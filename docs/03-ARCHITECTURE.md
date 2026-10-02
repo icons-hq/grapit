@@ -291,10 +291,12 @@ Admin refund writes audit evidence and can hold seats before manual reopening.
 
 `TicketModule` owns QR issue/read/verify.
 
-- QR tickets are reservation-level in the current implementation.
+- QR credentials are seat-level: one active `tickets` row per active Ticket Item (ADR 0001, ADR 0003).
 - `tickets` stores QR JTI, signing version, status, issue/email timestamps, use/revoke/expiry state.
-- QR reminder email is scheduled through pg-boss when eligible.
-- Reservation detail read path can self-heal missing QR for confirmed completed payments.
+- Reservation detail read path can self-heal missing QR for confirmed completed payments. Reads that find every credential stay lock-free; a missing credential is issued only inside a transaction that share-locks the reservation row and re-reads Ticket Item status, so it serializes with cancellation prepare, full refund, rights restoration and field consume (all lock the reservation first). A `cancellation_pending` Ticket Item never receives a new active credential, and concurrent issuers converge through `idx_tickets_ticket_item_active` (`ON CONFLICT DO NOTHING`).
+- QR reminder email is one pg-boss job per reservation, sent D-1 (or at issue when closer). The `qr-ticket-email-resend` queue uses pg-boss' standard policy, so `singletonKey` does not deduplicate. Scheduling records the job with a compare-and-set on `tickets.email_job_id`; a job whose id is not the recorded one is skipped. The worker claims `email_sent_at` on every active credential of the reservation before sending and releases the claim if delivery fails (pg-boss retries). A process crash between claim and send loses that reminder rather than duplicating it.
+- Ticket emails (manual `POST /tickets/reservations/:id/email` and the reminder) list every active seat with its Seat Identity and seat-level token, in seat order, plus the reservation detail link.
+- QR signing uses `QR_TICKET_SECRET`/`QR_TICKET_SECRET_VERSION` and verification keeps earlier versions in `QR_TICKET_SECRET_KEYRING_JSON`. A buyer read or ticket email for a credential whose version is missing from the keyring returns HTTP 500 (reported to Sentry), not 401, so the web client does not refresh the session. Field scans of such tokens stay `tampered`. At startup the API compares the keyring with the versions of `active`/`used` credentials and reports missing versions as critical. Rotation follows the [QR secret rotation runbook](runbooks/qr-ticket-secret-rotation.md).
 - Customer QR display is read-safe after field entry.
 
 Credential validity and venue entry state are separate:
@@ -306,7 +308,7 @@ Credential validity and venue entry state are separate:
 
 `FieldOperationsModule` provides:
 
-- verify: parse token or QR URL, load ticket context, return processable outcome,
+- verify: parse token or QR URL, load ticket context, return processable outcome; a scanned Ticket Item in `cancellation_pending` keeps the `refunded_cancelled` outcome but returns a distinct rejection reason (cancellation not yet confirmed, refuse entry and escalate) that is also stored on the scan event,
 - consume: manually process only the scanned Ticket Item after staff confirms, preserving companion seats and the buyer's QR access (ADR 0011),
 - offline sync: server-reverify pending attempts and return pending/synced/rejected state; transient failures remain pending,
 - monitor: KPI summary and scan logs.

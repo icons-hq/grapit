@@ -21,6 +21,7 @@ Use this only for reservations that entered ticket-item partial cancellation bef
 
 - If any Ticket Item remains `cancellation_pending`, do not start Full Reservation Cancellation for that reservation until the pending item is manually reconciled.
 - If Toss has no successful cancellation and Grabit is pending, restore the ticket item to active only after confirming the customer should keep the ticket.
+- Before restoring, confirm the pending item has no other active QR credential: `SELECT id, issued_at FROM tickets WHERE ticket_item_id = '<ticket_item_id>' AND status = 'active'`. Self-healing issuance now re-checks Ticket Item status under the reservation lock, but rows created before 2026-10 could hold one. If a row is returned, restoring the revoked credential fails on `idx_tickets_ticket_item_active`; revoke the extra row in the same reviewed transaction first and keep before/after evidence.
 - If Toss has a successful partial cancellation and Grabit is pending, finalize only the matching ticket item. If active Ticket Items remain, preserve parent `reservation=CONFIRMED` and `payment=DONE`; `PARTIAL_CANCELED` at the provider does not by itself justify changing the local parent payment.
 - A Full Reservation Cancellation retaining cancellation/service fees is different: the Reservation and all Ticket Items are cancelled, while local payment may be `PARTIAL_CANCELED` with the retained provider balance. Validate against the stored Cancellation Quote.
 - If Toss has full payment cancellation, finalize full reservation cancellation.

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnModuleInit,
@@ -9,8 +10,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import * as Sentry from '@sentry/nestjs';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { QrTicket, QrTicketStatus } from '@grabit/shared';
 import type { TicketEmailDelivery } from '@grabit/shared/types/booking.types.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
@@ -112,6 +114,15 @@ type TicketEmailContextRow = {
   } | null;
 };
 
+/** One reservation's ticket email: every active seat credential in seat order. */
+type TicketEmailContext = Omit<TicketEmailContextRow, 'ticket'> & {
+  tickets: TicketWithSeatRecord[];
+};
+
+type TicketReadDb = Pick<DrizzleDB, 'select'>;
+
+type TicketItemStatus = 'active' | 'cancellation_pending' | 'cancelled' | 'expired';
+
 export interface QrTicketTokenPayload {
   exp?: number;
   type: 'qr-ticket';
@@ -131,6 +142,10 @@ export interface QrTicketScannerContract {
   userId: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
+  /** Seat entitlement state, so a pending cancellation is not reported as a completed refund. */
+  ticketItemStatus: TicketItemStatus;
+  /** True while a cancellation/refund is requested but not yet confirmed by the PG. */
+  cancellationPending: boolean;
   reservationNumber?: string;
   reservationId: string;
   paymentId: string;
@@ -159,6 +174,9 @@ export class QrTicketService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // Not awaited: a slow database must not delay readiness. The check only reports.
+    void this.reportSecretKeyringCoverage();
+
     if (!this.pgBoss?.isAvailable || this.pgBoss.processesJobs === false) {
       return;
     }
@@ -171,7 +189,7 @@ export class QrTicketService implements OnModuleInit {
             return;
           }
 
-          await this.handleReminderEmailJob(job.data);
+          await this.handleReminderEmailJob(job.data, job.id);
         },
       );
     } catch (error) {
@@ -179,6 +197,46 @@ export class QrTicketService implements OnModuleInit {
         'QR reminder worker registration failed',
         error instanceof Error ? error.stack : String(error),
       );
+    }
+  }
+
+  /**
+   * Compares the configured keyring with the secret versions of credentials that
+   * buyers can still open. A missing version means buyer QR reads, ticket emails
+   * and field scans for those tickets fail, so it is reported as critical at boot
+   * instead of surfacing later as buyer-facing errors.
+   */
+  async reportSecretKeyringCoverage(): Promise<string[]> {
+    try {
+      const keyring = this.loadSecretKeyring();
+      const rows = await this.db
+        .selectDistinct({ secretVersion: tickets.secretVersion })
+        .from(tickets)
+        .where(inArray(tickets.status, ['active', 'used']));
+      const missingVersions = rows
+        .map((row) => row.secretVersion)
+        .filter((version) => !keyring[version])
+        .sort();
+
+      if (missingVersions.length > 0) {
+        const message = `CRITICAL: QR_TICKET_SECRET_KEYRING_JSON is missing secret versions still used by issued tickets: ${missingVersions.join(', ')}. Buyer QR reads, ticket emails and field scans for those tickets fail until the keyring includes them.`;
+        this.logger.error(message);
+        Sentry.withScope((scope) => {
+          scope.setTag('component', 'qr-ticket');
+          scope.setTag('check', 'secret-keyring-coverage');
+          scope.setLevel('fatal');
+          scope.setContext('qrSecretKeyring', { missingVersions });
+          Sentry.captureException(new Error(message));
+        });
+      }
+
+      return missingVersions;
+    } catch (error) {
+      this.logger.error(
+        'QR secret keyring coverage check failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return [];
     }
   }
 
@@ -199,47 +257,24 @@ export class QrTicketService implements OnModuleInit {
     paymentId: string;
   }): Promise<QrTicket[]> {
     const issueContext = await this.getReservationIssueContextWithTicketItems(input);
-    const ticketItemIds = issueContext.ticketItems.map((ticketItem) => ticketItem.id);
-    const existingTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds);
-    const existingTicketItemIds = new Set(
-      existingTickets.map((ticket) => ticket.ticketItemId),
+    let ticketItemsInOrder = issueContext.ticketItems;
+    let activeTickets = await this.findActiveTicketsByTicketItemIds(
+      ticketItemsInOrder.map((ticketItem) => ticketItem.id),
     );
-    const issuedAt = new Date();
-    const emailScheduledAt = this.calculateEmailScheduledAt(issueContext.showtimeAt, issuedAt);
+    const issuedTicketItemIds = new Set(activeTickets.map((ticket) => ticket.ticketItemId));
 
-    for (const ticketItem of issueContext.ticketItems) {
-      if (existingTicketItemIds.has(ticketItem.id)) {
-        continue;
-      }
-
-      try {
-        await this.db
-          .insert(tickets)
-          .values({
-            reservationId: issueContext.reservationId,
-            paymentId: issueContext.paymentId,
-            showtimeId: issueContext.showtimeId,
-            ticketItemId: ticketItem.id,
-            qrTokenJti: randomUUID(),
-            secretVersion: this.getCurrentSecretVersion(),
-            status: 'active',
-            issuedAt,
-            emailScheduledAt,
-            updatedAt: issuedAt,
-          })
-          .returning(this.ticketRecordFields());
-      } catch (error) {
-        if (!this.isUniqueViolation(error)) {
-          throw error;
-        }
-      }
+    // Fast path stays lock-free. Only a missing credential takes the reservation
+    // lock, because the unlocked reads above may straddle a cancellation commit.
+    if (ticketItemsInOrder.some((ticketItem) => !issuedTicketItemIds.has(ticketItem.id))) {
+      const issued = await this.issueMissingTicketsUnderReservationLock(input);
+      ticketItemsInOrder = issued.ticketItems;
+      activeTickets = issued.activeTickets;
     }
 
-    const activeTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds);
     const activeTicketByItemId = new Map(
       activeTickets.map((ticket) => [ticket.ticketItemId, ticket]),
     );
-    const orderedTickets = issueContext.ticketItems.map((ticketItem) =>
+    const orderedTickets = ticketItemsInOrder.map((ticketItem) =>
       activeTicketByItemId.get(ticketItem.id),
     );
 
@@ -251,6 +286,83 @@ export class QrTicketService implements OnModuleInit {
       orderedTickets as TicketWithSeatRecord[],
     );
     return Promise.all(scheduledTickets.map((ticket) => this.toQrTicket(ticket)));
+  }
+
+  /**
+   * Issues credentials only for Ticket Items that are still active while the
+   * reservation row is share-locked. Ticket-item cancellation, full refund,
+   * rights restoration and field consume all lock the reservation row first, so
+   * a cancellation prepare either commits before the status re-read below (and
+   * the item is skipped) or waits for this insert and then revokes it.
+   */
+  private async issueMissingTicketsUnderReservationLock(input: {
+    reservationId: string;
+    paymentId: string;
+  }): Promise<{
+    ticketItems: TicketItemIssueRecord[];
+    activeTickets: TicketWithSeatRecord[];
+  }> {
+    return this.db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        SELECT r.id
+        FROM reservations r
+        INNER JOIN payments p ON p.reservation_id = r.id
+        WHERE r.id = ${input.reservationId}
+          AND p.id = ${input.paymentId}
+          AND r.status = 'CONFIRMED'
+          AND p.status = 'DONE'
+        FOR SHARE OF r
+      `);
+      if (locked.rows.length === 0) {
+        return { ticketItems: [], activeTickets: [] };
+      }
+
+      const rows = await this.selectIssueContextRows(tx, input);
+      const [first] = rows;
+      if (!first) {
+        return { ticketItems: [], activeTickets: [] };
+      }
+
+      const ticketItemsInOrder = rows.map((row) => row.ticketItem);
+      const ticketItemIds = ticketItemsInOrder.map((ticketItem) => ticketItem.id);
+      const existingTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds, tx);
+      const existingTicketItemIds = new Set(
+        existingTickets.map((ticket) => ticket.ticketItemId),
+      );
+      const missingTicketItems = ticketItemsInOrder.filter(
+        (ticketItem) => !existingTicketItemIds.has(ticketItem.id),
+      );
+
+      if (missingTicketItems.length === 0) {
+        return { ticketItems: ticketItemsInOrder, activeTickets: existingTickets };
+      }
+
+      const issuedAt = new Date();
+      const emailScheduledAt = this.calculateEmailScheduledAt(first.showtimeAt, issuedAt);
+      const secretVersion = this.getCurrentSecretVersion();
+      // Concurrent readers share the lock; idx_tickets_ticket_item_active makes the
+      // loser a no-op instead of aborting the transaction.
+      await tx
+        .insert(tickets)
+        .values(missingTicketItems.map((ticketItem) => ({
+          reservationId: first.reservationId,
+          paymentId: first.paymentId,
+          showtimeId: first.showtimeId,
+          ticketItemId: ticketItem.id,
+          qrTokenJti: randomUUID(),
+          secretVersion,
+          status: 'active' as const,
+          issuedAt,
+          emailScheduledAt,
+          updatedAt: issuedAt,
+        })))
+        .onConflictDoNothing();
+
+      return {
+        ticketItems: ticketItemsInOrder,
+        activeTickets: await this.findActiveTicketsByTicketItemIds(ticketItemIds, tx),
+      };
+    });
   }
 
   async getOrIssueTicketForReservation(input: {
@@ -338,18 +450,17 @@ export class QrTicketService implements OnModuleInit {
     reservationId: string,
     userId: string,
   ): Promise<{ ticketEmailDelivery: TicketEmailDelivery }> {
-    const row = await this.findTicketEmailContext({ reservationId, userId });
-    if (!row) {
+    const context = await this.findTicketEmailContext({ reservationId, userId });
+    if (!context) {
       throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
     }
 
-    const ticket = this.toTicketWithSeatRecord(row.ticket);
-    const delivery = this.resolveTicketEmailDelivery(row, ticket);
+    const delivery = this.resolveTicketEmailDelivery(context);
     if (!delivery.canSend) {
       throw new BadRequestException('티켓을 받을 이메일 인증이 필요합니다');
     }
 
-    await this.sendTicketEmail(row, ticket);
+    await this.sendTicketEmail(context);
 
     const sentAt = new Date();
     await this.db
@@ -358,13 +469,13 @@ export class QrTicketService implements OnModuleInit {
         emailSentAt: sentAt,
         updatedAt: sentAt,
       })
-      .where(eq(tickets.id, ticket.id));
+      .where(inArray(tickets.id, context.tickets.map((ticket) => ticket.id)));
 
     return {
       ticketEmailDelivery: resolveTicketEmailDelivery({
-        email: row.user.email,
-        isEmailVerified: row.user.isEmailVerified,
-        scheduledAt: ticket.emailScheduledAt?.toISOString() ?? null,
+        email: context.user.email,
+        isEmailVerified: context.user.isEmailVerified,
+        scheduledAt: delivery.scheduledAt,
         lastSentAt: sentAt.toISOString(),
       }),
     };
@@ -487,6 +598,8 @@ export class QrTicketService implements OnModuleInit {
           : this.mapCredentialStatus(row) !== 'ACTIVE'
             ? this.mapCredentialStatus(row)
             : row.ticketItemAdmissionState === 'entered' ? 'USED' : this.mapScannerStatus(row),
+      ticketItemStatus: row.ticketItemStatus,
+      cancellationPending: row.ticketItemStatus === 'cancellation_pending',
       enteredAt: (row.enteredAt ?? row.usedAt)?.toISOString() ?? null,
       reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
@@ -597,7 +710,31 @@ export class QrTicketService implements OnModuleInit {
     reservationId: string;
     paymentId: string;
   }): Promise<ReservationIssueContextWithTicketItems> {
-    const rows = await this.db
+    const rows = await this.selectIssueContextRows(this.db, input);
+
+    const [first] = rows;
+    if (!first || first.paymentStatus !== 'DONE') {
+      throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+    }
+
+    return {
+      reservationId: first.reservationId,
+      paymentId: first.paymentId,
+      paymentStatus: first.paymentStatus,
+      showtimeId: first.showtimeId,
+      showtimeAt: first.showtimeAt,
+      ticketItems: rows.map((row) => row.ticketItem),
+    };
+  }
+
+  private async selectIssueContextRows(
+    db: TicketReadDb,
+    input: {
+      reservationId: string;
+      paymentId: string;
+    },
+  ): Promise<Array<ReservationIssueContext & { ticketItem: TicketItemIssueRecord }>> {
+    return db
       .select({
         reservationId: reservations.id,
         paymentId: payments.id,
@@ -636,30 +773,17 @@ export class QrTicketService implements OnModuleInit {
         ),
       )
       .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
-
-    const [first] = rows;
-    if (!first || first.paymentStatus !== 'DONE') {
-      throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
-    }
-
-    return {
-      reservationId: first.reservationId,
-      paymentId: first.paymentId,
-      paymentStatus: first.paymentStatus,
-      showtimeId: first.showtimeId,
-      showtimeAt: first.showtimeAt,
-      ticketItems: rows.map((row) => row.ticketItem),
-    };
   }
 
   private async findActiveTicketsByTicketItemIds(
     ticketItemIds: string[],
+    db: TicketReadDb = this.db,
   ): Promise<TicketWithSeatRecord[]> {
     if (ticketItemIds.length === 0) {
       return [];
     }
 
-    const rows = await this.db
+    const rows = await db
       .select(this.ticketWithSeatRecordFields())
       .from(tickets)
       .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
@@ -695,6 +819,9 @@ export class QrTicketService implements OnModuleInit {
       },
       {
         startAfter: ticketRecord.emailScheduledAt,
+        // Not a dedupe guarantee: the queue uses pg-boss' standard policy, which
+        // ignores singletonKey. The email_job_id CAS below and the send claim in
+        // handleReminderEmailJob are what prevent duplicate reminders.
         singletonKey: ticketRecord.id,
         retryLimit: 3,
         retryBackoff: true,
@@ -713,10 +840,23 @@ export class QrTicketService implements OnModuleInit {
         emailJobId: jobId,
         updatedAt: new Date(),
       })
-      .where(eq(tickets.id, ticketRecord.id))
+      .where(and(eq(tickets.id, ticketRecord.id), isNull(tickets.emailJobId)))
       .returning(this.ticketRecordFields());
 
-    return updated ?? { ...ticketRecord, emailJobId: jobId };
+    if (updated) {
+      return updated;
+    }
+
+    // A concurrent read recorded its job first. This job stays queued but is
+    // skipped by handleReminderEmailJob because it is not the recorded job.
+    this.logger.log(
+      `QR reminder already scheduled by a concurrent request. ticketId=${ticketRecord.id}, supersededJobId=${jobId}`,
+    );
+    const [current] = await this.db
+      .select(this.ticketRecordFields())
+      .from(tickets)
+      .where(eq(tickets.id, ticketRecord.id));
+    return current ?? ticketRecord;
   }
 
   private async ensureSingleReminderSchedule(
@@ -742,72 +882,106 @@ export class QrTicketService implements OnModuleInit {
     );
   }
 
-  private async handleReminderEmailJob(payload: QrTicketEmailJobPayload): Promise<void> {
-    const [row] = await this.db
+  /**
+   * One reminder per reservation, covering every active seat. The anchor ticket
+   * only identifies the reservation and the recorded job; the send right is
+   * claimed atomically on email_sent_at so duplicate jobs on other workers skip.
+   */
+  private async handleReminderEmailJob(
+    payload: QrTicketEmailJobPayload,
+    jobId?: string,
+  ): Promise<void> {
+    const [anchor] = await this.db
       .select({
-        ticket: this.ticketWithSeatRecordFields(),
-        reservation: {
-          id: reservations.id,
-          reservationNumber: reservations.reservationNumber,
-        },
-        user: {
-          email: users.email,
-          isEmailVerified: users.isEmailVerified,
-          preferredLocale: users.preferredLocale,
-        },
-        showtime: {
-          dateTime: showtimes.dateTime,
-        },
-        performance: {
-          title: performances.title,
-        },
-        venue: {
-          name: venues.name,
-        },
+        id: tickets.id,
+        reservationId: tickets.reservationId,
+        emailJobId: tickets.emailJobId,
       })
       .from(tickets)
-      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
-      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
-      .innerJoin(users, eq(reservations.userId, users.id))
-      .innerJoin(showtimes, eq(tickets.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .leftJoin(venues, eq(performances.venueId, venues.id))
       .where(eq(tickets.id, payload.ticketId));
 
-    if (!row) {
+    if (!anchor) {
       this.logger.warn(`QR reminder skipped: missing ticketId=${payload.ticketId}`);
       return;
     }
 
-    const ticket = this.toTicketWithSeatRecord(row.ticket);
-    if (ticket.emailSentAt || ticket.status !== 'active') {
-      return;
-    }
-
-    const delivery = this.resolveTicketEmailDelivery(row as TicketEmailContextRow, ticket);
-    if (!delivery.canSend) {
-      this.logger.warn(
-        `QR reminder skipped: ticket email verification required for reservationId=${row.reservation.id}`,
+    if (jobId && anchor.emailJobId && anchor.emailJobId !== jobId) {
+      this.logger.log(
+        `QR reminder skipped: superseded job. ticketId=${anchor.id}, jobId=${jobId}`,
       );
       return;
     }
 
-    await this.sendTicketEmail(row as TicketEmailContextRow, ticket);
+    const context = await this.findTicketEmailContext({ reservationId: anchor.reservationId });
+    if (!context || context.tickets.some((ticket) => ticket.emailSentAt)) {
+      return;
+    }
 
-    await this.db
+    const delivery = this.resolveTicketEmailDelivery(context);
+    if (!delivery.canSend) {
+      this.logger.warn(
+        `QR reminder skipped: ticket email verification required for reservationId=${context.reservation.id}`,
+      );
+      return;
+    }
+
+    const claimedAt = new Date();
+    const claimed = await this.db
       .update(tickets)
       .set({
-        emailSentAt: new Date(),
-        updatedAt: new Date(),
+        emailSentAt: claimedAt,
+        updatedAt: claimedAt,
       })
-      .where(eq(tickets.id, ticket.id));
+      .where(
+        and(
+          inArray(tickets.id, context.tickets.map((ticket) => ticket.id)),
+          eq(tickets.status, 'active'),
+          isNull(tickets.emailSentAt),
+        ),
+      )
+      .returning({ id: tickets.id });
+
+    if (claimed.length === 0) {
+      return;
+    }
+
+    try {
+      await this.sendTicketEmail(context);
+    } catch (error) {
+      // Release the claim so the pg-boss retry can send. A crash before this
+      // point leaves the claim in place (at-most-once reminder, never duplicate).
+      await this.releaseReminderClaim(claimed.map((row) => row.id), claimedAt);
+      throw error;
+    }
+  }
+
+  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<void> {
+    try {
+      await this.db
+        .update(tickets)
+        .set({
+          emailSentAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            inArray(tickets.id, ticketIds),
+            eq(tickets.emailSentAt, claimedAt),
+          ),
+        );
+    } catch (error) {
+      this.logger.error(
+        `QR reminder claim release failed. ticketIds=${ticketIds.join(',')}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private async findTicketEmailContext(input: {
     reservationId: string;
-    userId: string;
-  }): Promise<TicketEmailContextRow | undefined> {
-    const [row] = await this.db
+    userId?: string;
+  }): Promise<TicketEmailContext | undefined> {
+    const rows = await this.db
       .select({
         ticket: this.ticketWithSeatRecordFields(),
         reservation: {
@@ -840,45 +1014,65 @@ export class QrTicketService implements OnModuleInit {
       .where(
         and(
           eq(tickets.reservationId, input.reservationId),
-          eq(reservations.userId, input.userId),
+          input.userId ? eq(reservations.userId, input.userId) : undefined,
           eq(reservations.status, 'CONFIRMED'),
           eq(payments.status, 'DONE'),
           eq(tickets.status, 'active'),
+          eq(ticketItems.status, 'active'),
         ),
-      );
+      )
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
 
-    return row as TicketEmailContextRow | undefined;
+    const contextRows = rows as TicketEmailContextRow[];
+    const [first] = contextRows;
+    if (!first) {
+      return undefined;
+    }
+
+    return {
+      reservation: first.reservation,
+      user: first.user,
+      showtime: first.showtime,
+      performance: first.performance,
+      venue: first.venue,
+      tickets: contextRows.map((row) => this.toTicketWithSeatRecord(row.ticket)),
+    };
   }
 
-  private resolveTicketEmailDelivery(
-    row: TicketEmailContextRow,
-    ticket: TicketWithSeatRecord,
-  ): TicketEmailDelivery {
+  private resolveTicketEmailDelivery(context: TicketEmailContext): TicketEmailDelivery {
+    const scheduledAt = context.tickets.find((ticket) => ticket.emailScheduledAt)?.emailScheduledAt;
+    const lastSentAt = context.tickets
+      .map((ticket) => ticket.emailSentAt)
+      .filter((sentAt): sentAt is Date => sentAt instanceof Date)
+      .sort((left, right) => right.getTime() - left.getTime())[0];
+
     return resolveTicketEmailDelivery({
-      email: row.user.email,
-      isEmailVerified: row.user.isEmailVerified,
-      scheduledAt: ticket.emailScheduledAt?.toISOString() ?? null,
-      lastSentAt: ticket.emailSentAt?.toISOString() ?? null,
+      email: context.user.email,
+      isEmailVerified: context.user.isEmailVerified,
+      scheduledAt: scheduledAt?.toISOString() ?? null,
+      lastSentAt: lastSentAt?.toISOString() ?? null,
     });
   }
 
-  private async sendTicketEmail(
-    row: TicketEmailContextRow,
-    ticket: TicketWithSeatRecord,
-  ): Promise<void> {
-    const ticketToken = await this.buildTicketToken(ticket);
+  private async sendTicketEmail(context: TicketEmailContext): Promise<void> {
+    const seatTickets = await Promise.all(
+      context.tickets.map(async (ticket) => ({
+        seatLabel: this.buildSeatLabels(ticket.seatIdentity).join(', '),
+        token: await this.buildTicketToken(ticket),
+      })),
+    );
     const frontendUrl = (
       this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000'
     ).replace(/\/$/, '');
-    const ticketUrl = `${frontendUrl}/mypage/reservations/${row.reservation.id}`;
-    const result = await this.emailService.sendQrTicketReminderEmail(row.user.email, {
-      reservationNumber: row.reservation.reservationNumber,
-      performanceTitle: row.performance.title,
-      showDateTime: row.showtime.dateTime.toISOString(),
-      venue: row.venue?.name ?? '',
-      ticketToken,
+    const ticketUrl = `${frontendUrl}/mypage/reservations/${context.reservation.id}`;
+    const result = await this.emailService.sendQrTicketReminderEmail(context.user.email, {
+      reservationNumber: context.reservation.reservationNumber,
+      performanceTitle: context.performance.title,
+      showDateTime: context.showtime.dateTime.toISOString(),
+      venue: context.venue?.name ?? '',
+      tickets: seatTickets,
       ticketUrl,
-      locale: row.user.preferredLocale ?? 'ko',
+      locale: context.user.preferredLocale ?? 'ko',
     });
 
     if (!result.success) {
@@ -886,6 +1080,7 @@ export class QrTicketService implements OnModuleInit {
     }
   }
 
+  /** Buyer-side signing (QR display and ticket email). */
   private async buildTicketToken(ticketRecord: TicketWithSeatRecord): Promise<string> {
     return this.jwtService.signAsync(
       {
@@ -900,7 +1095,7 @@ export class QrTicketService implements OnModuleInit {
         issuedAt: ticketRecord.issuedAt.toISOString(),
       } satisfies QrTicketTokenPayload,
       {
-        secret: this.getVerificationSecret(ticketRecord.secretVersion),
+        secret: this.getSigningSecretForIssuedTicket(ticketRecord),
         algorithm: 'HS256',
         noTimestamp: true,
       },
@@ -977,11 +1172,39 @@ export class QrTicketService implements OnModuleInit {
     return secret;
   }
 
+  /**
+   * Scanner-side lookup for a presented token. An unknown version is an invalid
+   * credential from the scanner's point of view, so it stays a 401 (tampered).
+   */
   private getVerificationSecret(secretVersion: string): string {
     const keyring = this.loadSecretKeyring();
     const secret = keyring[secretVersion];
     if (!secret) {
+      this.logger.warn(
+        `QR token presented with a secret version missing from the keyring. secretVersion=${secretVersion.slice(0, 40)}`,
+      );
       throw new UnauthorizedException('알 수 없는 QR secret version 입니다');
+    }
+
+    return secret;
+  }
+
+  /**
+   * Buyer-side lookup for a credential this server issued. A missing version is
+   * a keyring misconfiguration, not a buyer auth failure: answering 401 would
+   * make the web client refresh the session and report an expired login.
+   */
+  private getSigningSecretForIssuedTicket(
+    ticketRecord: Pick<TicketRecord, 'id' | 'secretVersion'>,
+  ): string {
+    const secret = this.loadSecretKeyring()[ticketRecord.secretVersion];
+    if (!secret) {
+      this.logger.error(
+        `CRITICAL: QR secret version ${ticketRecord.secretVersion} of issued ticketId=${ticketRecord.id} is missing from QR_TICKET_SECRET_KEYRING_JSON.`,
+      );
+      throw new InternalServerErrorException(
+        'QR 티켓을 일시적으로 표시할 수 없습니다. 잠시 후 다시 시도해주세요.',
+      );
     }
 
     return secret;
@@ -1022,15 +1245,6 @@ export class QrTicketService implements OnModuleInit {
 
     keyring[currentVersion] = currentSecret;
     return keyring;
-  }
-
-  private isUniqueViolation(error: unknown): boolean {
-    return (
-      typeof error === 'object'
-      && error !== null
-      && 'code' in error
-      && (error as { code?: string }).code === '23505'
-    );
   }
 
   private isSeatLevelPayload(

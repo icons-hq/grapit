@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InternalServerErrorException, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { QrTicketService } from './qr-ticket.service.js';
 
@@ -32,6 +33,49 @@ function createUpdateResult<T>(rows: T[]) {
       }),
     }),
   };
+}
+
+function createConflictSafeInsert() {
+  const onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
+  const values = vi.fn().mockReturnValue({ onConflictDoNothing });
+  return { values, onConflictDoNothing };
+}
+
+/**
+ * Transaction used by the missing-credential issuance path. `lockedRows` is the
+ * result of the reservation share lock; `selects` are the re-reads made while
+ * the lock is held (issue context, existing credentials, issued credentials).
+ */
+function createIssueTransaction(input: {
+  lockedRows?: Array<Record<string, unknown>>;
+  selects: unknown[][];
+}) {
+  const insert = createConflictSafeInsert();
+  const tx = {
+    execute: vi.fn().mockResolvedValue({ rows: input.lockedRows ?? [{ id: 'reservation-1' }] }),
+    select: vi.fn(),
+    insert: vi.fn().mockReturnValue({ values: insert.values }),
+  };
+  for (const rows of input.selects) {
+    tx.select.mockReturnValueOnce(chainResult(rows));
+  }
+
+  return {
+    tx,
+    insertValues: insert.values,
+    onConflictDoNothing: insert.onConflictDoNothing,
+    transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+  };
+}
+
+function sqlText(query: unknown): string {
+  const chunks = (query as { queryChunks?: unknown[] }).queryChunks ?? [];
+  return chunks
+    .map((chunk) => {
+      const value = (chunk as { value?: unknown }).value;
+      return Array.isArray(value) ? value.join('') : '';
+    })
+    .join('');
 }
 
 function createTicketRecord(overrides: Record<string, unknown> = {}) {
@@ -143,37 +187,42 @@ describe('QrTicketService', () => {
       ticketItemId: 'ticket-item-a2',
       qrTokenJti: 'qr-jti-a2',
     });
+    const contextRows = [
+      {
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        paymentStatus: 'DONE',
+        showtimeId: 'showtime-1',
+        showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+        ticketItem: { id: 'ticket-item-a1', ...seatA1 },
+      },
+      {
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        paymentStatus: 'DONE',
+        showtimeId: 'showtime-1',
+        showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+        ticketItem: { id: 'ticket-item-a2', ...seatA2 },
+      },
+    ];
+    const issue = createIssueTransaction({
+      selects: [
+        contextRows,
+        [],
+        [
+          { ...issuedTicketA1, ...seatA1 },
+          { ...issuedTicketA2, ...seatA2 },
+        ],
+      ],
+    });
     const mockDb = {
       select: vi
         .fn()
-        .mockReturnValueOnce(chainResult([
-          {
-            reservationId: 'reservation-1',
-            paymentId: 'payment-1',
-            paymentStatus: 'DONE',
-            showtimeId: 'showtime-1',
-            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
-            ticketItem: { id: 'ticket-item-a1', ...seatA1 },
-          },
-          {
-            reservationId: 'reservation-1',
-            paymentId: 'payment-1',
-            paymentStatus: 'DONE',
-            showtimeId: 'showtime-1',
-            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
-            ticketItem: { id: 'ticket-item-a2', ...seatA2 },
-          },
-        ]))
-        .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([
-          { ...issuedTicketA1, ...seatA1 },
-          { ...issuedTicketA2, ...seatA2 },
-        ])),
-      insert: vi
-        .fn()
-        .mockReturnValueOnce(createInsertResult([issuedTicketA1]))
-        .mockReturnValueOnce(createInsertResult([issuedTicketA2])),
+        .mockReturnValueOnce(chainResult(contextRows))
+        .mockReturnValueOnce(chainResult([])),
+      insert: vi.fn(),
       update: vi.fn(),
+      transaction: issue.transaction,
     };
     const jwtService = new JwtService();
     const service = new QrTicketService(
@@ -213,56 +262,136 @@ describe('QrTicketService', () => {
       seatA2,
     ]);
     expect(new Set(issuedTickets.map((ticket) => ticket.jti))).toHaveProperty('size', 2);
-    expect(mockDb.insert).toHaveBeenCalledTimes(2);
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(issue.insertValues).toHaveBeenCalledTimes(1);
+    expect(issue.insertValues.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({ ticketItemId: 'ticket-item-a1', status: 'active' }),
+      expect.objectContaining({ ticketItemId: 'ticket-item-a2', status: 'active' }),
+    ]);
+    expect(issue.onConflictDoNothing).toHaveBeenCalledTimes(1);
+  });
+
+  it('issues a missing credential only after re-reading Ticket Item status under the reservation share lock', async () => {
+    // Audit #110: the unlocked reads saw seat A-1 active, but its cancellation
+    // prepare committed before the issue. The locked re-read no longer returns
+    // A-1, so no new active credential may be inserted for it.
+    const seatA1 = createSeatIdentity({ seatId: 'A-1', seatKey: '1F:A-1', number: '1' });
+    const seatA2 = createSeatIdentity({ seatId: 'A-2', seatKey: '1F:A-2', number: '2' });
+    const contextRow = (id: string, seat: Record<string, unknown>) => ({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+      paymentStatus: 'DONE',
+      showtimeId: 'showtime-1',
+      showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+      ticketItem: { id, ...seat },
+    });
+    const ticketA2 = createTicketRecord({ id: 'ticket-a2', ticketItemId: 'ticket-item-a2', qrTokenJti: 'qr-jti-a2' });
+    const issue = createIssueTransaction({
+      selects: [
+        [contextRow('ticket-item-a2', seatA2)],
+        [{ ...ticketA2, ...seatA2 }],
+      ],
+    });
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([
+          contextRow('ticket-item-a1', seatA1),
+          contextRow('ticket-item-a2', seatA2),
+        ]))
+        .mockReturnValueOnce(chainResult([{ ...ticketA2, ...seatA2 }])),
+      insert: vi.fn(),
+      update: vi.fn(),
+      transaction: issue.transaction,
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    const issuedTickets = await service.ensureIssuedTicketsForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    });
+
+    expect(issue.tx.execute).toHaveBeenCalledTimes(1);
+    expect(sqlText(issue.tx.execute.mock.calls[0]?.[0])).toMatch(/FOR SHARE OF r/);
+    expect(issue.insertValues).not.toHaveBeenCalled();
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(issuedTickets.map((ticket) => ticket.ticketItemId)).toEqual(['ticket-item-a2']);
+  });
+
+  it('does not issue anything when the reservation is no longer confirmed under the lock', async () => {
+    const seatA1 = createSeatIdentity();
+    const issue = createIssueTransaction({ lockedRows: [], selects: [] });
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([{
+          reservationId: 'reservation-1',
+          paymentId: 'payment-1',
+          paymentStatus: 'DONE',
+          showtimeId: 'showtime-1',
+          showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+          ticketItem: { id: 'ticket-item-1', ...seatA1 },
+        }]))
+        .mockReturnValueOnce(chainResult([])),
+      insert: vi.fn(),
+      update: vi.fn(),
+      transaction: issue.transaction,
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      { get: vi.fn((key: string) => (key === 'QR_TICKET_SECRET_VERSION' ? '2026-07' : key === 'QR_TICKET_SECRET' ? 'current-secret' : undefined)) } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    await expect(service.ensureIssuedTicketsForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    })).resolves.toEqual([]);
+    expect(issue.tx.select).not.toHaveBeenCalled();
+    expect(issue.insertValues).not.toHaveBeenCalled();
   });
 
   it('returns the first seat QR ticket through the single-ticket wrapper and schedules one D-1 email resend', async () => {
     const seatIdentity = createSeatIdentity();
     const ticketRecord = createTicketRecord();
+    const contextRows = [
+      {
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        paymentStatus: 'DONE',
+        showtimeId: 'showtime-1',
+        showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+        ticketItem: {
+          id: 'ticket-item-1',
+          ...seatIdentity,
+        },
+      },
+    ];
+    const issue = createIssueTransaction({
+      selects: [contextRows, [], [{ ...ticketRecord, ...seatIdentity }]],
+    });
     const mockDb = {
       select: vi
         .fn()
-        .mockReturnValueOnce(
-          chainResult([
-            {
-              reservationId: 'reservation-1',
-              paymentId: 'payment-1',
-              paymentStatus: 'DONE',
-              showtimeId: 'showtime-1',
-              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
-              ticketItem: {
-                id: 'ticket-item-1',
-                ...seatIdentity,
-              },
-            },
-          ]),
-        )
+        .mockReturnValueOnce(chainResult(contextRows))
         .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([
-          {
-            ...ticketRecord,
-            ...seatIdentity,
-          },
-        ]))
         .mockReturnValueOnce(chainResult([createVerifiableTicketRow()])),
-      insert: vi.fn().mockReturnValue(
-        createInsertResult([
-          {
-            id: 'ticket-1',
-            reservationId: 'reservation-1',
-            paymentId: 'payment-1',
-            showtimeId: 'showtime-1',
-            ticketItemId: 'ticket-item-1',
-            qrTokenJti: 'qr-jti-1',
-            secretVersion: '2026-07',
-            status: 'active',
-            issuedAt: now,
-            emailScheduledAt: new Date('2026-07-17T11:00:00.000Z'),
-            emailSentAt: null,
-            emailJobId: null,
-          },
-        ]),
-      ),
+      insert: vi.fn(),
+      transaction: issue.transaction,
       update: vi.fn().mockReturnValue(
         createUpdateResult([
           {
@@ -361,6 +490,34 @@ describe('QrTicketService', () => {
       ticketItemId: 'ticket-item-a2',
       qrTokenJti: 'qr-jti-a2',
     });
+    const contextRows = [
+      {
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        paymentStatus: 'DONE',
+        showtimeId: 'showtime-1',
+        showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+        ticketItem: { id: 'ticket-item-a1', ...seatA1 },
+      },
+      {
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        paymentStatus: 'DONE',
+        showtimeId: 'showtime-1',
+        showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+        ticketItem: { id: 'ticket-item-a2', ...seatA2 },
+      },
+    ];
+    const issue = createIssueTransaction({
+      selects: [
+        contextRows,
+        [],
+        [
+          { ...issuedTicketA1, ...seatA1 },
+          { ...issuedTicketA2, ...seatA2 },
+        ],
+      ],
+    });
     const mockDb = {
       select: vi
         .fn()
@@ -371,34 +528,11 @@ describe('QrTicketService', () => {
             paymentStatus: 'DONE',
           },
         ]))
-        .mockReturnValueOnce(chainResult([
-          {
-            reservationId: 'reservation-1',
-            paymentId: 'payment-1',
-            paymentStatus: 'DONE',
-            showtimeId: 'showtime-1',
-            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
-            ticketItem: { id: 'ticket-item-a1', ...seatA1 },
-          },
-          {
-            reservationId: 'reservation-1',
-            paymentId: 'payment-1',
-            paymentStatus: 'DONE',
-            showtimeId: 'showtime-1',
-            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
-            ticketItem: { id: 'ticket-item-a2', ...seatA2 },
-          },
-        ]))
-        .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([
-          { ...issuedTicketA1, ...seatA1 },
-          { ...issuedTicketA2, ...seatA2 },
-        ])),
-      insert: vi
-        .fn()
-        .mockReturnValueOnce(createInsertResult([issuedTicketA1]))
-        .mockReturnValueOnce(createInsertResult([issuedTicketA2])),
+        .mockReturnValueOnce(chainResult(contextRows))
+        .mockReturnValueOnce(chainResult([])),
+      insert: vi.fn(),
       update: vi.fn(),
+      transaction: issue.transaction,
     };
     const jwtService = new JwtService();
     const service = new QrTicketService(
@@ -460,12 +594,12 @@ describe('QrTicketService', () => {
 
     await service.onModuleInit();
     const handler = pgBoss.work.mock.calls[0]?.[1] as (
-      jobs: Array<{ data: typeof payload }>,
+      jobs: Array<{ id?: string; data: typeof payload }>,
     ) => Promise<void>;
-    await handler([{ data: payload }]);
+    await handler([{ id: 'qr-email-job-1', data: payload }]);
 
     expect(pgBoss.work).toHaveBeenCalledWith('qr-ticket-email-resend', expect.any(Function));
-    expect(handleReminderSpy).toHaveBeenCalledWith(payload);
+    expect(handleReminderSpy).toHaveBeenCalledWith(payload, 'qr-email-job-1');
   });
 
   it('does not register the QR email worker in producer-only mode', async () => {
@@ -609,9 +743,74 @@ describe('QrTicketService', () => {
         reservationNumber: 'GRP-24001',
         performanceTitle: 'Girl Rules Fanmeet',
         ticketUrl: 'https://heygrabit.com/mypage/reservations/reservation-1',
+        tickets: [
+          { seatLabel: '1층 · VIP A열 1번', token: expect.any(String) },
+        ],
       }),
     );
     expect(mockDb.update).toHaveBeenCalled();
+  });
+
+  it('emails every active seat of a multi-seat reservation with its own seat label and token', async () => {
+    // Audit #108: a 4-seat reservation used to email one arbitrary seat's token.
+    const seats = ['1', '2', '3', '4'].map((number) => createSeatIdentity({
+      seatId: `A-${number}`,
+      seatKey: `1F:A-${number}`,
+      number,
+    }));
+    const rows = seats.map((seat, index) => ({
+      ticket: createTicketWithSeatRecord({
+        id: `ticket-a${index + 1}`,
+        ticketItemId: `ticket-item-a${index + 1}`,
+        qrTokenJti: `qr-jti-a${index + 1}`,
+        seatIdentity: seat,
+      }),
+      reservation: { id: 'reservation-1', reservationNumber: 'GRP-24001' },
+      user: { email: 'buyer@example.com', isEmailVerified: true, preferredLocale: 'ko' },
+      showtime: { dateTime: new Date('2026-07-18T11:00:00.000Z') },
+      performance: { title: 'Girl Rules Fanmeet' },
+      venue: { name: 'Donghae Arts Center' },
+    }));
+    const updateWhere = vi.fn().mockResolvedValue(undefined);
+    const mockDb = {
+      select: vi.fn().mockReturnValue(chainResult(rows)),
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: updateWhere }) }),
+    };
+    const emailService = {
+      sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const jwtService = new JwtService();
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      jwtService,
+      emailService as never,
+      { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    await service.sendOwnedTicketsForReservationEmail('reservation-1', 'user-1');
+
+    expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledTimes(1);
+    const emailInput = emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1] as {
+      tickets: Array<{ seatLabel: string; token: string }>;
+    };
+    expect(emailInput.tickets.map((ticket) => ticket.seatLabel)).toEqual([
+      '1층 · VIP A열 1번',
+      '1층 · VIP A열 2번',
+      '1층 · VIP A열 3번',
+      '1층 · VIP A열 4번',
+    ]);
+    expect(emailInput.tickets.map((ticket) =>
+      (jwtService.decode(ticket.token) as Record<string, unknown>)['ticketItemId'],
+    )).toEqual(['ticket-item-a1', 'ticket-item-a2', 'ticket-item-a3', 'ticket-item-a4']);
+    expect(mockDb.update).toHaveBeenCalledTimes(1);
+    expect(updateWhere).toHaveBeenCalledTimes(1);
   });
 
   it('verifies a previously issued token via QR_TICKET_SECRET_KEYRING_JSON lookup', async () => {
@@ -1217,6 +1416,358 @@ describe('QrTicketService', () => {
       reservationId: 'reservation-1',
       paymentId: 'payment-1',
       showtimeId: 'showtime-1',
+    });
+  });
+  describe('QR reminder email job (audit #107, #108)', () => {
+    function reminderRows(count: number) {
+      return Array.from({ length: count }, (_, index) => ({
+        ticket: createTicketWithSeatRecord({
+          id: `ticket-a${index + 1}`,
+          ticketItemId: `ticket-item-a${index + 1}`,
+          qrTokenJti: `qr-jti-a${index + 1}`,
+          emailJobId: index === 0 ? 'qr-email-job-1' : null,
+          seatIdentity: {
+            seatId: `A-${index + 1}`,
+            seatKey: `1F:A-${index + 1}`,
+            number: String(index + 1),
+          },
+        }),
+        reservation: { id: 'reservation-1', reservationNumber: 'GRP-24001' },
+        user: { email: 'buyer@example.com', isEmailVerified: true, preferredLocale: 'ko' },
+        showtime: { dateTime: new Date('2026-07-18T11:00:00.000Z') },
+        performance: { title: 'Girl Rules Fanmeet' },
+        venue: { name: 'Donghae Arts Center' },
+      }));
+    }
+
+    function createReminderService(input: {
+      anchorEmailJobId?: string | null;
+      rows?: ReturnType<typeof reminderRows>;
+      claimedIds?: string[];
+      emailResult?: { success: boolean; error?: string };
+    }) {
+      const claimReturning = vi.fn().mockResolvedValue(
+        (input.claimedIds ?? []).map((id) => ({ id })),
+      );
+      const claimSet = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ returning: claimReturning }),
+      });
+      const releaseWhere = vi.fn().mockResolvedValue(undefined);
+      const releaseSet = vi.fn().mockReturnValue({ where: releaseWhere });
+      const mockDb = {
+        select: vi
+          .fn()
+          .mockReturnValueOnce(chainResult([{
+            id: 'ticket-a1',
+            reservationId: 'reservation-1',
+            emailJobId: input.anchorEmailJobId === undefined ? 'qr-email-job-1' : input.anchorEmailJobId,
+          }]))
+          .mockReturnValueOnce(chainResult(input.rows ?? reminderRows(2))),
+        update: vi
+          .fn()
+          .mockReturnValueOnce({ set: claimSet })
+          .mockReturnValueOnce({ set: releaseSet }),
+      };
+      const emailService = {
+        sendQrTicketReminderEmail: vi.fn().mockResolvedValue(input.emailResult ?? { success: true }),
+      };
+      const jwtService = new JwtService();
+      const service = new QrTicketService(
+        mockDb as never,
+        {
+          get: vi.fn((key: string) => {
+            if (key === 'QR_TICKET_SECRET') return 'current-secret';
+            if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+            if (key === 'FRONTEND_URL') return 'https://heygrabit.com';
+            return undefined;
+          }),
+        } as never,
+        jwtService,
+        emailService as never,
+        { isAvailable: true, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+      const handle = (jobId?: string) => (service as unknown as {
+        handleReminderEmailJob(payload: { ticketId: string; reservationId: string }, jobId?: string): Promise<void>;
+      }).handleReminderEmailJob({ ticketId: 'ticket-a1', reservationId: 'reservation-1' }, jobId);
+
+      return { mockDb, emailService, jwtService, claimSet, claimReturning, releaseSet, releaseWhere, handle };
+    }
+
+    it('claims every active seat before sending one reminder that covers the whole reservation', async () => {
+      const harness = createReminderService({ claimedIds: ['ticket-a1', 'ticket-a2'] });
+
+      await harness.handle('qr-email-job-1');
+
+      expect(harness.claimSet).toHaveBeenCalledWith(expect.objectContaining({ emailSentAt: now }));
+      expect(harness.claimReturning.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.emailService.sendQrTicketReminderEmail.mock.invocationCallOrder[0]!,
+      );
+      expect(harness.emailService.sendQrTicketReminderEmail).toHaveBeenCalledTimes(1);
+      const emailInput = harness.emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1] as {
+        tickets: Array<{ seatLabel: string; token: string }>;
+      };
+      expect(emailInput.tickets.map((ticket) => ticket.seatLabel)).toEqual([
+        '1층 · VIP A열 1번',
+        '1층 · VIP A열 2번',
+      ]);
+      expect(emailInput.tickets.map((ticket) =>
+        (harness.jwtService.decode(ticket.token) as Record<string, unknown>)['ticketItemId'],
+      )).toEqual(['ticket-item-a1', 'ticket-item-a2']);
+      expect(harness.releaseSet).not.toHaveBeenCalled();
+    });
+
+    it('does not send when another worker already claimed the reservation reminder', async () => {
+      const harness = createReminderService({ claimedIds: [] });
+
+      await harness.handle('qr-email-job-1');
+
+      expect(harness.claimSet).toHaveBeenCalledTimes(1);
+      expect(harness.emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('skips a duplicate job that lost the email_job_id compare-and-set', async () => {
+      const harness = createReminderService({ claimedIds: ['ticket-a1', 'ticket-a2'] });
+
+      await harness.handle('qr-email-job-duplicate');
+
+      expect(harness.mockDb.select).toHaveBeenCalledTimes(1);
+      expect(harness.mockDb.update).not.toHaveBeenCalled();
+      expect(harness.emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('skips the reminder when the reservation was already emailed', async () => {
+      const rows = reminderRows(2);
+      rows[1]!.ticket.emailSentAt = new Date('2026-07-12T00:00:00.000Z');
+      const harness = createReminderService({ rows, claimedIds: ['ticket-a1'] });
+
+      await harness.handle('qr-email-job-1');
+
+      expect(harness.mockDb.update).not.toHaveBeenCalled();
+      expect(harness.emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('releases its claim and rethrows when the send fails so the pg-boss retry can deliver', async () => {
+      const harness = createReminderService({
+        claimedIds: ['ticket-a1', 'ticket-a2'],
+        emailResult: { success: false, error: 'resend 503' },
+      });
+
+      await expect(harness.handle('qr-email-job-1')).rejects.toThrow('resend 503');
+
+      expect(harness.releaseSet).toHaveBeenCalledWith(expect.objectContaining({ emailSentAt: null }));
+      expect(harness.releaseWhere).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('keeps the first recorded reminder job when a concurrent read schedules another (audit #107)', async () => {
+    const seatIdentity = createSeatIdentity();
+    const unscheduled = { ...createTicketRecord(), ...seatIdentity };
+    const recordedByOtherRequest = createTicketRecord({ emailJobId: 'qr-email-job-first' });
+    const casWhere = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) });
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([{
+          reservationId: 'reservation-1',
+          paymentId: 'payment-1',
+          paymentStatus: 'DONE',
+          showtimeId: 'showtime-1',
+          showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+          ticketItem: { id: 'ticket-item-1', ...seatIdentity },
+        }]))
+        .mockReturnValueOnce(chainResult([unscheduled]))
+        .mockReturnValueOnce(chainResult([recordedByOtherRequest])),
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: casWhere }) }),
+      insert: vi.fn(),
+    };
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn().mockResolvedValue('qr-email-job-second'),
+      work: vi.fn(),
+      stop: vi.fn(),
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      pgBoss as never,
+    );
+
+    const [ticket] = await service.ensureIssuedTicketsForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    });
+
+    expect(pgBoss.send).toHaveBeenCalledTimes(1);
+    expect(casWhere).toHaveBeenCalledTimes(1);
+    // The losing request re-reads the persisted row instead of claiming its own job id.
+    expect(mockDb.select).toHaveBeenCalledTimes(3);
+    expect(ticket?.status).toBe('ACTIVE');
+  });
+
+  describe('QR secret keyring (audit #109)', () => {
+    const keyringConfig = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+        return undefined;
+      }),
+    };
+
+    it('answers a buyer read with a server error, not 401, when an issued ticket version is missing from the keyring', async () => {
+      const seatIdentity = createSeatIdentity();
+      const service = new QrTicketService(
+        {
+          select: vi
+            .fn()
+            .mockReturnValueOnce(chainResult([{
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              paymentStatus: 'DONE',
+              showtimeId: 'showtime-1',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              ticketItem: { id: 'ticket-item-1', ...seatIdentity },
+            }]))
+            .mockReturnValueOnce(chainResult([{
+              ...createTicketRecord({ secretVersion: '2026-05', emailJobId: 'qr-email-job-1' }),
+              ...seatIdentity,
+            }])),
+        } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      const error = await service.ensureIssuedTicketsForReservation({
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(InternalServerErrorException);
+      expect(error).not.toBeInstanceOf(UnauthorizedException);
+      expect((error as InternalServerErrorException).getStatus()).toBe(500);
+    });
+
+    it('keeps the scanner answer for an unknown secret version as an invalid credential', async () => {
+      const jwtService = new JwtService();
+      const token = await jwtService.signAsync(
+        createTokenPayload({ secretVersion: '2026-05' }),
+        { secret: 'prior-secret', algorithm: 'HS256', noTimestamp: true },
+      );
+      const service = new QrTicketService(
+        { select: vi.fn() } as never,
+        keyringConfig as never,
+        jwtService,
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      await expect(service.verifyTicketForScannerContract(token)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('reports issued secret versions missing from the keyring at boot', async () => {
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const selectDistinct = vi.fn().mockReturnValue(chainResult([
+        { secretVersion: '2026-07' },
+        { secretVersion: '2026-05' },
+      ]));
+      const service = new QrTicketService(
+        { selectDistinct } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      await expect(service.reportSecretKeyringCoverage()).resolves.toEqual(['2026-05']);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('missing secret versions still used by issued tickets: 2026-05'));
+      errorSpy.mockRestore();
+    });
+
+    it('stays quiet when the keyring covers every issued version', async () => {
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const service = new QrTicketService(
+        { selectDistinct: vi.fn().mockReturnValue(chainResult([{ secretVersion: '2026-07' }])) } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      await expect(service.reportSecretKeyringCoverage()).resolves.toEqual([]);
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+  });
+
+  it('distinguishes a pending cancellation from a completed refund in the scanner contract (audit #115)', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      createTokenPayload({ issuedAt: now.toISOString() }),
+      { secret: 'current-secret', algorithm: 'HS256', noTimestamp: true },
+    );
+    const scannerRow = (ticketItemStatus: string) => ({
+      status: 'revoked',
+      expiresAt: null,
+      usedAt: null,
+      revokedAt: new Date('2026-07-10T08:00:00.000Z'),
+      ticketId: 'ticket-1',
+      ticketItemId: 'ticket-item-1',
+      ticketItemStatus,
+      reservationStatus: 'CONFIRMED',
+      paymentStatus: 'DONE',
+      ticketItemAdmissionState: 'not_entered',
+      reservationNumber: 'GRP-27-SCAN-0001',
+      reservationId: 'reservation-1',
+      userId: 'buyer-1',
+      paymentId: 'payment-1',
+      showtimeId: 'showtime-1',
+      performanceId: 'performance-1',
+      performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+      showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+      venueName: '동해문화예술관 대극장',
+      seatIdentity: createSeatIdentity(),
+    });
+    const service = new QrTicketService(
+      {
+        select: vi
+          .fn()
+          .mockReturnValueOnce(chainResult([scannerRow('cancellation_pending')]))
+          .mockReturnValueOnce(chainResult([scannerRow('cancelled')])),
+      } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    await expect(service.verifyTicketForScannerContract(token)).resolves.toMatchObject({
+      ticketStatus: 'REVOKED',
+      ticketItemStatus: 'cancellation_pending',
+      cancellationPending: true,
+    });
+    await expect(service.verifyTicketForScannerContract(token)).resolves.toMatchObject({
+      ticketStatus: 'REVOKED',
+      ticketItemStatus: 'cancelled',
+      cancellationPending: false,
     });
   });
 });
