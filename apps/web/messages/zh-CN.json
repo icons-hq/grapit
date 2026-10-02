@@ -535,7 +535,8 @@
       "verificationLogin": "邮箱已验证。登录后可继续预订。",
       "continue": "继续",
       "showPassword": "显示密码",
-      "hidePassword": "隐藏密码"
+      "hidePassword": "隐藏密码",
+      "sessionRestorePending": "网络连接不稳定，正在重新确认您的登录状态。稍后将自动返回。"
     },
     "validation": {
       "email": "请输入有效的邮箱地址",

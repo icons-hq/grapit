@@ -273,4 +273,94 @@ describe('FieldMonitor', () => {
       { showErrorToast: false },
     );
   });
+
+  // A scan of a ticket whose cancellation is not confirmed yet (audit #115) must
+  // not read as a finished refund: staff refuse entry and escalate (field-ops-7).
+  describe('cancellation pending scans', () => {
+    const pendingReason = '취소 처리 중인 티켓입니다. 환불이 확정되지 않았으니 입장시키지 말고 현장 책임자에게 확인해주세요';
+    const cancellationPending = {
+      ...scanLogs[0], id: 'scan-log-pending', outcome: 'refunded_cancelled', result: 'refunded_cancelled',
+      syncState: null, source: 'online' as const, seatLabel: '1층 · VIP · A-1', rejectionReason: pendingReason,
+    };
+    const refunded = {
+      ...scanLogs[0], id: 'scan-log-refunded', outcome: 'refunded_cancelled', result: 'refunded_cancelled',
+      syncState: null, source: 'online' as const, seatLabel: '1층 · VIP · A-2', rejectionReason: '환불 또는 취소된 티켓입니다',
+    };
+    function summaryWithRefundedAlert(count: number) {
+      return {
+        ...monitorSummary,
+        latestAbnormalAlerts: [{
+          type: 'refunded_cancelled_attempt', message: 'Refunded or cancelled ticket scan attempts detected',
+          severity: 'warning', count, detectedAt: '2026-07-04T10:03:00.000Z',
+        }],
+      };
+    }
+
+    it('labels a pending cancellation apart from a completed refund and keeps the server reason', () => {
+      render(<FieldMonitor summary={summaryWithRefundedAlert(2)} scanLogs={[cancellationPending, refunded]} />);
+
+      const rows = within(screen.getByRole('table', { name: '스캔 로그' })).getAllByRole('row');
+      expect(rows[1]).toHaveTextContent('취소 처리 중(환불 미확정)');
+      expect(rows[1]).toHaveTextContent(pendingReason);
+      expect(rows[2]).toHaveTextContent('환불/취소');
+      expect(rows[2]).not.toHaveTextContent('취소 처리 중(환불 미확정)');
+    });
+
+    it('splits the refunded/cancelled alert count into pending and completed', () => {
+      render(<FieldMonitor summary={summaryWithRefundedAlert(2)} scanLogs={[cancellationPending, refunded]} />);
+
+      const alerts = screen.getByTestId('field-monitor-alerts');
+      expect(within(alerts).getByText('환불 또는 취소된 티켓 스캔이 있습니다')).toBeInTheDocument();
+      expect(within(alerts).getByTestId('field-monitor-refunded-breakdown')).toHaveTextContent('취소 처리 중 1건 · 환불/취소 1건');
+      expect(within(alerts).getByTestId('field-monitor-refunded-breakdown')).not.toHaveTextContent('스캔 로그 밖');
+    });
+
+    it('reports showtime scans outside the loaded log as not split instead of guessing', () => {
+      render(<FieldMonitor summary={summaryWithRefundedAlert(5)} scanLogs={[cancellationPending, refunded]} />);
+
+      expect(screen.getByTestId('field-monitor-refunded-breakdown'))
+        .toHaveTextContent('취소 처리 중 1건 · 환불/취소 1건 · 스캔 로그 밖 3건(구분 전)');
+    });
+  });
+
+  // The log table was wider than its card and the Radix filters were shorter
+  // and narrower than the native ones beside them (field-ops-8).
+  describe('layout', () => {
+    it('sizes the result and sync filters like the native filters', () => {
+      render(<FieldMonitor summary={monitorSummary} scanLogs={scanLogs} />);
+
+      for (const name of ['스캔 결과 필터', '오프라인 상태 필터']) {
+        expect(screen.getByRole('combobox', { name })).toHaveClass('h-11', 'w-full', 'data-[size=default]:h-11');
+        expect(screen.getByRole('combobox', { name })).not.toHaveClass('data-[size=default]:h-9');
+      }
+      expect(screen.getByRole('combobox', { name: '스캐너 계정 필터' })).toHaveClass('h-11', 'w-full');
+    });
+
+    it('puts the result next to the seat and shortens the time in the desktop table', () => {
+      render(<FieldMonitor summary={monitorSummary} scanLogs={[{ ...scanLogs[0], seatLabel: '1층 · VIP · A-1' }]} />);
+
+      const table = screen.getByRole('table', { name: '스캔 로그' });
+      const headers = within(table).getAllByRole('columnheader').map((cell) => cell.textContent);
+      expect(headers.slice(0, 3)).toEqual(['좌석', '결과', '예매번호']);
+      expect(within(table).getAllByRole('row')[1]).toHaveTextContent('07.04 19:00');
+      // Phones get the card list; the table and its scroll container are hidden there.
+      expect(screen.getByTestId('field-monitor-log-table')).toHaveClass('hidden', 'sm:block');
+      expect(screen.getByTestId('field-monitor-log-table')).toContainElement(table);
+    });
+
+    it('lists scans as cards on phones with time, seat, result and reason', () => {
+      render(<FieldMonitor summary={monitorSummary} scanLogs={[{
+        ...scanLogs[0], seatLabel: '1층 · VIP · A-1', rejectionReason: '이미 입장 처리된 티켓입니다',
+      }]} />);
+
+      const list = screen.getByRole('list', { name: '스캔 로그 목록' });
+      expect(list).toHaveClass('sm:hidden');
+      const [card] = within(list).getAllByRole('listitem');
+      expect(card).toHaveTextContent('19:00');
+      expect(card).toHaveTextContent('1층 · VIP · A-1');
+      expect(card).toHaveTextContent('중복');
+      expect(card).toHaveTextContent('이미 입장 처리된 티켓입니다');
+      expect(card).not.toHaveTextContent(rawToken);
+    });
+  });
 });

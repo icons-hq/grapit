@@ -202,3 +202,89 @@ describe('session restore on page load', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+// A page load during an API outage continues signed out and sends protected
+// pages to /auth. The login screen says the session is still being restored
+// (field-ops-11, audit #16 follow-up).
+describe('background restore notice', () => {
+  it('stays on while the background retry runs and clears when the session comes back', async () => {
+    let apiDown = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (apiDown) return json({}, 503);
+      if (url.endsWith('/api/v1/auth/refresh')) return json({ accessToken: 'recovered-access' });
+      return json(buyer);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    // Set before the store is initialized, so the redirected login screen already shows it.
+    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: null, sessionRestorePending: true });
+
+    // A failed background attempt keeps it on for the next retry.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(useAuthStore.getState().sessionRestorePending).toBe(true);
+
+    apiDown = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'recovered-access', sessionRestorePending: false });
+  });
+
+  it('clears when the background retry finds the session rejected', async () => {
+    let rejected = false;
+    vi.stubGlobal('fetch', vi.fn(async () => (rejected ? json({}, 401) : json({}, 503))));
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    expect(useAuthStore.getState().sessionRestorePending).toBe(true);
+
+    rejected = true;
+    // The 10 s retry plus the 401 recheck about 300 ms later.
+    await vi.advanceTimersByTimeAsync(11_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: null, sessionRestorePending: false });
+  });
+
+  it('clears when the user signs in manually before the next retry', async () => {
+    const fetchMock = vi.fn(async () => json({}, 503));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    useAuthStore.getState().setAuth('manual-access', buyer);
+    expect(useAuthStore.getState().sessionRestorePending).toBe(false);
+
+    const callsBefore = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    // The scheduled retry sees the manual session and sends nothing.
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'manual-access', sessionRestorePending: false });
+  });
+
+  it('is not a session change, so a restore in flight still applies', async () => {
+    let releaseRefresh!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/refresh')) {
+        return new Promise<Response>((resolve) => { releaseRefresh = resolve; });
+      }
+      return Promise.resolve(json(buyer));
+    }));
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(0);
+    useAuthStore.getState().setSessionRestorePending(true);
+    useAuthStore.getState().setSessionRestorePending(true);
+    useAuthStore.getState().setSessionRestorePending(false);
+    releaseRefresh(json({ accessToken: 'restored-access' }));
+    await vi.runAllTimersAsync();
+    await restoring;
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'restored-access', user: buyer });
+  });
+});

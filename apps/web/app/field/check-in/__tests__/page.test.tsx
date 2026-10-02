@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   showtimes: [] as Array<{ id: string; eventId: string; title: string; dateTime: string; venueName: string | null }>,
   auth: { isInitialized: true, accessToken: 'scanner-access-token' as string | null },
   capabilities: [] as string[],
+  userOverrides: {} as Record<string, unknown>,
   clearAuth: vi.fn(),
   apiPost: vi.fn(),
   consumeMutateAsync: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('@/stores/use-auth-store', () => ({
       role: 'admin',
       adminCapabilityBundle: 'scanner',
       adminCapabilities: mocks.capabilities,
+      ...mocks.userOverrides,
     },
   }),
 }));
@@ -174,7 +176,12 @@ function setOnline(value: boolean) {
   fireEvent(window, new Event(value ? 'online' : 'offline'));
 }
 
+// jsdom has no layout; the page brings each new scan result into view.
+const scrollIntoView = vi.fn();
+
 beforeEach(async () => {
+  scrollIntoView.mockReset();
+  Element.prototype.scrollIntoView = scrollIntoView;
   await clearPendingScanAttempts(); sessionStorage.clear(); localStorage.clear();
   window.history.replaceState(null, '', '/field/check-in');
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
@@ -187,6 +194,7 @@ beforeEach(async () => {
   mocks.useRealVerify = false;
   mocks.auth = { isInitialized: true, accessToken: 'scanner-access-token' };
   mocks.capabilities = ['field.scan.verify', 'field.scan.consume', 'field.scan.sync', 'field.benefits.redeem'];
+  mocks.userOverrides = {};
   mocks.showtimes = [showtimeOption(REQUESTED_SHOWTIME_ID, '현장 검증', '2099-01-01T10:00:00Z')];
   mocks.consumeMutateAsync.mockReset();
   mocks.benefitRedeemMutateAsync.mockReset().mockResolvedValue({
@@ -645,3 +653,144 @@ describe('FieldCheckInPage QR credential URL hygiene (#118)', () => {
     expect(decodeURIComponent(target)).not.toContain(RAW_TICKET_TOKEN);
   });
 });
+
+describe('FieldCheckInPage first screen (field-ops-2, field-ops-3)', () => {
+  it('brings each new scan result into view once, not on every queue change', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: '이 좌석 입장 처리' })).toBeEnabled();
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
+    const region = scrollIntoView.mock.contexts[0] as HTMLElement;
+    expect(region).toBe(screen.getByTestId('field-scan-result'));
+    expect(within(region).getByRole('status', { name: '입장 가능 티켓입니다' })).toBeInTheDocument();
+
+    // A queue reload re-renders the scan without moving the screen again.
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // The next QR, even the same one, is a new scan.
+    await user.click(screen.getByRole('button', { name: '다음 티켓' }));
+    await user.type(screen.getByLabelText('QR 링크 또는 내용'), RAW_TICKET_TOKEN);
+    await user.click(screen.getByRole('button', { name: '티켓 확인' }));
+    await screen.findByRole('button', { name: '이 좌석 입장 처리' });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+  });
+
+  it('folds the scanning guide once a showtime is chosen', async () => {
+    mocks.searchParams = new URLSearchParams();
+    const user = userEvent.setup();
+    renderPage();
+    const guide = '휴대폰 카메라로 QR 링크를 열면 새 탭에서도 이 계정이 최근 12시간 안에 고른 오늘 회차를 다시 불러옵니다. 카메라 이용이 어려우면 위 입력란을 사용하세요.';
+    expect(screen.getByText(guide).closest('details')).toBeNull();
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '검표할 공연·회차' }), REQUESTED_SHOWTIME_ID);
+
+    const folded = screen.getByText('검표 안내 보기').closest('details');
+    expect(folded).not.toBeNull();
+    expect(folded).not.toHaveAttribute('open');
+    expect(within(folded!).getByText(guide)).toBeInTheDocument();
+  });
+
+  it('shows the offline notice as a card in the scan area, inside the page\'s only main landmark', async () => {
+    mocks.verifyData = undefined;
+    mocks.verifyState = { fetchStatus: 'paused', isLoading: false };
+    renderPage();
+
+    const heading = await screen.findByRole('heading', { name: '연결이 끊겨 이 QR을 확인할 수 없습니다' });
+    expect(heading.tagName).toBe('H2');
+    const mains = screen.getAllByRole('main');
+    expect(mains).toHaveLength(1);
+    expect(mains[0]).toContainElement(heading);
+    // The notice no longer sits in its own full-height box below the header.
+    expect(heading.closest('.min-h-dvh')).toBe(mains[0]);
+    expect(screen.getByRole('region', { name: '연결이 끊겨 이 QR을 확인할 수 없습니다' })).toContainElement(heading);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps a single main landmark on the scan result', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: '이 좌석 입장 처리' });
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+  });
+});
+
+describe('FieldCheckInPage without scanner access (field-ops-4)', () => {
+  beforeEach(() => {
+    // A buyer account that signed in on the gate device.
+    mocks.capabilities = [];
+    mocks.userOverrides = { role: 'user', adminCapabilityBundle: null };
+  });
+
+  it('offers another login and home instead of a dead end, without naming a ticket that was not scanned', async () => {
+    mocks.searchParams = new URLSearchParams();
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.getByRole('heading', { name: '검표 권한이 없습니다' })).toBeInTheDocument();
+    expect(screen.queryByText('이 티켓을 검표할 권한이 없습니다')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '홈으로' })).toHaveAttribute('href', '/');
+
+    await user.click(screen.getByRole('button', { name: '다른 계정으로 로그인' }));
+
+    await waitFor(() => expect(mocks.routerReplace).toHaveBeenCalledWith(`/auth?returnTo=${encodeURIComponent('/field/check-in')}`));
+    expect(mocks.apiPost).toHaveBeenCalledWith('/api/v1/auth/logout', undefined, { showErrorToast: false });
+    expect(mocks.clearAuth).toHaveBeenCalled();
+    // AuthInitializer owns session restore; switching accounts adds no refresh.
+    expect(mocks.apiPost).not.toHaveBeenCalledWith('/api/v1/auth/refresh', expect.anything(), expect.anything());
+  });
+
+  it('names the ticket when a QR was scanned and keeps the showtime but not the QR in returnTo', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.getByRole('heading', { name: '이 티켓을 검표할 권한이 없습니다' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '다른 계정으로 로그인' }));
+
+    await waitFor(() => expect(mocks.routerReplace).toHaveBeenCalled());
+    const target = mocks.routerReplace.mock.calls.at(-1)?.[0] as string;
+    expect(target).toBe(`/auth?returnTo=${encodeURIComponent(`/field/check-in?showtimeId=${REQUESTED_SHOWTIME_ID}`)}`);
+    expect(decodeURIComponent(target)).not.toContain(RAW_TICKET_TOKEN);
+  });
+});
+
+describe('FieldCheckInPage showtime format (field-ops-10)', () => {
+  it('uses one minute-precision KST format in the picker, the summary and the pending banner', async () => {
+    mocks.showtimes = [
+      showtimeOption(REQUESTED_SHOWTIME_ID, '저녁 공연', '2026-10-03T10:00:00.000Z'),
+      showtimeOption(OTHER_SHOWTIME_ID, '낮 공연', '2026-10-02T14:52:46.000Z'),
+    ];
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    await addPendingScanAttempt(pendingRecord());
+    mocks.searchParams = new URLSearchParams({ showtimeId: REQUESTED_SHOWTIME_ID });
+    renderPage();
+
+    const picker = screen.getByRole('combobox', { name: '검표할 공연·회차' });
+    expect(within(picker).getByRole('option', { name: '저녁 공연 · 10/03(토) 19:00 KST' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: '낮 공연 · 10/02(금) 23:52 KST' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: '검표 중인 회차' })).getByText('10/03(토) 19:00 KST · Hall')).toBeInTheDocument();
+    const banner = await screen.findByRole('region', { name: '이 기기의 미동기화 입장 대기' });
+    expect(within(banner).getByText('낮 공연 · 10/02(금) 23:52 KST · 1건')).toBeInTheDocument();
+  });
+});
+
+describe('FieldCheckInPage held scan rows (field-ops-9)', () => {
+  it('records the seat with an offline entry and labels the row state once, in its badge', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: '이 좌석 입장 처리' });
+    setOnline(false);
+    await user.click(screen.getByRole('button', { name: '이 좌석 입장 처리' }));
+
+    await waitFor(async () => expect(await listPendingScanAttempts({ syncState: 'pending' })).toEqual([
+      expect.objectContaining({ seatLabel: 'VIP A열 1번' }),
+    ]));
+    const row = await screen.findByTestId('offline-sync-row');
+    expect(within(row).getByText('VIP A열 1번')).toBeInTheDocument();
+    expect(within(row).getAllByText('동기화 대기')).toHaveLength(1);
+    expect(row.textContent).not.toContain('· 동기화 대기');
+  });
+});
+

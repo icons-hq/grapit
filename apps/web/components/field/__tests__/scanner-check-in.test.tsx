@@ -12,6 +12,7 @@ import {
   type PendingScanAttemptRecord,
 } from '@/lib/field/offline-scan-store';
 import { ScannerCheckIn } from '../scanner-check-in';
+import { OfflineSyncStatus } from '../offline-sync-status';
 
 const scannerUser = {
   id: 'scanner-user-1',
@@ -364,6 +365,119 @@ describe('ScannerCheckIn', () => {
   });
 });
 
+describe('ScannerCheckIn unverifiable QR identity (field-ops-5)', () => {
+  it.each(['tampered', 'rejected'] as const)('leaves out the ticket card for a %s QR that identifies no ticket', (result) => {
+    renderScanner({
+      verification: {
+        result,
+        resultLabel: '확인할 수 없는 QR입니다',
+        processable: false,
+        seats: [],
+        offlineQueue: [],
+        benefitEntitlements: [],
+      },
+    });
+
+    expect(screen.getByRole('status', { name: '확인할 수 없는 QR입니다' })).toBeInTheDocument();
+    expect(screen.queryByText('티켓 정보')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('확인 중');
+    expect(screen.queryByText('검표 확인')).not.toBeInTheDocument();
+  });
+
+  it('shows settled wording, never "확인 중", for fields a verified result does not carry', () => {
+    renderScanner({
+      verification: {
+        result: 'tampered',
+        resultLabel: '확인할 수 없는 QR입니다',
+        processable: false,
+        reservationNumber: 'GRP-27-SCAN-0009',
+        seats: [],
+        offlineQueue: [],
+        benefitEntitlements: [],
+      },
+    });
+
+    expect(screen.getByText('티켓 정보')).toBeInTheDocument();
+    expect(screen.getByText('좌석 확인 불가')).toBeInTheDocument();
+    expect(screen.getAllByText('확인 불가').length).toBeGreaterThan(0);
+    expect(screen.getByText('검증 실패')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('확인 중');
+  });
+
+  it('keeps in-progress wording for the loading state only', () => {
+    renderScanner({ verification: null });
+
+    expect(screen.getByText('QR 티켓을 확인하고 있습니다')).toBeInTheDocument();
+  });
+});
+
+describe('ScannerCheckIn access denied (field-ops-4)', () => {
+  it('lets the person switch accounts or go home instead of a dead end', async () => {
+    const user = userEvent.setup();
+    const onSwitchAccount = vi.fn();
+    renderScanner({ user: regularUser, hasTicket: false, onSwitchAccount, verification: null });
+
+    expect(screen.getByRole('heading', { name: '검표 권한이 없습니다' })).toBeInTheDocument();
+    expect(screen.queryByText('이 티켓을 검표할 권한이 없습니다')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '홈으로' })).toHaveAttribute('href', '/');
+
+    await user.click(screen.getByRole('button', { name: '다른 계정으로 로그인' }));
+    expect(onSwitchAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the ticket only when one was scanned and offers no login button without a handler', () => {
+    renderScanner({ user: regularUser });
+
+    expect(screen.getByRole('heading', { name: '이 티켓을 검표할 권한이 없습니다' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '다른 계정으로 로그인' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '홈으로' })).toBeInTheDocument();
+  });
+});
+
+describe('OfflineSyncStatus receipts (field-ops-2, field-ops-9)', () => {
+  const pendingItem = { deviceAttemptId: 'held-1', state: 'pending' as const, attemptedAt: '2026-07-04T09:59:00.000Z', seatLabel: '1층 · VIP · A-1' };
+  const syncedItem = { deviceAttemptId: 'synced-1', state: 'synced' as const, attemptedAt: '2026-07-04T10:00:00.000Z', reason: '보류 스캔 동기화 완료' };
+  const rejectedItem = { deviceAttemptId: 'rejected-1', state: 'rejected' as const, attemptedAt: '2026-07-04T10:01:00.000Z', reason: '이미 입장 처리된 티켓입니다' };
+
+  it('folds settled receipts into one summary line when nothing is held', () => {
+    render(<OfflineSyncStatus queue={[syncedItem, rejectedItem]} isSyncing={false} onSyncOffline={vi.fn()} />);
+
+    const receipts = screen.getByTestId('offline-sync-receipts');
+    expect(receipts.tagName).toBe('DETAILS');
+    expect(receipts).not.toHaveAttribute('open');
+    expect(within(receipts).getByText('보류 스캔 0건 · 동기화 완료 1건 · 거절 1건 보기')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '보류 스캔 동기화' })).not.toBeInTheDocument();
+  });
+
+  it('keeps held entries open and settled receipts folded below them', () => {
+    render(<OfflineSyncStatus queue={[pendingItem, syncedItem]} isSyncing={false} onSyncOffline={vi.fn()} />);
+
+    const receipts = screen.getByTestId('offline-sync-receipts');
+    expect(receipts).not.toHaveAttribute('open');
+    expect(within(receipts).getByText('동기화 완료 1건 · 거절 0건 보기')).toBeInTheDocument();
+    expect(within(receipts).getByText('보류 스캔 동기화 완료')).toBeInTheDocument();
+    const heldRow = screen.getAllByTestId('offline-sync-row').find((row) => !receipts.contains(row))!;
+    expect(within(heldRow).getByText('1층 · VIP · A-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '보류 스캔 동기화' })).toBeEnabled();
+  });
+
+  it('labels a row state once, in a badge that does not wrap', () => {
+    render(<OfflineSyncStatus queue={[pendingItem]} isSyncing={false} onSyncOffline={vi.fn()} />);
+
+    const row = screen.getByTestId('offline-sync-row');
+    const badges = within(row).getAllByText('동기화 대기');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveClass('whitespace-nowrap', 'break-keep');
+    expect(row.textContent).not.toContain('· 동기화 대기');
+  });
+
+  it('omits the seat line for records saved before seats were recorded', () => {
+    render(<OfflineSyncStatus queue={[{ ...pendingItem, seatLabel: undefined }]} isSyncing={false} onSyncOffline={vi.fn()} />);
+
+    expect(screen.getByTestId('offline-sync-row')).not.toHaveTextContent('VIP');
+  });
+});
+
 describe('offline pending scan store', () => {
   beforeEach(async () => {
     await clearPendingScanAttempts();
@@ -400,6 +514,18 @@ describe('offline pending scan store', () => {
 
     await removePendingScanAttempt(pending.deviceAttemptId);
     await expect(listPendingScanAttempts()).resolves.toEqual([]);
+  });
+
+  it('keeps the seat label of a held entry through sync and accepts records without one', async () => {
+    const base = { scannerUserId: 'scanner-user-1', eventId: 'event-phase27', showtimeId: '00000000-0000-4000-8000-000000000027',
+      token: 'opaque-ticket-token', redactedTokenRef: 'tok_abc...7890', attemptedAt: '2026-07-04T09:59:00.000Z', syncState: 'pending' as const };
+    await addPendingScanAttempt({ ...base, deviceAttemptId: 'with-seat', seatLabel: '1층 · VIP · A-1' });
+    await addPendingScanAttempt({ ...base, deviceAttemptId: 'legacy', token: 'other-token' });
+    await updatePendingScanAttempt('with-seat', { syncState: 'synced' });
+
+    const records = await listPendingScanAttempts();
+    expect(records.find((record) => record.deviceAttemptId === 'with-seat')).toMatchObject({ seatLabel: '1층 · VIP · A-1', token: '' });
+    expect(records.find((record) => record.deviceAttemptId === 'legacy')).not.toHaveProperty('seatLabel');
   });
 
   it('persists the verifiable QR token for server sync without raw JTI, URLs, payment keys, cookies, IP, or buyer PII', async () => {

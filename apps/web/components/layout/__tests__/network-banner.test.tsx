@@ -1,6 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { NetworkBanner } from '../network-banner';
+
+const navigation = vi.hoisted(() => ({ pathname: '/' }));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => navigation.pathname,
+}));
 
 describe('NetworkBanner', () => {
   const originalOnLine = Object.getOwnPropertyDescriptor(
@@ -16,6 +22,7 @@ describe('NetworkBanner', () => {
   }
 
   afterEach(() => {
+    navigation.pathname = '/';
     if (originalOnLine) {
       Object.defineProperty(Navigator.prototype, 'onLine', originalOnLine);
     }
@@ -50,5 +57,24 @@ describe('NetworkBanner', () => {
     render(<NetworkBanner />);
     const alert = screen.getByRole('alert');
     expect(alert.getAttribute('aria-live')).toBe('assertive');
+  });
+
+  // The banner covered the scanner's 검표 종료 button, and its reload lost the
+  // results verified before the connection dropped (field-ops-6).
+  it.each(['/field/check-in', '/field', '/en/field/check-in'])(
+    'stays hidden on the field screen %s while offline',
+    (pathname) => {
+      navigation.pathname = pathname;
+      setOnLine(false);
+      const { container } = render(<NetworkBanner />);
+      expect(container.innerHTML).toBe('');
+    },
+  );
+
+  it.each(['/', '/fieldtrip', '/en/performance/1'])('still shows with its reload button on %s while offline', (pathname) => {
+    navigation.pathname = pathname;
+    setOnLine(false);
+    render(<NetworkBanner />);
+    expect(screen.getByRole('alert').textContent).toContain('다시 시도');
   });
 });

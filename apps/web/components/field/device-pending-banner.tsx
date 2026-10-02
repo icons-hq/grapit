@@ -3,6 +3,7 @@
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { FieldDevicePendingGroup } from '@/hooks/use-field-offline-queue';
+import { formatFieldShowtimeKst } from '@/lib/field/showtime-format';
 
 interface ShowtimeLabel {
   title: string;
@@ -82,7 +83,7 @@ export function DevicePendingBanner({
               >
                 <span className="min-w-0 break-words">
                   {showtime
-                    ? `${showtime.title} · ${formatKstDateTime(showtime.dateTime)} KST`
+                    ? `${showtime.title} · ${formatFieldShowtimeKst(showtime.dateTime)}`
                     : '목록에 없는 회차'}{' '}
                   · {group.count}건
                 </span>
@@ -124,14 +125,4 @@ export function DevicePendingBanner({
       )}
     </section>
   );
-}
-
-function formatKstDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Asia/Seoul',
-  }).format(date);
 }
