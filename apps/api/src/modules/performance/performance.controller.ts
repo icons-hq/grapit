@@ -39,7 +39,11 @@ export class PerformanceController {
       throw new BadRequestException('올바른 공연 ID가 아닙니다');
     }
 
-    const result = await this.performanceService.findById(id, query?.locale);
+    // One spelling per performance: the detail cache key, its generation scope
+    // and the view counter are keyed by the id, and catalog freshness only
+    // invalidates the lower-case form. An upper-case variant would otherwise
+    // keep serving a withdrawn detail until its TTL ends.
+    const result = await this.performanceService.findById(id.toLowerCase(), query?.locale);
     if (!result) {
       throw new NotFoundException('공연을 찾을 수 없습니다');
     }
