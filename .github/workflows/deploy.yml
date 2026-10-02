@@ -33,8 +33,9 @@ env:
   # Sitewide booking gate shared by API, Web and the background worker. Unset keeps
   # the current production behaviour (open). The kill-switch procedure in
   # docs/runbooks/managed-demo-cost-floor.md changes this variable first. The
-  # migrate job refuses a reopen, and deploy-api/deploy-web re-read the live value
-  # right before deploying so a close made mid-run is preserved.
+  # migrate job refuses a reopen and records each service's live value and revision,
+  # and deploy-api/deploy-web re-read the live value right before deploying so a close
+  # made mid-run is preserved, also in a run dispatched with allow_booking_reopen=true.
   BOOKING_ENABLED: ${{ vars.BOOKING_ENABLED || 'true' }}
   # Prewarm patches the service-level minimum (no new revision). 'template' is the
   # Phase 24-21 revision-template fallback if the service-level update is refused.
@@ -46,18 +47,17 @@ env:
   MIGRATION_STATEMENT_TIMEOUT: ${{ vars.MIGRATION_STATEMENT_TIMEOUT || '60s' }}
   # Set to true for the ticket-opening/entry window: any pending migration fails the deploy.
   MIGRATION_FREEZE: ${{ vars.MIGRATION_FREEZE || 'false' }}
-  # Worst-case PostgreSQL connection budget inputs. PGBOSS_POOL_MAX is the per-process
-  # pg-boss pool counted by the budget. It must be at least the cap the API and worker
-  # actually use: the code default is 3 with background processing, 1 producer-only.
-  PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX || '3' }}
+  # Worst-case PostgreSQL connection budget inputs. The budget counts each process's
+  # real pg-boss cap: RUNTIME_PGBOSS_POOL_MAX when set, otherwise the code default
+  # (3 with background processing, 1 for a producer-only API; the worker Job is 3).
   DB_CONNECTION_RESERVE: ${{ vars.DB_CONNECTION_RESERVE || '5' }}
   DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'false' }}
   # Optional runtime settings, passed to the API and worker only when the repository
   # variable is set (deploy-guards.mjs runtime-env); unset keeps each process's code
   # default. RUNTIME_PGBOSS_POOL_MAX has no default on purpose: the producer-only API
-  # uses 1 pg-boss connection and the worker 3, while PGBOSS_POOL_MAX above is only the
-  # worst-case budget input. Removing a variable later does not remove a value already
-  # set on the API service (env vars are merged); see the cost-floor runbook.
+  # uses 1 pg-boss connection and the worker 3. Removing a variable later does not
+  # remove a value already set on the API service (env vars are merged); see the
+  # cost-floor runbook.
   RUNTIME_PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX }}
   RUNTIME_PGBOSS_START_MAX_ATTEMPTS: ${{ vars.PGBOSS_START_MAX_ATTEMPTS }}
   RUNTIME_DB_STATEMENT_TIMEOUT_MS: ${{ vars.DB_STATEMENT_TIMEOUT_MS }}
@@ -75,6 +75,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Start-of-run live BOOKING_ENABLED (true/false/unreadable) and latest revision of
+    # each service, read by the deploy jobs' booking gate re-check.
+    outputs:
+      api_live: ${{ steps.booking_guard.outputs.api_live }}
+      api_revision: ${{ steps.booking_guard.outputs.api_revision }}
+      web_live: ${{ steps.booking_guard.outputs.web_live }}
+      web_revision: ${{ steps.booking_guard.outputs.web_revision }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,6 +134,7 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
       - name: Guard sitewide booking gate
+        id: booking_guard
         env:
           ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
         run: |
@@ -141,7 +149,9 @@ jobs:
           done
           node scripts/managed-demo/deploy-guards.mjs booking-gate \
             --service "${API_SERVICE}=${RUNNER_TEMP}/${API_SERVICE}.json" \
-            --service "${WEB_SERVICE}=${RUNNER_TEMP}/${WEB_SERVICE}.json"
+            --service "${WEB_SERVICE}=${RUNNER_TEMP}/${WEB_SERVICE}.json" \
+            --snapshot "api=${API_SERVICE}" \
+            --snapshot "web=${WEB_SERVICE}"
       - name: Start Cloud SQL Auth Proxy
         run: |
           gcloud components install cloud-sql-proxy --quiet 2>/dev/null || true
@@ -295,6 +305,8 @@ jobs:
         id: booking_gate
         env:
           ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+          LIVE_AT_GUARD: ${{ needs.migrate-production.outputs.api_live }}
+          REVISION_AT_GUARD: ${{ needs.migrate-production.outputs.api_revision }}
         run: |
           # Migrations already ran; retry a transient describe error instead of
           # failing this job and leaving the deploy half done.
@@ -309,7 +321,8 @@ jobs:
             if [ "${attempt}" -lt 3 ]; then sleep 5; fi
           done
           node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
-            --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json"
+            --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json" \
+            --live-at-guard "${LIVE_AT_GUARD}" --revision-at-guard "${REVISION_AT_GUARD}"
       - name: Resolve optional API runtime settings
         id: runtime_env
         run: node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
@@ -434,7 +447,11 @@ jobs:
 
   deploy-web:
     runs-on: ubuntu-latest
-    needs: deploy-api
+    # migrate-production is listed for its booking gate outputs: `needs` exposes only
+    # direct dependencies.
+    needs:
+      - migrate-production
+      - deploy-api
     permissions:
       contents: read
       id-token: write
@@ -455,6 +472,8 @@ jobs:
         id: booking_gate
         env:
           ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+          LIVE_AT_GUARD: ${{ needs.migrate-production.outputs.web_live }}
+          REVISION_AT_GUARD: ${{ needs.migrate-production.outputs.web_revision }}
         run: |
           # Migrations already ran; retry a transient describe error instead of
           # failing this job and leaving the deploy half done.
@@ -469,7 +488,8 @@ jobs:
             if [ "${attempt}" -lt 3 ]; then sleep 5; fi
           done
           node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
-            --service "${WEB_SERVICE}=${RUNNER_TEMP}/live-service.json"
+            --service "${WEB_SERVICE}=${RUNNER_TEMP}/live-service.json" \
+            --live-at-guard "${LIVE_AT_GUARD}" --revision-at-guard "${REVISION_AT_GUARD}"
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.WEB_SERVICE }}

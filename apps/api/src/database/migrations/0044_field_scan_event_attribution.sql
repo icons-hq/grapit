@@ -7,8 +7,6 @@
 --   previous API release keep satisfying the first branch during rollout.
 -- * Existing rows are backfilled from metadata.requestedShowtimeId, falling back
 --   to the ticket showtime that the previous release always used.
-SET LOCAL lock_timeout = '10s';
---> statement-breakpoint
 ALTER TABLE "ticket_scan_events" ADD COLUMN IF NOT EXISTS "requested_showtime_id" uuid;
 --> statement-breakpoint
 ALTER TABLE "ticket_scan_events" ALTER COLUMN "ticket_id" DROP NOT NULL;

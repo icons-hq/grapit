@@ -49,6 +49,9 @@ execFileSync(process.execPath, [require.resolve('@swc/cli/bin/swc.js'), 'src', '
   cwd: join(root, 'apps/api'), stdio: 'inherit',
 });
 require('reflect-metadata');
+// Booking consent rows and versions come from the freshly built shared contract,
+// the same source the checkout page uses (audit D7).
+const shared = require('@grabit/shared');
 const { GenericContainer } = require('testcontainers');
 const { Pool } = require('pg');
 const { drizzle } = require('drizzle-orm/node-postgres');
@@ -230,7 +233,8 @@ async function fixture(count, buyers) {
 function prepareBody(showtimeId, n, orderId) {
   return { orderId, showtimeId, amount: 52000, paymentDeadlineAt: new Date().toISOString(),
     seats: [{ seatId: `A-${n + 1}`, seatKey: `1F:A-${n + 1}`, floorKey: '1F', floorLabel: '1F', tierName: 'VIP', price: 50000, row: 'A', number: String(n + 1) }],
-    consentItems: ['terms', 'privacy', 'pipa_required'].map((key) => ({ key, version: '2026-04-28', language: 'ko', accepted: true, sourceFlow: 'booking' })),
+    consentItems: shared.BOOKING_CONSENT_ITEM_KEYS.map((key) => ({ key, version: shared.CONSENT_DOCUMENT_VERSIONS[key],
+      language: shared.resolveConsentDocumentLanguage('ko'), accepted: true, sourceFlow: 'booking' })),
     bookingPolicy: { maxTicketsPerOrder: 4, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false },
     paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' } };
 }

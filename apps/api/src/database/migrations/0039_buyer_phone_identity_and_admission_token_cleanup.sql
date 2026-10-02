@@ -2,8 +2,6 @@
 -- phone. Stored phones keep their submitted format, so the API narrows candidates by
 -- the last 8 digits and confirms the E.164 identity in application code. Keep this
 -- expression byte-identical to apps/api/src/database/ticket-limit.ts.
-SET LOCAL lock_timeout = '10s';
---> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_users_verified_phone_suffix
   ON users ((right(regexp_replace(translate(phone, '０１２３４５６７８９', '0123456789'), '[^0-9]', '', 'g'), 8)))
   WHERE is_phone_verified = true;

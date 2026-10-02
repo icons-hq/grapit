@@ -10,7 +10,7 @@
 
 ### 1.1 배포 창과 deploy 설정
 
-- [ ] 배포 창을 판매·대기열·현장 입장·결제 피크 밖으로 잡는다. 첫 배포는 migration 0038–0046 아홉 개를 한 transaction으로 적용하며 `reservation_seats`, `payments`, `users`, `reservations`, `ticket_benefits`, `seat_inventories`, `ticket_scan_events` 쓰기를 잠시 막는다. 잠금 영향, 행 수·활성 트랜잭션 확인, `CONCURRENTLY` 선생성 선택지는 [감사 migration batch 첫 배포](show-relaunch-reliability.md#2026-10-감사-migration-batch00380046-첫-배포)를 따른다. #59 #60 #62 #68 #47 #165 #24 #113 #99
+- [ ] 배포 창을 판매·대기열·현장 입장·결제 피크 밖으로 잡는다. 첫 배포는 migration 0038–0046 아홉 개를 한 transaction으로 적용하며, batch가 commit될 때까지 `reservation_seats`, `payments`, `users`, `reservations`, `seat_inventories` 쓰기와 `admin_audit_logs` INSERT를 막고, `ticket_benefits`, `ticket_benefit_entitlements`, `support_notices`, `ticket_scan_events`는 `ACCESS EXCLUSIVE`로 읽기까지 막는다. 잠금 대기는 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 잠금 영향, 행 수·활성 트랜잭션 확인, `CONCURRENTLY` 선생성 선택지는 [감사 migration batch 첫 배포](show-relaunch-reliability.md#2026-10-감사-migration-batch00380046-첫-배포)를 따른다. #59 #60 #62 #68 #47 #165 #24 #113 #99
 - [ ] repository variable `BOOKING_ENABLED`를 지금 live API·Web 값과 같게 맞춘다. 새 Deploy workflow는 live `false`(또는 읽을 수 없는 값)를 `true`로 바꾸는 배포를 DB 변경 전에 실패시킨다. 변수가 비어 있으면 `true`로 배포한다. #64
 - [ ] 배포 서비스 계정이 `grabit-api`와 `grabit-web`을 읽을 수 있는지(`run.services.get`) 확인한다. booking gate 확인은 두 서비스의 live 값을 읽지 못하면 배포를 실패시킨다. #64
 - [ ] `MIGRATION_FREEZE`가 배포 창에서 `false`인지 확인한다. 창 밖에 main merge가 일어날 수 있으면 `true`로 두어 batch가 자동 적용되지 않게 한다. #60
@@ -29,6 +29,9 @@
 | 결제 기한이 지난 고아 handoff | [First rollout of the review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement)의 후보 쿼리 | 운영자가 건수를 승인한 뒤 review 활성화 | #9 |
 | 금액 불일치로 거절된 과거 async DONE | [Read-Only Query Shapes](live-foreign-payment-cancel-uat-2026-06-03.md#read-only-query-shapes)의 async DONE 쿼리(`async_status='payment_amount_mismatch'`) | Toss 조회가 `DONE`이면 수동 환불 여부 결정. 이미 처리된 ledger라 배포만으로 자동 환불되지 않는다 | #75 |
 | 권리 미복원 `failed` 환불 | [Refund retry triage](ticket-cancellation-reconciliation.md#refund-retry-recovery-and-held-seats-2026-10) 첫 쿼리(`failed`, `rightsRestoredAt` 없음). `result_code`로 나눈다: `REFUND_RETRY_WINDOW_EXPIRED`는 잔액이 그대로이고 15일 기한만 지난 건, `BALANCE_RECONCILIATION_REQUIRED`는 잔액 대조가 필요한 건이다 | 건별로 결제사 내역을 확인하고, 관리자 예매 상세의 `환불 처리` 미리보기가 "이전 환불 재조정"(저장 금액·이전 실패 기록)을 보여 주면 `환불 확인`으로 재조정한다. 수동 대조 문구가 나오면 runbook대로 처리한다. 409로 권리가 복원되면 원 견적과 귀책을 보고 override 여부를 정한다. sweep은 이전 `failed`를 자동 재개하지 않는다 | #22 #53 #80 |
+| 첫 worker 실행이 다시 진행할 환불 | 아래 SQL. triage 첫 쿼리 중 `requested`·`sent_to_pg`·`processing_at_pg`이면서 `nextAttemptAt`이 10분 넘게 지났거나, schedule 없이 20분 넘게 갱신되지 않은 행 | Deploy의 worker smoke가 API 배포 전에 같은 frozen command로 Toss 재취소를 보낸다. 건별로 Toss 결제 상태(이미 취소됐는지, 잔액)를 확인한 뒤 진행을 승인한다 | #22 #53 |
+| 다시 열릴 취소 좌석 | 아래 SQL. 기한이 지난 `held_cancelled` 좌석을 회차·공연 판매 상태와 함께 센다 | worker smoke가 이 좌석을 `available`로 열고 좌석 갱신을 보낸다. 판매 중 회차가 있으면 운영자 승인을 받거나 판매 창 밖에 배포한다 | #24 |
+| 기록 없이 남은 과거 보상 취소 | 아래 SQL. `DONE`·`cancel_pending`이고 `asyncDoneCompensation` 기록과 confirm claim이 없으며 예약이 `CONFIRMED`·`CANCELLED`가 아닌 결제 | worker smoke가 이 결제에 Toss 전액 취소를 보낸다. 건수와 금액을 재무·운영이 승인한 뒤 배포한다 | #76 |
 | 과거 경합으로 남은 QR | `SELECT t.id, t.ticket_item_id, ti.status FROM tickets t JOIN ticket_items ti ON ti.id = t.ticket_item_id WHERE t.status = 'active' AND ti.status <> 'active';` | [취소 대조 runbook](ticket-cancellation-reconciliation.md)으로 건별 정리 | #110 |
 | QR keyring 범위 | `SELECT secret_version, status, count(*) FROM tickets WHERE status IN ('active','used') GROUP BY 1,2;` | 모든 version이 `qr-ticket-secret-keyring-json`(또는 현재 version)에 있는지, keyring의 현재 version 값이 `qr-ticket-secret`과 같은지 확인 | #109 |
 | 좁힌 목록을 가진 superuser | `role='admin' AND admin_capability_bundle='admin' AND admin_capabilities <> '[]'` 계정, 특히 공용 scanner 계정 | 승인된 절차로 `scanner` 등 비-admin 번들로 변경(배포 후에는 관리자 화면에서 가능) | #42 #25 |
@@ -62,7 +65,49 @@ FROM translation_drafts d
 JOIN translation_sources s ON s.id = d.source_id
 WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-review:%')
   AND d.status IN ('draft', 'review', 'published');
+
+-- 환불: 첫 worker 실행(refund recovery sweep)이 Toss 재취소를 보낼 행
+SELECT id, reservation_id, status, retry_count, updated_at,
+       provider_metadata->'refundCancelRetry'->>'nextAttemptAt' AS next_attempt_at
+FROM refunds
+WHERE status IN ('requested', 'sent_to_pg', 'processing_at_pg')
+  AND provider_metadata->>'rightsRestoredAt' IS NULL
+  AND CASE
+        WHEN provider_metadata->'refundCancelRetry'->>'nextAttemptAt' IS NOT NULL
+          THEN (provider_metadata->'refundCancelRetry'->>'nextAttemptAt')::timestamptz < now() - interval '10 minutes'
+        ELSE updated_at < now() - interval '20 minutes'
+      END
+ORDER BY requested_at;
+
+-- 좌석: 첫 worker 실행(held-cancelled recovery)이 available로 열 좌석, 회차별
+SELECT p.id AS performance_id, p.status AS performance_status, s.id AS showtime_id, s.date_time, count(*) AS seats
+FROM seat_inventories si
+JOIN showtimes s ON s.id = si.showtime_id
+JOIN performances p ON p.id = s.performance_id
+WHERE si.status = 'held_cancelled'
+  AND si.reopen_hold_until < now() - interval '15 minutes'
+  AND coalesce(si.reopen_job_id, '') <> 'SHOWTIME_IMMINENT'
+  AND s.date_time > now() + interval '5 minutes'
+  AND NOT EXISTS (
+    SELECT 1 FROM ticket_items ti
+    WHERE ti.showtime_id = si.showtime_id AND ti.floor_key = si.floor_key AND ti.seat_key = si.seat_key
+      AND ti.status IN ('active', 'cancellation_pending'))
+GROUP BY 1, 2, 3, 4
+ORDER BY s.date_time;
+
+-- 보상 취소: 첫 worker 실행(async DONE compensation recovery)이 기록 없이 채택해 Toss 전액 취소를 보낼 결제
+SELECT p.id, p.toss_order_id, p.method, p.currency, p.amount, r.status AS reservation_status, p.created_at
+FROM payments p
+JOIN reservations r ON r.id = p.reservation_id
+WHERE p.status = 'DONE'
+  AND p.async_status = 'cancel_pending'
+  AND p.provider_metadata->'asyncDoneCompensation' IS NULL
+  AND coalesce(p.provider_metadata->>'confirmCompensationClaim', 'false') <> 'true'
+  AND r.status NOT IN ('CONFIRMED', 'CANCELLED')
+ORDER BY p.created_at;
 ```
+
+세 쿼리는 Deploy의 `Smoke bounded background worker job` 단계가 API 배포 전에 처리할 대상을 그대로 센다. 결과는 건수·합계만 승인 기록에 옮기고, orderId 같은 식별자는 문서·채팅에 남기지 않는다.
 
 ### 1.3 공급자 콘솔과 알림
 
@@ -123,7 +168,8 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 ### 2.4 1–2일 관찰
 
-- [ ] 첫 worker 실행 로그에서 `Released held_cancelled seats whose release job did not run`과 `Recovered stale refunds`를 확인한다. 기존 `JOB_ENQUEUE_FAILED` 좌석과 고아 환불이 자동 처리된다. #24 #53
+- [ ] 첫 worker 실행 로그에서 `Released held_cancelled seats whose release job did not run`과 `Recovered stale refunds`를 확인한다. 기존 `JOB_ENQUEUE_FAILED` 좌석과 고아 환불이 자동 처리된다. 이 처리는 Deploy의 `Smoke bounded background worker job` 단계(API 배포 전)에서 시작되므로, 1.2의 해당 세 쿼리를 배포 전에 승인해 둔다. #24 #53
+- [ ] 1.2에서 승인한 기록 없는 과거 보상 취소는 해당 orderId의 결과를 확인한다: worker 로그의 `Async DONE compensation recovery: ... cancelled=...` 요약과 그 orderId의 `Async DONE compensation cancel request failed`·`cancel ABORTED`·`needs operator reconciliation` 로그, 그리고 `payments.status`와 `provider_metadata->'asyncDoneCompensation'->>'state'`(`cancelled`면 완료). #76
 - [ ] background worker Job 실행 시간을 본다. 고아 handoff 검토 예산 65초와 처리 창 30초가 Job timeout 120초 안에 들어가도록 설계됐다. #9 #154
 - [ ] 429 비율과 `Retry-After` 분포, 대기열 진입 400/404/403 `errorCode` 분포를 본다. 잘못된 ID가 더 이상 500을 내지 않아야 한다. `/api/v1/support-content`(추적 단위당 분당 120회)의 공유 NAT 사용자 429도 본다. #5 #158 #90 #132
 - [ ] `<provider> OAuth callback rejected: <reason>` warn 로그를 reason별로 본다. 모바일에서 `missing_nonce_cookie` 비중이 계속 높으면 인앱 브라우저 전환이 로그인을 깨는 것이다. #37
@@ -157,11 +203,11 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 - [ ] [전용 테스트 공연 부하 gate](phase26-cutover-ops.md#dedicated-test-event-load-gate)를 준비한다: 목표 VU 이상의 합성 구매자(`provision-load-buyers.mjs`, 실행 직전 발급), VU별 좌석 풀(pg-stub이면 VU × 구매 수 이상), 남은 좌석 1,000석 이상인 테스트 공연, marker로 시작하는 공연명. 실제 구매자 계정을 쓰지 않는다. #65 #167
 - [ ] confirm을 측정하려면 `scripts/revamp/pg-stub-preload.mjs`(`GRABIT_PG_STUB=isolated-load-test-only`)를 preload한 운영 동등 격리 배포가 필요하다. 현재 API 이미지에는 `scripts/`가 없을 수 있다. 대상이 없으면 LOAD gate는 `BLOCKED`이고 owner의 `ACCEPTED_RISK`가 필요하다. #65
-- [ ] 같은 회차 동시 confirm 시나리오에서 `application_name`별 `pg_stat_activity`, `timeout exceeded when trying to connect` 로그 0건, `wait_event`(`Lock:tuple`/`transactionid`), confirm p95를 기록한다. 로컬 isolated-capacity 1,100세션에서 드러난 같은 회차 confirm 직렬화(p95 5.1s, pool 2)를 운영 동등 환경에서 다시 판정한다. #17 #54 #56 #58 #167
+- [ ] 같은 회차 동시 confirm 시나리오에서 `application_name`별 `pg_stat_activity`, `timeout exceeded when trying to connect` 로그 0건, `wait_event`(`Lock:tuple`/`transactionid`), confirm p95를 기록한다. 로컬 isolated-capacity 1,100세션의 같은 회차 confirm 직렬화(p95 5.1s, pool 2)는 #56(발권 잠금 `FOR SHARE`) 적용 전 코드에서 측정한 값이다. `FOR SHARE` 적용 후 같은 회차 confirm p95와 `wait_event`를 다시 측정하고, 운영 동등 환경에서 판정한다. #17 #54 #56 #58 #167
 - [ ] 30분이 넘는 대기 시나리오(목표 동시 대기 인원·회차별 좌석 수)에서 sliding 세션 유지, 구매 후 slot 반환 처리량, 초당 1회 reconcile 아래 입장 속도, 대기 WebSocket 동시 연결 수를 확인한다. 판매 시각 없는 수동 오픈 모드도 포함한다. #4 #61 #89 #33
 - [ ] 부하 후 즉시 `provision-load-buyers.mjs cleanup`, 테스트 공연 정리 SQL(dry-run 수치 그대로) 뒤 `cleanup --delete-users`. [cleanup](phase26-cutover-ops.md#dedicated-test-event-cleanup). #164
-- [ ] privacy·pipa_required `2026-04-28` 동의 행 비활성화(4.1)는 부하 gate 뒤로 미룬다. k6 스크립트는 모든 동의 항목에 같은 version(기본 `2026-04-28`)을 보내므로 비활성화 뒤에는 prepare가 400이 된다. #65 #169
-- [ ] `production-preflight` 운영 실행 환경에 cloud-sql-proxy v2와 ADC를 준비한다. 첫 실행에서 `grapit_app`이 `pg_control_system()`을 읽을 수 있는지와 `server.source`를 확인한다. postmaster 대체 식별값이면 배포 창 안에 Cloud SQL 재시작이 없어야 비교가 통과한다. baseline은 배포 직전에 같은 DB role로 다시 수집한다. 대상 instance는 스크립트에 `grabit-db-managed-demo`로 고정돼 있어, 판매 용량 복원에서 Cloud SQL을 다른 이름의 instance로 바꾸면 `unexpected_instance`로 멈춘다. 같은 instance를 resize하거나 스크립트 상수를 먼저 바꾼다. #163 #166
+- [ ] k6 부하 스크립트, isolated-capacity, rehearsal smoke의 prepare는 `@grabit/shared`의 예매 동의 항목(`terms`, `privacy`)만 항목별 현재 version(`2026-04-28`, `2026-05-11`)으로 보낸다. 그래서 privacy·pipa_required `2026-04-28` 행 비활성화(4.1)를 부하 gate 뒤로 미룰 필요가 없다. 부하 대상 DB에 0045(`privacy` `2026-05-11` 행)가 적용됐는지만 확인한다. #65 #106 #169
+- [ ] `production-preflight` 운영 실행 환경에 cloud-sql-proxy v2와 ADC를 준비한다. 첫 실행에서 `grapit_app`이 `pg_control_system()`을 읽을 수 있는지와 `server.source`를 확인한다. postmaster 대체 식별값이면 배포 창 안에 Cloud SQL 재시작이 없어야 비교가 통과한다. baseline은 배포 직전에 같은 DB role로 다시 수집한다. 판매 용량 복원에서 Cloud SQL을 다른 이름의 instance로 바꾸면 `--instance=<project:region:instance>`(또는 `REVAMP_PROD_CLOUD_SQL_INSTANCE`)로 대상을 지정한다. 기본값은 `grabit-db-managed-demo`이고, secret의 host가 지정한 instance와 다르면 `unexpected_instance`로 멈춘다. baseline도 같은 instance로 수집한 것만 비교된다. #163 #166
 - [ ] 저사양 Android 실기기에서 실제 좌석맵과 초당 30건의 seat-update 아래 INP와 long task를 CPU throttling으로 측정한다. jsdom 측정(업데이트당 325ms → 0.41ms)만 있다. #11
 
 ### 3.4 결제 UAT
@@ -204,7 +250,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - [ ] 가입 때 `pipa_required` 동의 기록이 없는 활성 계정 수를 [쿼리](consent-document-versions.md#accounts-without-signup-pipa-evidence)로 세고, 그 계정에만 checkout에서 동의를 받을지 정한다(API 변경 필요). #98
 - [ ] 동의 분쟁 대응: privacy·pipa_required 행이 어떤 v1.2 본문을 보여줬는지는 `agreed_at`을 `37b23f2a` release의 실제 배포 시각과 비교해야 한다. 배포 기록에서 그 시각을 찾아 [Reading Historical Rows](consent-document-versions.md#reading-historical-rows)에 남긴다. #169
 - [ ] 관리자 IP allowlist를 강제할지: guard 또는 edge 규칙, deploy에 `ADMIN_IP_ALLOWLIST_CIDRS` 반영, IP가 바뀌는 현장 scanner 경로(`/field`, `field.scan.*`) 예외 정책을 먼저 정한다. 그 전까지 관리자 계정은 비밀번호와 감사 모니터링으로만 보호되며 MFA는 수용된 위험이다. #43
-- [ ] `run.app` 직접 접근 차단(ingress 제한 또는 edge secret 없는 요청 403). 먼저 OAuth callback(`CLOUD_RUN_API_URL` 기반), Toss webhook URL, Scheduler·prewarm, smoke script가 `run.app`을 쓰지 않는지 확인한다. #152
+- [ ] `run.app` 직접 접근 차단(ingress 제한 또는 edge secret 없는 요청 403). 먼저 OAuth callback(`CLOUD_RUN_API_URL` 기반), Toss webhook URL, Scheduler·prewarm, smoke script가 `run.app`을 쓰지 않는지 확인한다. API startup·liveness probe(`/api/v1/health`)는 edge secret을 보내지 않으므로, 앱 수준 403 차단을 쓰면 이 경로를 예외로 둔다(ingress 제한 방식은 probe에 영향이 없다). #152
 - [ ] Cloud Run·LB 요청 로그가 최초 `GET /field/check-in?ticket=...`의 query를 그대로 남긴다. 로그 보존·접근 범위를 점검하고, QR URL을 fragment(`#ticket=`)로 바꾸는 안을 ADR로 검토한다(기존 `?ticket=` QR은 계속 지원). 단절 중 새 QR까지 검증하려면 공개키 기반 로컬 검증 ADR이 필요하다. #118 #40
 - [ ] 기존 `seat_maps.svg_url`·`venue_layout_floors.svg_url` SVG를 운영 DB·R2에서 모두 받아 `hasUnsafeSvgPayload` 기준(주석, PI, `<`/`>`가 든 CDATA, HTML breakout tag, SMIL, `on*` 속성, 표현 속성의 `image-set()` 같은 외부 이미지 함수)으로 점검하고, 걸리면 교체한다. 렌더 sanitizer가 막지만 변조 파일은 찾아야 한다. `svgUrl`을 `R2_PUBLIC_URL` 도메인으로 제한할지는 기존 행의 host·상대 경로를 확인한 뒤 정한다. #49
 - [ ] 선택: 판매 중인 공연에서 같은 인증 휴대폰을 쓰는 다계정의 과거 구매를 조회한다. 기존 확정 구매는 소급 취소하지 않고 새 구매부터 합산 제한이 적용된다. #62
@@ -216,5 +262,4 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
 - web에는 `script-src` CSP가 없다. seat-update는 이제 frame 단위로 묶어 반영하지만, 저사양 Android 실기기 INP는 아직 측정하지 않았다(3.3). #11 #49
-- `scripts/phase26/infra-evidence.mjs`의 연결 수 추정은 pg-boss pool을 빼고 계산하며 템플릿 값(`${{ env.DB_POOL_MAX }}`)을 읽지 못한다. 연결 예산은 Deploy workflow의 database preflight 결과를 쓴다. #54
 - 새 runtime env 예시(`PGBOSS_POOL_MAX`, `PGBOSS_START_MAX_ATTEMPTS`, `DB_APPLICATION_NAME`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`)를 `.env.example`에 넣는 작업은 감사 작업 환경에서 `.env*` 접근이 막혀 하지 못했다. 로컬 설정 담당자가 확인한다. 기본값과 의미는 [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration)와 [Optional runtime settings](managed-demo-cost-floor.md#optional-runtime-settings)에 있다. #54 #55

@@ -4,11 +4,14 @@ import { createRequire, register } from 'node:module';
 import test from 'node:test';
 import {
   ADMISSION_COOKIE,
+  BOOKING_CONSENT_VERSIONS,
   BUYER_THROTTLES,
   REFRESH_COOKIE,
   TICKET_SERVICE_FEE_KRW,
   buildOptions,
+  buildPrepareBody,
   buyerThrottleDemand,
+  consentDocumentLanguage,
   createPhase26Load,
   parseConfig,
   parseSeatPool,
@@ -21,6 +24,18 @@ const shared = createRequire(new URL('../../apps/api/package.json', import.meta.
 const prepareTransportSchema = shared.prepareReservationSchema
   .omit({ queueAdmission: true })
   .extend({ queueAdmission: shared.queueAdmissionSchema.partial().optional() });
+
+// Active consent rows of a target that retired the 2026-04-28 privacy document
+// (consent version runbook): only the current version of each booking row, in the
+// two document languages. ConsentService answers 400 for any other required row.
+const ACTIVE_BOOKING_CONSENT = new Set(shared.BOOKING_CONSENT_ITEM_KEYS.flatMap((key) =>
+  shared.CONSENT_DOCUMENT_LANGUAGES.map((language) => `${key}:${shared.CONSENT_DOCUMENT_VERSIONS[key]}:${language}`)));
+function bookingConsentOutdated(items) {
+  return shared.BOOKING_CONSENT_ITEM_KEYS.some((key) => {
+    const item = items.find((candidate) => candidate.key === key);
+    return !item?.accepted || !ACTIVE_BOOKING_CONSENT.has(`${key}:${item.version}:${item.language}`);
+  });
+}
 
 const PERFORMANCE_ID = '11111111-1111-4111-8111-111111111111';
 const SHOWTIME_ID = '22222222-2222-4222-8222-222222222222';
@@ -66,7 +81,8 @@ function env(overrides = {}) {
 // A confirmed seat is sold and can never be locked again.
 const VERIFIED_PROFILE = (user) => ({ id: user.sub, role: 'user', isEmailVerified: true, isPhoneVerified: true });
 
-function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile = VERIFIED_PROFILE }) {
+function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile = VERIFIED_PROFILE,
+  activeWindowMs = null, now = () => 0 }) {
   const calls = [];
   const locks = new Map();
   const sold = new Set();
@@ -74,6 +90,17 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile 
   let confirms = 0;
   let polls = waitingPolls;
   const byToken = new Map(users.map((user) => [user.accessToken, user]));
+  // With activeWindowMs, queue sessions follow the API (audit D2): an ADMITTED
+  // session is reused only inside its active window; after it, enter starts a new
+  // WAITING session, and the admission cookie is set only once admitted.
+  const sessions = new Map();
+  let sessionSeq = 0;
+  const admittedNow = (session) => session?.state === 'ADMITTED' && now() < session.admittedUntil;
+  function admit(jar, session) {
+    session.state = 'ADMITTED';
+    session.admittedUntil = now() + activeWindowMs;
+    jar.cookies.set(ADMISSION_COOKIE, `admission-${session.id}`);
+  }
 
   function respond(status, body) {
     return { status, body: body === undefined ? '' : JSON.stringify(body) };
@@ -95,6 +122,28 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile 
     // QueueService.resolveBrowserIdentity / AdmissionGuard need the refresh cookie on every request.
     if (jar.cookies.get(REFRESH_COOKIE) !== user.refreshToken) return respond(401, { message: '브라우저 세션이 필요합니다' });
 
+    if (activeWindowMs !== null && method === 'POST' && path === `/queue/performances/${PERFORMANCE_ID}/enter`) {
+      const current = sessions.get(user.refreshToken);
+      if (admittedNow(current)) {
+        jar.cookies.set(ADMISSION_COOKIE, `admission-${current.id}`);
+        return respond(201, { queueSessionId: current.id, state: 'ADMITTED' });
+      }
+      if (current) current.state = 'EXPIRED';
+      sessionSeq += 1;
+      const session = { id: `session-${user.refreshToken}-${sessionSeq}`, state: 'WAITING', pollsLeft: waitingPolls };
+      sessions.set(user.refreshToken, session);
+      if (session.pollsLeft <= 0) admit(jar, session);
+      return respond(201, { queueSessionId: session.id, state: session.state });
+    }
+    if (activeWindowMs !== null && method === 'GET' && path.startsWith('/queue/sessions/')) {
+      const session = sessions.get(user.refreshToken);
+      if (!session || path !== `/queue/sessions/${session.id}`) return respond(404);
+      if (session.state === 'WAITING') {
+        session.pollsLeft -= 1;
+        if (session.pollsLeft <= 0) admit(jar, session);
+      }
+      return respond(200, { state: session.state });
+    }
     if (method === 'POST' && path === `/queue/performances/${PERFORMANCE_ID}/enter`) {
       jar.cookies.set(ADMISSION_COOKIE, `admission-${user.refreshToken}`);
       return respond(201, { queueSessionId: `session-${user.refreshToken}`, state: polls > 0 ? 'WAITING' : 'ADMITTED' });
@@ -103,7 +152,10 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile 
       polls -= 1;
       return respond(200, { state: polls > 0 ? 'WAITING' : 'ADMITTED' });
     }
-    const admitted = jar.cookies.get(ADMISSION_COOKIE) === `admission-${user.refreshToken}`;
+    const admitted = activeWindowMs === null
+      ? jar.cookies.get(ADMISSION_COOKIE) === `admission-${user.refreshToken}`
+      : admittedNow(sessions.get(user.refreshToken))
+        && jar.cookies.get(ADMISSION_COOKIE) === `admission-${sessions.get(user.refreshToken).id}`;
     if (method === 'POST' && path === '/booking/seats/lock') {
       if (!admitted) return respond(403, { message: '대기열 입장 인증이 필요합니다' });
       const { seatId } = JSON.parse(body);
@@ -116,6 +168,7 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile 
       if (!admitted) return respond(403);
       const parsed = prepareTransportSchema.safeParse(JSON.parse(body));
       if (!parsed.success) return respond(400, { issues: parsed.error.issues });
+      if (bookingConsentOutdated(parsed.data.consentItems)) return respond(400, { message: 'consent document outdated' });
       const seat = parsed.data.seats[0];
       if (locks.get(seat.seatKey) !== user.refreshToken) return respond(409);
       if (parsed.data.amount !== seat.price + shared.TICKET_SERVICE_FEE_KRW) return respond(400);
@@ -148,7 +201,7 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile 
     const path = url.slice(API.length);
     const response = route(jar, method, path, body, params);
     calls.push({ method, path, headers: params?.headers ?? {}, tags: params?.tags ?? {}, body, status: response.status,
-      vu: jar.vu });
+      responseBody: response.body, vu: jar.vu });
     return response;
   }
 
@@ -178,11 +231,12 @@ function counter() {
   return { values, add: (value, tags) => values.push({ value, tags }) };
 }
 
-function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOutcome, profile, apiUsers = users }) {
-  const api = fakeApi({ users: apiUsers, waitingPolls, confirmOutcome, profile });
+function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOutcome, profile, apiUsers = users,
+  activeWindowMs = null }) {
+  let clock = NOW_S * 1000;
+  const api = fakeApi({ users: apiUsers, waitingPolls, confirmOutcome, profile, activeWindowMs, now: () => clock });
   const metrics = { queueAdmitted: counter(), queueNotAdmitted: counter() };
   const sleeps = [];
-  let clock = NOW_S * 1000;
   let iterationInTest = 0;
   const vus = new Map();
   function vu(id) {
@@ -198,6 +252,7 @@ function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOu
   const originalRandom = Math.random;
   return {
     api, metrics, sleeps,
+    advance: (ms) => { clock += ms; },
     jar: (id) => vu(id).http.jar,
     run(id, setupData) {
       const { http, load } = vu(id);
@@ -442,6 +497,108 @@ test('pg-stub reuses a seat after a clean confirm rejection but never after an u
 test('keeps the k6 service fee and cookie names aligned with the API', () => {
   assert.equal(TICKET_SERVICE_FEE_KRW, shared.TICKET_SERVICE_FEE_KRW);
   assert.equal(REFRESH_COOKIE, shared.AUTH_COOKIE_NAME);
+});
+
+test('sends each booking consent row at its current document version and language (audit #65 #106, D7)', () => {
+  // Same keys as the booking checkout, each at the shared document version.
+  assert.deepEqual(Object.keys(BOOKING_CONSENT_VERSIONS).sort(), [...shared.BOOKING_CONSENT_ITEM_KEYS].sort());
+  for (const key of shared.BOOKING_CONSENT_ITEM_KEYS) {
+    assert.equal(BOOKING_CONSENT_VERSIONS[key], shared.CONSENT_DOCUMENT_VERSIONS[key], `${key} version`);
+  }
+  for (const locale of [...shared.SUPPORTED_LOCALES, 'ja']) {
+    assert.equal(consentDocumentLanguage(locale), shared.resolveConsentDocumentLanguage(locale), locale);
+  }
+
+  const seat = parseSeatPool(seatPool(1))[0];
+  for (const [locale, language] of [['ko', 'ko'], ['th', 'en'], ['zh-CN', 'en']]) {
+    const config = parseConfig(env({ PHASE26_LOCALE: locale }), 'LOAD_10K_BASELINE');
+    const body = buildPrepareBody({ config, seat, orderId: 'PHASE26_ORD-1', bookingPolicy: POLICY, now: new Date(0) });
+    assert.deepEqual(body.consentItems, shared.BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
+      key, version: shared.CONSENT_DOCUMENT_VERSIONS[key], language, accepted: true, sourceFlow: 'booking',
+    })));
+    assert.equal(bookingConsentOutdated(body.consentItems), false, `${locale} prepare is accepted`);
+  }
+
+  // A non-Korean buyer journey passes the consent check end to end.
+  const config = parseConfig(env({ PHASE26_LOCALE: 'th' }), 'LOAD_10K_BASELINE');
+  const h = harness({ config, users: parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 }),
+    seats: parseSeatPool(seatPool(1)), random: 0 });
+  h.run(1, h.setup());
+  assert.deepEqual(h.api.calls.filter((call) => call.path === '/reservations/prepare').map((call) => call.status), [201]);
+});
+
+test('consent version overrides are per row and the single-version variable is refused', () => {
+  assert.throws(() => parseConfig(env({ PHASE26_CONSENT_VERSION: '2026-04-28' }), 'LOAD_10K_BASELINE'),
+    /PHASE26_CONSENT_VERSION was removed/);
+  assert.deepEqual(parseConfig(env({ PHASE26_CONSENT_VERSIONS: 'privacy=2026-04-28' }), 'LOAD_10K_BASELINE').consentVersions,
+    { terms: '2026-04-28', privacy: '2026-04-28' });
+  for (const bad of ['pipa_required=2026-05-11', 'terms', 'terms=a=b', 'privacy=']) {
+    assert.throws(() => parseConfig(env({ PHASE26_CONSENT_VERSIONS: bad }), 'LOAD_10K_BASELINE'),
+      /PHASE26_CONSENT_VERSIONS must be/, bad);
+  }
+});
+
+test('re-entering after the active window lapsed waits for a new admission instead of failing (audit D2)', () => {
+  const config = parseConfig(env({ PHASE26_QUEUE_POLL_SECONDS: '2', PHASE26_QUEUE_MAX_WAIT_SECONDS: '30' }),
+    'LOAD_10K_BASELINE');
+  const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
+  const h = harness({ config, users, seats: parseSeatPool(seatPool(1)), random: 0, waitingPolls: 2,
+    activeWindowMs: 600_000 });
+  const setupData = h.setup();
+  h.run(1, setupData);
+  h.advance(601_000); // the 600 s active admission window has passed
+  h.run(1, setupData);
+  h.run(1, setupData); // still inside the new window: the same session is reused
+
+  const enters = h.api.calls.filter((call) => call.path.endsWith('/enter'))
+    .map((call) => JSON.parse(call.responseBody));
+  assert.deepEqual(enters, [
+    { queueSessionId: 'session-refresh-0-1', state: 'WAITING' },
+    { queueSessionId: 'session-refresh-0-2', state: 'WAITING' },
+    { queueSessionId: 'session-refresh-0-2', state: 'ADMITTED' },
+  ]);
+  const statuses = h.api.calls.filter((call) => call.path.startsWith('/queue/sessions/'));
+  assert.deepEqual(statuses.map((call) => call.path), [
+    '/queue/sessions/session-refresh-0-1', '/queue/sessions/session-refresh-0-1',
+    '/queue/sessions/session-refresh-0-2', '/queue/sessions/session-refresh-0-2',
+  ], 'the expired journey polls its new WAITING session until ADMITTED');
+  assert.deepEqual(lockCalls(h).map((call) => call.status), [201, 201, 201]);
+  assert.equal(h.api.calls.filter((call) => call.status === 401 || call.status === 403).length, 0);
+  assert.equal(h.metrics.queueAdmitted.values.length, 3);
+});
+
+test('keeps the documented login and refresh throttle figures aligned with ROUTE_THROTTLES', async () => {
+  const routeThrottles = await readFile(new URL('../../apps/api/src/modules/traffic/route-throttles.ts', import.meta.url), 'utf8');
+  const perMinute = (name) => {
+    const match = new RegExp(`\\b${name}: \\{ limit: (\\d+), ttl: MINUTE_MS \\}`).exec(routeThrottles);
+    assert.ok(match, `${name} found`);
+    return Number(match[1]);
+  };
+  const login = perMinute('authLogin');
+  const refresh = perMinute('authRefresh');
+  const policies = await readFile(new URL('../../apps/api/src/modules/traffic/traffic-defense.service.ts', import.meta.url), 'utf8');
+  const loginAccount = /'login-account': \{(?:\s*\/\/[^\n]*)*\s*ttl: FIFTEEN_MINUTES_MS,\s*limit: (\d+),/.exec(policies);
+  assert.ok(loginAccount, 'login-account policy found');
+
+  const minutes = (buyers) => Math.ceil(buyers / login);
+  const expected = [
+    `POST /auth/login allows ${login} requests per minute per client IP`,
+    `10,000 buyers in about ${minutes(10_000)} minutes and 20,000 in about ${minutes(20_000)} minutes`,
+    `${loginAccount[1]} per 15 minutes`,
+    `${refresh} requests per minute per client IP`,
+  ];
+  const provision = (await readFile(new URL('../phase26/provision-load-buyers.mjs', import.meta.url), 'utf8'))
+    .split('\n').filter((line) => line.startsWith('//')).map((line) => line.replace(/^\/\/ ?/, '')).join(' ')
+    .replace(/\s+/g, ' ');
+  const runbook = (await readFile(new URL('../../docs/runbooks/phase26-cutover-ops.md', import.meta.url), 'utf8'))
+    .replace(/`/g, '').replace(/\s+/g, ' ');
+  for (const text of expected) {
+    assert.ok(provision.includes(text), `provision-load-buyers.mjs says "${text}"`);
+    assert.ok(runbook.includes(text), `phase26-cutover-ops.md says "${text}"`);
+  }
+  assert.ok(runbook.includes('DEFAULT_THROTTLER'), 'the runbook names the default throttler definition');
+  assert.ok(!/app\.module\.ts/.test(runbook.slice(runbook.indexOf('## Dedicated test-event load gate'))),
+    'the load gate section no longer points at app.module.ts');
 });
 
 test('the k6 entry scripts wire the shared logic, pools and options', async () => {

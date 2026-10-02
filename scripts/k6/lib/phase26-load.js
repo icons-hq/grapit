@@ -9,7 +9,10 @@
 //
 // k6 empties each VU's cookie jar after every iteration (noCookiesReset=false
 // by default), so the refresh cookie is seeded at the start of every iteration
-// and each journey re-enters the queue, which reuses the buyer's queue session.
+// and each journey re-enters the queue. While the buyer's admission is still
+// active the API reuses the same queue session; once the active window has
+// passed, enter returns a new WAITING position and the journey polls until
+// ADMITTED again.
 //
 // The buyer pool comes from scripts/phase26/provision-load-buyers.mjs. k6 never
 // refreshes tokens, so every access token must outlive the run.
@@ -23,13 +26,46 @@ export const REFRESH_COOKIE = 'refreshToken';
 export const ADMISSION_COOKIE = 'grabit_queue_admission';
 // Mirrors TICKET_SERVICE_FEE_KRW in @grabit/shared (asserted by the unit test).
 export const TICKET_SERVICE_FEE_KRW = 2000;
-export const BOOKING_CONSENT_KEYS = ['terms', 'privacy', 'pipa_required'];
-export const DEFAULT_CONSENT_VERSION = '2026-04-28';
+// The rows the booking checkout records and the current document version of
+// each: BOOKING_CONSENT_ITEM_KEYS and CONSENT_DOCUMENT_VERSIONS in @grabit/shared
+// (asserted by the unit test). k6 cannot import the shared package. pipa_required
+// is captured at signup and is not part of booking.
+export const BOOKING_CONSENT_VERSIONS = Object.freeze({ terms: '2026-04-28', privacy: '2026-05-11' });
 export const FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
 export const CONFIRM_MODES = ['off', 'pg-stub'];
+const CONSENT_VERSION_PATTERN = /^[0-9A-Za-z._-]{1,40}$/;
 
-// Per-buyer API throttles: the global `default` throttler in app.module.ts and
-// TRAFFIC_POLICIES in traffic-defense.service.ts (asserted by the unit test).
+// Legal documents exist only in Korean and English; mirrors
+// resolveConsentDocumentLanguage in @grabit/shared.
+export function consentDocumentLanguage(locale) {
+  return locale === 'ko' ? 'ko' : 'en';
+}
+
+// PHASE26_CONSENT_VERSIONS='terms=2026-04-28,privacy=2026-05-11' overrides the
+// version of individual booking rows, for a target that still serves an older
+// active document. The single PHASE26_CONSENT_VERSION was removed: one version
+// for every row cannot match documents with different effective dates.
+export function parseConsentVersions(env) {
+  if (String(env.PHASE26_CONSENT_VERSION || '').trim()) {
+    throw new Error('PHASE26_CONSENT_VERSION was removed; set per-row versions with '
+      + "PHASE26_CONSENT_VERSIONS='terms=<version>,privacy=<version>' or leave it unset for the current documents");
+  }
+  const versions = { ...BOOKING_CONSENT_VERSIONS };
+  const raw = String(env.PHASE26_CONSENT_VERSIONS || '').trim();
+  if (!raw) return versions;
+  for (const pair of raw.split(',')) {
+    const [key, version, extra] = pair.split('=').map((part) => part.trim());
+    if (extra !== undefined || !Object.prototype.hasOwnProperty.call(BOOKING_CONSENT_VERSIONS, key)
+      || !CONSENT_VERSION_PATTERN.test(version || '')) {
+      throw new Error(`PHASE26_CONSENT_VERSIONS must be comma-separated key=version pairs for ${Object.keys(BOOKING_CONSENT_VERSIONS).join(', ')}`);
+    }
+    versions[key] = version;
+  }
+  return versions;
+}
+
+// Per-buyer API throttles: DEFAULT_THROTTLER (the global `default` throttler)
+// and TRAFFIC_POLICIES in traffic-defense.service.ts (asserted by the unit test).
 // Every request carries the buyer's access token, so each limit counts per buyer
 // account. The public browse budget is stricter than the API: catalog reads are
 // not throttled and the seat map read allows 60 per 10 s (SEAT_STATUS_THROTTLE).
@@ -171,7 +207,7 @@ export function parseConfig(env, gateId) {
     queueMaxWaitSeconds: intEnv(env, 'PHASE26_QUEUE_MAX_WAIT_SECONDS', 120),
     httpTimeout: durationEnv(env, 'PHASE26_HTTP_TIMEOUT', '10s'),
     locale: String(env.PHASE26_LOCALE || 'ko').trim(),
-    consentVersion: String(env.PHASE26_CONSENT_VERSION || DEFAULT_CONSENT_VERSION).trim(),
+    consentVersions: parseConsentVersions(env),
   };
   assertWithinBuyerThrottles(config);
   return config;
@@ -412,10 +448,10 @@ export function buildPrepareBody({ config, seat, orderId, bookingPolicy, now }) 
     showtimeId: config.showtimeId,
     seats: [seat],
     amount: seat.price + TICKET_SERVICE_FEE_KRW,
-    consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
+    consentItems: Object.keys(config.consentVersions).map((key) => ({
       key,
-      version: config.consentVersion,
-      language: config.locale,
+      version: config.consentVersions[key],
+      language: consentDocumentLanguage(config.locale),
       accepted: true,
       sourceFlow: 'booking',
     })),

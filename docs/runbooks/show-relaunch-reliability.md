@@ -100,18 +100,19 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 
 ### 2026-10 감사 migration batch(0038–0046) 첫 배포
 
-감사 수정 브랜치를 처음 배포하면 0038–0046 아홉 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다.
+감사 수정 브랜치를 처음 배포하면 0038–0046 아홉 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다. 모든 잠금은 batch 전체가 commit될 때까지 유지된다. `ACCESS EXCLUSIVE`는 write뿐 아니라 읽기(`SELECT`)도 막고, `SHARE`·`SHARE ROW EXCLUSIVE`는 읽기는 두고 write를 막는다. 잠금 대기는 batch 전체가 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 이 batch의 migration에는 `SET LOCAL lock_timeout`이 없다.
 
 | Migration | 잠금 대상 | 영향 |
 | --- | --- | --- |
-| 0038 | `reservation_seats`, `payments` | `CONCURRENTLY` 없는 인덱스 생성. 생성 동안 두 테이블 write(좌석 선택 prepare, confirm, webhook 기록)가 멈춘다. |
-| 0039 | `users`, `reservations` | 0039부터 batch 끝까지 `lock_timeout` 10s. `users` 인덱스 생성(가입·프로필 write 대기)과 `reservations` 전 행 `UPDATE`(예약 write 대기). 사전 확인·batch 선변환은 아래 '예매 게이트 변경의 배포 차단 점검'을 따른다. |
-| 0040 | `ticket_benefits`, `ticket_benefit_entitlements` | 컬럼 type을 `text`로 바꾸는 동안 `ACCESS EXCLUSIVE`, FK 추가 동안 두 테이블 잠금. 발권 시 특전 동기화가 기다린다. |
+| 0038 | `reservation_seats`, `payments` | `CONCURRENTLY` 없는 인덱스 생성(`SHARE`). 생성 동안 두 테이블 write(좌석 선택 prepare, confirm, webhook 기록)가 멈춘다. |
+| 0039 | `users`, `reservations` | `users` 인덱스 생성(`SHARE`, 가입·프로필 write 대기)과 `reservations` 전 행 `UPDATE`(행 잠금, 예약 write 대기). 사전 확인·batch 선변환은 아래 '예매 게이트 변경의 배포 차단 점검'을 따른다. |
+| 0040 | `ticket_benefits`, `ticket_benefit_entitlements`, `admin_audit_logs` | 컬럼 type 변경(`ticket_benefits`)과 컬럼 추가(`ticket_benefit_entitlements`)는 `ACCESS EXCLUSIVE`라 특전 설정·지급 조회와 발권 시 특전 동기화가 읽기까지 멈춘다. FK 추가는 참조 대상 `admin_audit_logs`에 `SHARE ROW EXCLUSIVE`를 잡아 관리자 감사 기록 INSERT(감사 대상 관리자 작업 전체)가 기다린다. |
+| 0041 | `support_notices` | 컬럼 추가는 `ACCESS EXCLUSIVE`라 공지 조회(공개 공지 화면 포함)와 편집이 멈추고, 이어지는 인덱스 생성(`SHARE`) 동안 공지 write가 기다린다. |
 | 0043 | `seat_inventories` | `CONCURRENTLY` 없는 부분 인덱스 생성. 생성 동안 `SHARE` 잠금으로 좌석 상태 write(확정 시 sold, 취소 시 held/available, 관리자 좌석 작업)가 멈춘다. 대상 행이 적어도 전체 테이블을 스캔한다. |
-| 0044 | `ticket_scan_events` | `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가. 현장 검표 기록이 멈춘다. |
+| 0044 | `ticket_scan_events` | 컬럼 추가, `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가가 `ACCESS EXCLUSIVE`다. 검표 기록과 현장 모니터 조회가 멈춘다. |
 | 0046 | `users` | 인덱스 생성. 로그인 조회는 계속되고 write만 기다린다. |
 
-0041(관리자 감사 enum 값과 `support_notices` 컬럼·인덱스), 0042(감사 enum 값), 0045(`consent_items` 행 INSERT)는 hot table을 잠그지 않는다. 다만 0039의 `SET LOCAL lock_timeout = '10s'`가 batch 끝까지 남으므로 이들도 10s 기준으로 기다린다.
+0042(감사 enum 값)와 0045(`consent_items` 행 INSERT)는 hot table을 잠그지 않는다. 그래도 앞 migration이 잡은 잠금은 이들이 끝나 batch가 commit될 때까지 남는다.
 
 - 판매 오픈, 현장 입장, 결제 확정이 몰리는 시간대를 피한 배포 창에서 실행하고, 그 창 밖에서는 `MIGRATION_FREEZE=true`를 유지한다.
 - 실행 전에 `seat_inventories`, `reservations`, `ticket_scan_events` 행 수와 활성 트랜잭션(`pg_stat_activity`의 `state <> 'idle'`)을 확인한다. 잠금 대기로 실패하면 transaction 전체가 rollback되므로 한산한 시간에 다시 실행한다.
@@ -258,7 +259,7 @@ AND NOT EXISTS (
 
 - 결제 확인 운영 점검: 국내·외화 상점 모두 `PAYMENT_STATUS_CHANGED` 웹훅 URL과 서명 secret이 등록·일치하는지, 최근 `EXPIRED/ABORTED` 이벤트가 `payment_webhook_events`에 처리 완료로 쌓이는지 확인한다. 승인 전 확정 거절(점유 만료·매수 초과·회차 시작)은 confirm 시점 조회로 `ABORTED/EXPIRED`가 확인되지 않는 한 PG가 결제를 만료시키는 웹훅이 올 때까지 예약을 `PENDING_PAYMENT`로 둔다(ADR 0010). Toss 위젯 variant에 가상계좌 등 비동기 입금 수단을 켜지 않는다. 위 로그 문자열의 log-based alert를 만들고, pg-boss `payment-confirm-reconcile` job이 실행되는지(가장 오래된 `created` job 나이) 확인한다. `checkout_started_at` 이후 30분 넘게 결제 행이 없는 `PENDING_PAYMENT` 예약은 orderId로 Toss 주문 조회(`GET /v1/payments/orders/{orderId}`)를 국내·외화 상점 키 각각으로 실행해 대조한다. 결제 행이 없는 예약에는 paymentKey가 DB에 남지 않기 때문이다. 승인 건은 결제 행부터 본다. `DONE`/`cancel_pending` 행의 `provider_metadata`에 `confirmCompensationClaim: true`가 있고 `asyncDoneCompensation`이 없으면 reconcile job(`payment-confirm-reconcile`, singletonKey `<orderId>:<paymentKey>`) 소관이니 그 job과 로그를 확인한다. 그 밖의 행은 비동기 DONE 보상 복구 소관이다(`asyncDoneCompensation.state`·`attempts`·`lastError`). 결제 행 없이 승인만 있는 건만 reconcile job 로그(`PAYMENT_CONFIRM_OUTCOME_UNKNOWN`)로 추적한다. confirm 안에서 보상된 주문은 `PENDING_PAYMENT`로 남지 않고 `FAILED`·`CONFIRM_APPROVAL_COMPENSATED`가 된다. `DB_POOL_MAX`·`--concurrency`·Cloud SQL `max_connections`·인스턴스 수를 같은 회차 동시 confirm 부하로 다시 산정한다.
 - [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다. Valkey는 replica 1개 이상·multi-zone·오픈/입장일을 피한 maintenance window·`noeviction`을 `verify-valkey-sale-posture.mjs`로 확인하고, DB connection 예산과 WebSocket 동시 연결을 포함한 API 용량을 검증한다.
-- [사이트 전체 예매 kill switch](managed-demo-cost-floor.md#sitewide-booking-kill-switch): `BOOKING_ENABLED`는 API·Web·worker가 같은 repository variable을 쓴다. 닫을 때는 variable을 먼저 `false`로 바꾼 뒤 live API → Web → worker를 갱신한다. 다시 여는 배포는 수동 dispatch의 `allow_booking_reopen=true` 없이는 거부된다. API·Web 배포 job은 배포 직전에 live 값을 다시 읽으므로, 진행 중인 Deploy 도중에 닫은 상태도 유지된다. 진행 중 run이 있었다면 끝난 뒤 runtime flag를 다시 확인한다.
+- [사이트 전체 예매 kill switch](managed-demo-cost-floor.md#sitewide-booking-kill-switch): `BOOKING_ENABLED`는 API·Web·worker가 같은 repository variable을 쓴다. 닫을 때는 variable을 먼저 `false`로 바꾼 뒤 live API → Web → worker를 갱신한다. 다시 여는 배포는 수동 dispatch의 `allow_booking_reopen=true` 없이는 거부된다. API·Web 배포 job은 배포 직전에 live 값을 다시 읽으므로, 진행 중인 Deploy 도중에 닫은 상태도 유지된다. `allow_booking_reopen=true` run에서도 시작 때 열려 있었거나 run 도중 revision이 바뀐 서비스는 닫힌 채 두고 경고한다. 시작 때부터 닫혀 있었고 바뀌지 않은 서비스만 경고와 함께 다시 연다. 시작 시점 기록을 읽지 못하면 승인 run은 경고와 함께 연다. 진행 중 run이 있었다면 끝난 뒤 runtime flag를 다시 확인하고, 재개방 run 자체를 멈추려면 `gh run cancel`로 취소한다.
 - [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md): 명시 승인된 계정·결제 금액·수단으로 승인 → 발권 → 취소 → PG/DB 대조를 수행한다. 고객 연락, 임의 계정 병합, 실제 결제/환불은 포함 승인 없이는 실행하지 않는다.
 - [기존 오픈 evidence gates](ticketing-open-evidence-gates-2026-06-03.md): actual phone/browser, scanner 권한, 동시 스캔, 연결 단절/복구, 수동 검색 예외, 실물 원장 담당자 인수를 남긴다. 미실행 항목은 pass가 아니다.
 - [2026-10 오픈 감사 수정의 운영 후속 조치](open-audit-remediation-2026-10.md): 감사 수정 브랜치의 배포 전·배포 직후·오픈 리허설 운영 조치와 결정 대기 항목을 감사 번호와 함께 모은 목록이다.
