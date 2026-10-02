@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | A01 | edge proxy 회귀 및 운영 HTTP/www→canonical 301, HTTPS·callback 200 확인 | 실제 외부 공유 링크의 단말별 확인 |
 | A02 | auth 초기화·마이페이지·QR 조회 회귀 | 당시 해외 인앱 브라우저/OS 재현 |
-| A03 | SMS 국가코드·send/verify 오류·throttle 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인 | 태국 실제 번호 수신·공급자 전달 결과 |
+| A03 | SMS 국가코드·send/verify 오류 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인. 당시 'throttle 테스트'는 운영에 없는 가짜 controller의 IP throttle을 검사해 앱 SMS 제한이 꺼진 상태를 놓쳤다(2026-09 감사 #36). 이제 앱 제한은 번호별 30초 cooldown·시간당 5회 발송·15분 10회 확인과 분당·시간당 전체 발송 예산이며, 실제 SmsController·SmsService를 Valkey로 검증한다. IP 축 제한은 공유 IP 장애 때문에 두지 않는다 | 태국 실제 번호 수신·공급자 전달 결과. Twilio Verify rate limit·잔액·비용 알림 설정 확인 |
 | A04 | 발송 실패와 인증 불일치 UI/오류 매핑 회귀 | 실제 발송 오류 표시 확인 |
 | A05 | 인증/대체 진입 코드 유지. 운영 Twilio 중국 감시 발송 허용 및 기존 지원 티켓의 발송 활성화·당시 실제 수신 성공 확인 | 다음 판매 전 중국 실제 번호 수신·인증 재검증 |
 | A06 | 소셜 callback 언어별 오류·재시도, refresh 1회 및 실패 후 로딩 종료, 추가정보·공유 IP throttle 회귀 | Naver 운영 앱 승인 및 실제 계정 왕복 |
@@ -158,7 +158,7 @@ AND NOT EXISTS (
 | API 전체 integration | 6파일·63테스트 통과. testcontainers PostgreSQL 16/Valkey 8, 운영 DB 미사용 |
 | 핵심 재현 | 기존 상태의 중복 좌석, 7분 deadline, 베네핏 누락, 잠금 탈취, 이미 수령한 권리 재생성, 동시 late DONE 보상 취소, showtime deadlock, 역순 상태 퇴행, 매수 초과, 보상 취소 중 재발권을 red 확인 후 green |
 | 브라우저 E2E | 8파일·34테스트 통과: 소셜 오류/다국어/재시도, 결제 pending/failed/expired, floor/queue, QR 검표/권한/중복, offline 재연결, CSV/수동 오픈. 결제/사용자 API는 fixture |
-| 가입 SMS E2E | 별도 PostgreSQL/Valkey 컨테이너에 migration/seed 후 실제 API 기동, 발송 cooldown·000000 인증·오입력 3테스트 통과. 공급자 자격증명 없이 SMS mock 사용; 실제 SMS 미발송 |
+| 가입 SMS E2E | 별도 PostgreSQL/Valkey 컨테이너에 migration/seed 후 실제 API 기동, 발송 cooldown·000000 인증·오입력 3테스트 통과. 공급자 자격증명 없이 SMS mock 사용; 실제 SMS 미발송. 정정(2026-09 감사 #36): SMS mock은 앱 cooldown·발송 한도를 건너뛰고 당시 앱 제한도 꺼져 있었으므로, 이 cooldown은 웹 화면 타이머 확인이며 서버 제한의 증거가 아니다 |
 | 실제 render | localhost:3218 예매 취소 상세 1440×1100 / 390×844 및 en callback 1440×1000, th/zh-CN callback 390×844. 새 문구·가로 overflow 0·페이지 런타임 오류 0 확인 |
 | 정적 검증 | 전체 typecheck 통과. lint 오류 0(기존 경고 남음). API build 통과. diff/문서 상대 경로 검사 통과 |
 | 운영 read-only | 09:39 KST 전체 인덱스 preflight 0/0, 재고 불일치 0. 10:05 KST 실제 복구 함수 dry-run 3티켓/13권리, applied 0 |

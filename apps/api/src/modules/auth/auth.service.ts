@@ -15,8 +15,8 @@ import { eq, and, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import { UserRepository } from '../user/user.repository.js';
-import { SmsService } from '../sms/sms.service.js';
-import type { SmsVerificationPurpose } from '../sms/sms.service.js';
+import { SmsService, releasePhoneClaimAndRethrow } from '../sms/sms.service.js';
+import type { PhoneVerificationClaim, SmsVerificationPurpose } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
@@ -163,6 +163,13 @@ export class AuthService {
       parallelism: 1,
     });
 
+    // Consume the single-use phone token right before the write; a failed
+    // write releases it so the buyer can retry without another SMS.
+    const phoneClaim = await this.claimPhoneVerification(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'signup',
+    );
     const user = await this.db.transaction(async (tx) => {
       // 3. Insert user
       const createdUser = await this.userRepository.create({
@@ -198,7 +205,7 @@ export class AuthService {
       );
 
       return createdUser;
-    });
+    }).catch(releasePhoneClaimAndRethrow(phoneClaim));
 
     const verification = await this.issueEmailVerificationForUser(
       user.id,
@@ -1036,6 +1043,13 @@ export class AuthService {
           message: '이미 가입된 계정이 있습니다. 기존 계정으로 로그인해주세요.',
         });
       }
+      // Claim the single-use phone token only after every pre-write rejection, so a
+      // refused link (privileged target) leaves the token usable.
+      const linkPhoneClaim = await this.claimPhoneVerification(
+        dto.phone,
+        dto.phoneVerificationToken,
+        'social_registration',
+      );
       const linkedUser = await this.db.transaction(async (tx) => {
         const updatedAt = new Date();
         const guardedUsers = await tx
@@ -1083,7 +1097,7 @@ export class AuthService {
         );
 
         return guardedUser;
-      });
+      }).catch(releasePhoneClaimAndRethrow(linkPhoneClaim));
 
       this.logger.log(`completeSocialRegistration: linked for userId=${linkedUser.id}`);
       const tokens = await this.generateTokenPair(
@@ -1110,6 +1124,11 @@ export class AuthService {
       });
     }
 
+    const phoneClaim = await this.claimPhoneVerification(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'social_registration',
+    );
     const user = await this.db.transaction(async (tx) => {
       // 3. Create new user (passwordHash = null for social-only accounts)
       const createdUser = await this.userRepository.create({
@@ -1157,7 +1176,7 @@ export class AuthService {
       );
 
       return createdUser;
-    });
+    }).catch(releasePhoneClaimAndRethrow(phoneClaim));
 
     this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
     const tokens = await this.generateTokenPair(
@@ -1182,6 +1201,17 @@ export class AuthService {
     purpose: SmsVerificationPurpose,
   ): Promise<void> {
     this.smsService.verifyPhoneVerificationToken(verificationToken, {
+      phone,
+      purpose,
+    });
+  }
+
+  private claimPhoneVerification(
+    phone: string,
+    verificationToken: string,
+    purpose: SmsVerificationPurpose,
+  ): Promise<PhoneVerificationClaim> {
+    return this.smsService.claimPhoneVerificationToken(verificationToken, {
       phone,
       purpose,
     });

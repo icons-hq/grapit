@@ -26,7 +26,11 @@ import {
   users,
 } from '../../database/schema/index.js';
 import { AdminAuditService } from '../admin/admin-audit.service.js';
-import { SmsService } from '../sms/sms.service.js';
+import {
+  SmsService,
+  releasePhoneClaimAndRethrow,
+  type PhoneVerificationClaim,
+} from '../sms/sms.service.js';
 
 @Injectable()
 export class UserService {
@@ -218,11 +222,12 @@ export class UserService {
     if (data.marketingConsent !== undefined) {
       updateData.marketingConsent = data.marketingConsent;
     }
+    let phoneClaim: PhoneVerificationClaim | null = null;
     if (data.phone !== undefined && (data.phone !== currentUser.phone || !currentUser.isPhoneVerified)) {
       if (!data.phoneVerificationToken) {
         throw new BadRequestException('전화번호 인증이 필요합니다');
       }
-      this.smsService.verifyPhoneVerificationToken(data.phoneVerificationToken, {
+      phoneClaim = await this.smsService.claimPhoneVerificationToken(data.phoneVerificationToken, {
         phone: data.phone,
         purpose: 'profile_phone_change',
       });
@@ -230,7 +235,10 @@ export class UserService {
       updateData.isPhoneVerified = true;
     }
 
-    const user = await this.userRepository.updateProfile(userId, updateData);
+    const updateProfile = this.userRepository.updateProfile(userId, updateData);
+    const user = await (phoneClaim
+      ? updateProfile.catch(releasePhoneClaimAndRethrow(phoneClaim))
+      : updateProfile);
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
     }

@@ -149,7 +149,9 @@ describe('AuthService', () => {
     sendVerificationCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
     verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
+    claimPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
+  let releasePhoneClaim: ReturnType<typeof vi.fn>;
 
   beforeAll(async () => {
     preHashedPassword = await argon2.hash('Test1234!', {
@@ -203,11 +205,13 @@ describe('AuthService', () => {
       ),
     };
 
+    releasePhoneClaim = vi.fn().mockResolvedValue(undefined);
     mockSmsService = {
       verifyCode: vi.fn().mockResolvedValue({ verified: true }),
       sendVerificationCode: vi.fn().mockResolvedValue({ success: true, message: '' }),
       isPhoneVerified: vi.fn().mockResolvedValue(false),
       verifyPhoneVerificationToken: vi.fn(),
+      claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: releasePhoneClaim }),
     };
 
     // REVIEWS.md HIGH-03: capture reset link via EmailService spy
@@ -421,6 +425,58 @@ describe('AuthService', () => {
       );
       expect(mockUserRepo.create).not.toHaveBeenCalled();
     });
+
+    it('이메일 확인 뒤 계정 생성 직전에 phone verification token을 1회 소비한다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: randomUUID(),
+        email: mockRegisterDto.email,
+      });
+
+      await authService.register(mockRegisterDto);
+
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        mockRegisterDto.phoneVerificationToken,
+        { phone: mockRegisterDto.phone, purpose: 'signup' },
+      );
+      const claimOrder =
+        mockSmsService.claimPhoneVerificationToken.mock.invocationCallOrder[0]!;
+      expect(mockUserRepo.findByEmail.mock.invocationCallOrder[0]!).toBeLessThan(claimOrder);
+      expect(claimOrder).toBeLessThan(mockUserRepo.create.mock.invocationCallOrder[0]!);
+      expect(releasePhoneClaim).not.toHaveBeenCalled();
+    }, 15000);
+
+    it('이미 소비된 phone verification token으로는 두 번째 계정을 만들지 않는다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockSmsService.claimPhoneVerificationToken.mockRejectedValueOnce(
+        new BadRequestException('이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.'),
+      );
+
+      await expect(
+        authService.register({ ...mockRegisterDto, email: 'second-account@test.com' }),
+      ).rejects.toThrow('이미 사용된 전화번호 인증입니다');
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    }, 15000);
+
+    it('이메일 중복으로 거절되면 phone verification token을 소비하지 않는다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(mockSmsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
+    });
+
+    it('계정 생성 transaction이 실패하면 소비한 phone verification token을 되돌린다', async () => {
+      const writeError = new Error('duplicate key value violates unique constraint');
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockRejectedValueOnce(writeError);
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBe(writeError);
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
+    }, 15000);
   });
 
   describe('validateUser', () => {
@@ -2133,6 +2189,11 @@ describe('AuthService', () => {
       );
       expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
       expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: staleTargetUser.phone, purpose: 'social_registration' },
+      );
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
     });
 
     it('does not let provider email conflict block an exact single verified identity link', async () => {
@@ -2436,6 +2497,12 @@ describe('AuthService', () => {
         'signed-social-phone-token',
         { phone: '010-1234-5678', purpose: 'social_registration' },
       );
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledTimes(1);
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: '010-1234-5678', purpose: 'social_registration' },
+      );
+      expect(releasePhoneClaim).not.toHaveBeenCalled();
       expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
       expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalledWith(

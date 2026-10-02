@@ -568,6 +568,20 @@ Documents, evidence, UI tests, and logs must not include:
 
 Use masked references and evidence paths instead.
 
+### 10.4 Phone Verification Abuse Controls
+
+`/sms/send-code` and `/sms/verify-code` skip the IP throttler because shared IPs (carrier NAT, venue Wi-Fi) blocked signups during the 2026-05 hotfix. `SmsService` applies limits that do not depend on client IP, backed by Valkey:
+
+- per phone: 30-second resend cooldown, 5 sends per hour, 10 verify attempts per 15 minutes. `SMS_LOCAL_RATE_LIMITS_ENABLED=false` turns these off as an incident switch; unset means on.
+- service-wide send budgets per fixed minute and per fixed hour: `SMS_GLOBAL_SEND_LIMIT_PER_MINUTE` (default `300`) caps bursts, `SMS_GLOBAL_SEND_LIMIT_PER_HOUR` (default `3000`) caps sustained cost; `0` disables either one. Requests over a budget get `429` and give back their per-phone and minute slots. The first rejection in each window sends a Sentry warning. Raise both values before a ticket opening that expects more new signups.
+- optional destination allowlist: `SMS_ALLOWED_COUNTRIES` (comma-separated ISO alpha-2 codes, unset = all countries). Twilio Verify Geo Permissions remain the provider-side control. The API logs `sms.allowed_countries_unset` at startup in production when it is unset; it does not refuse to start.
+- a failed provider call caused by a transient error (5xx, 429, network) returns every slot it reserved. So does a Valkey error part-way through reserving them.
+- the verify counter counts only checks Twilio evaluated against a live verification. Twilio "no pending verification" (404/20404, also after expiry) and "max check attempts" (60202) give the slot back, so 11 requests for a number nobody sent a code to cannot lock it out. Someone who first triggers send-code for a number (under the send limits above) can still spend that number's verify attempts; Twilio also caps checks per verification.
+
+Recommended production settings, checked before each opening: `SMS_ALLOWED_COUNTRIES` set to the countries buyers actually verify from (currently `KR,TH,CN`, plus any newly supported market), both global budgets sized for the expected new-signup rate, and Twilio balance, usage and Verify rate-limit alerts in place. A Cloudflare rate-limit rule or Turnstile on `/api/v1/sms/send-code` is the complementary edge control and is not in application code.
+
+A phone verification token from `/sms/verify-code` backs exactly one write. Signup, social registration completion, and profile phone change claim the token nonce in Valkey (`SET NX`) right before their database write and release it if that write fails. A second use returns `400`. These three writes therefore also need Valkey: while Valkey is unavailable they fail with `500`, the same as send-code and verify-code.
+
 ## 11. Testing Strategy
 
 | Area | Current commands |

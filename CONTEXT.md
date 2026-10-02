@@ -29,11 +29,11 @@ An operator-controlled repair that moves existing ownership records from a dupli
 _Avoid_: Future social-login linking, automatic signup, global deduplication.
 
 **Safe Merge Group**:
-A group of duplicate Buyer Accounts whose verified identity evidence matches and whose target Buyer Account is unambiguous enough for an operator-approved batch merge.
+A group of duplicate Buyer Accounts whose verified identity evidence matches, whose target Buyer Account is unambiguous enough for an operator-approved batch merge, and in which no account has a payment that can still settle.
 _Avoid_: Every duplicate group, identity conflict, best-effort merge.
 
 **Manual Merge Allowlist**:
-An operator-approved list of duplicate Buyer Accounts that may be merged even when they are not eligible for automatic safe-group merging.
+An operator-approved list of duplicate Buyer Accounts that may be merged even when they are not eligible for automatic safe-group merging. It cannot override missing verified phone evidence or a payment still in progress for any account in the group.
 _Avoid_: Automatic merge rule, broad production filter, informal approval.
 
 **Merge Target Buyer Account**:
