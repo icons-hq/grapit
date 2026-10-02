@@ -165,6 +165,10 @@ function pendingRecord(overrides: Partial<PendingScanAttemptRecord> = {}): Pendi
   };
 }
 
+function saveSelection(showtimeId: string, showtimeDateTime: string, selectedAt: string) {
+  localStorage.setItem(fieldShowtimeSelectionKey(SCANNER_USER_ID), JSON.stringify({ showtimeId, showtimeDateTime, selectedAt }));
+}
+
 function setOnline(value: boolean) {
   Object.defineProperty(navigator, 'onLine', { configurable: true, value });
   fireEvent(window, new Event(value ? 'online' : 'offline'));
@@ -333,6 +337,56 @@ describe('FieldCheckInPage camera tab showtime persistence (#39)', () => {
     expect(mocks.verifyCalls.at(-1)).toEqual(expect.objectContaining({ token: RAW_TICKET_TOKEN, showtimeId: REQUESTED_SHOWTIME_ID }));
   });
 
+  it('renews the restored choice so each camera tab extends its 12 hour window', async () => {
+    localStorage.setItem(fieldShowtimeSelectionKey(SCANNER_USER_ID), JSON.stringify({
+      showtimeId: REQUESTED_SHOWTIME_ID,
+      showtimeDateTime: evening.dateTime,
+      selectedAt: '2026-10-02T22:00:00.000Z',
+    }));
+    mocks.searchParams = new URLSearchParams({ ticket: RAW_TICKET_TOKEN });
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: '이 좌석 입장 처리' })).toBeEnabled();
+    expect(JSON.parse(localStorage.getItem(fieldShowtimeSelectionKey(SCANNER_USER_ID))!)).toEqual({
+      showtimeId: REQUESTED_SHOWTIME_ID,
+      showtimeDateTime: evening.dateTime,
+      selectedAt: now.toISOString(),
+    });
+  });
+
+  it('keeps the restored showtime\'s held scans listed after a sync that started before the restore', async () => {
+    saveSelection(REQUESTED_SHOWTIME_ID, evening.dateTime, '2026-10-03T08:00:00.000Z');
+    await addPendingScanAttempt(pendingRecord({ showtimeId: REQUESTED_SHOWTIME_ID, attemptedAt: '2026-10-03T08:30:00.000Z' }));
+    // The automatic sync on load fails, so the entry stays pending.
+    mocks.offlineSyncMutateAsync.mockRejectedValue(new TypeError('Failed to fetch'));
+    mocks.searchParams = new URLSearchParams();
+    renderPage();
+
+    expect(await screen.findByText('동기화를 완료하지 못했습니다. 대기 기록은 유지되며 다시 시도할 수 있습니다.')).toBeInTheDocument();
+    // Let the sync's closing refresh settle; it must reload the restored showtime, not the empty one it started with.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(screen.getByRole('combobox', { name: '검표할 공연·회차' })).toHaveValue(REQUESTED_SHOWTIME_ID);
+    expect(screen.getByText('보류 스캔')).toBeInTheDocument();
+    expect(screen.getByText('보류 1')).toBeInTheDocument();
+  });
+
+  it('remembers a listed showtime that came with the link and ignores an unlisted one', async () => {
+    mocks.searchParams = new URLSearchParams({ ticket: RAW_TICKET_TOKEN, showtimeId: REQUESTED_SHOWTIME_ID });
+    const { unmount } = renderPage();
+    expect(await screen.findByRole('button', { name: '이 좌석 입장 처리' })).toBeEnabled();
+    expect(JSON.parse(localStorage.getItem(fieldShowtimeSelectionKey(SCANNER_USER_ID))!)).toMatchObject({
+      showtimeId: REQUESTED_SHOWTIME_ID,
+      selectedAt: now.toISOString(),
+    });
+    unmount();
+
+    localStorage.clear();
+    mocks.searchParams = new URLSearchParams({ ticket: RAW_TICKET_TOKEN, showtimeId: TICKET_SHOWTIME_ID });
+    renderPage();
+    expect(await screen.findByText('QR을 읽었습니다. 검표할 공연과 회차를 선택하면 바로 확인합니다.')).toBeInTheDocument();
+    expect(localStorage.getItem(fieldShowtimeSelectionKey(SCANNER_USER_ID))).toBeNull();
+  });
+
   it('does not restore an expired choice and keeps the scanned QR until a showtime is picked', async () => {
     const user = userEvent.setup();
     localStorage.setItem(fieldShowtimeSelectionKey(SCANNER_USER_ID), JSON.stringify({
@@ -454,7 +508,7 @@ describe('FieldCheckInPage device-wide pending entries (#117)', () => {
     expect(within(banner).getByText('이 기기에 동기화되지 않은 입장 대기 3건')).toBeInTheDocument();
     expect(within(banner).getByText(/이전 회차 .* · 2건/)).toBeInTheDocument();
     expect(within(banner).getByText(/다른 현장 계정이 이 기기에 저장한 대기 1건/)).toBeInTheDocument();
-    expect(within(banner).getByRole('button', { name: '내 대기 2건 동기화' })).toBeDisabled();
+    expect(within(banner).getByRole('button', { name: '이 계정 대기 전체 2건 동기화' })).toBeDisabled();
 
     await user.click(within(banner).getByRole('button', { name: '이 회차로 이동' }));
     expect(screen.getByRole('combobox', { name: '검표할 공연·회차' })).toHaveValue(OTHER_SHOWTIME_ID);
@@ -506,9 +560,48 @@ describe('FieldCheckInPage device-wide pending entries (#117)', () => {
 
     act(() => setOnline(true));
 
-    await waitFor(() => expect(within(banner).getByRole('button', { name: '내 대기 1건 동기화' })).toBeDisabled());
+    await waitFor(() => expect(within(banner).getByRole('button', { name: '이 계정 대기 전체 1건 동기화' })).toBeDisabled());
     expect(mocks.offlineSyncMutateAsync).not.toHaveBeenCalled();
     expect(await listPendingScanAttempts({ syncState: 'pending' })).toHaveLength(1);
+  });
+
+  it('tells staff another tab is syncing when a manual sync cannot take the device lock', async () => {
+    await addPendingScanAttempt(pendingRecord({ showtimeId: REQUESTED_SHOWTIME_ID }));
+    mocks.searchParams = new URLSearchParams({ showtimeId: REQUESTED_SHOWTIME_ID });
+    // A frozen background tab holds the device sync lock.
+    const request = vi.fn(async (_name: string, _options: unknown, callback: (lock: null) => Promise<void>) => callback(null));
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } });
+    try {
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText('보류 스캔');
+      // The automatic sync on load skips quietly.
+      await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText('다른 탭에서 동기화 중입니다. 잠시 뒤 다시 시도하세요.')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: '보류 스캔 동기화' }));
+
+      expect(await screen.findByText('다른 탭에서 동기화 중입니다. 잠시 뒤 다시 시도하세요.')).toBeInTheDocument();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(mocks.offlineSyncMutateAsync).not.toHaveBeenCalled();
+      expect(await listPendingScanAttempts({ syncState: 'pending' })).toHaveLength(1);
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks');
+    }
+  });
+
+  it('counts the current showtime in the account-wide sync button because it syncs those entries too', async () => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    await addPendingScanAttempt(pendingRecord());
+    await addPendingScanAttempt(pendingRecord({ deviceAttemptId: 'current-1', showtimeId: REQUESTED_SHOWTIME_ID, token: 'current-token-1' }));
+    await addPendingScanAttempt(pendingRecord({ deviceAttemptId: 'current-2', showtimeId: REQUESTED_SHOWTIME_ID, token: 'current-token-2' }));
+    mocks.searchParams = new URLSearchParams({ showtimeId: REQUESTED_SHOWTIME_ID });
+    renderPage();
+
+    const banner = await screen.findByRole('region', { name: '이 기기의 미동기화 입장 대기' });
+    expect(within(banner).getByText('다른 회차·계정의 동기화되지 않은 입장 대기 1건')).toBeInTheDocument();
+    // The banner button sends every pending entry of this account, all three of them.
+    expect(within(banner).getByRole('button', { name: '이 계정 대기 전체 3건 동기화' })).toBeDisabled();
   });
 
   it('warns before logging out with unsynced entries and clears the session only on confirmation', async () => {

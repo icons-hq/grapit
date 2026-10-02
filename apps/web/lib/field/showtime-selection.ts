@@ -8,7 +8,10 @@ import { formatAdminKstDate } from '@/lib/admin-datetime';
  */
 const STORAGE_KEY_PREFIX = 'grabit-field-showtime:';
 export const FIELD_SHOWTIME_SELECTION_TTL_MS = 12 * 60 * 60 * 1000;
-export const FIELD_SHOWTIME_RESTORE_WINDOW_MS = 12 * 60 * 60 * 1000;
+/** A showtime that starts within this window from now can be restored. */
+export const FIELD_SHOWTIME_RESTORE_AHEAD_MS = 12 * 60 * 60 * 1000;
+/** A showtime that started at most this long ago can still be restored. */
+export const FIELD_SHOWTIME_RESTORE_PAST_MS = 6 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export interface FieldShowtimeSelection {
@@ -56,7 +59,9 @@ export function readFieldShowtimeSelection(userId: string): FieldShowtimeSelecti
 /**
  * Returns the stored showtime only when every check passes: the choice is at
  * most 12 hours old, the showtime is still in the server list with the same
- * start time, and it starts today in KST or within 12 hours of now.
+ * start time, and it starts today in KST, starts within the next 12 hours, or
+ * started at most 6 hours ago. The window is asymmetric so that last night's
+ * show is not restored in a tab opened the next morning.
  */
 export function resolveRestorableFieldShowtime<T extends SelectableShowtime>(
   selection: FieldShowtimeSelection | null,
@@ -76,7 +81,8 @@ export function resolveRestorableFieldShowtime<T extends SelectableShowtime>(
 
   const sameKstDay = formatAdminKstDate(new Date(startsAt).toISOString())
     === formatAdminKstDate(now.toISOString());
-  const nearNow = Math.abs(startsAt - nowMs) <= FIELD_SHOWTIME_RESTORE_WINDOW_MS;
+  const nearNow = startsAt >= nowMs - FIELD_SHOWTIME_RESTORE_PAST_MS
+    && startsAt <= nowMs + FIELD_SHOWTIME_RESTORE_AHEAD_MS;
   return sameKstDay || nearNow ? showtime : null;
 }
 
