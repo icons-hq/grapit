@@ -1,97 +1,109 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import {
+  describe, it, expect, beforeAll, afterAll, beforeEach, vi, type MockInstance,
+} from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { Test } from '@nestjs/testing';
 import { type INestApplication, HttpStatus } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { APP_GUARD } from '@nestjs/core';
 import IORedis from 'ioredis';
 import request from 'supertest';
+import { SmsController } from '../src/modules/sms/sms.controller.js';
 import {
+  SmsService,
   VERIFY_AND_INCREMENT_LUA,
-  smsOtpKey,
   smsAttemptsKey,
+  smsGlobalSendCounterKey,
+  smsOtpKey,
+  smsResendKey,
+  smsSendCounterKey,
+  smsVerificationTokenClaimKey,
   smsVerifiedKey,
 } from '../src/modules/sms/sms.service.js';
-
-// Phase 10.1: Twilio Verify env(TWILIO_ACCOUNT_SID, API key pair, TWILIO_VERIFY_SERVICE_SID) 체계.
-// 레거시 APPLICATION_ID/MESSAGE_ID env는 v3 API 전환으로 제거됨.
+import {
+  TwilioVerifyApiError,
+  TwilioVerifyClient,
+} from '../src/modules/sms/twilio-verify-client.js';
 
 /**
- * SMS Throttle Integration Test -- testcontainers Valkey
+ * SMS abuse limits against the REAL SmsController + SmsService -- testcontainers Valkey
  *
- * 실제 Valkey 컨테이너를 구동하여 @nestjs/throttler + ThrottlerStorageRedisService가
- * Valkey에서 정확하게 rate limiting을 수행하는지 검증합니다.
+ * Audit #36: this file used to exercise a stand-in controller carrying
+ * @Throttle decorators that production never had, so it passed while the real
+ * /sms routes had no app-level limit at all. The production routes skip the
+ * IP throttler on purpose (260517 shared-IP hotfix); the limits that must hold
+ * are the IP-independent ones inside SmsService, checked here against real
+ * Valkey TTL/INCR/SET NX semantics. Only the Twilio HTTP calls are stubbed.
  *
- * 실행: pnpm --filter @grabit/api test:integration sms-throttle -- --run
+ * 실행: pnpm --filter @grabit/api exec vitest run --config vitest.integration.config.ts test/sms-throttle.integration.spec.ts
  * Docker가 필수입니다.
  */
 
-// --- Minimal SmsController for isolated throttle testing ---
-import { Controller, Post, Body, HttpCode } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+const GLOBAL_SEND_LIMIT_PER_MINUTE = 10;
+// Lower than the number of distinct-phone sends below, to prove the shared
+// client IP is not what limits these routes.
+const DEFAULT_IP_THROTTLE_LIMIT = 3;
 
-@Controller('sms')
-class TestSmsController {
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 20, ttl: 3_600_000 } })
-  @Post('send-code')
-  sendCode(@Body() body: { phone: string }) {
-    return { success: true, message: 'mock', phone: body.phone };
-  }
-
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 900_000 } })
-  @Post('verify-code')
-  verifyCode(@Body() body: { phone: string; code: string }) {
-    return { verified: true, phone: body.phone };
-  }
+function phoneAt(index: number): string {
+  return `+8210${String(55550000 + index)}`;
 }
 
-@Controller('auth')
-class TestAuthController {
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 3, ttl: 900_000 } })
-  @Post('password-reset/request')
-  passwordResetRequest(@Body() body: { email: string }) {
-    return { message: 'ok', email: body.email };
+async function waitForFreshMinuteWindow(minRemainingMs = 8_000): Promise<number> {
+  const remaining = 60_000 - (Date.now() % 60_000);
+  if (remaining < minRemainingMs) {
+    await new Promise((resolve) => setTimeout(resolve, remaining + 50));
   }
+  return Math.floor(Date.now() / 60_000);
 }
 
-describe('SMS Throttle Integration (testcontainers + Valkey)', () => {
+describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () => {
   let container: StartedTestContainer;
   let app: INestApplication;
   let redis: IORedis;
+  let smsService: SmsService;
+  let sendSpy: MockInstance<TwilioVerifyClient['sendVerification']>;
+  let checkSpy: MockInstance<TwilioVerifyClient['checkVerification']>;
 
   beforeAll(async () => {
-    // Start Valkey container
     container = await new GenericContainer('valkey/valkey:8')
       .withExposedPorts(6379)
       .start();
 
-    const host = container.getHost();
-    const port = container.getMappedPort(6379);
-    const redisUrl = `redis://${host}:${port}`;
+    redis = new IORedis(
+      `redis://${container.getHost()}:${container.getMappedPort(6379)}`,
+      { maxRetriesPerRequest: 3 },
+    );
 
-    // Create a standalone ioredis client for TTL verification
-    redis = new IORedis(redisUrl, { maxRetriesPerRequest: 3 });
+    // Production wiring: the real service built from env-shaped config and the
+    // real Valkey client. Vitest does not emit decorator metadata, so the
+    // controller's constructor type is declared explicitly (same pattern as
+    // the other integration specs).
+    smsService = new SmsService(
+      new ConfigService({
+        TWILIO_ACCOUNT_SID: 'AC_integration',
+        TWILIO_API_KEY_SID: 'SK_integration',
+        TWILIO_API_KEY_SECRET: 'integration-secret',
+        TWILIO_VERIFY_SERVICE_SID: 'VA_integration',
+        SMS_VERIFICATION_TOKEN_SECRET: 'integration-token-secret',
+        SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: String(GLOBAL_SEND_LIMIT_PER_MINUTE),
+      }),
+      redis,
+    );
+    Reflect.defineMetadata('design:paramtypes', [SmsService], SmsController);
 
-    // Build NestJS TestingModule with real Valkey-backed throttler
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
         ThrottlerModule.forRoot({
-          throttlers: [{ name: 'default', ttl: 60_000, limit: 60 }],
+          throttlers: [{ name: 'default', ttl: 60_000, limit: DEFAULT_IP_THROTTLE_LIMIT }],
           storage: new ThrottlerStorageRedisService(redis),
         }),
       ],
-      controllers: [TestSmsController, TestAuthController],
+      controllers: [SmsController],
       providers: [
-        {
-          provide: APP_GUARD,
-          useClass: ThrottlerGuard,
-        },
+        { provide: SmsService, useValue: smsService },
+        { provide: APP_GUARD, useClass: ThrottlerGuard },
       ],
     }).compile();
 
@@ -101,176 +113,159 @@ describe('SMS Throttle Integration (testcontainers + Valkey)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    vi.restoreAllMocks();
     await app?.close();
     await redis?.quit();
     await container?.stop();
   });
 
-  describe('send-code rate limiting', () => {
-    it('IP axis: 20/3600s -- 21번째 요청에서 429', async () => {
-      // Flush keys to isolate test
-      await redis.flushall();
+  beforeEach(async () => {
+    await redis.flushall();
+    vi.restoreAllMocks();
+    sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+      .mockResolvedValue({ sid: 'VE_integration', status: 'pending', channel: 'sms' });
+    checkSpy = vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
+      .mockResolvedValue({ sid: 'VE_integration', status: 'pending', valid: false });
+  });
 
+  describe('send-code', () => {
+    it('같은 번호의 30초 cooldown 안 재발송은 429이고 Valkey TTL이 실제로 설정된다', async () => {
       const server = app.getHttpServer();
+      const phone = phoneAt(1);
 
-      // 20 requests should succeed
-      for (let i = 0; i < 20; i++) {
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
+      const second = await request(server).post('/sms/send-code').send({ phone });
+
+      expect(second.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      const cooldownTtl = await redis.pttl(smsResendKey(phone));
+      expect(cooldownTtl).toBeGreaterThan(25_000);
+      expect(cooldownTtl).toBeLessThanOrEqual(30_000);
+      const counterTtl = await redis.ttl(smsSendCounterKey(phone));
+      expect(counterTtl).toBeGreaterThan(3_500);
+      expect(counterTtl).toBeLessThanOrEqual(3_600);
+      expect(await redis.get(smsSendCounterKey(phone))).toBe('1');
+    });
+
+    it('cooldown이 지나도 같은 번호는 시간당 5회를 넘겨 발송할 수 없다', async () => {
+      const server = app.getHttpServer();
+      const phone = phoneAt(2);
+
+      for (let i = 0; i < 5; i++) {
+        await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
+        await redis.del(smsResendKey(phone)); // simulate the 30s cooldown elapsing
+      }
+      const sixth = await request(server).post('/sms/send-code').send({ phone });
+
+      expect(sixth.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(sendSpy).toHaveBeenCalledTimes(5);
+    });
+
+    it('번호를 돌리는 대량 발송은 공유 IP throttle이 아니라 분당 global send budget에서 멈춘다', async () => {
+      const server = app.getHttpServer();
+      const windowIndex = await waitForFreshMinuteWindow();
+      const remainingBudget = 5;
+      await redis.set(
+        smsGlobalSendCounterKey(windowIndex),
+        String(GLOBAL_SEND_LIMIT_PER_MINUTE - remainingBudget),
+        'EX',
+        120,
+      );
+
+      for (let i = 0; i < remainingBudget; i++) {
+        await request(server)
+          .post('/sms/send-code')
+          .send({ phone: phoneAt(100 + i) })
+          .expect(HttpStatus.OK);
+      }
+      const rejectedPhone = phoneAt(200);
+      const rejected = await request(server).post('/sms/send-code').send({ phone: rejectedPhone });
+
+      expect(remainingBudget).toBeGreaterThan(DEFAULT_IP_THROTTLE_LIMIT);
+      expect(rejected.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(rejected.body.message).toBe('인증번호 요청이 많아 잠시 후 다시 시도해주세요.');
+      expect(sendSpy).toHaveBeenCalledTimes(remainingBudget);
+      // The rejected buyer keeps no per-phone cooldown or hourly slot.
+      expect(await redis.exists(smsResendKey(rejectedPhone))).toBe(0);
+      expect(await redis.get(smsSendCounterKey(rejectedPhone))).toBe('0');
+      const globalTtl = await redis.ttl(smsGlobalSendCounterKey(windowIndex));
+      expect(globalTtl).toBeGreaterThan(0);
+      expect(globalTtl).toBeLessThanOrEqual(120);
+    });
+
+    it('공급자 일시 장애로 보내지 못한 요청은 cooldown·시간당 한도·global budget을 되돌린다', async () => {
+      const server = app.getHttpServer();
+      const windowIndex = await waitForFreshMinuteWindow();
+      const phone = phoneAt(3);
+      sendSpy.mockRejectedValueOnce(new TwilioVerifyApiError(503, 20503, 'Service Unavailable'));
+
+      const failed = await request(server).post('/sms/send-code').send({ phone });
+
+      expect(failed.status).toBe(HttpStatus.BAD_REQUEST);
+      expect(await redis.exists(smsResendKey(phone))).toBe(0);
+      expect(await redis.get(smsSendCounterKey(phone))).toBe('0');
+      expect(await redis.get(smsGlobalSendCounterKey(windowIndex))).toBe('0');
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
+    });
+  });
+
+  describe('verify-code', () => {
+    it('같은 번호의 15분 10회를 넘는 확인 시도는 Twilio 호출 전에 429로 막힌다', async () => {
+      const server = app.getHttpServer();
+      const phone = phoneAt(4);
+
+      for (let i = 0; i < 10; i++) {
         const res = await request(server)
-          .post('/sms/send-code')
-          .send({ phone: `+8201000000${String(i).padStart(2, '0')}` })
-          .expect(HttpStatus.OK);
-        expect(res.body.success).toBe(true);
-      }
-
-      // 21st request should be throttled (429)
-      const throttled = await request(server)
-        .post('/sms/send-code')
-        .send({ phone: '+82010000099' });
-      expect(throttled.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
-    });
-
-    it('phone axis: 동일 phone + 서로 다른 IP axis는 @Throttle default로 동일 IP에서 test', async () => {
-      // This test validates that the IP-based default throttle is enforced
-      // Phone-axis throttling (5/3600s) is done in SmsService via Lua script,
-      // not through @nestjs/throttler. The throttler handles IP-axis only.
-      // The SmsService Lua counter is tested in sms.service.spec.ts unit tests.
-      await redis.flushall();
-
-      const server = app.getHttpServer();
-
-      // Send 20 requests with same phone (IP axis throttle applies)
-      for (let i = 0; i < 20; i++) {
-        await request(server)
-          .post('/sms/send-code')
-          .send({ phone: '+82010012345678' })
-          .expect(HttpStatus.OK);
-      }
-
-      // 21st request exceeds IP axis limit
-      const res = await request(server)
-        .post('/sms/send-code')
-        .send({ phone: '+82010012345678' });
-      expect(res.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
-    });
-  });
-
-  describe('verify-code rate limiting', () => {
-    it('IP axis: 10/900s -- 11번째 요청에서 429', async () => {
-      await redis.flushall();
-
-      const server = app.getHttpServer();
-
-      // 10 requests should succeed
-      for (let i = 0; i < 10; i++) {
-        await request(server)
           .post('/sms/verify-code')
-          .send({ phone: `+8201000000${String(i).padStart(2, '0')}`, code: '123456' })
+          .send({ phone, code: '123456' })
           .expect(HttpStatus.OK);
+        expect(res.body.verified).toBe(false);
       }
-
-      // 11th request should be throttled
-      const res = await request(server)
+      const eleventh = await request(server)
         .post('/sms/verify-code')
-        .send({ phone: '+82010000099', code: '123456' });
-      expect(res.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
-    });
+        .send({ phone, code: '123456' });
 
-    it('같은 phone으로 반복 verify -- IP axis limit 적용', async () => {
-      await redis.flushall();
-
-      const server = app.getHttpServer();
-
-      for (let i = 0; i < 10; i++) {
-        await request(server)
-          .post('/sms/verify-code')
-          .send({ phone: '+82010012345678', code: '000000' })
-          .expect(HttpStatus.OK);
-      }
-
-      const res = await request(server)
-        .post('/sms/verify-code')
-        .send({ phone: '+82010012345678', code: '000000' });
-      expect(res.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(eleventh.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(checkSpy).toHaveBeenCalledTimes(10);
     });
   });
 
-  describe('password-reset rate limiting (D-09)', () => {
-    it('3/900s -- 4번째 요청에서 429', async () => {
-      await redis.flushall();
-
+  describe('phone verification token (audit #103)', () => {
+    it('발급된 토큰은 한 번만 claim되고, release하면 같은 토큰으로 재시도할 수 있다', async () => {
       const server = app.getHttpServer();
+      const phone = phoneAt(5);
+      checkSpy.mockResolvedValueOnce({ sid: 'VE_ok', status: 'approved', valid: true });
 
-      // 3 requests should succeed
-      for (let i = 0; i < 3; i++) {
-        await request(server)
-          .post('/auth/password-reset/request')
-          .send({ email: `user${i}@test.com` })
-          .expect(HttpStatus.OK);
-      }
-
-      // 4th request should be throttled
-      const res = await request(server)
-        .post('/auth/password-reset/request')
-        .send({ email: 'blocked@test.com' });
-      expect(res.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
-    });
-  });
-
-  // [Review #6 TTL ms 검증]
-  describe('TTL 단위 검증', () => {
-    it('send-code Throttler가 1h=3600000ms TTL을 Valkey에 설정하는지 확인', async () => {
-      await redis.flushall();
-
-      const server = app.getHttpServer();
-
-      // Make one request to create throttler key
-      await request(server)
-        .post('/sms/send-code')
-        .send({ phone: '+82010099998888' })
-        .expect(HttpStatus.OK);
-
-      // Find throttler hit keys in Valkey.
-      // @nest-lab/throttler-storage-redis stores keys as `{<tracker>:<throttlerName>}:hits`
-      // (and `:blocked`) — no "throttler" substring in the key itself.
-      const keys = await redis.keys('*');
-      const throttlerKeys = keys.filter((k) => k.endsWith(':hits'));
-
-      // At least one throttler key should exist
-      expect(throttlerKeys.length).toBeGreaterThan(0);
-
-      // Check PTTL of any throttler key -- should be <= 3_600_000ms (1h)
-      // The send-code endpoint has ttl: 3_600_000
-      for (const key of throttlerKeys) {
-        const pttl = await redis.pttl(key);
-        // PTTL should be positive and <= 3_600_000ms
-        expect(pttl).toBeGreaterThan(0);
-        expect(pttl).toBeLessThanOrEqual(3_600_000);
-        // Should be close to 3_600_000ms (within first second of creation)
-        expect(pttl).toBeGreaterThan(3_599_000);
-      }
-    });
-
-    it('verify-code Throttler가 15min=900000ms TTL을 Valkey에 설정하는지 확인', async () => {
-      await redis.flushall();
-
-      const server = app.getHttpServer();
-
-      await request(server)
+      const verified = await request(server)
         .post('/sms/verify-code')
-        .send({ phone: '+82010088887777', code: '123456' })
+        .send({ phone, code: '123456', purpose: 'signup' })
         .expect(HttpStatus.OK);
+      const token = verified.body.verificationToken as string;
+      const nonce = (JSON.parse(
+        Buffer.from(token.split('.')[0]!, 'base64url').toString('utf8'),
+      ) as { nonce: string }).nonce;
 
-      const keys = await redis.keys('*');
-      const throttlerKeys = keys.filter((k) => k.endsWith(':hits'));
+      const claims = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          smsService.claimPhoneVerificationToken(token, { phone, purpose: 'signup' })),
+      );
+      const fulfilled = claims.filter(
+        (claim): claim is PromiseFulfilledResult<Awaited<ReturnType<SmsService['claimPhoneVerificationToken']>>> =>
+          claim.status === 'fulfilled',
+      );
+      expect(fulfilled).toHaveLength(1);
 
-      expect(throttlerKeys.length).toBeGreaterThan(0);
+      const claimTtl = await redis.pttl(smsVerificationTokenClaimKey(phone, nonce));
+      expect(claimTtl).toBeGreaterThan(600_000);
+      expect(claimTtl).toBeLessThanOrEqual(660_000);
 
-      for (const key of throttlerKeys) {
-        const pttl = await redis.pttl(key);
-        expect(pttl).toBeGreaterThan(0);
-        expect(pttl).toBeLessThanOrEqual(900_000);
-        expect(pttl).toBeGreaterThan(899_000);
-      }
+      await fulfilled[0]!.value.release();
+      await expect(
+        smsService.claimPhoneVerificationToken(token, { phone, purpose: 'signup' }),
+      ).resolves.toBeDefined();
+      await expect(
+        smsService.claimPhoneVerificationToken(token, { phone, purpose: 'signup' }),
+      ).rejects.toThrow('이미 사용된 전화번호 인증입니다');
     });
   });
 });

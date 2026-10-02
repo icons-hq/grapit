@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * Unit tests for sms.controller.ts Plan 10-06 changes:
  * 1. Hotfix 260517 skips signup SMS IP throttling
  * 2. sendCodeSchema accepts both Korean local and E.164 international numbers
- * 3. sms.service.ts local SMS rate limits are bypassed for signup recovery
+ * 3. sms.service.ts keeps IP-independent app-side SMS limits (audit #36)
  */
 
 // ---- 1. Decorator metadata tests ----
@@ -72,76 +72,96 @@ describe('sendCodeSchema phone validation', () => {
   });
 });
 
-// ---- 3. sms.service.ts local SMS rate limit bypass tests ----
-describe('SmsService local SMS rate limit hotfix', () => {
-  it('sendVerificationCode does not block on local cooldown or phone-axis counters', async () => {
+// ---- 3. sms.service.ts app-side SMS limits (audit #36) ----
+function twilioConfig(overrides: Record<string, string> = {}) {
+  const env: Record<string, string> = {
+    TWILIO_ACCOUNT_SID: 'AC_test',
+    TWILIO_API_KEY_SID: 'SK_test',
+    TWILIO_API_KEY_SECRET: 'test-secret',
+    TWILIO_VERIFY_SERVICE_SID: 'VA_test',
+    ...overrides,
+  };
+  return { get: vi.fn().mockImplementation((key: string) => env[key]) };
+}
+
+describe('SmsService app-side SMS limits', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('enforces the per-phone resend cooldown by default even though the controller skips IP throttling', async () => {
+    const { HttpException } = await import('@nestjs/common');
     const mockRedis = {
       set: vi.fn().mockResolvedValue(null),
-      eval: vi.fn().mockResolvedValue(999),
+      eval: vi.fn().mockResolvedValue(1),
+      pttl: vi.fn().mockResolvedValue(25_000),
+    };
+
+    const { SmsService } = await import('./sms.service.js');
+    const { TwilioVerifyClient } = await import('./twilio-verify-client.js');
+    const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification');
+
+    // @ts-expect-error partial mock
+    const service = new SmsService(twilioConfig(), mockRedis);
+    const error = await service.sendVerificationCode('+821012345678').catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as InstanceType<typeof HttpException>).getStatus()).toBe(429);
+    expect((error as InstanceType<typeof HttpException>).getResponse()).toMatchObject({
+      retryAfterMs: 25_000,
+    });
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('enforces the per-phone verify limit by default', async () => {
+    const { HttpException } = await import('@nestjs/common');
+    const mockRedis = {
+      set: vi.fn().mockResolvedValue('OK'),
+      eval: vi.fn().mockResolvedValue(11),
+    };
+
+    const { SmsService } = await import('./sms.service.js');
+    const { TwilioVerifyClient } = await import('./twilio-verify-client.js');
+    const checkSpy = vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification');
+
+    // @ts-expect-error partial mock
+    const service = new SmsService(twilioConfig(), mockRedis);
+    const error = await service.verifyCode('+821012345678', '123456').catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as InstanceType<typeof HttpException>).getStatus()).toBe(429);
+    expect(checkSpy).not.toHaveBeenCalled();
+  });
+
+  it('SMS_LOCAL_RATE_LIMITS_ENABLED=false bypasses only the per-phone limits, not the global send budget', async () => {
+    const mockRedis = {
+      set: vi.fn().mockResolvedValue(null),
+      eval: vi.fn().mockResolvedValue(1),
       pttl: vi.fn().mockResolvedValue(3000),
     };
 
     const { SmsService } = await import('./sms.service.js');
     const { TwilioVerifyClient } = await import('./twilio-verify-client.js');
-    const mockConfigService = {
-      get: vi.fn().mockImplementation((key: string) => {
-        const env: Record<string, string> = {
-          TWILIO_ACCOUNT_SID: 'AC_test',
-          TWILIO_API_KEY_SID: 'SK_test',
-          TWILIO_API_KEY_SECRET: 'test-secret',
-          TWILIO_VERIFY_SERVICE_SID: 'VA_test',
-        };
-        return env[key];
-      }),
-    };
     const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
       .mockResolvedValueOnce({
-        sid: 'VE_hotfix',
+        sid: 'VE_kill_switch',
         status: 'pending',
         channel: 'sms',
       });
 
     // @ts-expect-error partial mock
-    const service = new SmsService(mockConfigService, mockRedis);
+    const service = new SmsService(twilioConfig({ SMS_LOCAL_RATE_LIMITS_ENABLED: 'false' }), mockRedis);
     const result = await service.sendVerificationCode('+821012345678');
 
     expect(result.success).toBe(true);
     expect(sendSpy).toHaveBeenCalledWith('+821012345678');
     expect(mockRedis.set).not.toHaveBeenCalled();
-    expect(mockRedis.eval).not.toHaveBeenCalled();
-  });
-
-  it('verifyCode does not block on local phone-axis counters', async () => {
-    const mockRedis = {
-      set: vi.fn().mockResolvedValue('OK'),
-      eval: vi.fn().mockResolvedValue(999),
-    };
-
-    const { SmsService } = await import('./sms.service.js');
-    const { TwilioVerifyClient } = await import('./twilio-verify-client.js');
-    const mockConfigService = {
-      get: vi.fn().mockImplementation((key: string) => {
-        const env: Record<string, string> = {
-          TWILIO_ACCOUNT_SID: 'AC_test',
-          TWILIO_API_KEY_SID: 'SK_test',
-          TWILIO_API_KEY_SECRET: 'test-secret',
-          TWILIO_VERIFY_SERVICE_SID: 'VA_test',
-        };
-        return env[key];
-      }),
-    };
-    vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
-      .mockResolvedValueOnce({
-        sid: 'VE_hotfix',
-        status: 'approved',
-        valid: true,
-      });
-
-    // @ts-expect-error partial mock
-    const service = new SmsService(mockConfigService, mockRedis);
-    const result = await service.verifyCode('+821012345678', '123456');
-
-    expect(result.verified).toBe(true);
-    expect(mockRedis.eval).not.toHaveBeenCalled();
+    expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('INCR'),
+      1,
+      expect.stringMatching(/^sms:global-send:\d+$/),
+      120,
+    );
   });
 });

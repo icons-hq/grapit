@@ -40,6 +40,8 @@ export class SmsController {
   @HttpCode(HttpStatus.OK)
   @SkipThrottle()
   // Hotfix 260517: signup SMS must not be blocked by shared IP traffic.
+  // Abuse limits that do not depend on client IP (per-phone cooldown and
+  // hourly cap, service-wide send budget) live in SmsService.
   @Post('send-code')
   async sendCode(
     @Body(new ZodValidationPipe(sendCodeSchema)) dto: SendCodeBody,
@@ -61,6 +63,7 @@ export class SmsController {
   @HttpCode(HttpStatus.OK)
   @SkipThrottle()
   // Hotfix 260517: signup SMS must not be blocked by shared IP traffic.
+  // SmsService applies the per-phone verify limit instead.
   @Post('verify-code')
   async verifyCode(
     @Body(new ZodValidationPipe(verifyCodeSchema)) dto: VerifyCodeBody,

@@ -471,6 +471,17 @@ Documents, evidence, UI tests, and logs must not include:
 
 Use masked references and evidence paths instead.
 
+### 10.4 Phone Verification Abuse Controls
+
+`/sms/send-code` and `/sms/verify-code` skip the IP throttler because shared IPs (carrier NAT, venue Wi-Fi) blocked signups during the 2026-05 hotfix. `SmsService` applies limits that do not depend on client IP, backed by Valkey:
+
+- per phone: 30-second resend cooldown, 5 sends per hour, 10 verify attempts per 15 minutes. `SMS_LOCAL_RATE_LIMITS_ENABLED=false` turns these off as an incident switch; unset means on.
+- service-wide send budget per fixed minute: `SMS_GLOBAL_SEND_LIMIT_PER_MINUTE`, default `300`, `0` disables. Requests over the budget get `429` and give back their per-phone slots. The first rejection in a minute sends a Sentry warning. Raise the value before a ticket opening that expects more new signups.
+- optional destination allowlist: `SMS_ALLOWED_COUNTRIES` (comma-separated ISO alpha-2 codes, unset = all countries). Twilio Verify Geo Permissions remain the provider-side control.
+- a failed provider call caused by a transient error (5xx, 429, network) returns every slot it reserved.
+
+A phone verification token from `/sms/verify-code` backs exactly one write. Signup, social registration completion, and profile phone change claim the token nonce in Valkey (`SET NX`) right before their database write and release it if that write fails. A second use returns `400`.
+
 ## 11. Testing Strategy
 
 | Area | Current commands |

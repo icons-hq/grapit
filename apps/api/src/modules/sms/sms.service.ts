@@ -17,15 +17,27 @@ import {
 } from './phone.util.js';
 
 // Phase 10 constants (retained)
-const SMS_LOCAL_RATE_LIMITS_ENABLED = false; // Hotfix 260517: unblock signup; provider limits still apply.
+// Local SMS abuse limits are on unless SMS_LOCAL_RATE_LIMITS_ENABLED=false.
+// The 260517 hotfix turned them off together with the IP throttle; only the
+// IP axis was the shared-IP problem, so the phone axis and the global send
+// budget below stay independent of client IP.
 const RESEND_COOLDOWN_MS = 30_000;           // D-11: 30s resend cooldown
 const SEND_PHONE_LIMIT = 5;                  // D-06: phone 5/3600s
 const SEND_PHONE_WINDOW_SEC = 3600;          // D-06: 1h window
 const VERIFY_PHONE_LIMIT = 10;               // D-07: phone 10/900s
 const VERIFY_PHONE_WINDOW_SEC = 900;         // D-07: 15min window
+// Service-wide send budget per fixed minute. Bounds number-rotation pumping
+// that per-phone limits cannot see. 0 disables it.
+export const DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE = 300;
+const GLOBAL_SEND_WINDOW_MS = 60_000;
+const GLOBAL_SEND_COUNTER_TTL_SEC = 120;
 
 const VERIFIED_FLAG_TTL_SEC = 600;           // verified flag 10min for signup re-check
 const PHONE_VERIFICATION_TOKEN_TTL_MS = VERIFIED_FLAG_TTL_SEC * 1000;
+// Keep the single-use marker a little past token expiry so API instances with
+// slightly different clocks cannot accept a token whose marker already expired.
+const PHONE_VERIFICATION_TOKEN_CLAIM_GRACE_MS = 60_000;
+const PHONE_VERIFICATION_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 export const SMS_VERIFICATION_PURPOSES = [
   'signup',
   'social_registration',
@@ -135,8 +147,38 @@ export const smsVerifiedKey      = (e164: string): string => { assertE164(e164);
 export const smsResendKey        = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:resend`; };
 export const smsSendCounterKey   = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:send-count`; };
 export const smsVerifyCounterKey = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:verify-count`; };
+export const smsVerificationTokenClaimKey = (e164: string, nonce: string): string => {
+  assertE164(e164);
+  if (!PHONE_VERIFICATION_NONCE_RE.test(nonce)) {
+    throw new Error('[sms] invalid verification token nonce');
+  }
+  return `{sms:${e164}}:token-used:${nonce}`;
+};
+// Service-wide counter, touched only by single-key commands.
+export const smsGlobalSendCounterKey = (windowIndex: number): string =>
+  `sms:global-send:${windowIndex}`;
 
 export interface SendResult { success: boolean; message: string }
+
+/**
+ * Proof that one phone verification token was consumed for a write.
+ * `release()` returns the token to the unused state when the write that
+ * consumed it failed, so the buyer can retry without another SMS.
+ */
+export interface PhoneVerificationClaim {
+  release(): Promise<void>;
+}
+
+/** `promise.catch(releasePhoneClaimAndRethrow(claim))` for the consuming write. */
+export function releasePhoneClaimAndRethrow(
+  claim: PhoneVerificationClaim,
+): (err: unknown) => Promise<never> {
+  return async (err: unknown) => {
+    await claim.release();
+    throw err;
+  };
+}
+
 export interface VerifyResult {
   verified: boolean;
   message?: string;
@@ -159,6 +201,12 @@ const SMS_PROVIDER_RATE_LIMITED_MESSAGE =
   '인증번호 요청이 제한되었습니다. 잠시 후 다시 시도해주세요.';
 const SMS_SEND_FAILED_MESSAGE =
   '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.';
+const SMS_LOCAL_RATE_LIMITED_MESSAGE = '잠시 후 다시 시도해주세요';
+const SMS_GLOBAL_RATE_LIMITED_MESSAGE =
+  '인증번호 요청이 많아 잠시 후 다시 시도해주세요.';
+const PHONE_VERIFICATION_REQUIRED_MESSAGE = '전화번호 인증이 완료되지 않았습니다';
+const PHONE_VERIFICATION_TOKEN_USED_MESSAGE =
+  '이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.';
 
 const SMS_ERROR_CODES = {
   invalidPhone: 'SMS_PHONE_INVALID',
@@ -192,6 +240,42 @@ function parseE164OrBadRequest(phone: string): string {
     }
     throw err;
   }
+}
+
+function smsTooManyRequests(retryAfterMs: number, message = SMS_LOCAL_RATE_LIMITED_MESSAGE): HttpException {
+  return new HttpException(
+    { statusCode: 429, message, retryAfterMs: Math.max(retryAfterMs, 0) },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+}
+
+export function parseSmsLocalRateLimitsEnabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() !== 'false';
+}
+
+export function parseSmsGlobalSendLimitPerMinute(value: string | undefined): number {
+  if (value === undefined || value.trim() === '') {
+    return DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE;
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE must be a non-negative integer');
+  }
+  return parsed;
+}
+
+export function parseSmsAllowedCountries(value: string | undefined): ReadonlySet<string> | null {
+  if (value === undefined || value.trim() === '') return null;
+  const countries = value
+    .split(',')
+    .map((country) => country.trim().toUpperCase())
+    .filter(Boolean);
+  for (const country of countries) {
+    if (!/^[A-Z]{2}$/.test(country)) {
+      throw new Error('SMS_ALLOWED_COUNTRIES must be comma-separated ISO 3166-1 alpha-2 codes');
+    }
+  }
+  return countries.length > 0 ? new Set(countries) : null;
 }
 
 function maskE164ForLog(e164: string): string {
@@ -233,6 +317,9 @@ export class SmsService {
   private readonly client: TwilioVerifyClient | null;
   private readonly isDevMock: boolean;
   private readonly verificationTokenSecret: string;
+  private readonly localRateLimitsEnabled: boolean;
+  private readonly globalSendLimitPerMinute: number;
+  private readonly allowedCountries: ReadonlySet<string> | null;
 
   constructor(
     configService: ConfigService,
@@ -290,9 +377,24 @@ export class SmsService {
         );
     this.verificationTokenSecret =
       verificationTokenSecret || 'dev-sms-verification-token-secret';
+    this.localRateLimitsEnabled = parseSmsLocalRateLimitsEnabled(
+      configService.get<string>('SMS_LOCAL_RATE_LIMITS_ENABLED'),
+    );
+    this.globalSendLimitPerMinute = parseSmsGlobalSendLimitPerMinute(
+      configService.get<string>('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE'),
+    );
+    this.allowedCountries = parseSmsAllowedCountries(
+      configService.get<string>('SMS_ALLOWED_COUNTRIES'),
+    );
 
     if (this.isDevMock) {
       this.logger.warn({ event: 'sms.credential_missing', mode: 'dev_mock' });
+    }
+    if (!this.localRateLimitsEnabled) {
+      this.logger.warn({ event: 'sms.local_rate_limits_disabled' });
+    }
+    if (this.globalSendLimitPerMinute === 0) {
+      this.logger.warn({ event: 'sms.global_send_budget_disabled' });
     }
   }
 
@@ -306,9 +408,96 @@ export class SmsService {
     )) as number;
   }
 
+  /**
+   * Reserve every app-side send quota before the provider call.
+   * Order matters: the per-phone checks run first so hammering one number
+   * cannot drain the service-wide budget, and a request rejected by the
+   * global budget gives its per-phone slots back.
+   */
+  private async reserveSendQuota(e164: string): Promise<() => Promise<void>> {
+    const rollbacks: Array<{ op: string; run: () => Promise<unknown> }> = [];
+    const release = async (): Promise<void> => {
+      // [WR-02] Emit per-op rollback failures so ops can detect stuck-quota
+      // states instead of silently pinning a buyer in cooldown.
+      const results = await Promise.allSettled(rollbacks.map(({ run }) => run()));
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          this.logger.warn({
+            event: 'sms.rollback_failed',
+            phone: maskE164ForLog(e164),
+            op: rollbacks[index]!.op,
+            err: (result.reason as Error).message,
+          });
+        }
+      });
+    };
+
+    if (this.localRateLimitsEnabled) {
+      // D-11: 30s resend cooldown via Valkey SET NX
+      const cooldownKey = smsResendKey(e164);
+      const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
+      if (acquired === null) {
+        const ttl = await this.redis.pttl(cooldownKey);
+        this.logger.warn({ event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'resend_cooldown' });
+        throw smsTooManyRequests(ttl);
+      }
+      rollbacks.push({ op: 'cooldown_del', run: () => this.redis.del(cooldownKey) });
+
+      // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
+      const sendCounterKey = smsSendCounterKey(e164);
+      const sendCount = await this.atomicIncr(sendCounterKey, SEND_PHONE_WINDOW_SEC);
+      if (sendCount > SEND_PHONE_LIMIT) {
+        this.logger.warn({
+          event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'phone_axis_send', count: sendCount,
+        });
+        throw smsTooManyRequests(SEND_PHONE_WINDOW_SEC * 1000);
+      }
+      rollbacks.push({ op: 'counter_decr', run: () => this.redis.decr(sendCounterKey) });
+    }
+
+    if (this.globalSendLimitPerMinute > 0) {
+      const now = Date.now();
+      const windowIndex = Math.floor(now / GLOBAL_SEND_WINDOW_MS);
+      const globalKey = smsGlobalSendCounterKey(windowIndex);
+      const globalCount = await this.atomicIncr(globalKey, GLOBAL_SEND_COUNTER_TTL_SEC);
+      if (globalCount > this.globalSendLimitPerMinute) {
+        await release();
+        this.logger.warn({
+          event: 'sms.rate_limited',
+          phone: maskE164ForLog(e164),
+          layer: 'global_send_budget',
+          count: globalCount,
+          limit: this.globalSendLimitPerMinute,
+        });
+        if (globalCount === this.globalSendLimitPerMinute + 1) {
+          // One alert per window: the budget tripping means either an abuse
+          // burst or a launch spike that needs a larger configured budget.
+          Sentry.withScope((scope) => {
+            scope.setTag('provider', 'twilio_verify');
+            scope.setTag('sms_limit', 'global_send_budget');
+            scope.setLevel('warning');
+            Sentry.captureMessage('SMS global send budget exhausted');
+          });
+        }
+        throw smsTooManyRequests(
+          (windowIndex + 1) * GLOBAL_SEND_WINDOW_MS - now,
+          SMS_GLOBAL_RATE_LIMITED_MESSAGE,
+        );
+      }
+      rollbacks.push({ op: 'global_counter_decr', run: () => this.redis.decr(globalKey) });
+    }
+
+    return release;
+  }
+
   async sendVerificationCode(phone: string): Promise<SendResult> {
     const e164 = parseE164OrBadRequest(phone);
     const country = getE164Country(e164) ?? 'unknown';
+
+    if (this.allowedCountries && !this.allowedCountries.has(country)) {
+      this.logger.warn({ event: 'sms.country_blocked', phone: maskE164ForLog(e164), country });
+      throw smsBadRequest(SMS_RECIPIENT_BLOCKED_MESSAGE, SMS_ERROR_CODES.recipientBlocked);
+    }
 
     // Dev mock -- cooldown/counter/Twilio all skipped
     if (this.isDevMock) {
@@ -316,37 +505,7 @@ export class SmsService {
       return { success: true, message: '인증번호가 발송되었습니다' };
     }
 
-    let cooldownKey: string | undefined;
-    let sendCounterKey: string | undefined;
-
-    if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
-      // D-11: 30s resend cooldown via Valkey SET NX
-      cooldownKey = smsResendKey(e164);
-      const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
-      if (acquired === null) {
-        const ttl = await this.redis.pttl(cooldownKey);
-        this.logger.warn({ event: 'sms.rate_limited', phone: e164, layer: 'resend_cooldown' });
-        throw new HttpException(
-          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: Math.max(ttl, 0) },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-
-      // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
-      sendCounterKey = smsSendCounterKey(e164);
-      const sendCount = await this.atomicIncr(
-        sendCounterKey, SEND_PHONE_WINDOW_SEC,
-      );
-      if (sendCount > SEND_PHONE_LIMIT) {
-        this.logger.warn({
-          event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_send', count: sendCount,
-        });
-        throw new HttpException(
-          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: SEND_PHONE_WINDOW_SEC * 1000 },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-    }
+    const releaseSendQuota = await this.reserveSendQuota(e164);
 
     try {
       const sent = await this.client!.sendVerification(e164);
@@ -366,27 +525,11 @@ export class SmsService {
       //   transient provider outage would burn the user's 5/hour quota
       //   without delivering anything (Issue 2 from PR #16 review).
       // Twilio permanent 4xx -> keep both cooldown and counter (abuse mitigation).
+      // The global budget slot follows the same rule.
       const shouldRollback =
         !(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota;
-      if (shouldRollback && SMS_LOCAL_RATE_LIMITS_ENABLED && cooldownKey && sendCounterKey) {
-        // [WR-02] Emit per-op rollback failures so ops can detect stuck-quota
-        // states. Silently swallowing `.catch(() => {})` meant a Valkey blip
-        // during rollback could pin a user in the 30s cooldown or retain
-        // their phone-axis slot with zero observability.
-        const rollbackResults = await Promise.allSettled([
-          this.redis.del(cooldownKey),
-          this.redis.decr(sendCounterKey),
-        ]);
-        rollbackResults.forEach((r, i) => {
-          if (r.status === 'rejected') {
-            this.logger.warn({
-              event: 'sms.rollback_failed',
-              phone: e164,
-              op: i === 0 ? 'cooldown_del' : 'counter_decr',
-              err: (r.reason as Error).message,
-            });
-          }
-        });
+      if (shouldRollback) {
+        await releaseSendQuota();
       }
 
       Sentry.withScope((scope) => {
@@ -453,19 +596,16 @@ export class SmsService {
     }
 
     const verifyCounterKey = smsVerifyCounterKey(e164);
-    if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
+    if (this.localRateLimitsEnabled) {
       // D-07 local phone-axis rate limit runs before the provider call.
       const verifyCount = await this.atomicIncr(
         verifyCounterKey, VERIFY_PHONE_WINDOW_SEC,
       );
       if (verifyCount > VERIFY_PHONE_LIMIT) {
         this.logger.warn({
-          event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_verify', count: verifyCount,
+          event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'phone_axis_verify', count: verifyCount,
         });
-        throw new HttpException(
-          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
+        throw smsTooManyRequests(VERIFY_PHONE_WINDOW_SEC * 1000);
       }
     }
 
@@ -502,7 +642,7 @@ export class SmsService {
         throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
       }
       if (err instanceof TwilioVerifyApiError && err.isRateLimited) {
-        if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
+        if (this.localRateLimitsEnabled) {
           await this.redis
             .decr(verifyCounterKey)
             .catch((rollbackErr: unknown) => {
@@ -514,17 +654,14 @@ export class SmsService {
               });
             });
         }
-        throw new HttpException(
-          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
+        throw smsTooManyRequests(VERIFY_PHONE_WINDOW_SEC * 1000);
       }
       // Transient Twilio/Valkey failure: the user got no verification
       // outcome, so release the verify slot that atomicIncr just consumed.
       // Mirrors the sendVerificationCode rollback policy for 5xx/network
       // failures. Without this, each Valkey blip burns one of the user's
       // 10/15min verify attempts without producing any result.
-      if (SMS_LOCAL_RATE_LIMITS_ENABLED && (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota)) {
+      if (this.localRateLimitsEnabled && (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota)) {
         await this.redis
           .decr(verifyCounterKey)
           .catch((rollbackErr: unknown) => {
@@ -587,10 +724,71 @@ export class SmsService {
     }
   }
 
+  /**
+   * Stateless signature/phone/purpose/expiry check. It does NOT consume the
+   * token, so use it only to fail fast before other request validation.
+   * Every write that relies on phone ownership must call
+   * claimPhoneVerificationToken() so one SMS verification backs one write.
+   */
   verifyPhoneVerificationToken(
     token: string,
     options: { phone: string; purpose: SmsVerificationPurpose },
   ): void {
+    this.validatePhoneVerificationToken(token, options);
+  }
+
+  /**
+   * Consume a phone verification token exactly once (audit #103).
+   *
+   * Valkey `SET NX` on the token nonce makes concurrent or repeated writes
+   * with the same token lose after the first claim. Call it immediately
+   * before the write and `release()` the claim if that write fails, so a
+   * failed signup can be retried with the same verification.
+   */
+  async claimPhoneVerificationToken(
+    token: string,
+    options: { phone: string; purpose: SmsVerificationPurpose },
+  ): Promise<PhoneVerificationClaim> {
+    const { e164, payload } = this.validatePhoneVerificationToken(token, options);
+    const claimKey = smsVerificationTokenClaimKey(e164, payload.nonce);
+    const ttlMs =
+      Math.max(payload.exp - Date.now(), 0) + PHONE_VERIFICATION_TOKEN_CLAIM_GRACE_MS;
+
+    const claimed = await this.redis.set(claimKey, '1', 'PX', ttlMs, 'NX');
+    if (claimed === null) {
+      this.logger.warn({
+        event: 'sms.verification_token_reused',
+        phone: maskE164ForLog(e164),
+        purpose: options.purpose,
+      });
+      throw new BadRequestException(PHONE_VERIFICATION_TOKEN_USED_MESSAGE);
+    }
+
+    let released = false;
+    return {
+      release: async () => {
+        if (released) return;
+        released = true;
+        // Only this claimant can hold the key until the token expires, so a
+        // plain DEL cannot free another request's claim.
+        try {
+          await this.redis.del(claimKey);
+        } catch (err) {
+          this.logger.warn({
+            event: 'sms.verification_token_release_failed',
+            phone: maskE164ForLog(e164),
+            purpose: options.purpose,
+            err: (err as Error).message,
+          });
+        }
+      },
+    };
+  }
+
+  private validatePhoneVerificationToken(
+    token: string,
+    options: { phone: string; purpose: SmsVerificationPurpose },
+  ): { e164: string; payload: PhoneVerificationTokenPayload } {
     const e164 = parseE164OrBadRequest(options.phone);
     const payload = this.parsePhoneVerificationToken(token);
 
@@ -599,8 +797,9 @@ export class SmsService {
       payload.purpose !== options.purpose ||
       payload.exp < Date.now()
     ) {
-      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      throw new BadRequestException(PHONE_VERIFICATION_REQUIRED_MESSAGE);
     }
+    return { e164, payload };
   }
 
   private createPhoneVerificationToken(
@@ -623,25 +822,25 @@ export class SmsService {
   private parsePhoneVerificationToken(token: string): PhoneVerificationTokenPayload {
     const [encodedPayload, signature] = token.split('.');
     if (!encodedPayload || !signature) {
-      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      throw new BadRequestException(PHONE_VERIFICATION_REQUIRED_MESSAGE);
     }
 
     const expectedSignature = this.signPhoneVerificationPayload(encodedPayload);
     const expected = Buffer.from(expectedSignature, 'utf8');
     const actual = Buffer.from(signature, 'utf8');
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      throw new BadRequestException(PHONE_VERIFICATION_REQUIRED_MESSAGE);
     }
 
     let payload: unknown;
     try {
       payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
     } catch {
-      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      throw new BadRequestException(PHONE_VERIFICATION_REQUIRED_MESSAGE);
     }
 
     if (!this.isPhoneVerificationPayload(payload)) {
-      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      throw new BadRequestException(PHONE_VERIFICATION_REQUIRED_MESSAGE);
     }
 
     return payload;
@@ -663,7 +862,8 @@ export class SmsService {
       typeof candidate.phone === 'string' &&
       SMS_VERIFICATION_PURPOSES.includes(candidate.purpose as SmsVerificationPurpose) &&
       typeof candidate.exp === 'number' &&
-      typeof candidate.nonce === 'string'
+      typeof candidate.nonce === 'string' &&
+      PHONE_VERIFICATION_NONCE_RE.test(candidate.nonce)
     );
   }
 }

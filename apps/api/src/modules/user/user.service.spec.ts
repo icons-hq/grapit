@@ -24,7 +24,8 @@ const baseUser = {
 
 describe('UserService preferred locale persistence', () => {
   let repository: Pick<UserRepository, 'findById' | 'updateProfile'>;
-  let smsService: Pick<SmsService, 'verifyPhoneVerificationToken'>;
+  let smsService: Pick<SmsService, 'claimPhoneVerificationToken'>;
+  let releasePhoneClaim: ReturnType<typeof vi.fn>;
   let db: {
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
@@ -39,8 +40,9 @@ describe('UserService preferred locale persistence', () => {
       findById: vi.fn().mockResolvedValue(baseUser),
       updateProfile: vi.fn().mockResolvedValue(baseUser),
     } as unknown as Pick<UserRepository, 'findById' | 'updateProfile'>;
+    releasePhoneClaim = vi.fn().mockResolvedValue(undefined);
     smsService = {
-      verifyPhoneVerificationToken: vi.fn(),
+      claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: releasePhoneClaim }),
     };
     const reservationWhere = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([]) });
     const reservationJoin = vi.fn().mockReturnValue({ where: reservationWhere });
@@ -163,7 +165,7 @@ describe('UserService preferred locale persistence', () => {
       isPhoneVerified: true,
     });
 
-    expect(smsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+    expect(smsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
       'signed-profile-phone-token',
       { phone: '+821099998888', purpose: 'profile_phone_change' },
     );
@@ -171,12 +173,49 @@ describe('UserService preferred locale persistence', () => {
       phone: '+821099998888',
       isPhoneVerified: true,
     });
+    expect(releasePhoneClaim).not.toHaveBeenCalled();
+  });
+
+  it('rejects a phone verification token that was already consumed before writing the profile', async () => {
+    vi.mocked(smsService.claimPhoneVerificationToken).mockRejectedValueOnce(
+      new BadRequestException('이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.'),
+    );
+
+    await expect(
+      service.updateProfile('user-1', {
+        phone: '+821099998888',
+        phoneVerificationToken: 'reused-profile-phone-token',
+      }),
+    ).rejects.toThrow('이미 사용된 전화번호 인증입니다');
+    expect(repository.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('releases the consumed phone verification token when the profile write fails', async () => {
+    const writeError = new Error('db unavailable');
+    vi.mocked(repository.updateProfile).mockRejectedValueOnce(writeError);
+
+    await expect(
+      service.updateProfile('user-1', {
+        phone: '+821099998888',
+        phoneVerificationToken: 'signed-profile-phone-token',
+      }),
+    ).rejects.toBe(writeError);
+    expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not consume a phone token when the phone is unchanged and already verified', async () => {
+    await service.updateProfile('user-1', {
+      phone: baseUser.phone,
+      phoneVerificationToken: 'unused-proof',
+      marketingConsent: true,
+    });
+    expect(smsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
   });
 
   it('verifies an existing unverified phone with the same purpose-bound proof', async () => {
     vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, isPhoneVerified: false } as never);
     await service.updateProfile('user-1', { phone: baseUser.phone, phoneVerificationToken: 'current-phone-proof' });
-    expect(smsService.verifyPhoneVerificationToken).toHaveBeenCalledWith('current-phone-proof', {
+    expect(smsService.claimPhoneVerificationToken).toHaveBeenCalledWith('current-phone-proof', {
       phone: baseUser.phone, purpose: 'profile_phone_change',
     });
     expect(repository.updateProfile).toHaveBeenCalledWith('user-1', { phone: baseUser.phone, isPhoneVerified: true });
