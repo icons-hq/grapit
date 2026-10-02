@@ -1526,7 +1526,9 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(attribution?.values).toMatchObject({ cancellationFee: 0, serviceFeeRefund: 2000, refundableAmount: 58000 });
     expect(whereParams(attribution?.whereArgs[0])).toEqual(['ticket-item-2']);
     const reconciliation = transaction.updateCalls.filter((call) => call.table === payments).at(-1);
-    const patch = JSON.parse(new PgDialect().sqlToQuery(reconciliation?.values.providerMetadata as SQL).params[0] as string);
+    // The transaction mock already decodes the payments jsonb merge patch.
+    const patch = reconciliation?.values.providerMetadata as { quotelessCancellationReconciliation?: unknown };
+    expect(reconciliation?.providerMetadataSql).toBe(`coalesce("payments"."provider_metadata", '{}'::jsonb) || $1::jsonb`);
     expect(patch.quotelessCancellationReconciliation).toMatchObject({ status: 'ATTRIBUTED', providerCancelAmount: 58000,
       faceValueAmount: 52000, differenceAmount: 6000, earlierRecordedAmount: 46000, attributedTicketItemId: 'ticket-item-2' });
   });
@@ -1553,7 +1555,9 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.filter((call) => call.table === ticketItems && 'refundableAmount' in call.values
       && typeof call.values.refundableAmount === 'number')).toHaveLength(0);
     const reconciliation = transaction.updateCalls.filter((call) => call.table === payments).at(-1);
-    const patch = JSON.parse(new PgDialect().sqlToQuery(reconciliation?.values.providerMetadata as SQL).params[0] as string);
+    // The transaction mock already decodes the payments jsonb merge patch.
+    const patch = reconciliation?.values.providerMetadata as { quotelessCancellationReconciliation?: unknown };
+    expect(reconciliation?.providerMetadataSql).toBe(`coalesce("payments"."provider_metadata", '{}'::jsonb) || $1::jsonb`);
     expect(patch.quotelessCancellationReconciliation).toMatchObject({ status: 'UNATTRIBUTED', providerCancelAmount: 100000,
       faceValueAmount: 104000, differenceAmount: -4000 });
   });

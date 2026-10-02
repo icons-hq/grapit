@@ -38,6 +38,7 @@ import {
   type RefundRequestResponse,
 } from '../refund/refund.service.js';
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
+import { ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES } from '../payment/async-done-compensation.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
@@ -853,10 +854,30 @@ function expiredPaymentFailureConditionSql(): SQL {
   )`;
 }
 
+/**
+ * Every async DONE that could not be issued (seat conflict, ticket limit, amount or currency
+ * mismatch, unsupported provider, duplicate payment key) is refunded in full and recorded with
+ * one of these diagnostic codes. They all belong to the compensated-cancel bucket, never to
+ * buyer cancellation or provider abort.
+ */
+const ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES: readonly string[] = Object.values(
+  ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES,
+);
+const ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODE_SET = new Set(
+  ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES,
+);
+
+function asyncDoneCompensatedCancelDiagnosticSql(): SQL<boolean> {
+  return sql<boolean>`coalesce(${reservationPaymentFailureDiagnostics.diagnosticCode} in (${sql.join(
+    ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES.map((code) => sql`${code}`),
+    sql`, `,
+  )}), false)`;
+}
+
 function abortedPaymentFailureConditionSql(): SQL {
   return sql`(
     ${funnelStatusEqualsSql('PAYMENT_FAILED')}
-    and ${reservationPaymentFailureDiagnostics.diagnosticCode} is distinct from 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'
+    and not ${asyncDoneCompensatedCancelDiagnosticSql()}
     and (
       ${payments.status} = 'ABORTED'
       or ${reservationPaymentFailureDiagnostics.diagnosticCode} in (
@@ -889,7 +910,7 @@ function providerExpiryWebhookReceivedSql(): SQL<boolean> {
 function paymentFailureBucketSql(): SQL<PaymentFailureBucket | null> {
   return sql<PaymentFailureBucket | null>`case
     when not (${funnelStatusEqualsSql('PAYMENT_FAILED')}) then null
-    when ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'
+    when ${asyncDoneCompensatedCancelDiagnosticSql()}
       then 'compensated_cancel'
     when ${payments.id} is null
       and ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_DEADLINE_EXPIRED'
@@ -2582,7 +2603,7 @@ function derivePaymentFailureBucket(input: {
     return null;
   }
 
-  if (input.diagnosticCode === 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED') {
+  if (input.diagnosticCode && ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODE_SET.has(input.diagnosticCode)) {
     return 'compensated_cancel';
   }
 

@@ -24,6 +24,7 @@ import {
   reservationSeats,
   seatInventories,
 } from '../../database/schema/index.js';
+import { ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES } from '../payment/async-done-compensation.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 
 function ticketItem(overrides: Record<string, unknown> = {}) {
@@ -937,6 +938,64 @@ describe('AdminBookingService', () => {
         },
       });
     });
+
+    it.each(Object.values(ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES))(
+      'buckets an async DONE compensation (%s) as a compensated cancel, not a buyer cancellation',
+      async (diagnosticCode) => {
+        mockDb.select
+          .mockReturnValueOnce(createChainMock([{
+            totalBookings: 1,
+            completedRevenue: 0,
+            soldCount: 0,
+            pendingPaymentCount: 0,
+            paymentProcessingCount: 0,
+            failedCount: 1,
+            cancelProcessingCount: 0,
+            cancelledCount: 0,
+            partialCancelledCount: 0,
+          }]))
+          .mockReturnValueOnce(createChainMock([{
+            reservation: {
+              id: 'reservation-compensated-1',
+              reservationNumber: 'R-COMPENSATED-001',
+              tossOrderId: 'GRP-TOSS-COMPENSATED-001',
+              status: 'FAILED',
+              totalAmount: 79000,
+              createdAt: new Date('2026-07-01T03:00:00.000Z'),
+            },
+            user: { name: '김보상', email: 'compensated@example.com', country: 'KR' },
+            showtime: { dateTime: new Date('2026-07-18T10:00:00.000Z') },
+            performance: { title: 'Girl Rules Fanmeeting' },
+            payment: {
+              id: 'payment-compensated-1',
+              status: 'CANCELED',
+              method: 'FOREIGN_EASY_PAY',
+              provider: 'ALIPAY_PLUS',
+              currency: 'KRW',
+            },
+            refund: { status: null },
+            diagnostic: {
+              diagnosticKind: 'payment_compensated_cancel',
+              diagnosticCode,
+              diagnosticMessage: '자동 취소',
+              diagnosticSource: 'async_done_compensation_recovery',
+              recordedAt: new Date('2026-07-01T03:05:00.000Z'),
+              providerCheckStatus: 'not_checked',
+              providerCheckedAt: null,
+              providerCheckMessage: null,
+            },
+          }]))
+          .mockReturnValueOnce(createChainMock([]))
+          .mockReturnValueOnce(createChainMock([]));
+
+        const result = await service.getBookings({});
+
+        expect(result.bookings[0]).toMatchObject({ paymentFailureBucket: 'compensated_cancel' });
+        const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(objectGraphContains(statsSelect.compensatedCancelCount, diagnosticCode)).toBe(true);
+        expect(objectGraphContains(statsSelect.abortedPaymentCount, diagnosticCode)).toBe(true);
+      },
+    );
 
     it('applies extended filters and returns the filtered total instead of an unfiltered count', async () => {
       const statsCalls: Array<{ method: string; args: unknown[] }> = [];

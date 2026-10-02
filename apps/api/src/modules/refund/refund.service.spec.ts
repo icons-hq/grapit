@@ -607,12 +607,28 @@ describe('RefundService', () => {
     expect(queryPayment).toHaveBeenCalledWith('pay-key-1', expect.any(Object));
   });
 
+  it('keeps the admin refund preview requestable with the PG cancel amount when the PG query fails', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')) } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    // A PG outage must not stop an admin refund from entering the retry path; the operator still
+    // confirms the PG cancel amount that requestAdminRefund compares against.
+    expect(result.canRequestRefund).toBe(true);
+    expect(result.blockedReason).toBeNull();
+    expect(result.providerRefund).toMatchObject({ currency: 'KRW', amountMinor: 140000 });
+  });
+
   it.each([
-    {
-      name: 'the PG is unreachable',
-      queryPayment: () => vi.fn().mockRejectedValue(new Error('fetch failed')),
-      reason: '결제사 환불 잔액을 확인하지 못했습니다',
-    },
     {
       name: 'the PG balance differs from the booking ledger',
       queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 100000, isPartialCancelable: true }),
