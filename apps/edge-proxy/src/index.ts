@@ -1,6 +1,10 @@
 const WEB_HOSTS = new Set(['heygrabit.com', 'www.heygrabit.com']);
 const API_HOST = 'api.heygrabit.com';
 const LOCAL_STAGING_HOSTS = new Set(['localhost', '127.0.0.1']);
+// The API trusts EDGE_CLIENT_IP_HEADER only when EDGE_SECRET_HEADER matches its
+// EDGE_PROXY_SHARED_SECRET (apps/api/src/common/request-ip.ts).
+export const EDGE_SECRET_HEADER = 'x-grabit-edge-secret';
+export const EDGE_CLIENT_IP_HEADER = 'x-grabit-client-ip';
 
 function isApiPath(pathname: string): boolean {
   return (
@@ -35,7 +39,11 @@ export function resolveOrigin(
   return null;
 }
 
-export function buildOriginRequest(request: Request, origin: string): Request {
+export function buildOriginRequest(
+  request: Request,
+  origin: string,
+  edgeSecret?: string,
+): Request {
   const incomingUrl = new URL(request.url);
   const targetUrl = new URL(origin);
   targetUrl.pathname = incomingUrl.pathname;
@@ -46,6 +54,19 @@ export function buildOriginRequest(request: Request, origin: string): Request {
   originRequest.headers.set('x-forwarded-host', incomingUrl.host);
   originRequest.headers.set('x-forwarded-proto', 'https');
   originRequest.headers.set('x-forwarded-port', '443');
+
+  // Never relay a visitor-supplied value for the edge identity headers.
+  originRequest.headers.delete(EDGE_SECRET_HEADER);
+  originRequest.headers.delete(EDGE_CLIENT_IP_HEADER);
+  const secret = edgeSecret?.trim();
+  if (secret) {
+    originRequest.headers.set(EDGE_SECRET_HEADER, secret);
+    // Cloudflare sets cf-connecting-ip on the inbound request to the visitor IP.
+    const clientIp = request.headers.get('cf-connecting-ip')?.trim();
+    if (clientIp) {
+      originRequest.headers.set(EDGE_CLIENT_IP_HEADER, clientIp);
+    }
+  }
   return originRequest;
 }
 
@@ -88,7 +109,9 @@ async function proxy(request: Request, env: Env): Promise<Response> {
     });
   }
 
-  const response = await fetch(buildOriginRequest(request, origin));
+  // Only the API consumes the edge identity headers; keep the secret off the Web origin.
+  const edgeSecret = origin === env.API_ORIGIN ? env.EDGE_PROXY_SHARED_SECRET : undefined;
+  const response = await fetch(buildOriginRequest(request, origin, edgeSecret));
   return rewriteOriginRedirect(response, origin, incomingUrl.origin);
 }
 

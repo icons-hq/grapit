@@ -8,8 +8,8 @@ import { AppModule } from './app.module.js';
  * Unit tests for ThrottlerModule forRootAsync configuration.
  * Verifies:
  * 1. forRootAsync is used (not forRoot)
- * 2. InMemoryRedis fallback uses in-memory throttler (no ThrottlerStorageRedisService)
- * 3. Real ioredis would use ThrottlerStorageRedisService (checked via import presence)
+ * 2. InMemoryRedis fallback uses in-memory throttler (no Redis storage)
+ * 3. Real ioredis uses the block-aware @nest-lab Redis storage
  */
 
 describe('AppModule ThrottlerModule configuration', () => {
@@ -24,13 +24,27 @@ describe('AppModule ThrottlerModule configuration', () => {
     expect(source).not.toMatch(/ThrottlerModule\.forRoot\s*\(/);
   });
 
-  it('should import ThrottlerStorageRedisService from @nest-lab/throttler-storage-redis', async () => {
+  it('should use the @nest-lab Redis storage that does not count blocked requests', async () => {
     const { readFile } = await import('fs/promises');
     const { resolve } = await import('path');
     const source = await readFile(resolve(__dirname, 'app.module.ts'), 'utf-8');
+    const { ThrottlerStorageRedisService } = await import('@nest-lab/throttler-storage-redis');
+    const { BlockAwareThrottlerStorageRedisService, BLOCK_AWARE_THROTTLE_SCRIPT } = await import(
+      './modules/traffic/throttler-storage.js'
+    );
 
-    expect(source).toContain('ThrottlerStorageRedisService');
-    expect(source).toContain('@nest-lab/throttler-storage-redis');
+    expect(source).toContain('new BlockAwareThrottlerStorageRedisService(redis)');
+    expect(source).not.toContain('new ThrottlerStorageRedisService(');
+    expect(BlockAwareThrottlerStorageRedisService.prototype).toBeInstanceOf(
+      ThrottlerStorageRedisService,
+    );
+    expect(BlockAwareThrottlerStorageRedisService.prototype.getScriptSrc()).toBe(
+      BLOCK_AWARE_THROTTLE_SCRIPT,
+    );
+    // The block check must come before the hit is counted (see throttler-storage.ts).
+    expect(BLOCK_AWARE_THROTTLE_SCRIPT.indexOf("redis.call('PTTL', blockKey)")).toBeLessThan(
+      BLOCK_AWARE_THROTTLE_SCRIPT.indexOf("redis.call('INCR', hitKey)"),
+    );
   });
 
   it('should inject REDIS_CLIENT in forRootAsync', async () => {
@@ -68,8 +82,13 @@ describe('AppModule ThrottlerModule configuration', () => {
     const { readFile } = await import('fs/promises');
     const { resolve } = await import('path');
     const source = await readFile(resolve(__dirname, 'app.module.ts'), 'utf-8');
+    const { TrafficDefenseService } = await import(
+      './modules/traffic/traffic-defense.service.js'
+    );
+    const config = new TrafficDefenseService().getThrottlerModuleConfig();
 
-    expect(source).toContain('limit: 60');
+    expect(source).toContain('trafficDefense.getThrottlerModuleConfig()');
+    expect(config.throttlers[0]).toMatchObject({ name: 'default', ttl: 60_000, limit: 60 });
   });
 
   it('should authenticate before throttling so protected routes are tracked by verified user identity', async () => {

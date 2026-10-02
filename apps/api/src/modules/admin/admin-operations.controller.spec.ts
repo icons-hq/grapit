@@ -86,4 +86,28 @@ describe('AdminOperationsController audit request context (audit #123)', () => {
     expect(context.ipAddress).toBe('203.0.113.77');
     expect(context.userAgent).toHaveLength(500);
   });
+
+  it('records the trusted peer IP, not a client-supplied X-Forwarded-For entry (audit #5)', async () => {
+    const { service, controller } = createController();
+
+    await controller.escalateThread(
+      'thread-1',
+      'admin-1',
+      { reason: 'needs finance review' },
+      createRequest({
+        peerIp: '203.0.113.99',
+        headers: {
+          'x-forwarded-for': '198.51.100.1, 203.0.113.99',
+          'user-agent': 'Vitest Browser',
+        },
+      }),
+    );
+
+    expect(service.escalateThread).toHaveBeenCalledWith(
+      'thread-1',
+      'admin-1',
+      { reason: 'needs finance review' },
+      { ipAddress: '203.0.113.99', userAgent: 'Vitest Browser' },
+    );
+  });
 });

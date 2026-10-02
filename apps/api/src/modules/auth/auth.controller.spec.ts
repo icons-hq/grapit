@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AuthController } from './auth.controller.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import { SOCIAL_REGISTRATION_BINDING_COOKIE } from './social-oauth-state.js';
 
@@ -23,6 +24,7 @@ const excludedLaunchProviderTokens = {
   socialRoute: ['social', 'line'].join('/'),
 };
 const DEFAULT_SKIP_METADATA = 'THROTTLER:SKIPdefault';
+const DEFAULT_LIMIT_METADATA = 'THROTTLER:LIMITdefault';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -604,13 +606,19 @@ describe('AuthController', () => {
       expect(JSON.stringify(result)).not.toContain('token');
     });
 
-    it('POST request skips the default IP throttler during signup verification', () => {
+    it('POST request stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.requestEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.requestEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationSend.limit);
     });
 
     it('POST resend keeps the resend action immediately visible through a dedicated endpoint', async () => {
@@ -633,13 +641,19 @@ describe('AuthController', () => {
       );
     });
 
-    it('POST resend skips the default IP throttler during signup verification', () => {
+    it('POST resend stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.resendEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.resendEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationSend.limit);
     });
 
     it('POST verify checks a 6-digit email code through AuthService', async () => {
@@ -656,13 +670,19 @@ describe('AuthController', () => {
       );
     });
 
-    it('POST verify skips the default IP throttler during signup verification', () => {
+    it('POST verify stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.verifyEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.verifyEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationVerify.limit);
     });
 
     it('POST verify keeps old token links compatible while new emails use codes', async () => {
