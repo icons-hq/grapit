@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   InternalServerErrorException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -33,16 +34,20 @@ function ticketLimitResult({
   performanceId = 'performance-1',
   maxTicketsPerUser = 999,
   activeTicketCount = 0,
+  showtimeStartsAt = new Date(Date.now() + 24 * 60 * 60 * 1000),
 }: {
   performanceId?: string;
   maxTicketsPerUser?: number;
   activeTicketCount?: number;
+  showtimeStartsAt?: Date;
 } = {}) {
+  // db.execute also serves the pre-approval showtime cutoff lookup.
   return {
     rows: [{
       performance_id: performanceId,
       max_tickets_per_user: maxTicketsPerUser,
       active_ticket_count: activeTicketCount,
+      date_time: showtimeStartsAt,
     }],
   };
 }
@@ -59,14 +64,19 @@ function createMockDb() {
 
 function createMockTossClient() {
   return {
-    confirmPayment: vi.fn().mockResolvedValue({
-      paymentKey: 'pk_test_123',
-      orderId: 'GRP-20260403-ABCDE',
+    confirmPayment: vi.fn().mockImplementation((params: {
+      paymentKey: string;
+      orderId: string;
+      amount: number;
+    }) => Promise.resolve({
+      paymentKey: params.paymentKey,
+      orderId: params.orderId,
       method: '카드',
-      totalAmount: 150000,
+      totalAmount: params.amount,
+      currency: 'KRW',
       status: 'DONE',
       approvedAt: '2026-04-03T10:00:00+09:00',
-    }),
+    })),
     cancelPayment: vi.fn().mockImplementation((
       _paymentKey: string,
       reason: string,
@@ -2778,7 +2788,7 @@ describe('ReservationService', () => {
         'pk_test_123',
         '좌석 점유 만료로 인한 자동 취소',
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -2790,7 +2800,7 @@ describe('ReservationService', () => {
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
-    it('cancels Toss and rejects when the order confirm lock is lost after Toss confirm', async () => {
+    it('returns 503 without cancelling Toss when another finalizer holds the order confirm lock after Toss confirm', async () => {
       setupConfirmReservationBase({
         reservationId,
         showtimeId,
@@ -2801,23 +2811,20 @@ describe('ReservationService', () => {
       mockBookingService.refreshPaymentConfirmLock
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false);
+      mockBookingService.acquirePaymentConfirmLock
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      mockDb.select.mockReturnValueOnce(chainResult([]));
 
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
+      )).rejects.toThrow(ServiceUnavailableException);
 
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
-        'pk_test_123',
-        '결제 확인 중복 처리로 인한 자동 취소',
-        {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
-          secretKeyScope: 'default',
-        },
-      );
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -2834,9 +2841,9 @@ describe('ReservationService', () => {
         userId,
         amount: 150000,
       });
-      mockBookingService.refreshPaymentConfirmLock
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
+      mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
+        new ConflictException(LOCK_EXPIRED_MESSAGE),
+      );
       mockTossClient.cancelPayment.mockRejectedValueOnce(new Error('Toss cancel failed'));
 
       await expect(service.confirmAndCreateReservation(
@@ -2847,9 +2854,9 @@ describe('ReservationService', () => {
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pk_test_123',
-        '결제 확인 중복 처리로 인한 자동 취소',
+        '좌석 점유 만료로 인한 자동 취소',
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -2859,7 +2866,7 @@ describe('ReservationService', () => {
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
-    it('cancels Toss and rejects when confirm lock refresh throws after Toss confirm', async () => {
+    it('returns 503 without cancelling Toss when confirm lock refresh throws after Toss confirm', async () => {
       setupConfirmReservationBase({
         reservationId,
         showtimeId,
@@ -2870,23 +2877,17 @@ describe('ReservationService', () => {
       mockBookingService.refreshPaymentConfirmLock
         .mockResolvedValueOnce(true)
         .mockRejectedValueOnce(new Error('Redis eval failed'));
+      mockDb.select.mockReturnValueOnce(chainResult([]));
 
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow(InternalServerErrorException);
+      )).rejects.toThrow(ServiceUnavailableException);
 
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
-        'pk_test_123',
-        '결제 확인 상태 검증 실패로 인한 자동 취소',
-        {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
-          secretKeyScope: 'default',
-        },
-      );
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -3136,7 +3137,7 @@ describe('ReservationService', () => {
         'pk_test_123',
         expect.stringContaining('판매 불가능'),
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -3158,7 +3159,15 @@ describe('ReservationService', () => {
         amount: 150000,
       });
       mockDb.transaction.mockRejectedValueOnce(new Error('duplicate key value violates unique constraint'));
-      mockDb.select.mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-race-winner',
+          reservationId,
+          tossOrderId: orderId,
+          status: 'DONE',
+          asyncStatus: 'sync',
+        }]))
+        .mockReturnValueOnce(chainResult([{ status: 'CONFIRMED' }]));
       setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
 
       await expect(service.confirmAndCreateReservation(
@@ -3171,8 +3180,14 @@ describe('ReservationService', () => {
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
       expect(mockBookingService.assertOwnedSeatLocks.mock.invocationCallOrder[0])
         .toBeLessThan(mockDb.transaction.mock.invocationCallOrder[0]!);
-      expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      // The committed order is sold: post-commit cleanup runs as for a direct commit.
+      expect(mockBookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+        userId,
+        showtimeId,
+        ['1F:A-1', '1F:A-2'],
+        { skipUnavailableCheck: true },
+      );
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, '1F:A-1', 'sold', userId);
       const lockToken = mockBookingService.acquirePaymentConfirmLock.mock.calls[0]?.[1];
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
@@ -3601,6 +3616,43 @@ describe('ReservationService', () => {
         reservationId,
         paymentId: 'payment-1',
       });
+    });
+
+    it('still returns a confirmed booking when read-path QR self-heal issuance fails', async () => {
+      const qrTicketService = {
+        ensureIssuedTicketsForReservation: vi.fn().mockRejectedValue(
+          new Error('timeout exceeded when trying to connect'),
+        ),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      const detail = await qrAwareService.getReservationDetail(reservationId, userId);
+
+      expect(detail).toMatchObject({ id: reservationId, status: 'CONFIRMED' });
+      expect(detail.ticketItems.every((ticketItem) => ticketItem.qrCredential === null)).toBe(true);
+      expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledOnce();
+    });
+
+    it('reports a committed payment as completed when the post-confirm detail read fails', async () => {
+      const finalizedReservationId = randomUUID();
+      Object.assign(service, {
+        reservationFinalizationService: {
+          confirmAndCreateReservation: vi.fn().mockResolvedValue({
+            reservationId: finalizedReservationId,
+          }),
+        },
+      });
+      mockDb.select.mockImplementationOnce(() => {
+        throw new Error('timeout exceeded when trying to connect');
+      });
+
+      const result = service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId: 'GRP-DETAIL-READ-FAIL', amount: 150000 },
+        userId,
+      );
+      await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(result).rejects.toThrow('결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.');
     });
 
     it('marks social placeholder emails as verification-required for ticket email delivery', async () => {

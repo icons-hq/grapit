@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   TossPaymentError,
   TossPaymentsClient,
+  isTossConfirmOutcomeUnknown,
   type TossPaymentResponse,
 } from './toss-payments.client.js';
 
@@ -510,5 +511,111 @@ describe('TossPaymentsClient', () => {
     expect((caught as TossPaymentError).code).toBe('NOT_FOUND_PAYMENT');
     expect((caught as Error).message).not.toContain(secretKey);
     expect((caught as Error).message).not.toContain('pay_test_phase26_sensitive_1');
+  });
+
+  describe('confirm outcome classification (audit #18)', () => {
+    const confirmParams = {
+      paymentKey: 'pay_test_phase26_1',
+      orderId: 'GRP-PHASE26-1',
+      amount: 150000,
+    };
+
+    it('bounds every Toss call with an abort timeout', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ ...paidResponse, currency: 'KRW', cancels: [] }),
+      });
+
+      await client.confirmPayment(confirmParams);
+      await client.cancelPayment('pay_test_phase26_1', 'reason');
+      await client.queryPayment('pay_test_phase26_1');
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      for (const [, init] of fetchMock.mock.calls) {
+        expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+      }
+    });
+
+    it('reports a timed-out confirm as an unknown provider outcome', async () => {
+      fetchMock.mockRejectedValueOnce(
+        Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }),
+      );
+
+      const error = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(TossPaymentError);
+      expect((error as TossPaymentError).code).toBe('PROVIDER_TIMEOUT');
+      expect(isTossConfirmOutcomeUnknown(error)).toBe(true);
+    });
+
+    it('reports a connection failure as an unknown provider outcome', async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+      const error = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect((error as TossPaymentError).code).toBe('NETWORK_ERROR');
+      expect(isTossConfirmOutcomeUnknown(error)).toBe(true);
+    });
+
+    it('wraps a non-JSON gateway body instead of leaking a SyntaxError', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected token < in JSON')),
+      });
+
+      const error = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(TossPaymentError);
+      expect((error as TossPaymentError).code).toBe('INVALID_PROVIDER_RESPONSE');
+      expect((error as TossPaymentError).httpStatus).toBe(502);
+      expect(isTossConfirmOutcomeUnknown(error)).toBe(true);
+    });
+
+    it('rejects a successful confirm body without the approval fields', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ paymentKey: 'pay_test_phase26_1', status: 'DONE' }),
+      });
+
+      const error = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect((error as TossPaymentError).code).toBe('INVALID_PROVIDER_RESPONSE');
+      expect(isTossConfirmOutcomeUnknown(error)).toBe(true);
+    });
+
+    it('keeps the HTTP status of Toss errors and treats 5xx as unknown', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: vi.fn().mockResolvedValue({ code: 'FAILED_INTERNAL_SYSTEM_PROCESSING', message: 'error' }),
+      });
+
+      const error = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect((error as TossPaymentError).httpStatus).toBe(500);
+      expect(isTossConfirmOutcomeUnknown(error)).toBe(true);
+    });
+
+    it('treats provider rejections and local key errors as definitive', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: vi.fn().mockResolvedValue({ code: 'REJECT_CARD_COMPANY', message: '카드사 거절' }),
+      });
+
+      const rejection = await client.confirmPayment(confirmParams).catch((caught: unknown) => caught);
+
+      expect((rejection as TossPaymentError).code).toBe('REJECT_CARD_COMPANY');
+      expect(isTossConfirmOutcomeUnknown(rejection)).toBe(false);
+      expect(isTossConfirmOutcomeUnknown(
+        new TossPaymentError('MISSING_OVERSEAS_CARD_SECRET_KEY', 'missing'),
+      )).toBe(false);
+      expect(isTossConfirmOutcomeUnknown(
+        new TossPaymentError('ALREADY_PROCESSED_PAYMENT', '이미 처리된 결제 입니다.', 400),
+      )).toBe(true);
+    });
   });
 });

@@ -132,8 +132,22 @@ AND NOT EXISTS (
 
 새 공연마다 품목/회차별 `기초 재고 + 입고 + 반환 - 실제 지급 - 손실 = 마감 잔량`을 대조한다. 권리수, 발표표, 추가 보상표, 지급 원장, 실물 잔량은 각각의 기준시각과 버전을 적는다. 기술 테스트는 이 원장 작성과 운영자 인수를 대체하지 않는다.
 
+## 결제 승인 확인 계약 (2026-09-30 오픈 감사 반영)
+
+동기 `POST /payments/confirm`은 Toss 승인 응답을 그대로 믿지 않는다. 아래 계약은 `ReservationFinalizationService` 기준이다.
+
+- 승인 응답은 요청한 `paymentKey`·`orderId`와 같아야 하고 `status=DONE`이어야 한다. 국내·해외카드 KRW 경로는 `currency=KRW`와 원화 금액을, PayPal·해외카드 USD 경로는 `currency=USD`(외화 상점 표기 `MUSD` 포함)와 저장된 견적 cent 금액을 요구한다. 결제수단도 경로별 허용 목록(국내 카드·계좌이체·간편결제·휴대폰, 해외카드는 카드, PayPal은 해외간편결제)에 있어야 한다. 하나라도 다르면 발권하지 않고 즉시 전액 보상 취소한다. 가상계좌 `WAITING_FOR_DEPOSIT`처럼 DONE이 아닌 승인도 같은 처리다.
+- PayPal·해외카드 USD confirm은 예매에 고정된 `checkout_payment_method`가 같은 결제수단일 때만 Toss를 호출한다.
+- 회차 시작 시각(`showtimes.date_time`)이 지났으면 Toss 승인을 호출하지 않고 403 `이미 시작된 회차는 예매할 수 없습니다.`를 반환한다. 이전 시도에서 이미 승인된 결제는 판매 마감으로 거절하지 않고 조회한 승인 결과로 확정한다.
+- Toss 호출은 승인 30초·취소 60초·조회 15초에서 끊는다. timeout, 통신 오류, 5xx, JSON이 아닌 응답, `ALREADY_PROCESSED_PAYMENT`는 결과 불명으로 보고 같은 paymentKey를 조회한다. 이 주문의 승인이 확인되면 발권을 계속하고, 승인되지 않은 `ABORTED/EXPIRED`가 확인되면 웹훅과 같은 실패 기록(결제 행·예약 FAILED·진단)을 남긴다. 확인할 수 없으면 보상 취소 없이 503으로 재시도시킨다. 조회한 결제의 orderId가 다르면 어떤 쓰기나 취소도 하지 않는다. confirm에는 결정적 Idempotency-Key를 보내지 않는다. Toss는 같은 paymentKey를 두 번 승인하지 않으며, 같은 키로 저장된 일시 오류 응답이 재시도를 막을 수 있기 때문이다.
+- 승인 뒤 confirm lease 갱신이 실패하거나 다른 처리자에게 넘어가도 보상 취소하지 않는다. 다른 처리자가 확정했으면 그 결과를 성공으로 반환하고, 아니면 503으로 재시도시킨다. 만료된 lease를 다시 얻었고 아무도 확정하지 않았으면 이어서 확정한다. 좌석 잠금 상실(409)만 보상 취소 사유다. Redis 오류로 확인하지 못하면 503이다.
+- 발권 transaction이 일시 DB 오류(pool 획득 timeout, 연결 끊김, deadlock, serialization, failover)로 실패하면 최대 3회 재시도한다. 매번 먼저 확정 여부를 다시 읽어 COMMIT 응답 유실을 성공으로 처리한다. 재시도를 모두 실패했거나 영구 오류일 때만 보상 취소한다.
+- commit 이후의 좌석 잠금 정리, sold broadcast, QR 발급, 알림 예약 실패는 confirm 결과를 바꾸지 않는다. QR과 알림은 다음 예매 조회에서 다시 시도한다. confirm 직후 상세 조회가 실패하면 503 `결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.`를 반환한다.
+- 결과 불명 경로는 `PAYMENT_CONFIRM_OUTCOME_UNKNOWN`, 승인 불일치는 `CRITICAL: provider approval does not match the order`, 보상 취소 실패는 `CRITICAL: compensation cancel failed` 로그를 남긴다. 운영 알림은 이 세 문자열을 기준으로 건다.
+
 ## 새 공연 오픈의 남은 gate
 
+- 결제 확인 운영 점검: 국내·외화 상점 모두 `PAYMENT_STATUS_CHANGED` 웹훅 URL과 서명 secret이 등록·일치하는지, 최근 `EXPIRED/ABORTED` 이벤트가 `payment_webhook_events`에 처리 완료로 쌓이는지 확인한다. 승인 전 확정 거절(점유 만료·매수 초과·회차 시작)은 PG가 결제를 만료시키는 웹훅이 올 때까지 예약을 `PENDING_PAYMENT`로 둔다(ADR 0010). Toss 위젯 variant에 가상계좌 등 비동기 입금 수단을 켜지 않는다. 위 세 로그 문자열의 log-based alert를 만들고, `checkout_started_at` 이후 30분 넘게 결제 행이 없는 예약을 결제 키로 대조한다. `DB_POOL_MAX`·`--concurrency`·Cloud SQL `max_connections`·인스턴스 수를 같은 회차 동시 confirm 부하로 다시 산정한다.
 - [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다.
 - [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md): 명시 승인된 계정·결제 금액·수단으로 승인 → 발권 → 취소 → PG/DB 대조를 수행한다. 고객 연락, 임의 계정 병합, 실제 결제/환불은 포함 승인 없이는 실행하지 않는다.
 - [기존 오픈 evidence gates](ticketing-open-evidence-gates-2026-06-03.md): actual phone/browser, scanner 권한, 동시 스캔, 연결 단절/복구, 수동 검색 예외, 실물 원장 담당자 인수를 남긴다. 미실행 항목은 pass가 아니다.

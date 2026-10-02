@@ -8,6 +8,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
@@ -1375,7 +1376,19 @@ export class ReservationService {
       userId,
     );
 
-    return this.getReservationDetail(result.reservationId, userId);
+    try {
+      return await this.getReservationDetail(result.reservationId, userId);
+    } catch (detailError) {
+      // The payment is already committed; a failed read must not be shown as
+      // a failed payment. The buyer recovers the booking from its order ID.
+      this.logger.warn(
+        `Reservation detail read failed after confirmed payment. reservationId=${result.reservationId}`,
+        detailError instanceof Error ? detailError.stack : String(detailError),
+      );
+      throw new ServiceUnavailableException(
+        '결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.',
+      );
+    }
   }
 
   async getMyReservations(userId: string, status?: ReservationStatus, locale?: string): Promise<ReservationListItem[]> {
@@ -1562,10 +1575,19 @@ export class ReservationService {
       && this.qrTicketService
       && ticketItemRows.some((ticketItem) => ticketItem.status === 'active')
     ) {
-      qrTickets = await this.qrTicketService.ensureIssuedTicketsForReservation({
-        reservationId,
-        paymentId: payment.id,
-      });
+      // Self-healing issuance is a side effect of the read; its failure must
+      // not hide a confirmed booking. The next read retries it.
+      try {
+        qrTickets = await this.qrTicketService.ensureIssuedTicketsForReservation({
+          reservationId,
+          paymentId: payment.id,
+        });
+      } catch (issueError) {
+        this.logger.warn(
+          `QR self-heal issuance failed during reservation read. reservationId=${reservationId}`,
+          issueError instanceof Error ? issueError.stack : String(issueError),
+        );
+      }
     }
     const ticketItemDtos = ticketItemRows.length > 0
       ? this.mapTicketItems(
