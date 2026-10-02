@@ -51,6 +51,7 @@ import {
   type PgBossContract,
   type RefundCancelRetryJobPayload,
 } from './pgboss.provider.js';
+import { waitWithinRunDeadline } from '../../common/run-deadline.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -185,15 +186,8 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = await Promise.race([
-      inFlight.then(() => false, () => false),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(true), REFUND_RECOVERY_SHUTDOWN_WAIT_MS);
-        timer.unref?.();
-      }),
-    ]);
-    if (timer) clearTimeout(timer);
+    // The bounded worker shortens the wait to its run deadline (common/run-deadline.ts).
+    const timedOut = await waitWithinRunDeadline(inFlight, REFUND_RECOVERY_SHUTDOWN_WAIT_MS);
     if (timedOut) {
       this.logger.warn(
         'Stale refund recovery sweep was still running at shutdown. The unfinished attempt is retried after its lease.',

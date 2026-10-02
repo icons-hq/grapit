@@ -5,6 +5,7 @@ import {
   ABANDONED_PAYMENT_HANDOFF_FOUND_BACKOFF_SECONDS,
   ABANDONED_PAYMENT_HANDOFF_INCONCLUSIVE_BACKOFF_SECONDS,
   ABANDONED_PAYMENT_HANDOFF_REVIEW_LIMIT,
+  ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS,
   ABANDONED_PAYMENT_HANDOFF_SCAN_LIMIT,
   ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS,
   AbandonedPaymentHandoffService,
@@ -12,6 +13,7 @@ import {
   mergeProviderLookupWindows,
 } from './abandoned-payment-handoff.service.js';
 import { ABANDONED_PAYMENT_HANDOFF_GRACE_MS } from './payment-handoff-policy.js';
+import { setRunDeadline } from '../../common/run-deadline.js';
 import {
   TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS,
   TOSS_TRANSACTION_PAGE_SIZE,
@@ -129,6 +131,7 @@ describe('AbandonedPaymentHandoffService', () => {
   });
 
   afterEach(() => {
+    setRunDeadline(null);
     vi.restoreAllMocks();
   });
 
@@ -351,6 +354,28 @@ describe('AbandonedPaymentHandoffService', () => {
     expect(toss.queryTransactions).not.toHaveBeenCalled();
     expect(db.transaction).not.toHaveBeenCalled();
     expect([...store.values.keys()].some((key) => key.includes(':deferred:'))).toBe(false);
+  });
+
+  it('leaves the bounded worker drains their share of the run deadline', async () => {
+    // Bounded worker: 30s left before the run deadline. The review keeps the drain
+    // reserve, so its lookups get 10s instead of the full 65s budget.
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    setRunDeadline(1_000_000 + ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS + 10_000);
+
+    await service.sweepAbandonedPaymentHandoffs(NOW);
+
+    const timeouts = toss.queryTransactions.mock.calls.map(([options]) => (options as { timeoutMs: number }).timeoutMs);
+    expect(timeouts.length).toBeGreaterThan(0);
+    expect(Math.max(...timeouts)).toBeLessThanOrEqual(10_000);
+
+    // With less than a lookup's minimum left, nothing is queried or failed.
+    toss.queryTransactions.mockClear();
+    setRunDeadline(1_000_000 + ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS + 1_000);
+    await expect(service.sweepAbandonedPaymentHandoffs(NOW)).resolves.toEqual({
+      reviewedReservations: 0,
+      failedReservations: 0,
+    });
+    expect(toss.queryTransactions).not.toHaveBeenCalled();
   });
 
   it('proves nothing without a configured provider key', async () => {

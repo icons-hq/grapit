@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { PaymentService } from '../payment/payment.service.js';
-import { AsyncDoneCompensationRecoveryWorker } from './async-done-compensation-recovery.worker.js';
+import {
+  ASYNC_DONE_COMPENSATION_SHUTDOWN_WAIT_MS,
+  AsyncDoneCompensationRecoveryWorker,
+} from './async-done-compensation-recovery.worker.js';
+import { setRunDeadline } from '../../common/run-deadline.js';
 
 function createConfig(values: Record<string, string | undefined>): ConfigService {
   return { get: vi.fn((key: string) => values[key]) } as unknown as ConfigService;
@@ -17,7 +21,54 @@ function createPaymentService(
 
 describe('AsyncDoneCompensationRecoveryWorker', () => {
   afterEach(() => {
+    setRunDeadline(null);
     vi.useRealTimers();
+  });
+
+  it('stops after the current order on shutdown and bounds the wait (bounded worker budget)', async () => {
+    vi.useFakeTimers();
+    let shouldStop: (() => boolean) | undefined;
+    const recover = vi.fn((_now: Date, _limit: unknown, options?: { shouldStop?: () => boolean }) => {
+      shouldStop = options?.shouldStop;
+      return new Promise(() => undefined);
+    });
+    const worker = new AsyncDoneCompensationRecoveryWorker(
+      createPaymentService(recover as never),
+      createConfig({}),
+    );
+
+    worker.onModuleInit();
+    expect(shouldStop?.()).toBe(false);
+
+    let destroyed = false;
+    const destroy = worker.onModuleDestroy().then(() => { destroyed = true; });
+    // The sweep loop sees the stop request before its next order.
+    expect(shouldStop?.()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(ASYNC_DONE_COMPENSATION_SHUTDOWN_WAIT_MS - 1);
+    expect(destroyed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await destroy;
+    expect(destroyed).toBe(true);
+    // The interval is cleared, so no further sweep starts after shutdown.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(recover).toHaveBeenCalledOnce();
+  });
+
+  it('gives up the drain at the bounded worker run deadline', async () => {
+    vi.useFakeTimers();
+    setRunDeadline(Date.now() + 2_000);
+    const worker = new AsyncDoneCompensationRecoveryWorker(
+      createPaymentService(vi.fn(() => new Promise(() => undefined)) as never),
+      createConfig({}),
+    );
+
+    worker.onModuleInit();
+    let destroyed = false;
+    const destroy = worker.onModuleDestroy().then(() => { destroyed = true; });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await destroy;
+    expect(destroyed).toBe(true);
   });
 
   it('sweeps once at start so a bounded worker window also recovers compensations', async () => {

@@ -686,6 +686,19 @@ describe('PaymentService async DONE safety and recovery', () => {
       expect(bookingService.acquirePaymentConfirmLock).toHaveBeenCalledWith('GRP-COMP-1', expect.any(String));
     });
 
+    it('starts no further order once the worker asks the sweep to stop (bounded shutdown)', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      sweepCandidates([
+        { id: 'payment-1', tossOrderId: 'GRP-COMP-1' },
+        { id: 'payment-2', tossOrderId: 'GRP-COMP-2' },
+      ]);
+
+      await expect(service.recoverAsyncDoneCompensations(now, undefined, { shouldStop: () => true }))
+        .resolves.toMatchObject({ checked: 0 });
+      expect(bookingService.acquirePaymentConfirmLock).not.toHaveBeenCalledWith('GRP-COMP-1', expect.any(String));
+      expect(tossClient.queryPayment).not.toHaveBeenCalled();
+    });
+
     it('finalizes a legacy cancel_pending row locally once the provider shows the cancel completed', async () => {
       const now = new Date('2026-10-01T01:00:00.000Z');
       sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);

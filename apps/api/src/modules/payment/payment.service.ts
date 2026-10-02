@@ -3418,6 +3418,7 @@ export class PaymentService {
   async recoverAsyncDoneCompensations(
     now: Date = new Date(),
     limit = ASYNC_DONE_COMPENSATION_SWEEP_LIMIT,
+    options: { shouldStop?: () => boolean } = {},
   ): Promise<AsyncDoneCompensationRecoveryResult> {
     const result: AsyncDoneCompensationRecoveryResult = {
       checked: 0,
@@ -3454,6 +3455,10 @@ export class PaymentService {
           .limit(limit);
 
         for (const candidate of candidates) {
+          // Shutdown: finish the current order only (the caller bounds the wait).
+          if (options.shouldStop?.()) {
+            break;
+          }
           result.checked += 1;
           try {
             await assertSweepLease();

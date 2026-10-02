@@ -22,6 +22,23 @@ export function resolveBackgroundWorkerWindowMs(value?: string): number {
 
 export const BACKGROUND_WORKER_FORCED_EXIT_GRACE_MS = 5_000;
 
+/** Cloud Run Job task timeout (scripts/managed-demo/deploy-background-worker-v2.mjs `timeout`). */
+export const BACKGROUND_WORKER_JOB_TIMEOUT_MS = 120_000;
+/**
+ * Kept after the run deadline for pg-boss's graceful stop (8s), closing the
+ * Redis and database clients, and margin. A task that exceeds the Job timeout
+ * fails and is retried (maxRetries 1), so the deadline must leave this room.
+ */
+export const BACKGROUND_WORKER_CLEANUP_RESERVE_MS = 15_000;
+
+/**
+ * Wall-clock deadline (epoch ms) for the sweep, the processing window and the
+ * recovery drains of one worker run (common/run-deadline.ts).
+ */
+export function resolveBackgroundWorkerRunDeadline(processStartedAtMs: number): number {
+  return processStartedAtMs + BACKGROUND_WORKER_JOB_TIMEOUT_MS - BACKGROUND_WORKER_CLEANUP_RESERVE_MS;
+}
+
 export interface ForcedWorkerExitOptions {
   exit?(code: number): void;
   getExitCode?(): number | string | null | undefined;
@@ -81,13 +98,19 @@ export async function runBackgroundWorkerWindow(
 
   // The expiration sweep and the pg-boss queues are independent. A sweep
   // failure must not cancel the processing window, otherwise refund retries,
-  // cancelled-seat releases, and QR reminders stall for the whole run.
-  try {
-    result = await runtime.sweepPendingPayments();
-  } catch (error) {
-    sweepFailure = error;
-    runtime.onSweepFailure?.(error);
-  }
+  // cancelled-seat releases, and QR reminders stall for the whole run. The
+  // sweep (including the abandoned payment handoff review, which can take
+  // about a minute of provider lookups) runs during the window rather than
+  // before it, so the run lasts max(sweep, window) instead of their sum.
+  const sweep = runtime.sweepPendingPayments().then(
+    (value) => {
+      result = value;
+    },
+    (error: unknown) => {
+      sweepFailure = error;
+      runtime.onSweepFailure?.(error);
+    },
+  );
 
   if (runtime.isQueueProcessing()) {
     try {
@@ -98,15 +121,21 @@ export async function runBackgroundWorkerWindow(
   } else {
     failure = new BackgroundWorkerQueueUnavailableError();
   }
+  await sweep;
 
+  // Close the application before stopping pg-boss, in the same order as an API
+  // shutdown: the recovery sweeps drain in onModuleDestroy while pg-boss still
+  // accepts the retries they schedule (a stopped queue would turn those into
+  // retry_schedule_failed and a support CTA), and PgBossShutdownService then
+  // stops pg-boss gracefully. stopQueue is the idempotent fallback.
   try {
-    await runtime.stopQueue();
+    await runtime.closeApplication();
   } catch (error) {
     failure ??= error;
   }
 
   try {
-    await runtime.closeApplication();
+    await runtime.stopQueue();
   } catch (error) {
     failure ??= error;
   }

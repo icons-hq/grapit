@@ -11,6 +11,7 @@ import { sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { isBackgroundProcessingEnabled } from '../jobs/pgboss.provider.js';
+import { waitWithinRunDeadline } from '../../common/run-deadline.js';
 
 export const HELD_SEAT_RECOVERY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 /** A release job normally runs at its hold expiry; only seats held well past it are treated as stranded. */
@@ -88,15 +89,8 @@ export class HeldCancelledSeatRecoveryWorker implements OnModuleInit, OnModuleDe
       return;
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      inFlight.then(() => undefined, () => undefined),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, HELD_SEAT_RECOVERY_SHUTDOWN_WAIT_MS);
-        timer.unref?.();
-      }),
-    ]);
-    if (timer) clearTimeout(timer);
+    // The bounded worker shortens the wait to its run deadline (common/run-deadline.ts).
+    await waitWithinRunDeadline(inFlight, HELD_SEAT_RECOVERY_SHUTDOWN_WAIT_MS);
   }
 
   async releaseExpiredHeldSeats(now: Date = new Date()): Promise<HeldSeatRecoveryResult> {

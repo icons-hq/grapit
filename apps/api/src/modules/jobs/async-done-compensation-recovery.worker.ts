@@ -8,8 +8,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PaymentService } from '../payment/payment.service.js';
 import { isBackgroundProcessingEnabled } from './pgboss.provider.js';
+import { waitWithinRunDeadline } from '../../common/run-deadline.js';
 
 export const ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS = 60_000;
+/** One order's provider cancel can take the full Toss cancel timeout (60s). */
+export const ASYNC_DONE_COMPENSATION_SHUTDOWN_WAIT_MS = 60_000;
 
 function resolveRecoveryIntervalMs(configService?: ConfigService): number {
   const configured = configService?.get<string>('ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS');
@@ -37,6 +40,7 @@ export class AsyncDoneCompensationRecoveryWorker implements OnModuleInit, OnModu
   private readonly logger = new Logger(AsyncDoneCompensationRecoveryWorker.name);
   private sweepInterval: ReturnType<typeof setInterval> | null = null;
   private running: Promise<void> | null = null;
+  private stopping = false;
 
   constructor(
     private readonly paymentService: PaymentService,
@@ -64,18 +68,34 @@ export class AsyncDoneCompensationRecoveryWorker implements OnModuleInit, OnModu
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.sweepInterval) {
       clearInterval(this.sweepInterval);
       this.sweepInterval = null;
     }
 
-    // Let an in-flight sweep finish its current order before connections close.
-    await this.running;
+    // Let an in-flight sweep finish its current order before connections close;
+    // it starts no further order. Bounded like the other recovery sweeps, and
+    // shortened to the bounded worker's run deadline. An order cut off here is
+    // retried by the next sweep under its order lease.
+    const inFlight = this.running;
+    if (!inFlight) {
+      return;
+    }
+    const timedOut = await waitWithinRunDeadline(inFlight, ASYNC_DONE_COMPENSATION_SHUTDOWN_WAIT_MS);
+    if (timedOut) {
+      this.logger.warn(
+        'Async DONE compensation recovery was still running at shutdown. The unfinished order is retried by the next sweep.',
+      );
+    }
   }
 
   runOnce(): Promise<void> {
     if (this.running) {
       return this.running;
+    }
+    if (this.stopping) {
+      return Promise.resolve();
     }
 
     this.running = this.sweep().finally(() => {
@@ -86,7 +106,9 @@ export class AsyncDoneCompensationRecoveryWorker implements OnModuleInit, OnModu
 
   private async sweep(): Promise<void> {
     try {
-      const result = await this.paymentService.recoverAsyncDoneCompensations();
+      const result = await this.paymentService.recoverAsyncDoneCompensations(new Date(), undefined, {
+        shouldStop: () => this.stopping,
+      });
       if (result.cancelled + result.retried + result.attention > 0) {
         this.logger.log(
           `Async DONE compensation recovery: checked=${result.checked}, cancelled=${result.cancelled}, retried=${result.retried}, waiting=${result.waiting}, attention=${result.attention}, skipped=${result.skipped}`,

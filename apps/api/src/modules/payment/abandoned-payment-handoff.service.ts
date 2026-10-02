@@ -11,6 +11,7 @@ import {
 } from '../../database/schema/index.js';
 import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
+import { boundedByRunDeadline } from '../../common/run-deadline.js';
 import {
   ABANDONED_PAYMENT_HANDOFF_GRACE_MS,
   ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS,
@@ -29,10 +30,16 @@ export const ABANDONED_PAYMENT_HANDOFF_REVIEW_LIMIT = 20;
 export const ABANDONED_PAYMENT_HANDOFF_SCAN_LIMIT = 100;
 /**
  * Wall-clock budget for provider lookups in one sweep. One lookup may use the full
- * documented 60 seconds, and the sweep still fits the bounded background worker run
- * (30s window inside a 120s job timeout).
+ * documented 60 seconds. In the bounded background worker the review runs during the
+ * 30s processing window and is shortened to the run deadline (120s Job timeout).
  */
 export const ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS = 65_000;
+/**
+ * Time the review leaves before the bounded worker's run deadline for the
+ * recovery sweeps' shutdown drains (a refund cancel in flight can need its
+ * full provider timeout).
+ */
+export const ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS = 20_000;
 /** Lookup failed or hit the page cap: look again later without re-querying every sweep. */
 export const ABANDONED_PAYMENT_HANDOFF_INCONCLUSIVE_BACKOFF_SECONDS = 30 * 60;
 /** The provider has a transaction this server never recorded: alert daily until reconciled. */
@@ -241,7 +248,11 @@ export class AbandonedPaymentHandoffService {
   private async reviewAbandonedPaymentHandoffs(
     now: Date,
   ): Promise<AbandonedPaymentHandoffSweepResult> {
-    const budgetEndsAtMs = Date.now() + ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS;
+    // In the bounded worker the review also ends early enough to leave the
+    // shutdown drains their share of the Job timeout (common/run-deadline.ts).
+    const budgetEndsAtMs = Date.now() + boundedByRunDeadline(ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS, {
+      reserveMs: ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS,
+    });
     const candidates = await this.selectReviewCandidates(now);
     if (candidates.length === 0) {
       return EMPTY_RESULT;

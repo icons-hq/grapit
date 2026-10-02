@@ -1,10 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKGROUND_WORKER_CLEANUP_RESERVE_MS,
   BACKGROUND_WORKER_FORCED_EXIT_GRACE_MS,
+  BACKGROUND_WORKER_JOB_TIMEOUT_MS,
   BackgroundWorkerQueueUnavailableError,
   DEFAULT_BACKGROUND_WORKER_WINDOW_MS,
   MAX_BACKGROUND_WORKER_WINDOW_MS,
   MIN_BACKGROUND_WORKER_WINDOW_MS,
+  resolveBackgroundWorkerRunDeadline,
   resolveBackgroundWorkerWindowMs,
   runBackgroundWorkerWindow,
   scheduleForcedWorkerExit,
@@ -66,7 +71,7 @@ describe('background worker runtime', () => {
     // refund retry, cancelled-seat release, and QR jobs still get the full window
     expect(runtime.wait).toHaveBeenCalledWith(30_000);
     expect(runtime.wait.mock.invocationCallOrder[0]).toBeLessThan(
-      runtime.stopQueue.mock.invocationCallOrder[0]!,
+      runtime.closeApplication.mock.invocationCallOrder[0]!,
     );
     expect(runtime.stopQueue).toHaveBeenCalledTimes(1);
     expect(runtime.closeApplication).toHaveBeenCalledTimes(1);
@@ -98,6 +103,60 @@ describe('background worker runtime', () => {
       BackgroundWorkerQueueUnavailableError,
     );
     expect(runtime.onSweepFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the expiration sweep during the window instead of before it (seam: w2a review x u03 drains)', async () => {
+    const runtime = createRuntime();
+    let finishSweep: (value: { expiredReservations: number; unlockedSeats: number }) => void = () => undefined;
+    runtime.sweepPendingPayments.mockReturnValue(new Promise((resolveSweep) => {
+      finishSweep = resolveSweep;
+    }));
+    let finishWindow: () => void = () => undefined;
+    runtime.wait.mockReturnValue(new Promise<void>((resolveWindow) => {
+      finishWindow = resolveWindow;
+    }));
+
+    const run = runBackgroundWorkerWindow(runtime, 30_000);
+    await Promise.resolve();
+    // The window started while the abandoned-handoff review is still looking up Toss.
+    expect(runtime.wait).toHaveBeenCalledWith(30_000);
+
+    finishWindow();
+    await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    // Cleanup waits for the sweep, which still owns order leases and DB work.
+    expect(runtime.closeApplication).not.toHaveBeenCalled();
+
+    finishSweep({ expiredReservations: 3, unlockedSeats: 0 });
+    await expect(run).resolves.toEqual({ expiredReservations: 3, unlockedSeats: 0 });
+  });
+
+  it('closes the application (recovery drains) before pg-boss stops accepting retries', async () => {
+    const runtime = createRuntime();
+
+    await runBackgroundWorkerWindow(runtime, 30_000);
+
+    // A drain that schedules a refund retry must still reach pg-boss, otherwise it is
+    // recorded as retry_schedule_failed and turns on the support CTA.
+    expect(runtime.closeApplication.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.stopQueue.mock.invocationCallOrder[0]!,
+    );
+    expect(runtime.stopQueue.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.closeRedis.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('ends the run deadline early enough for cleanup inside the Cloud Run Job timeout', () => {
+    expect(resolveBackgroundWorkerRunDeadline(1_000)).toBe(
+      1_000 + BACKGROUND_WORKER_JOB_TIMEOUT_MS - BACKGROUND_WORKER_CLEANUP_RESERVE_MS,
+    );
+    // pg-boss graceful stop (8s) plus Redis/DB close must fit the reserve.
+    expect(BACKGROUND_WORKER_CLEANUP_RESERVE_MS).toBeGreaterThanOrEqual(8_000 + 5_000);
+
+    const deployScript = readFileSync(
+      resolve(__dirname, '../../../scripts/managed-demo/deploy-background-worker-v2.mjs'),
+      'utf8',
+    );
+    expect(deployScript).toContain(`timeout: '${BACKGROUND_WORKER_JOB_TIMEOUT_MS / 1000}s'`);
   });
 
   it('surfaces a cleanup failure after a successful window', async () => {
