@@ -13,10 +13,15 @@
  * - 루트는 SVG namespace의 `<svg>`여야 한다.
  * - Comment·Processing Instruction은 제거하고 CDATA는 텍스트 노드로 바꾼다(직렬화 때 escape된다).
  * - SVG namespace의 허용 요소만 남기고, `title`/`desc`에는 텍스트만 남긴다.
- * - 허용 속성만 남기고 URL을 싣는 속성, 이벤트 핸들러, 외부 `url(...)` 참조, CSS escape를 제거한다.
+ * - 허용 속성만 남기고 URL을 싣는 속성, 이벤트 핸들러, 외부 `url(...)` 참조, 문자열 인자 이미지
+ *   함수(`image-set()` 등), CSS escape를 제거한다.
+ * - `id`·`class`는 영문자·밑줄로 시작하고 영숫자·`_.:-`로만 된 128자 이내 이름만 남기고,
+ *   `url(#...)` 참조도 같은 이름만 허용한다. 직렬화 뒤 문자열을 다루는 코드가 공격자 이름 때문에
+ *   마크업 경계를 바꾸지 못하게 한다(audit #49 MiniMap).
  *
  * 업로드 검사(`hasUnsafeSvgPayload`)는 보안상 위험한 내용만 거부한다. 디자인 툴이 넣는 메타데이터
- * (`<metadata>`, `inkscape:*` 속성, 생성기 주석 등)는 업로드를 막지 않고 렌더링 때 조용히 제거된다.
+ * (`<metadata>`, `inkscape:*` 속성, Windows 경로가 든 export 속성, 생성기 주석 등)와 이름 규칙을
+ * 벗어난 `id`는 업로드를 막지 않고 렌더링 때 조용히 제거된다.
  * presigned PUT이나 외부 svgUrl로 업로드 검사를 우회해도 렌더링 sanitizer가 마지막 경계다.
  */
 
@@ -356,11 +361,22 @@ const URL_ATTRIBUTE_NAMES = new Set([
 /** 값에 백슬래시가 있어도 CSS로 해석되지 않는 속성. */
 const NON_CSS_ATTRIBUTE_NAMES = new Set(['id', 'class', 'lang', 'role']);
 
+/**
+ * `id`·`class` 토큰과 `url(#...)` 참조 대상에 허용하는 이름(audit #49).
+ * 따옴표, `$`, `<`, 공백처럼 문자열 치환·재직렬화에서 경계를 바꿀 수 있는 문자를 막는다.
+ */
+const SAFE_SVG_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/;
+
 const SCRIPTABLE_URL_SCHEMES = ['javascript:', 'vbscript:'];
 
 // style 속성에서 외부 리소스를 불러오거나 escape로 검사를 우회할 수 있는 CSS 구문.
 const UNSAFE_STYLE_PATTERN =
   /url\s*\(|image-set\s*\(|image\s*\(|cross-fade\s*\(|element\s*\(|src\s*\(|expression\s*\(|@import|behavior\s*:|binding\s*:|\\/i;
+
+// 표현 속성(fill, cursor, mask 등)도 CSS 값으로 파싱된다. 지역 url(#id)는 따로 검사하고,
+// 문자열 인자로 외부 이미지를 불러오는 함수와 escape는 막는다.
+const UNSAFE_PRESENTATION_VALUE_PATTERN =
+  /image-set\s*\(|image\s*\(|cross-fade\s*\(|element\s*\(|src\s*\(|expression\s*\(|@import|\\/i;
 
 // 주석·PI·CDATA 안의 `<`·`>`는 HTML 재파싱에서 마크업으로 되살아날 수 있다.
 const MARKUP_LIKE_PATTERN = /[<>]/;
@@ -402,22 +418,60 @@ function hasNonLocalUrlReference(value: string) {
   return false;
 }
 
-function isUnsafeSvgAttribute(attr: Attr) {
+// `url(` 뒤의 지역 참조 하나: 선택적 따옴표, `#`, 안전한 이름, 같은 따옴표, `)`.
+const SAFE_LOCAL_URL_REFERENCE_PATTERN = /^\s*(['"]?)#[A-Za-z_][A-Za-z0-9_.:-]{0,127}\1\s*\)/;
+
+/** `url(...)` 중 하나라도 안전한 이름의 지역 참조(`url(#id)`)가 아니면 true. */
+function hasUnsafeUrlReference(value: string) {
+  const lower = value.toLowerCase();
+  let index = lower.indexOf('url(');
+  while (index !== -1) {
+    if (!SAFE_LOCAL_URL_REFERENCE_PATTERN.test(value.slice(index + 4))) return true;
+    index = lower.indexOf('url(', index + 4);
+  }
+  return false;
+}
+
+/** `id`는 이름 하나, `class`는 공백으로 나눈 이름 목록이어야 한다. */
+function hasUnsafeNameValue(name: string, value: string) {
+  if (name === 'id') return !SAFE_SVG_NAME_PATTERN.test(value);
+  const tokens = value.split(/[\t\n\f\r ]+/).filter(Boolean);
+  return tokens.some((token) => !SAFE_SVG_NAME_PATTERN.test(token));
+}
+
+/** 실행·외부 문서 삽입이 가능한 속성. 렌더링에서 지우고 업로드에서도 거부한다. */
+function isScriptCapableAttribute(attr: Attr) {
+  const name = lowerLocalName(attr);
+  return name.startsWith('on') || URL_ATTRIBUTE_NAMES.has(name) || containsScriptableUrl(attr.value);
+}
+
+/**
+ * 렌더링(`render`)은 허용 속성 중 위험한 값을 지운다. 업로드 검사(`upload`)는 보안상 위험한
+ * 값만 거부한다. 렌더링이 어차피 지우는 속성(`inkscape:*`, `sodipodi:*` 등 namespace 속성,
+ * 비허용 속성)은 실행 가능 여부만 보고, Windows 경로의 백슬래시 같은 CSS 검사는 하지 않는다.
+ * 이름 규칙을 벗어난 `id`·`class`, 이상한 지역 `url(#...)` 참조도 렌더링에서만 지운다.
+ */
+function isUnsafeAttributeValue(attr: Attr, mode: 'render' | 'upload') {
   const name = lowerLocalName(attr);
   const value = attr.value;
 
-  if (name.startsWith('on')) return true;
-  if (URL_ATTRIBUTE_NAMES.has(name)) return true;
-  if (containsScriptableUrl(value)) return true;
+  if (isScriptCapableAttribute(attr)) return true;
+  if (mode === 'upload' && !isAllowedSvgAttribute(attr)) return false;
   if (name === 'style') return UNSAFE_STYLE_PATTERN.test(value);
+
+  if (!attr.namespaceURI && (name === 'id' || name === 'class')) {
+    return mode === 'render' && hasUnsafeNameValue(name, value);
+  }
 
   const isInertDataAttribute =
     !attr.namespaceURI &&
     (name.startsWith('data-') || name.startsWith('aria-') || NON_CSS_ATTRIBUTE_NAMES.has(name));
   if (isInertDataAttribute) return false;
 
-  // 표현 속성은 CSS 값으로 파싱된다. 외부 url() 참조와 CSS escape(`u\rl(`)를 막는다.
-  return hasNonLocalUrlReference(value) || value.includes('\\');
+  // 표현 속성은 CSS 값으로 파싱된다. 외부 url() 참조, 문자열 인자로 외부 이미지를 불러오는
+  // 함수(image-set 등), CSS escape(`u\rl(`)를 막는다. 지역 url(#id)는 허용한다.
+  const unsafeUrl = mode === 'render' ? hasUnsafeUrlReference(value) : hasNonLocalUrlReference(value);
+  return unsafeUrl || UNSAFE_PRESENTATION_VALUE_PATTERN.test(value);
 }
 
 function isAllowedSvgAttribute(attr: Attr) {
@@ -437,7 +491,7 @@ function isAllowedSvgAttribute(attr: Attr) {
 
 function sanitizeAttributes(el: Element) {
   for (const attr of Array.from(el.attributes)) {
-    if (!isAllowedSvgAttribute(attr) || isUnsafeSvgAttribute(attr)) {
+    if (!isAllowedSvgAttribute(attr) || isUnsafeAttributeValue(attr, 'render')) {
       el.removeAttributeNode(attr);
     }
   }
@@ -527,7 +581,7 @@ export function hasUnsafeSvgPayload(doc: Document): boolean {
       const el = node as Element;
       if (isDangerousSvgElement(el)) return true;
       for (const attr of Array.from(el.attributes)) {
-        if (isUnsafeSvgAttribute(attr)) return true;
+        if (isUnsafeAttributeValue(attr, 'upload')) return true;
       }
       for (const child of Array.from(el.childNodes)) {
         stack.push(child);

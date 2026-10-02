@@ -146,7 +146,8 @@ WHERE p.publish_state = 'published' AND p.status <> 'ended'
 ROLLBACK;
 ```
 
-- 웹이 위젯의 가상계좌·휴대폰 선택을 `CARD`로 보내도 서버가 막는다. confirm과 비동기 DONE이 실제 승인 결제수단을 저장된 수단·공연 정책과 대조하므로, 그런 결제는 발권되지 않고 보상 취소(가상계좌 입금 완료 건은 `attention`)로 끝난다. 다만 구매자는 인증까지 마친 뒤 취소를 겪으므로, Toss 위젯 variant에 가상계좌·휴대폰 결제를 켜지 않는 운영 원칙은 그대로다.
+- 웹은 위젯이 알려 주는 결제수단 코드를 명시 표로 분류한다. 가상계좌·휴대폰은 정확히 분류한 뒤 모든 공연 정책에서 거절하고(prepare도 `isCheckoutPaymentMethodAllowed`로 409), PAYCO·삼성페이·상품권·카드사 바로가기·미지의 코드는 미지원으로 표시해 서버로 보내지 않는다. 기본 `CARD` 분류는 없다. 관리자 화면의 허용 목록 4종(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`)이 서버가 받는 집합과 같다.
+- 그래도 위젯 iframe 안에서 결제창이 열린 뒤 수단이 바뀌는 경로는 서버가 막는다. confirm과 비동기 DONE이 실제 승인 결제수단을 저장된 수단·공연 정책과 대조하므로, 그런 결제는 발권되지 않고 보상 취소(가상계좌 입금 완료 건은 `attention`)로 끝난다. 다만 구매자는 인증까지 마친 뒤 취소를 겪으므로, Toss 위젯 variant에 가상계좌·휴대폰 결제를 켜지 않는 운영 원칙은 그대로다.
 
 ### migration 0039 (#62·#68)
 

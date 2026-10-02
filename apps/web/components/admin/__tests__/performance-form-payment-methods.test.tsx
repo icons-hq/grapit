@@ -6,12 +6,17 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CHECKOUT_CONFIGURABLE_PAYMENT_METHODS,
+  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
+  isCheckoutPaymentMethodAllowed,
   type PerformanceAllowedPaymentMethod,
   type PerformanceWithDetails,
 } from '@grabit/shared';
 
 import { apiClient } from '@/lib/api-client';
-import { resolvePaymentMethodSelection } from '@/components/booking/toss-payment-widget';
+import {
+  isPayableWidgetSelection,
+  resolvePaymentMethodSelection,
+} from '@/components/booking/toss-payment-widget';
 import { PerformanceForm } from '../performance-form';
 import { useAuthStore } from '@/stores/use-auth-store';
 
@@ -170,18 +175,45 @@ describe('PerformanceForm allowed payment methods (audit #70)', () => {
     await expect(applyAndReadSavedPaymentMethods(user)).resolves.toEqual(['CARD', 'SIMPLE_PAY']);
   });
 
-  it('offers exactly the categories checkout can submit to reservation prepare', () => {
+  it('offers exactly the categories checkout can submit, with no CARD fallback for other widget methods', () => {
     renderForm(['CARD']);
     const widgetCodes = [
-      'CARD', 'TRANSFER', 'TOSSPAY', 'NAVERPAY', 'KAKAOPAY', 'ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY',
-      'PAYPAL', '페이팔', 'VISA', 'OVERSEAS_CARD', 'VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'UNKNOWN',
+      'CARD', '카드', 'TRANSFER', '계좌이체', 'TOSSPAY', 'NAVERPAY', 'KAKAOPAY', '카카오페이', 'ALIPAY',
+      'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔', 'VISA', 'OVERSEAS_CARD', 'VIRTUAL_ACCOUNT', '가상계좌',
+      'MOBILE_PHONE', '휴대폰', 'PAYCO', 'SAMSUNGPAY', '문화상품권', '간편결제', 'UNKNOWN',
     ];
-    const submittedCategories = new Set(['DEFAULT', 'uspay'].flatMap((variantKey) => widgetCodes
-      .map((code) => resolvePaymentMethodSelection(code, variantKey).paymentMethod.method)));
+    const selections = ['DEFAULT', 'uspay'].flatMap((variantKey) => widgetCodes
+      .map((code) => ({ code, variantKey, selection: resolvePaymentMethodSelection(code, variantKey) })));
 
+    // Everything checkout can send to prepare is a category the admin form offers.
+    const submittedCategories = new Set(selections
+      .filter(({ selection }) => isPayableWidgetSelection(selection))
+      .map(({ selection }) => selection.paymentMethod.method));
     expect([...submittedCategories].sort()).toEqual([...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS].sort());
+
+    // Unknown or unsupported widget methods are flagged, never silently classified as CARD.
+    for (const code of ['PAYCO', 'SAMSUNGPAY', '문화상품권', '간편결제', 'UNKNOWN']) {
+      const { selection } = selections.find((entry) => entry.code === code && entry.variantKey === 'DEFAULT')!;
+      expect(selection.unsupported).toBe(true);
+      expect(selection.paymentMethod.method).not.toBe('CARD');
+    }
+    for (const code of ['VIRTUAL_ACCOUNT', '가상계좌', 'MOBILE_PHONE', '휴대폰']) {
+      const { selection } = selections.find((entry) => entry.code === code && entry.variantKey === 'DEFAULT')!;
+      expect(selection.paymentMethod.method).toMatch(/^(VIRTUAL_ACCOUNT|MOBILE_PHONE)$/);
+    }
+
     for (const label of ['카드 결제(국내/해외)', '계좌이체', '국내 간편결제', '해외 간편결제']) {
       expect(screen.getByRole('checkbox', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('never allows virtual account or phone payments, under any stored policy', () => {
+    for (const method of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'] as const) {
+      expect(isCheckoutPaymentMethodAllowed({ method }, [...PERFORMANCE_ALLOWED_PAYMENT_METHODS])).toBe(false);
+      expect(isCheckoutPaymentMethodAllowed({ method }, [method])).toBe(false);
+    }
+    for (const method of CHECKOUT_CONFIGURABLE_PAYMENT_METHODS) {
+      expect(isCheckoutPaymentMethodAllowed({ method }, [method])).toBe(true);
     }
   });
 });

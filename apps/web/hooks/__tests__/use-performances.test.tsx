@@ -8,7 +8,11 @@ import {
   type PerformanceListResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { CATALOG_BOOKING_START_REFETCH_GRACE_MS } from '@/components/performance/performance-display-status';
+import {
+  CATALOG_BOOKING_START_REFETCH_GRACE_MS,
+  resetCatalogRefetchJitterForTests,
+} from '@/components/performance/performance-display-status';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 import {
   clampCatalogPage,
   useBrowsePerformances,
@@ -191,12 +195,16 @@ describe('useBrowsePerformances', () => {
     vi.setSystemTime(OPEN_MS - 60_000);
     // Jitter 0: the refetch lands exactly grace after the booking start.
     vi.spyOn(Math, 'random').mockReturnValue(0);
+    resetCatalogRefetchJitterForTests();
+    resetServerClockForTests();
     get.mockReset();
     get.mockResolvedValue(page);
   });
 
   afterEach(() => {
     Reflect.deleteProperty(document, 'visibilityState');
+    resetServerClockForTests();
+    resetCatalogRefetchJitterForTests();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -226,7 +234,9 @@ describe('useBrowsePerformances', () => {
   });
 
   it('keeps the refetch when the page re-renders between the booking start and the refetch', async () => {
-    const { rerender } = renderHook(() => useBrowsePerformances('selling', 1), { wrapper: createWrapper() });
+    // Only the upcoming filter can hold a row whose booking start is still ahead: the
+    // API's on-sale filter returns rows whose start passed or is unset (catalog-card.ts).
+    const { rerender } = renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
     await advanceTo(Date.now());
     expect(get).toHaveBeenCalledTimes(1);
 
@@ -237,6 +247,28 @@ describe('useBrowsePerformances', () => {
     rerender();
 
     await advanceTo(REFETCH_AT_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches after the server booking start on a device clock that runs 90 seconds fast', async () => {
+    // The device reads OPEN + 30s while the server is still at OPEN - 60s.
+    vi.setSystemTime(OPEN_MS + 30_000);
+    recordServerTimeSample({
+      serverNowMs: OPEN_MS - 60_000 + 100,
+      requestStartedAtMs: OPEN_MS + 30_000,
+      responseReceivedAtMs: OPEN_MS + 30_200,
+    });
+    renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // On the device clock the start already passed when the page was fetched; anchored
+    // to the device clock the list would never refetch. The server clock still waits
+    // for the start: the refetch lands at server REFETCH_AT = device REFETCH_AT + 90s.
+    await advanceTo(REFETCH_AT_MS + 90_000 - 1);
+    expect(get).toHaveBeenCalledTimes(1);
+
+    await advanceTo(REFETCH_AT_MS + 90_000);
     expect(get).toHaveBeenCalledTimes(2);
   });
 

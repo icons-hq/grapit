@@ -46,6 +46,10 @@ const ALLOWED_KOREAN_SOURCE_PATTERNS: RegExp[] = [
   /locale === 'ko'/,
   /DEFAULT_STATUS_MESSAGES|잘못된 요청|접근 권한|요청하신 정보|서버 응답|요청이 너무 많|서버에 문제/,
   /LEGACY_LOCK_FAILURE_MESSAGES|좌석 점유 시간이 만료|이미 다른 사용자가 선택/,
+  // Server rejection text matched by status + message (C8), never displayed as is.
+  /대기열 입장 시간이 만료/,
+  // Korean Toss widget method labels the payment widget reports, matched as codes.
+  /^\s*\['[가-힣]+', \{ kind: '[A-Z_]+'/,
   /LEGACY_FLOOR_LABEL|기본/,
   /환불 요청|환불 실패|예매 취소 요청|결제수단|결제사|카드사|수동 확인/,
   /취소된 좌석은 즉시 재오픈/,

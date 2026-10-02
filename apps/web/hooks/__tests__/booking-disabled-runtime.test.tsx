@@ -320,7 +320,8 @@ function seedBookingFlow() {
     showtimeId: 'showtime-disabled',
     performanceId: 'performance-disabled',
     performanceTitle: 'Girl Rules Fanmeet',
-    showDateTime: '2026-07-04T09:00:00.000Z',
+    // Checkout closes once the showtime starts (C1); keep the fixture showtime ahead of real time.
+    showDateTime: '2099-07-04T09:00:00.000Z',
     venue: '서울 공연장',
     posterUrl: null,
     expiresAt: Date.now() + 600000,

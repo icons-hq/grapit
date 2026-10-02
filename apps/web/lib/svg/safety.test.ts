@@ -140,6 +140,52 @@ describe('sanitizeParsedSvg (audit #49 mXSS)', () => {
     expect(doc.querySelector('linearGradient stop')?.getAttribute('stop-color')).toBe('#fff');
   });
 
+  it('removes id/class names and url(#...) references outside the safe name rule', () => {
+    const doc = parseSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="ok_1.a:b-c"/>
+          <linearGradient id="g$'"/>
+          <linearGradient id="has space"/>
+          <linearGradient id="1starts-with-digit"/>
+          <linearGradient id="${'a'.repeat(129)}"/>
+        </defs>
+        <rect data-seat-id="A-1" class="seat-cell vip" fill="url(#ok_1.a:b-c)" stroke="url('#ok_1.a:b-c')"/>
+        <rect data-seat-id="A-2" class="seat $x" fill="url(#g$')" stroke="url(#has space)"/>
+      </svg>
+    `);
+
+    expect(sanitizeParsedSvg(doc)).toBe(true);
+    expect(Array.from(doc.querySelectorAll('linearGradient')).map((el) => el.getAttribute('id')))
+      .toEqual(['ok_1.a:b-c', null, null, null, null]);
+    const [kept, dropped] = Array.from(doc.querySelectorAll('rect'));
+    expect(kept!.getAttribute('class')).toBe('seat-cell vip');
+    expect(kept!.getAttribute('fill')).toBe('url(#ok_1.a:b-c)');
+    expect(kept!.getAttribute('stroke')).toBe("url('#ok_1.a:b-c')");
+    expect(dropped!.hasAttribute('class')).toBe(false);
+    expect(dropped!.hasAttribute('fill')).toBe(false);
+    expect(dropped!.hasAttribute('stroke')).toBe(false);
+    expect(dropped!.getAttribute('data-seat-id')).toBe('A-2');
+  });
+
+  it('removes image functions with string arguments from presentation attributes', () => {
+    const doc = parseSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <rect data-seat-id="A-1" cursor="image-set('https://tracker.example/c.png' 1x), pointer"
+          mask="image('https://tracker.example/m.png')" fill="cross-fade('https://tracker.example/a.png', red)"
+          filter="url(#f)" stroke="#111"/>
+      </svg>
+    `);
+
+    expect(sanitizeParsedSvg(doc)).toBe(true);
+    const rect = doc.querySelector('rect')!;
+    expect(rect.hasAttribute('cursor')).toBe(false);
+    expect(rect.hasAttribute('mask')).toBe(false);
+    expect(rect.hasAttribute('fill')).toBe(false);
+    expect(rect.getAttribute('filter')).toBe('url(#f)');
+    expect(rect.getAttribute('stroke')).toBe('#111');
+  });
+
   it('neutralizes documents whose root is not an SVG <svg> element', () => {
     const doc = parseSvg(
       '<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="x" onerror="alert(1)"/></body></html>',
@@ -185,6 +231,9 @@ describe('hasUnsafeSvgPayload (upload check)', () => {
     ['<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example/p.svg#x)"/></svg>'],
     ['<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:u\\rl(https://evil.example)"/></svg>'],
     ['<svg xmlns="http://www.w3.org/2000/svg"><rect data-x="java&#10;script:alert(1)"/></svg>'],
+    ['<svg xmlns="http://www.w3.org/2000/svg"><rect cursor="image-set(\'https://evil.example/c.png\' 1x), auto"/></svg>'],
+    ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"><g inkscape:onload="alert(1)"/></svg>'],
+    ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x"><g x:label="javascript:alert(1)"/></svg>'],
     ['<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>'],
   ])('rejects %s', (markup) => {
     expect(hasUnsafeSvgPayload(parseSvg(markup))).toBe(true);
@@ -202,6 +251,26 @@ describe('hasUnsafeSvgPayload (upload check)', () => {
 </svg>`);
 
     expect(hasUnsafeSvgPayload(doc)).toBe(false);
+  });
+
+  it('accepts an Inkscape export whose namespaced attributes carry Windows paths', () => {
+    const doc = parseSvg(`<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+  xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+  xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+  viewBox="0 0 100 100" sodipodi:docname="seat-map.svg"
+  inkscape:export-filename="C:\\Users\\designer\\Desktop\\seat map.png" inkscape:export-xdpi="96">
+  <sodipodi:namedview id="namedview1" inkscape:current-layer="layer1"/>
+  <g id="layer1" inkscape:label="Seats" inkscape:groupmode="layer">
+    <rect id="Frame 1" data-seat-id="A-1" x="1" y="1" width="5" height="5"/>
+  </g>
+</svg>`);
+
+    expect(hasUnsafeSvgPayload(doc)).toBe(false);
+    // The renderer drops what the upload check let through.
+    expect(sanitizeParsedSvg(doc)).toBe(true);
+    expect(doc.documentElement.getAttributeNS('http://www.inkscape.org/namespaces/inkscape', 'export-filename')).toBeNull();
+    expect(doc.querySelector('[data-seat-id="A-1"]')?.hasAttribute('id')).toBe(false);
   });
 
   it('accepts the seeded sample seat map', () => {

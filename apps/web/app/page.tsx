@@ -76,7 +76,7 @@ export default function HomePage() {
       {flagsResolved && !bookingEnabled && <p role="status" className="mt-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-950">{copy.home.bookingPaused}</p>}
       {isLoading ? <div role="status" aria-label={copy.home.loading} className="space-y-4 py-6">{[0,1,2].map((key) => <Skeleton key={key} className="h-32 w-full rounded-md" />)}</div>
         : isError ? <div role="alert" className="py-12 text-center"><p>{copy.home.loadError}</p><Button className="mt-4" variant="outline" onClick={() => void refetch()}>{copy.commonErrors.retry}</Button></div>
-        : data?.data.length ? <ul>{data.data.map((performance) => <PerformanceListRow key={performance.id} performance={performance} locale={locale} bookingEnabled={bookingEnabled} />)}</ul>
+        : data?.data.length ? <ul>{data.data.map((performance) => <PerformanceListRow key={performance.id} performance={performance} locale={locale} bookingEnabled={bookingEnabled} flagsResolved={flagsResolved} />)}</ul>
         : <p role="status" className="py-12 text-center text-muted-foreground">{copy.home.emptyFiltered}</p>}
       {data && data.totalPages > 1 && !isError && <div className="mt-8"><PaginationNav currentPage={data.page} totalPages={data.totalPages} onPageChange={(nextPage) => updateCatalog(filter, nextPage)} labels={{ navigation: copy.search.paginationNav, previous: copy.search.previousPage, next: copy.search.nextPage }} /></div>}
     </section>

@@ -1067,7 +1067,7 @@ describe('use-booking payment mutations', () => {
     );
   });
 
-  it('useBookingPaymentSnapshot() exposes a separate paymentDeadlineAt from lock expiry', () => {
+  it('useBookingPaymentSnapshot() follows the checkout deadline before prepare, not an entry-time estimate (audit #95)', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-08T10:00:00.000Z'));
 
@@ -1104,9 +1104,23 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(result.current.lockExpiresAt).toBe('2026-05-08T10:10:00.000Z');
-    expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:07:00.000Z');
+    // The server payment window (7 min) starts at prepare; until then the seat lock
+    // and the queue access window bound checkout.
+    expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:10:00.000Z');
+    expect(result.current.bookingPolicy.paymentWindowMinutes).toBe(7);
     expect(result.current.allowedPaymentMethods).toEqual(['CARD', 'FOREIGN_EASY_PAY']);
     expect(result.current.allowedPaymentMethodsKnown).toBe(true);
+
+    // Eight minutes on the review screen: the lock is still alive, so is checkout.
+    act(() => {
+      vi.advanceTimersByTime(8 * 60_000);
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(2 * 60_000);
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(true);
 
     vi.useRealTimers();
   });
@@ -1798,4 +1812,14 @@ it('keeps a bank-transfer widget selection distinct from a card checkout', () =>
     paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
     requiresOverseasDisclaimer: false,
   });
+  expect(resolvePaymentMethodSelection('계좌이체').paymentMethod.method).toBe('TRANSFER');
+});
+
+it('classifies virtual account and phone payments exactly instead of as a card (audit #70)', () => {
+  expect(resolvePaymentMethodSelection('VIRTUAL_ACCOUNT').paymentMethod.method).toBe('VIRTUAL_ACCOUNT');
+  expect(resolvePaymentMethodSelection('가상계좌').paymentMethod.method).toBe('VIRTUAL_ACCOUNT');
+  expect(resolvePaymentMethodSelection('MOBILE_PHONE').paymentMethod.method).toBe('MOBILE_PHONE');
+  expect(resolvePaymentMethodSelection('휴대폰').paymentMethod.method).toBe('MOBILE_PHONE');
+  expect(resolvePaymentMethodSelection('PAYCO')).toMatchObject({ unsupported: true });
+  expect(resolvePaymentMethodSelection('PAYCO').paymentMethod.method).not.toBe('CARD');
 });

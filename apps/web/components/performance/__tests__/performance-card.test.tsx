@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import type { PerformanceCardData } from '@grabit/shared';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 import { PerformanceCard } from '../performance-card';
 
 const localeMock = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const localeMock = vi.hoisted(() => ({
 
 const runtimeFlagsMock = vi.hoisted(() => ({
   bookingEnabled: true,
+  isResolved: true,
 }));
 
 vi.mock('next-intl', () => ({
@@ -18,6 +20,7 @@ vi.mock('next-intl', () => ({
 vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: () => ({
     bookingEnabled: runtimeFlagsMock.bookingEnabled,
+    isResolved: runtimeFlagsMock.isResolved,
   }),
 }));
 
@@ -46,10 +49,43 @@ describe('PerformanceCard', () => {
   beforeEach(() => {
     localeMock.activeLocale = 'ko';
     runtimeFlagsMock.bookingEnabled = true;
+    runtimeFlagsMock.isResolved = true;
+    resetServerClockForTests();
   });
 
   afterEach(() => {
+    resetServerClockForTests();
     vi.useRealTimers();
+  });
+
+  it('judges the booking start on the server clock like the detail page', () => {
+    vi.useFakeTimers();
+    // Device 10:59:00 runs 90 seconds slow; the server is already past the start.
+    const deviceNow = Date.parse('2026-07-01T10:59:00.000Z');
+    vi.setSystemTime(deviceNow);
+    recordServerTimeSample({
+      serverNowMs: deviceNow + 90_000 + 100,
+      requestStartedAtMs: deviceNow,
+      responseReceivedAtMs: deviceNow + 200,
+    });
+    render(
+      <PerformanceCard
+        performance={{ ...basePerformance, status: 'upcoming', bookingStartsAt: '2026-07-01T11:00:00.000Z' }}
+      />,
+    );
+
+    expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
+    expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
+  });
+
+  it('keeps the on-sale badge while the runtime flags have not loaded', () => {
+    runtimeFlagsMock.bookingEnabled = false;
+    runtimeFlagsMock.isResolved = false;
+
+    render(<PerformanceCard performance={basePerformance} />);
+
+    expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
+    expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
   });
 
   it('shows the upcoming badge for a selling performance until its booking start, then the dates', () => {

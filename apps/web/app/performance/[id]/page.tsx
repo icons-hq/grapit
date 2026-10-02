@@ -24,10 +24,14 @@ import {
 } from '@/components/performance/status-badge';
 import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
-import { resolveBookingStartPerformanceStatus } from '@/components/performance/performance-display-status';
+import {
+  parseBookingStartMs,
+  resolveBookingStartPerformanceStatus,
+} from '@/components/performance/performance-display-status';
 import { PerformancePeriod } from '@/components/performance/performance-period';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
@@ -72,10 +76,15 @@ export default function PerformanceDetailPage({
     verificationRequiredForBooking,
     bookingDisabledMessage,
     bookingEnabled,
+    isResolved: flagsResolved,
     isBeforeScheduledBookingStart,
   } = useBookingAvailability({
     performanceStatus: performance?.status,
     bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
+  });
+  // Refresh the server clock sample shortly before the opening the CTA waits for.
+  useRuntimeFlags({
+    resyncClockBeforeMs: parseBookingStartMs(performance?.bookingPolicy?.bookingStartsAt),
   });
   const showAutomaticTranslationLabel =
     hasAutomaticTranslationMetadata(performance);
@@ -111,7 +120,8 @@ export default function PerformanceDetailPage({
     performance.bookingPolicy?.bookingStartsAt,
     isBeforeScheduledBookingStart,
   );
-  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
+  // Booking stays closed while the flags are unknown, but the badge is not downgraded.
+  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
 
   return (
     <>

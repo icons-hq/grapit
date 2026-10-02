@@ -32,7 +32,9 @@ import { useServerTimeReached } from '@/hooks/use-server-clock';
 import {
   getQueueAccessClosedCopy,
   isQueueAccessDeadline,
+  parseServerDeadline,
 } from '@/lib/booking/queue-access';
+import { isShowtimeSalesClosedError } from '@/lib/booking/showtime-sales';
 import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
@@ -48,6 +50,7 @@ import {
   CONSENT_DOCUMENT_VERSIONS,
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   TICKET_SERVICE_FEE_KRW,
+  isCheckoutConfigurablePaymentMethod,
   isCheckoutPaymentMethodAllowed,
   isSameCheckoutPaymentMethod,
   resolveConsentDocumentLanguage,
@@ -85,6 +88,14 @@ function isPaymentMethodNotAllowedError(err: unknown): boolean {
     && err.message === CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
 }
 
+/** Admission guard 403 once the queue access window closed (C8: status + message). */
+const QUEUE_ACCESS_EXPIRED_MESSAGE = '대기열 입장 시간이 만료되었습니다';
+
+function isQueueAccessExpiredError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err && Number(err.statusCode) === 403
+    && err.message.trim() === QUEUE_ACCESS_EXPIRED_MESSAGE;
+}
+
 function getLocalizedLockFailureMessage(
   message: string,
   copy: ReturnType<typeof getVisibleCopy>['bookingExtra']['confirm'],
@@ -115,6 +126,10 @@ function ConfirmPageContent() {
   const queueAccessExpiresAt = useBookingStore((s) => s.queueAccessExpiresAt);
   const queueAccessClosed = useServerTimeReached(queueAccessExpiresAt);
   const queueAccessCopy = getQueueAccessClosedCopy(locale);
+  // C1 sales cutoff: once the showtime starts (server clock), prepare answers 403, so the
+  // pay button closes at the same instant instead of after a failed request.
+  const showtimeStarted = useServerTimeReached(parseServerDeadline(showDateTime));
+  const showtimeClosedMessage = t('seatSelection.showtimeClosed');
   const user = useAuthStore((s) => s.user);
   const {
     paymentDeadlineAt,
@@ -343,7 +358,13 @@ function ConfirmPageContent() {
   const methodFixedByOrder = restoredMethod
     ? isSameCheckoutPaymentMethod(restoredMethod, paymentMethod)
     : false;
-  const paymentMethodNotAllowed = paymentMethodRejected || (
+  // A virtual account, phone bill or unsupported widget method is refused under every
+  // policy, cached or not, and even for an order whose saved method it matches (audit #70).
+  // Same rule as the widget's isPayableWidgetSelection, which re-checks before handoff.
+  const selectionNotPayable = selectedPaymentMethod !== null
+    && (selectedPaymentMethod.unsupported === true
+      || !isCheckoutConfigurablePaymentMethod(selectedPaymentMethod.paymentMethod));
+  const paymentMethodNotAllowed = paymentMethodRejected || selectionNotPayable || (
     allowedPaymentMethodsKnown === true
     && Array.isArray(allowedPaymentMethods)
     && !methodFixedByOrder
@@ -355,6 +376,7 @@ function ConfirmPageContent() {
   async function handlePayment() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
+    if (showtimeStarted) return;
     if (queueAccessClosed) return;
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
@@ -458,6 +480,12 @@ function ConfirmPageContent() {
       }
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
+      // Server rejections arrive in Korean; the two checkout closures have locale copy.
+      const localizedRejection = isShowtimeSalesClosedError(err)
+        ? showtimeClosedMessage
+        : isQueueAccessExpiredError(err)
+        ? queueAccessCopy.toast
+        : null;
       let uncreatedOrder = false;
       if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
         && 'statusCode' in err && [400, 403, 409, 422].includes(Number(err.statusCode))) {
@@ -489,10 +517,13 @@ function ConfirmPageContent() {
         return;
       }
       if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
-        setLockFailureMessage(locale === 'ko' ? getLocalizedLockFailureMessage(errorMessage, confirmCopy) : confirmCopy.paymentRequestFailed);
+        setLockFailureMessage(localizedRejection
+          ?? (isLockFailureMessage(errorMessage)
+            ? getLocalizedLockFailureMessage(errorMessage, confirmCopy)
+            : locale === 'ko' ? errorMessage : confirmCopy.paymentRequestFailed));
         return;
       }
-      toast.error(errorMessage);
+      toast.error(localizedRejection ?? errorMessage);
       if (returnOrderId) void refetchRecovery();
     }
   }
@@ -558,6 +589,7 @@ function ConfirmPageContent() {
     || paymentMethodNotAllowed
     || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
+    || showtimeStarted
     || queueAccessClosed
     || !agreed
     || !widgetAgreementAgreed
@@ -567,6 +599,8 @@ function ConfirmPageContent() {
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
   const ctaText = !bookingAvailable
     ? bookingDisabledMessage
+    : showtimeStarted
+    ? showtimeClosedMessage
     : queueAccessClosed
     ? queueAccessCopy.title
     : lockFailureMessage
@@ -633,29 +667,47 @@ function ConfirmPageContent() {
               variant="outline"
               className="mt-3"
               onClick={handleLockFailureRecovery}
+              disabled={isReselecting || isProcessing}
             >
               {t('paymentRecovery.reselectCta')}
             </Button>
           </section>
         )}
 
-        {queueAccessClosed && (
+        {showtimeStarted && !lockFailureMessage && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
-            <p className="text-sm font-semibold text-red-700">{queueAccessCopy.title}</p>
-            <p className="mt-1 text-sm text-red-700">{queueAccessCopy.body}</p>
+            <p className="text-sm font-medium text-red-700">{showtimeClosedMessage}</p>
             <Button
               type="button"
               variant="outline"
               className="mt-3"
               onClick={handlePaymentReturnRecovery}
-              disabled={isReselecting}
+              disabled={isReselecting || isProcessing}
+            >
+              {t('paymentRecovery.reselectCta')}
+            </Button>
+          </section>
+        )}
+
+        {queueAccessClosed && !showtimeStarted && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{queueAccessCopy.title}</p>
+            <p className="mt-1 text-sm text-red-700">{queueAccessCopy.body}</p>
+            {/* Rejoining cancels the pending order and releases the seats, so it must
+                not run while prepare or the provider handoff is in flight. */}
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
             >
               {queueAccessCopy.rejoin}
             </Button>
           </section>
         )}
 
-        {isPaymentDeadlineExpired && !queueAccessClosed && (
+        {isPaymentDeadlineExpired && !queueAccessClosed && !showtimeStarted && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-red-700">
               {t('paymentRecovery.expiredTitle')}
@@ -663,6 +715,15 @@ function ConfirmPageContent() {
             <p className="mt-1 text-sm text-red-700">
               {t('paymentRecovery.expiredBody')}
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {t('paymentRecovery.reselectCta')}
+            </Button>
           </section>
         )}
 
@@ -681,7 +742,7 @@ function ConfirmPageContent() {
             {lockedMethodMismatch && <p className="text-sm text-muted-foreground">{checkoutCopy.methodLocked}</p>}
           </section>
         )}
-        {paymentMethodNotAllowed && !lockedMethodMismatch && (
+        {paymentMethodNotAllowed && (selectionNotPayable || !lockedMethodMismatch) && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-medium text-red-700">{checkoutCopy.methodNotAllowed}</p>
           </section>

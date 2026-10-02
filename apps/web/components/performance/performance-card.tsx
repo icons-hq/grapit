@@ -12,10 +12,11 @@ import {
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
 import {
-  resolveTimeAwarePerformanceStatus,
-  useBookingStartClock,
+  parseBookingStartMs,
+  resolveBookingStartPerformanceStatus,
 } from './performance-display-status';
 import type { PerformanceCardData } from '@grabit/shared';
 
@@ -32,14 +33,17 @@ export function PerformanceCard({
 }: PerformanceCardProps) {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
-  const { bookingEnabled } = useRuntimeFlags();
-  const nowMs = useBookingStartClock([performance.bookingStartsAt]);
-  const saleStatus = resolveTimeAwarePerformanceStatus(
+  const { bookingEnabled, isResolved: flagsResolved } = useRuntimeFlags();
+  // Server-corrected clock, the same verdict the detail page and its booking CTA use.
+  const bookingStartReached = useServerTimeReached(
+    parseBookingStartMs(performance.bookingStartsAt),
+  );
+  const saleStatus = resolveBookingStartPerformanceStatus(
     performance.status,
     performance.bookingStartsAt,
-    nowMs,
+    !bookingStartReached,
   );
-  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
+  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
 
   return (
     <Link

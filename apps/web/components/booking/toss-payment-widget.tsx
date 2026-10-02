@@ -18,7 +18,13 @@ import { Loader2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
-import { COUNTRY_OPTIONS, TICKET_SERVICE_FEE_KRW, isForeignCheckout, isSameCheckoutPaymentMethod } from '@grabit/shared';
+import {
+  COUNTRY_OPTIONS,
+  TICKET_SERVICE_FEE_KRW,
+  isCheckoutConfigurablePaymentMethod,
+  isForeignCheckout,
+  isSameCheckoutPaymentMethod,
+} from '@grabit/shared';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import type {
   FloorAwareSeatSelection,
@@ -31,32 +37,60 @@ import type {
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-09-21';
 const USPAY_VARIANT_KEY = 'uspay';
 const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
-const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>(['ALIPAY_PLUS', 'PAYPAL']);
 const PLACEHOLDER_PHONE_NUMBERS = new Set(['01000000000']);
-const OVERSEAS_CARD_CODES = new Set([
-  'VISA',
-  'MASTER',
-  'JCB',
-  'UNIONPAY',
-  'AMEX',
-  'DISCOVER',
-  'DINERS',
+
+/**
+ * What a Toss widget selection code means for checkout (audit #70). The widget reports
+ * either the English ENUM code or its Korean label, so both are listed. Any code that is
+ * not listed (PAYCO, Samsung Pay, L.PAY, SSG Pay, Apple Pay, gift certificates, card
+ * issuer or bank shortcuts, a bare "간편결제" without a provider, new codes) is unsupported:
+ * checkout refuses it in the browser instead of guessing a category.
+ */
+type WidgetMethodCategory =
+  | { kind: 'CARD' }
+  | { kind: 'OVERSEAS_CARD' }
+  | { kind: 'TRANSFER' }
+  | { kind: 'VIRTUAL_ACCOUNT' }
+  | { kind: 'MOBILE_PHONE' }
+  | { kind: 'SIMPLE_PAY'; provider: 'TOSS_PAY' | 'NAVER_PAY' | 'KAKAOPAY' }
+  | { kind: 'FOREIGN_EASY_PAY'; provider: 'ALIPAY_PLUS' | 'TRUEMONEY' | 'PAYPAL' };
+
+const WIDGET_METHOD_CATEGORY_BY_CODE = new Map<string, WidgetMethodCategory>([
+  ['CARD', { kind: 'CARD' }],
+  ['카드', { kind: 'CARD' }],
+  // International card brands are only shown by the overseas (uspay) payment UI.
+  ...['VISA', 'MASTER', 'JCB', 'UNIONPAY', 'AMEX', 'DISCOVER', 'DINERS']
+    .map((code): [string, WidgetMethodCategory] => [code, { kind: 'OVERSEAS_CARD' }]),
+  ['TRANSFER', { kind: 'TRANSFER' }],
+  ['계좌이체', { kind: 'TRANSFER' }],
+  ['VIRTUAL_ACCOUNT', { kind: 'VIRTUAL_ACCOUNT' }],
+  ['가상계좌', { kind: 'VIRTUAL_ACCOUNT' }],
+  ['MOBILE_PHONE', { kind: 'MOBILE_PHONE' }],
+  ['휴대폰', { kind: 'MOBILE_PHONE' }],
+  ['TOSSPAY', { kind: 'SIMPLE_PAY', provider: 'TOSS_PAY' }],
+  ['토스페이', { kind: 'SIMPLE_PAY', provider: 'TOSS_PAY' }],
+  ['NAVERPAY', { kind: 'SIMPLE_PAY', provider: 'NAVER_PAY' }],
+  ['네이버페이', { kind: 'SIMPLE_PAY', provider: 'NAVER_PAY' }],
+  ['KAKAOPAY', { kind: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
+  ['카카오페이', { kind: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
+  ['ALIPAY', { kind: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+  ['ALIPAY_PLUS', { kind: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+  ['TRUEMONEY', { kind: 'FOREIGN_EASY_PAY', provider: 'TRUEMONEY' }],
+  ['PAYPAL', { kind: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
+  ['페이팔', { kind: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
 ]);
 
-const SIMPLE_PAY_PROVIDER_BY_CODE = {
-  TOSSPAY: 'TOSS_PAY',
-  NAVERPAY: 'NAVER_PAY',
-  KAKAOPAY: 'KAKAOPAY',
-} as const satisfies Record<string, PaymentProvider>;
-
-const FOREIGN_PROVIDER_BY_CODE = {
-  ALIPAY: 'ALIPAY_PLUS',
-  ALIPAY_PLUS: 'ALIPAY_PLUS',
-  TRUEMONEY: 'TRUEMONEY',
-  PAYPAL: 'PAYPAL',
-  페이팔: 'PAYPAL',
-} as const satisfies Record<string, PaymentProvider>;
+/**
+ * Placeholder method of an unsupported selection. No supported selection produces a
+ * provider-less SIMPLE_PAY, so it never compares equal to a payable selection, and the
+ * selection is refused before prepare and before Provider Handoff anyway.
+ */
+const UNSUPPORTED_SELECTION_PAYMENT_METHOD: PaymentMethod = {
+  method: 'SIMPLE_PAY',
+  provider: 'CARD',
+  currency: 'KRW',
+};
 
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;
@@ -95,6 +129,26 @@ export interface PaymentMethodSelection {
   paymentMethod: PaymentMethod;
   requiresOverseasDisclaimer: boolean;
   requestFlow: 'widget';
+  /**
+   * The widget method has no checkout category (see WIDGET_METHOD_CATEGORY_BY_CODE).
+   * Checkout never sends it to the server; `paymentMethod` is only a placeholder.
+   */
+  unsupported?: true;
+}
+
+/**
+ * Whether checkout may send this widget selection to the server: a supported category that
+ * checkout can complete. Virtual account and phone payments are classified exactly and
+ * refused here under every performance policy (audit #70).
+ */
+export function isPayableWidgetSelection(selection: PaymentMethodSelection): boolean {
+  return selection.unsupported !== true
+    && isCheckoutConfigurablePaymentMethod(selection.paymentMethod);
+}
+
+function isSameWidgetSelection(a: PaymentMethodSelection, b: PaymentMethodSelection): boolean {
+  return (a.unsupported === true) === (b.unsupported === true)
+    && isSameCheckoutPaymentMethod(a.paymentMethod, b.paymentMethod);
 }
 
 export interface TossPaymentBranchResponse {
@@ -233,8 +287,9 @@ export function resolvePaymentWidgetRenderAmount({
   };
 }
 
+/** English codes are matched case-insensitively; Korean labels have no case. */
 function normalizePaymentMethodCode(code: string): string {
-  return code === '페이팔' ? code : code.toUpperCase();
+  return code.trim().toUpperCase();
 }
 
 function usesProviderChargeQuote(provider: PaymentProvider): boolean {
@@ -273,102 +328,49 @@ export function resolvePaymentMethodSelection(
   variantKey = 'DEFAULT',
 ): PaymentMethodSelection {
   const normalizedCode = normalizePaymentMethodCode(code);
-
-  if (
-    isForeignPaymentWidgetVariant(variantKey)
-    && (normalizedCode === 'ALIPAY' || normalizedCode === 'ALIPAY_PLUS')
-  ) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'ALIPAY_PLUS',
-        currency: 'USD',
-        pendingUrlRequired: true,
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (normalizedCode === 'CARD' && isForeignPaymentWidgetVariant(variantKey)) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'CARD',
-        provider: 'CARD',
-        currency: 'USD',
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (FOREIGN_WALLET_CODES.has(normalizedCode)) {
-    const provider = FOREIGN_PROVIDER_BY_CODE[normalizedCode as keyof typeof FOREIGN_PROVIDER_BY_CODE];
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'FOREIGN_EASY_PAY',
-        provider,
-        currency: 'USD',
-        ...(provider === 'PAYPAL' ? {} : { pendingUrlRequired: true }),
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (
-    (normalizedCode === 'OVERSEAS_CARD' && isForeignPaymentWidgetVariant(variantKey))
-    || OVERSEAS_CARD_CODES.has(normalizedCode)
-  ) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'CARD',
-        provider: 'CARD',
-        currency: 'USD',
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (normalizedCode === 'TRANSFER') {
-    return {
-      code, requestFlow: 'widget', requiresOverseasDisclaimer: false,
-      paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
-    };
-  }
-
-  if (code in SIMPLE_PAY_PROVIDER_BY_CODE) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: false,
-      paymentMethod: {
-        method: 'SIMPLE_PAY',
-        provider: SIMPLE_PAY_PROVIDER_BY_CODE[code as keyof typeof SIMPLE_PAY_PROVIDER_BY_CODE],
-        currency: 'KRW',
-      },
-    };
-  }
-
-  return {
+  const isOverseasWidget = isForeignPaymentWidgetVariant(variantKey);
+  const category = normalizedCode === 'OVERSEAS_CARD' && isOverseasWidget
+    ? { kind: 'OVERSEAS_CARD' as const }
+    : WIDGET_METHOD_CATEGORY_BY_CODE.get(normalizedCode);
+  const domestic = (paymentMethod: PaymentMethod): PaymentMethodSelection => ({
     code,
     requestFlow: 'widget',
     requiresOverseasDisclaimer: false,
-    paymentMethod: {
-      method: 'CARD',
-      provider: 'CARD',
-      currency: 'KRW',
-    },
-  };
+    paymentMethod,
+  });
+  const overseas = (paymentMethod: PaymentMethod): PaymentMethodSelection => ({
+    code,
+    requestFlow: 'widget',
+    requiresOverseasDisclaimer: true,
+    paymentMethod: { ...paymentMethod, overseasPaymentConsent: createOverseasConsent() },
+  });
+
+  switch (category?.kind) {
+    case 'CARD':
+      // The overseas payment UI charges every card in USD under the overseas card contract.
+      return isOverseasWidget
+        ? overseas({ method: 'CARD', provider: 'CARD', currency: 'USD' })
+        : domestic({ method: 'CARD', provider: 'CARD', currency: 'KRW' });
+    case 'OVERSEAS_CARD':
+      return overseas({ method: 'CARD', provider: 'CARD', currency: 'USD' });
+    case 'TRANSFER':
+      return domestic({ method: 'TRANSFER', provider: 'CARD', currency: 'KRW' });
+    case 'VIRTUAL_ACCOUNT':
+      return domestic({ method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' });
+    case 'MOBILE_PHONE':
+      return domestic({ method: 'MOBILE_PHONE', provider: 'CARD', currency: 'KRW' });
+    case 'SIMPLE_PAY':
+      return domestic({ method: 'SIMPLE_PAY', provider: category.provider, currency: 'KRW' });
+    case 'FOREIGN_EASY_PAY':
+      return overseas({
+        method: 'FOREIGN_EASY_PAY',
+        provider: category.provider,
+        currency: 'USD',
+        ...(category.provider === 'PAYPAL' ? {} : { pendingUrlRequired: true }),
+      });
+    default:
+      return { ...domestic(UNSUPPORTED_SELECTION_PAYMENT_METHOD), unsupported: true };
+  }
 }
 
 export function resolvePaymentRequestAmount({
@@ -699,13 +701,18 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           (await paymentMethodWidget.getSelectedPaymentMethod()).code,
           paymentWidgetVariantKey,
         );
-        if (!isSameCheckoutPaymentMethod(
-          liveSelection.paymentMethod,
-          selectedPaymentMethodRef.current.paymentMethod,
-        )) {
+        const liveSelectionChanged = !isSameWidgetSelection(
+          liveSelection,
+          selectedPaymentMethodRef.current,
+        );
+        if (liveSelectionChanged || !isPayableWidgetSelection(liveSelection)) {
           selectedPaymentMethodRef.current = liveSelection;
           onPaymentMethodChange?.(liveSelection);
-          throw new Error(checkoutCopy.methodChanged);
+          // A virtual account, phone bill or unsupported widget method never reaches
+          // the server, whatever the selection event said earlier (audit #70).
+          throw new Error(isPayableWidgetSelection(liveSelection)
+            ? checkoutCopy.methodChanged
+            : checkoutCopy.methodNotAllowed);
         }
         const selection = selectedPaymentMethodRef.current;
         if (agreementAgreedRef.current === false) {
@@ -818,7 +825,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
           // The buyer can change an iframe selection while the branch request is in flight.
           // Never send its amount/return contract to a different provider selection.
-          if (!isSameCheckoutPaymentMethod(selection.paymentMethod, selectedPaymentMethodRef.current.paymentMethod)) {
+          if (!isSameWidgetSelection(selection, selectedPaymentMethodRef.current)) {
             throw new Error(checkoutCopy.methodChanged);
           }
           await widgets.requestPayment(

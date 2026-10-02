@@ -4,7 +4,13 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 import type { PrepareReservationResponse } from '@grabit/shared';
-import { TossPaymentWidget, type TossPaymentWidgetRef } from '../toss-payment-widget';
+import {
+  TossPaymentWidget,
+  isPayableWidgetSelection,
+  resolvePaymentMethodSelection,
+  type TossPaymentWidgetRef,
+} from '../toss-payment-widget';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 
 const {
   apiClientPostMock,
@@ -404,6 +410,39 @@ describe('TossPaymentWidget', () => {
     }));
   });
 
+  it.each([
+    ['VIRTUAL_ACCOUNT', 'VIRTUAL_ACCOUNT'],
+    ['휴대폰', 'MOBILE_PHONE'],
+    ['PAYCO', 'SIMPLE_PAY'],
+  ])('refuses a live %s selection before any handoff is recorded (audit #70)', async (code, method) => {
+    const onPaymentMethodChange = vi.fn();
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} onPaymentMethodChange={onPaymentMethodChange} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    // The selection event said card; the iframe now shows the refused method.
+    getSelectedPaymentMethodMock.mockResolvedValueOnce({ code });
+
+    await expect(ref.current!.requestPayment()).rejects.toThrow(getCheckoutCopy('ko').methodNotAllowed);
+
+    expect(apiClientPostMock).not.toHaveBeenCalled();
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+    expect(onPaymentMethodChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      code,
+      paymentMethod: expect.objectContaining({ method }),
+    }));
+  });
+
+  it('refuses an unsupported selection even when the selection event already reported it', async () => {
+    getSelectedPaymentMethodMock.mockResolvedValue({ code: 'SAMSUNGPAY' });
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    await expect(ref.current!.requestPayment()).rejects.toThrow(getCheckoutCopy('ko').methodNotAllowed);
+    expect(apiClientPostMock).not.toHaveBeenCalled();
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+  });
+
   it('does not record a handoff after the buyer withdraws the payment terms agreement', async () => {
     const ref = createRef<TossPaymentWidgetRef>();
     render(<TossPaymentWidget {...defaultProps} ref={ref} />);
@@ -574,5 +613,64 @@ describe('TossPaymentWidget', () => {
       },
     })).rejects.toThrow('해외 카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
     expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolvePaymentMethodSelection widget code table (audit #70)', () => {
+  it.each([
+    ['CARD', { method: 'CARD', provider: 'CARD', currency: 'KRW' }],
+    ['card', { method: 'CARD', provider: 'CARD', currency: 'KRW' }],
+    ['카드', { method: 'CARD', provider: 'CARD', currency: 'KRW' }],
+    ['TRANSFER', { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' }],
+    ['계좌이체', { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' }],
+    ['VIRTUAL_ACCOUNT', { method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' }],
+    ['가상계좌', { method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' }],
+    ['MOBILE_PHONE', { method: 'MOBILE_PHONE', provider: 'CARD', currency: 'KRW' }],
+    ['휴대폰', { method: 'MOBILE_PHONE', provider: 'CARD', currency: 'KRW' }],
+    ['TOSSPAY', { method: 'SIMPLE_PAY', provider: 'TOSS_PAY', currency: 'KRW' }],
+    ['토스페이', { method: 'SIMPLE_PAY', provider: 'TOSS_PAY', currency: 'KRW' }],
+    ['NAVERPAY', { method: 'SIMPLE_PAY', provider: 'NAVER_PAY', currency: 'KRW' }],
+    ['네이버페이', { method: 'SIMPLE_PAY', provider: 'NAVER_PAY', currency: 'KRW' }],
+    ['kakaopay', { method: 'SIMPLE_PAY', provider: 'KAKAOPAY', currency: 'KRW' }],
+    ['카카오페이', { method: 'SIMPLE_PAY', provider: 'KAKAOPAY', currency: 'KRW' }],
+    ['PAYPAL', { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' }],
+    ['페이팔', { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' }],
+    ['TRUEMONEY', { method: 'FOREIGN_EASY_PAY', provider: 'TRUEMONEY', currency: 'USD' }],
+    ['VISA', { method: 'CARD', provider: 'CARD', currency: 'USD' }],
+  ] as const)('maps the domestic widget code %s exactly', (code, paymentMethod) => {
+    const selection = resolvePaymentMethodSelection(code, 'DEFAULT');
+    expect(selection.unsupported).toBeUndefined();
+    expect(selection.paymentMethod).toMatchObject(paymentMethod);
+  });
+
+  it.each(['CARD', '카드', 'OVERSEAS_CARD', 'MASTER'])('keeps %s an overseas USD card in the overseas widget', (code) => {
+    expect(resolvePaymentMethodSelection(code, 'uspay')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'USD', overseasPaymentConsent: { required: true } },
+    });
+  });
+
+  it.each([
+    'PAYCO', 'SAMSUNGPAY', 'LPAY', 'SSG', 'SSGPAY', 'APPLEPAY', 'PINPAY', 'KBPAY', 'CULTURE_GIFT_CERTIFICATE',
+    '문화상품권', 'BOOK_GIFT_CERTIFICATE', 'GAME_GIFT_CERTIFICATE', '간편결제', 'EASY_PAY', 'SHINHAN', 'BRANDPAY',
+    'OVERSEAS_CARD', 'GCASH', 'UNKNOWN', '',
+  ])('flags %s unsupported instead of falling back to CARD', (code) => {
+    const selection = resolvePaymentMethodSelection(code, 'DEFAULT');
+    expect(selection.unsupported).toBe(true);
+    expect(selection.paymentMethod.method).not.toBe('CARD');
+    expect(isPayableWidgetSelection(selection)).toBe(false);
+  });
+
+  it('never lets an unsupported placeholder compare equal to a payable selection', () => {
+    const unsupported = resolvePaymentMethodSelection('PAYCO').paymentMethod;
+    for (const code of ['CARD', 'TRANSFER', 'TOSSPAY', 'NAVERPAY', 'KAKAOPAY', 'PAYPAL', 'VISA']) {
+      expect(resolvePaymentMethodSelection(code).paymentMethod).not.toEqual(unsupported);
+    }
+  });
+
+  it.each(['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'])('classifies %s exactly but never as payable', (code) => {
+    const selection = resolvePaymentMethodSelection(code);
+    expect(selection.unsupported).toBeUndefined();
+    expect(isPayableWidgetSelection(selection)).toBe(false);
   });
 });

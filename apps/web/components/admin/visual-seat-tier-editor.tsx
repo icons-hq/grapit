@@ -36,7 +36,8 @@ function parseSvg(svgMarkup: string, tiers: SeatTier[]) {
   ) {
     return null;
   }
-  sanitizeParsedSvg(doc);
+  // A non-SVG root is neutralized but must not be injected either; use the parse-error fallback.
+  if (!sanitizeParsedSvg(doc)) return null;
 
   const seatIds = Array.from(doc.querySelectorAll('[data-seat-id]'))
     .map((el) => el.getAttribute('data-seat-id')?.trim())

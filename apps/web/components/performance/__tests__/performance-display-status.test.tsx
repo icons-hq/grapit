@@ -1,13 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CATALOG_BOOKING_START_REFETCH_GRACE_MS,
   CATALOG_BOOKING_START_REFETCH_SPREAD_MS,
   getCatalogBookingStartRefetchDelay,
   getCatalogListBookingStartRefetchInterval,
+  resetCatalogRefetchJitterForTests,
   resolveTimeAwarePerformanceStatus,
-  useBookingStartClock,
 } from '../performance-display-status';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 
 const NOW = Date.parse('2026-10-01T10:59:00.000Z');
 const OPEN = '2026-10-01T11:00:00.000Z';
@@ -35,52 +35,6 @@ describe('resolveTimeAwarePerformanceStatus', () => {
     const openMs = Date.parse(OPEN);
     expect(resolveTimeAwarePerformanceStatus('upcoming', OPEN, openMs - 1)).toBe('upcoming');
     expect(resolveTimeAwarePerformanceStatus('upcoming', OPEN, openMs)).toBe('selling');
-  });
-});
-
-function ClockProbe({ startsAt }: { startsAt: Array<string | null> }) {
-  const nowMs = useBookingStartClock(startsAt);
-  return (
-    <span data-testid="status">
-      {resolveTimeAwarePerformanceStatus('upcoming', startsAt[0], nowMs)}
-    </span>
-  );
-}
-
-describe('useBookingStartClock', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('re-renders when the booking start passes without a reload', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    render(<ClockProbe startsAt={[OPEN]} />);
-    expect(screen.getByTestId('status').textContent).toBe('upcoming');
-
-    act(() => {
-      vi.advanceTimersByTime(59_999);
-    });
-    expect(screen.getByTestId('status').textContent).toBe('upcoming');
-
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
-    expect(screen.getByTestId('status').textContent).toBe('selling');
-  });
-
-  it('catches up when data with an already-passed start arrives after mount', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    const { rerender } = render(<ClockProbe startsAt={[null]} />);
-
-    // The response lands two seconds after the opening second.
-    vi.setSystemTime(Date.parse(OPEN) + 2_000);
-    rerender(<ClockProbe startsAt={[OPEN]} />);
-    act(() => {
-      vi.advanceTimersByTime(0);
-    });
-    expect(screen.getByTestId('status').textContent).toBe('selling');
   });
 });
 
@@ -139,12 +93,29 @@ describe('getCatalogBookingStartRefetchDelay', () => {
 
 describe('getCatalogListBookingStartRefetchInterval', () => {
   const page = { data: [{ status: 'upcoming' as const, bookingStartsAt: OPEN }] };
+  const GRACE = CATALOG_BOOKING_START_REFETCH_GRACE_MS;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    // Jitter 0, drawn fresh for this test instead of whatever an earlier test cached.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    resetCatalogRefetchJitterForTests();
+    resetServerClockForTests();
+  });
+
+  afterEach(() => {
+    resetServerClockForTests();
+    resetCatalogRefetchJitterForTests();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
 
   it('anchors on the latest settled fetch, including a failed refetch', () => {
     const openMs = Date.parse(OPEN);
     expect(getCatalogListBookingStartRefetchInterval({
       state: { data: page, dataUpdatedAt: NOW, errorUpdatedAt: 0, fetchStatus: 'idle' },
-    })).toBeGreaterThan(0);
+    })).toBe(openMs - NOW + GRACE);
     // A refetch that failed after the target must not retry every millisecond.
     expect(getCatalogListBookingStartRefetchInterval({
       state: {
@@ -162,5 +133,51 @@ describe('getCatalogListBookingStartRefetchInterval', () => {
         state: { data: page, dataUpdatedAt: NOW, errorUpdatedAt: 0, fetchStatus },
       })).toBe(false);
     }
+  });
+
+  it('does not schedule before any fetch settled, whatever the clock offset', () => {
+    recordServerTimeSample({ serverNowMs: NOW + 90_100, requestStartedAtMs: NOW, responseReceivedAtMs: NOW + 200 });
+    expect(getCatalogListBookingStartRefetchInterval({
+      state: { data: page, dataUpdatedAt: 0, errorUpdatedAt: 0, fetchStatus: 'idle' },
+    })).toBe(false);
+  });
+
+  it.each([
+    ['runs 90 seconds fast', -90_000],
+    ['runs 90 seconds slow', 90_000],
+  ])('refetches at the server booking start when the device clock %s', (_name, offsetMs) => {
+    const openMs = Date.parse(OPEN);
+    // The device reads NOW; the server is offsetMs ahead of it.
+    recordServerTimeSample({
+      serverNowMs: NOW + offsetMs + 100,
+      requestStartedAtMs: NOW,
+      responseReceivedAtMs: NOW + 200,
+    });
+    const serverNowMs = NOW + offsetMs;
+    const delay = getCatalogListBookingStartRefetchInterval({
+      state: { data: page, dataUpdatedAt: NOW, errorUpdatedAt: 0, fetchStatus: 'idle' },
+    });
+
+    if (serverNowMs > openMs + GRACE) {
+      // The page was fetched on the server clock after the start: nothing left to wait for.
+      expect(delay).toBe(false);
+    } else {
+      expect(delay).toBe(openMs + GRACE - serverNowMs);
+    }
+  });
+
+  it('keeps polling a page fetched before the server start even on a fast device clock', () => {
+    const openMs = Date.parse(OPEN);
+    // Device runs 90s fast: it reads OPEN + 30s while the server is still 60s before OPEN.
+    vi.setSystemTime(openMs + 30_000);
+    recordServerTimeSample({
+      serverNowMs: openMs - 60_000 + 100,
+      requestStartedAtMs: openMs + 30_000,
+      responseReceivedAtMs: openMs + 30_200,
+    });
+
+    expect(getCatalogListBookingStartRefetchInterval({
+      state: { data: page, dataUpdatedAt: openMs + 30_000, errorUpdatedAt: 0, fetchStatus: 'idle' },
+    })).toBe(60_000 + GRACE);
   });
 });
