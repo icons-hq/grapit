@@ -128,7 +128,10 @@ describe('Consent audit query and document versions on Postgres', () => {
     let cursor: string | undefined;
     let pages = 0;
     do {
-      const page = await service.queryConsentAudit({ limit: 2, cursor }, now);
+      // Each "load more" happens days later; the first page's window must hold,
+      // or the 2026-09-28 row would drop out of the last page unnoticed.
+      const requestedAt = new Date(now.getTime() + pages * 3 * 86_400_000);
+      const page = await service.queryConsentAudit({ limit: 2, cursor }, requestedAt);
       expect(page.items.length).toBeLessThanOrEqual(2);
       expect(page.defaultWindowFrom).toBe('2026-09-24T00:00:00.000Z');
       seen.push(...page.items.map((row) => row.id));

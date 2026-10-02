@@ -63,6 +63,12 @@ const CONSENT_AUDIT_CURSOR_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d
 const consentAuditCursorSchema = z.object({
   at: z.string().regex(CONSENT_AUDIT_CURSOR_TIMESTAMP),
   id: z.string().uuid(),
+  /**
+   * Start of the default lookback window chosen for the first page. Later pages
+   * keep it, so a slow "load more" does not silently drop rows that fall out of
+   * a window recomputed from a later `now`.
+   */
+  from: z.string().datetime().optional(),
 });
 type ConsentAuditCursor = z.infer<typeof consentAuditCursorSchema>;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -149,13 +155,16 @@ export class ConsentService {
       predicates.push(eq(users.email, filters.email));
     }
 
-    // Without a period or an identity filter the query would walk the whole
-    // log; bound it to a recent window the operator can widen explicitly.
+    // Without a period start or an identity filter the query would walk the
+    // whole log; bound it to the 7 days ending at `to` (or now). A cursor keeps
+    // the window chosen for the first page so every page shares one lower bound.
     const hasIdentityFilter = Boolean(filters.userId || filters.email || filters.ip);
     let defaultWindowFrom: Date | null = null;
     if (!filters.from && !hasIdentityFilter) {
       const anchor = filters.to ? new Date(filters.to) : now;
-      defaultWindowFrom = new Date(anchor.getTime() - ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS * DAY_MS);
+      defaultWindowFrom = cursor?.from
+        ? new Date(cursor.from)
+        : new Date(anchor.getTime() - ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS * DAY_MS);
       predicates.push(gte(consentAuditLogs.agreedAt, defaultWindowFrom));
     }
 
@@ -207,7 +216,11 @@ export class ConsentService {
         accepted: row.accepted,
       })),
       nextCursor: rows.length > limit && lastRow
-        ? ConsentService.encodeAuditCursor({ at: lastRow.cursorAt, id: lastRow.id })
+        ? ConsentService.encodeAuditCursor({
+          at: lastRow.cursorAt,
+          id: lastRow.id,
+          ...(defaultWindowFrom ? { from: defaultWindowFrom.toISOString() } : {}),
+        })
         : null,
       defaultWindowFrom: defaultWindowFrom?.toISOString() ?? null,
     };

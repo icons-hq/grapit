@@ -181,7 +181,12 @@ describe('ConsentAuditTable', () => {
   it('explains the default lookback window applied to an unbounded query', () => {
     renderTable({ defaultWindowFrom: '2026-09-23T00:00:00.000Z' });
 
-    expect(screen.getByRole('status')).toHaveTextContent('기간을 지정하지 않아 최근 7일');
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('시작 시각을 지정하지 않아 2026-09-23 09:00:00부터 7일 범위의 기록만 조회했습니다.');
+    // With only an end time the window ends at that time, not now: the notice
+    // must not claim the period was unset or that it covers the latest days.
+    expect(notice).not.toHaveTextContent('기간을 지정하지 않아');
+    expect(notice).not.toHaveTextContent('최근');
   });
 
   it('shows accessible error state', () => {

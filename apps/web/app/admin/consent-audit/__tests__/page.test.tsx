@@ -61,7 +61,7 @@ describe('AdminConsentAuditPage', () => {
 
     expect(await screen.findByText('u1***@example.com')).toBeInTheDocument();
     expect(mocks.get).toHaveBeenCalledWith('/api/v1/admin/consent-audit');
-    expect(screen.getByRole('status')).toHaveTextContent('최근 7일');
+    expect(screen.getByRole('status')).toHaveTextContent('2026-09-23 09:00:00부터 7일 범위');
 
     await user.click(screen.getByRole('button', { name: '더 보기' }));
 

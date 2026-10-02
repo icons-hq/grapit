@@ -201,7 +201,7 @@ export function ConsentAuditTable({
 
       {defaultWindowFrom && (
         <p role="status" className="rounded-lg bg-white px-4 py-3 text-sm text-gray-600 shadow-sm">
-          기간을 지정하지 않아 최근 {ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS}일({formatDateTime(defaultWindowFrom)} 이후) 기록만 조회했습니다.
+          시작 시각을 지정하지 않아 {formatDateTime(defaultWindowFrom)}부터 {ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS}일 범위의 기록만 조회했습니다.
           이전 기록은 시작 시각을 지정하거나 사용자·IP로 조회하세요.
         </p>
       )}

@@ -456,7 +456,9 @@ Shared admin capability bundles include:
 
 Scanner-only accounts can verify/consume/sync field scan attempts but must not gain broad admin, finance, support, user, security, refund, or raw export authority.
 
-`GET /api/v1/admin/consent-audit` requires `audit.read` and returns keyset-paginated pages (default 100, maximum 500 rows); without a period or user/email/IP filter it reads only the last 7 days.
+`GET /api/v1/admin/consent-audit` requires `audit.read` and returns keyset-paginated pages (default 100, maximum 500 rows); without a `from` or user/email/IP filter it reads only the 7 days ending at `to` (or now), and every page of one query keeps the first page's window.
+
+`/api/v1/admin/dashboard/*` requires `reservations.read` (the same capability as the admin home menu), and `GET /api/v1/admin/_sentry-test` requires `security.manage`. Legacy `role=admin` accounts with no bundle or capabilities remain superusers.
 
 ### 10.3 Data Redaction
 

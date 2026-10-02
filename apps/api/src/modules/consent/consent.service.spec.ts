@@ -5,6 +5,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import {
   ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS,
+  prepareReservationSchema,
   type ConsentCaptureItem,
 } from '@grabit/shared';
 import { CONSENT_DOCUMENT_OUTDATED_MESSAGE, ConsentService } from './consent.service.js';
@@ -189,6 +190,24 @@ describe('ConsentService', () => {
       await expect(service.assertRequiredConsents({ items: bookingItems() })).resolves.toBeUndefined();
     });
 
+    it('treats the consent rows the shared prepare schema produces as booking rows', async () => {
+      // Contract with reservation prepare: whatever the request schema yields
+      // must resolve to the booking required set, not the signup one.
+      const items = prepareReservationSchema.shape.consentItems.parse(bookingItems());
+
+      await expect(service.assertRequiredConsents({ items })).resolves.toBeUndefined();
+      await expect(service.assertRequiredConsents({ items, sourceFlow: 'booking' })).resolves.toBeUndefined();
+    });
+
+    it('uses an explicit booking flow even when rows lost their per-item tag', async () => {
+      const untagged = bookingItems().map(({ sourceFlow: _sourceFlow, ...item }) => item);
+
+      await expect(service.assertRequiredConsents({ items: untagged }))
+        .rejects.toThrow('pipa_required consent is required');
+      await expect(service.assertRequiredConsents({ items: untagged, sourceFlow: 'booking' }))
+        .resolves.toBeUndefined();
+    });
+
     it('still requires PIPA consent for signup rows', async () => {
       const signupItems = bookingItems().map((item) => ({ ...item, sourceFlow: 'signup' as const }));
       await expect(service.assertRequiredConsents({ items: signupItems }))
@@ -349,6 +368,7 @@ describe('ConsentService', () => {
       expect(ConsentService.decodeAuditCursor(result.nextCursor!)).toEqual({
         at: auditRow(2).cursorAt,
         id: auditRow(2).id,
+        from: result.defaultWindowFrom,
       });
     });
 
@@ -370,6 +390,34 @@ describe('ConsentService', () => {
       expect(result.defaultWindowFrom).toBe(windowFrom.toISOString());
       expect(rendered().sql).toContain('"consent_audit_logs"."agreed_at" >= $1');
       expect(rendered().params).toEqual([windowFrom.toISOString()]);
+    });
+
+    it('keeps the first page window when a later page is loaded after time has passed', async () => {
+      // Page 1 at T1 shows "since T1-7d"; "load more" at T2 must not quietly
+      // switch the lower bound to T2-7d and drop the rows in between.
+      const first = auditQueryDb([0, 1, 2, 3].map(auditRow));
+      const firstPage = await first.auditService.queryConsentAudit({ limit: 3 }, now);
+      const later = new Date(now.getTime() + 2 * 86_400_000);
+      const second = auditQueryDb([]);
+
+      const secondPage = await second.auditService.queryConsentAudit(
+        { limit: 3, cursor: firstPage.nextCursor! },
+        later,
+      );
+
+      expect(secondPage.defaultWindowFrom).toBe(firstPage.defaultWindowFrom);
+      expect(second.rendered().params[0]).toBe(firstPage.defaultWindowFrom);
+    });
+
+    it('anchors the default window at `to` when only the end of the period is set', async () => {
+      const { auditService, rendered } = auditQueryDb([]);
+      const to = '2026-09-20T00:00:00.000Z';
+
+      const result = await auditService.queryConsentAudit({ to }, now);
+
+      const windowFrom = new Date(Date.parse(to) - ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS * 86_400_000);
+      expect(result.defaultWindowFrom).toBe(windowFrom.toISOString());
+      expect(rendered().params).toEqual([to, windowFrom.toISOString()]);
     });
 
     it('does not cap a user lookup to the default window', async () => {

@@ -982,6 +982,7 @@ describe('ReservationService', () => {
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
       expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
         items: dto.consentItems,
+        sourceFlow: 'booking',
       });
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
