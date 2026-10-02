@@ -14,12 +14,31 @@ import { allowSocketIoFrontendOrigin } from '../../config/frontend-origins.js';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import {
   canPublishSocketIoEvents,
-  publishSocketIoRoomEvent,
+  publishSocketIoRoomEvents,
   type SocketIoRedisPublisher,
 } from './providers/socket-io-redis-emitter.js';
 
 export const BOOKING_SOCKET_NAMESPACE = '/booking';
+/**
+ * Legacy seat update event, sent for every state except `locked`.
+ *
+ * Web bundles from before audit #92 remove a selected seat when a `locked`
+ * event names another user, and the payload no longer names anyone, so such a
+ * tab would drop the seat the user just locked (the lock then stays orphaned
+ * until its TTL). Those bundles only listen to this event, so it never carries
+ * `locked`.
+ * TODO(next release): stop sending it once no pre-v2 web bundle can be open.
+ */
 export const SEAT_UPDATE_EVENT = 'seat-update';
+/** Carries every seat state, `locked` included. Current web bundles listen to both. */
+export const SEAT_UPDATE_V2_EVENT = 'seat-update.v2';
+
+/** The events one seat change is sent as, in this order. */
+export function seatUpdateEventNames(status: SeatState): readonly string[] {
+  return status === 'locked'
+    ? [SEAT_UPDATE_V2_EVENT]
+    : [SEAT_UPDATE_V2_EVENT, SEAT_UPDATE_EVENT];
+}
 
 export function showtimeRoom(showtimeId: string): string {
   return `showtime:${showtimeId}`;
@@ -94,7 +113,9 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   /**
-   * Broadcasts a seat status update to all clients in the showtime room.
+   * Broadcasts a seat status update to all clients in the showtime room, as
+   * `seat-update.v2` and, unless the seat was locked, as the legacy
+   * `seat-update` (see SEAT_UPDATE_EVENT).
    *
    * The room is joined without authentication, so the payload carries only the
    * seat and its state, never who locked or bought it (audit #92). The trailing
@@ -120,9 +141,12 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.notifySeatUpdateListeners(showtimeId, seatId, status);
     const payload: SeatUpdateEvent = { seatId, status };
     const room = showtimeRoom(showtimeId);
+    const events = seatUpdateEventNames(status);
 
     if (this.server) {
-      this.server.to(room).emit(SEAT_UPDATE_EVENT, payload);
+      for (const event of events) {
+        this.server.to(room).emit(event, payload);
+      }
       return true;
     }
 
@@ -131,11 +155,11 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
 
     try {
-      await publishSocketIoRoomEvent(
+      await publishSocketIoRoomEvents(
         this.redisPublisher,
         BOOKING_SOCKET_NAMESPACE,
         room,
-        SEAT_UPDATE_EVENT,
+        events,
         payload,
       );
       return true;

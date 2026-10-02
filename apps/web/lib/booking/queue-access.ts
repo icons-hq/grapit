@@ -49,13 +49,43 @@ export function isQueueAccessDeadline(
 
 type QueueAccessLocale = 'ko' | 'en' | 'th' | 'zh-CN';
 
+/**
+ * Server messages (403) of a seat lock or prepare refused for the queue
+ * admission itself: the window ended, the admission was used up by a purchase
+ * in another tab, or the admission cookie is missing or for another
+ * performance. Other 403s (sales closed, booking disabled) are not about the
+ * queue.
+ */
+const QUEUE_ACCESS_REJECTION_PREFIXES = [
+  '대기열 입장 시간이 만료되었습니다',
+  '대기열 입장 인증이 필요합니다',
+  '대기열 입장 정보가',
+] as const;
+
+export function isQueueAccessRejection(statusCode: number, message: string): boolean {
+  const normalized = message.trim();
+  return (
+    statusCode === 403 &&
+    QUEUE_ACCESS_REJECTION_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+  );
+}
+
+function resolveQueueAccessLocale(locale: string | undefined): QueueAccessLocale {
+  return locale && Object.hasOwn(QUEUE_ACCESS_CLOSED_COPY, locale)
+    ? (locale as QueueAccessLocale)
+    : 'ko';
+}
+
 export interface QueueAccessClosedCopy {
   /** Heading of the checkout notice and label of the blocked pay button. */
   title: string;
   body: string;
   /** Leaves checkout (releasing the seats) for the queue. */
   rejoin: string;
-  /** Shown when the checkout countdown reaches the queue access deadline. */
+  /**
+   * Shown when the checkout countdown reaches the queue access deadline, and
+   * when a seat lock is refused because the queue access is gone.
+   */
   toast: string;
 }
 
@@ -64,32 +94,81 @@ const QUEUE_ACCESS_CLOSED_COPY: Record<QueueAccessLocale, QueueAccessClosedCopy>
     title: '대기열 입장 시간이 끝났습니다',
     body: '결제 요청은 대기열 입장 시간 안에만 할 수 있습니다. 다시 입장하면 선택한 좌석이 해제되고 새 순번을 받습니다.',
     rejoin: '대기열 다시 입장하기',
-    toast: '대기열 입장 시간이 끝나 결제를 진행할 수 없습니다. 대기열에 다시 입장해 주세요.',
+    toast: '대기열 입장 시간이 끝나 예매를 계속할 수 없습니다. 대기열에 다시 입장해 주세요.',
   },
   en: {
     title: 'Your queue access has ended',
     body: 'Payment can only be requested while your queue access is active. Rejoining releases the selected seats and gives you a new place in the queue.',
     rejoin: 'Rejoin the queue',
-    toast: 'Your queue access ended, so payment cannot continue. Please rejoin the queue.',
+    toast: 'Your queue access ended, so booking cannot continue. Please rejoin the queue.',
   },
   th: {
     title: 'สิทธิ์เข้าคิวของคุณสิ้นสุดแล้ว',
     body: 'ขอชำระเงินได้เฉพาะช่วงที่สิทธิ์เข้าคิวยังมีผลอยู่ เมื่อเข้าคิวใหม่ ที่นั่งที่เลือกจะถูกปล่อยและคุณจะได้รับลำดับคิวใหม่',
     rejoin: 'เข้าคิวใหม่',
-    toast: 'สิทธิ์เข้าคิวสิ้นสุดแล้ว จึงไม่สามารถชำระเงินต่อได้ กรุณาเข้าคิวใหม่',
+    toast: 'สิทธิ์เข้าคิวสิ้นสุดแล้ว จึงไม่สามารถจองต่อได้ กรุณาเข้าคิวใหม่',
   },
   'zh-CN': {
     title: '排队入场时间已结束',
     body: '只有在排队入场有效期内才能发起付款。重新排队会释放已选座位，并分配新的排队序号。',
     rejoin: '重新排队',
-    toast: '排队入场时间已结束，无法继续付款。请重新排队。',
+    toast: '排队入场时间已结束，无法继续预订。请重新排队。',
   },
 };
 
 export function getQueueAccessClosedCopy(
   locale: string | undefined,
 ): QueueAccessClosedCopy {
-  return locale && Object.hasOwn(QUEUE_ACCESS_CLOSED_COPY, locale)
-    ? QUEUE_ACCESS_CLOSED_COPY[locale as QueueAccessLocale]
-    : QUEUE_ACCESS_CLOSED_COPY.ko;
+  return QUEUE_ACCESS_CLOSED_COPY[resolveQueueAccessLocale(locale)];
+}
+
+export interface QueuePaymentRecoveryCopy {
+  badge: string;
+  title: string;
+  body: string;
+  /** Opens checkout for the order awaiting payment. */
+  resume: string;
+  /** Opens the buyer's reservation list. */
+  reservations: string;
+}
+
+/**
+ * The booking route for an admission whose seat window closed while an order
+ * still awaits payment: only that payment may continue.
+ */
+const QUEUE_PAYMENT_RECOVERY_COPY: Record<QueueAccessLocale, QueuePaymentRecoveryCopy> = {
+  ko: {
+    badge: '결제 대기',
+    title: '결제 대기 중인 예매가 있습니다',
+    body: '좌석 선택 시간은 끝났지만 결제를 시작한 예매가 남아 있습니다. 결제 기한 안에 결제를 이어서 완료할 수 있습니다.',
+    resume: '결제 이어하기',
+    reservations: '내 예매 보기',
+  },
+  en: {
+    badge: 'Payment pending',
+    title: 'You have a booking awaiting payment',
+    body: 'Your seat selection time has ended, but a booking you started paying for is still open. You can finish the payment before its deadline.',
+    resume: 'Continue payment',
+    reservations: 'View my bookings',
+  },
+  th: {
+    badge: 'รอชำระเงิน',
+    title: 'คุณมีการจองที่รอชำระเงิน',
+    body: 'เวลาเลือกที่นั่งสิ้นสุดแล้ว แต่ยังมีการจองที่คุณเริ่มชำระเงินไว้ คุณสามารถชำระเงินต่อให้เสร็จได้ก่อนหมดเวลาชำระ',
+    resume: 'ชำระเงินต่อ',
+    reservations: 'ดูการจองของฉัน',
+  },
+  'zh-CN': {
+    badge: '待付款',
+    title: '您有一笔待付款的预订',
+    body: '选座时间已结束，但您已开始付款的预订仍然有效。请在付款期限内完成付款。',
+    resume: '继续付款',
+    reservations: '查看我的预订',
+  },
+};
+
+export function getQueuePaymentRecoveryCopy(
+  locale: string | undefined,
+): QueuePaymentRecoveryCopy {
+  return QUEUE_PAYMENT_RECOVERY_COPY[resolveQueueAccessLocale(locale)];
 }

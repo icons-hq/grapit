@@ -262,12 +262,16 @@ async function openSeatSockets(showtimeId, count, lockSentAt) {
       socket.once('joined', joined);
       socket.emit('join-showtime', showtimeId, (ack) => { if (ack?.event === 'joined' || ack === showtimeId) joined(); });
     });
-    socket.on('seat-update', (payload) => {
+    // `locked` arrives as `seat-update.v2` (current API) or as the legacy
+    // `seat-update` (API before the v2 event), never as both.
+    const onSeatUpdate = (payload) => {
       const sentAt = payload?.status === 'locked' ? lockSentAt.get(payload.seatId) : undefined;
       if (sentAt === undefined) return;
       received[index] += 1;
       record('socket.seat-update', performance.now() - sentAt, 'delivered');
-    });
+    };
+    socket.on('seat-update.v2', onSeatUpdate);
+    socket.on('seat-update', onSeatUpdate);
   });
   return received;
 }

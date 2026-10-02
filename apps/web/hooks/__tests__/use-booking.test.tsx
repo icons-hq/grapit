@@ -136,6 +136,9 @@ function setAdminAuth() {
     isPhoneVerified: true,
     marketingConsent: false,
     role: 'admin',
+    // Admin Booking Bypass needs the full-admin claims /users/me returns.
+    adminCapabilityBundle: 'admin',
+    adminCapabilities: [],
     createdAt: '2026-05-06T00:00:00.000Z',
   });
 }

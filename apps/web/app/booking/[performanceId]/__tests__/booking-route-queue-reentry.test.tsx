@@ -4,15 +4,18 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BookingRoute from '../page';
 import { resetServerClockForTests } from '@/lib/server-clock';
+import { useBookingStore } from '@/stores/use-booking-store';
 
 // Drives the real useQueue against a scripted queue API so the route sees the
-// same snapshots the server sends (normalizeSnapshot, auto-enter, socket).
+// same snapshots the server sends (closed windows, payment recovery, socket).
 const {
   postMock,
   getMock,
   socketHandlers,
   socketMock,
   toastWarningMock,
+  unlockAllMock,
+  bookingPageRenders,
   useBookingAvailabilityMock,
   useAuthStoreMock,
 } = vi.hoisted(() => {
@@ -33,6 +36,8 @@ const {
     socketHandlers: handlers,
     socketMock: socket,
     toastWarningMock: vi.fn(),
+    unlockAllMock: vi.fn(),
+    bookingPageRenders: { count: 0 },
     useBookingAvailabilityMock: vi.fn(),
     useAuthStoreMock: vi.fn(),
   };
@@ -45,10 +50,12 @@ vi.mock('socket.io-client', () => ({
 vi.mock('@/lib/api-client', () => {
   class ApiClientError extends Error {
     statusCode: number;
+    data: unknown;
 
-    constructor(message: string, statusCode: number) {
+    constructor(message: string, statusCode: number, data?: unknown) {
       super(message);
       this.statusCode = statusCode;
+      this.data = data;
     }
   }
   return {
@@ -58,7 +65,7 @@ vi.mock('@/lib/api-client', () => {
 });
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 
 vi.mock('next-intl', () => ({
@@ -73,14 +80,32 @@ vi.mock('@/hooks/use-booking-availability', () => ({
   useBookingAvailability: useBookingAvailabilityMock,
 }));
 
+vi.mock('@/hooks/use-booking', () => ({
+  useUnlockAllSeats: () => ({ mutate: unlockAllMock }),
+}));
+
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: useAuthStoreMock,
 }));
 
 vi.mock('@/components/booking/booking-page', () => ({
-  BookingPage: ({ queueAccessExpiresAt }: { queueAccessExpiresAt?: number | null }) => (
-    <div>booking page until {String(queueAccessExpiresAt ?? 'none')}</div>
-  ),
+  BookingPage: ({
+    queueAccessExpiresAt,
+    onQueueAccessRejected,
+  }: {
+    queueAccessExpiresAt?: number | null;
+    onQueueAccessRejected?: () => void;
+  }) => {
+    bookingPageRenders.count += 1;
+    return (
+      <div>
+        booking page until {String(queueAccessExpiresAt ?? 'none')}
+        <button type="button" onClick={() => onQueueAccessRejected?.()}>
+          seat lock refused by the queue
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('@/components/booking/queue-waiting', () => ({
@@ -99,6 +124,7 @@ vi.mock('@/components/booking/queue-waiting', () => ({
 const ADMITTED_AT = Date.parse('2026-10-02T11:00:00.000Z');
 const ACTIVE_UNTIL = ADMITTED_AT + 10 * 60_000;
 const REENTRY_GRACE_UNTIL = ACTIVE_UNTIL + 3 * 60_000;
+const SHOWTIME_ID = 'showtime-reentry';
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
@@ -116,9 +142,14 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** prepare ran before the window closed: the server keeps it until the grace. */
-const paymentRecoverySnapshot = () =>
-  snapshot({ state: 'PAYMENT_RECOVERY', autoEnter: false });
+/** prepare ran, then the window closed: only the bound order may be paid. */
+const recoverySnapshot = () =>
+  snapshot({
+    state: 'PAYMENT_RECOVERY',
+    autoEnter: false,
+    paymentRecoveryUntilAt: new Date(REENTRY_GRACE_UNTIL).toISOString(),
+    recoveryOrderId: 'order-awaiting-payment',
+  });
 const expiredSnapshot = () =>
   snapshot({
     state: 'EXPIRED',
@@ -168,14 +199,35 @@ function enterCalls() {
   ).length;
 }
 
-describe('BookingRoute rejoin after the queue access window (audit #32 follow-up)', () => {
+function holdSeatsInStore() {
+  useBookingStore.setState({
+    selectedShowtimeId: SHOWTIME_ID,
+    selectedSeats: [
+      {
+        seatId: 'A-1',
+        tierName: 'VIP',
+        tierColor: '#6C3CE0',
+        row: 'A',
+        number: '1',
+        price: 110000,
+        floorKey: '1F',
+        floorLabel: '1층',
+        seatKey: '1F:A-1',
+      },
+    ],
+  });
+}
+
+describe('BookingRoute queue re-entry (audit #4, #32, D2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     postMock.mockReset();
     getMock.mockReset();
     socketHandlers.clear();
+    bookingPageRenders.count = 0;
     vi.useFakeTimers();
     resetServerClockForTests();
+    useBookingStore.getState().resetBooking();
     getMock.mockImplementation(() => new Promise(() => {}));
     useBookingAvailabilityMock.mockReturnValue({
       bookingAvailable: true,
@@ -195,102 +247,151 @@ describe('BookingRoute rejoin after the queue access window (audit #32 follow-up
     vi.useRealTimers();
   });
 
-  it('does not loop on the expired screen when rejoining returns the PAYMENT_RECOVERY session', async () => {
-    vi.setSystemTime(ADMITTED_AT + 9 * 60_000);
+  it('never opens a seat screen without a countdown for an admission whose window closed', async () => {
+    // Back on the route after the window closed; an older API still hands
+    // out the old admission once, then queues the buyer again.
+    vi.setSystemTime(ACTIVE_UNTIL + 30_000);
     postMock
       .mockResolvedValueOnce(snapshot())
-      .mockResolvedValueOnce(paymentRecoverySnapshot())
       .mockResolvedValueOnce(newWaitingSnapshot());
 
     renderBookingRoute();
     await flush();
-    expect(screen.getByText(`booking page until ${ACTIVE_UNTIL}`)).toBeInTheDocument();
+    expect(screen.queryByText(/booking page/)).not.toBeInTheDocument();
+    await flush(1);
+    await flush(1_300);
 
-    // The window closes on the seat screen.
-    await flush(60_000 + 100);
-    expect(screen.getByText('queue expired')).toBeInTheDocument();
-
-    // Rejoin: the server still reuses the recovery session (until the grace).
-    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
-    await flush();
+    expect(bookingPageRenders.count).toBe(0);
     expect(enterCalls()).toBe(2);
-    await flush(1_300); // useQueue auto-enter delay for a non-immediate admission
-
-    // No expired <-> admitted loop: the seat screen keeps the server path
-    // (no client deadline), where the first seat lock expires the session.
-    expect(screen.getByText('booking page until none')).toBeInTheDocument();
-    expect(screen.queryByText('queue expired')).not.toBeInTheDocument();
-    await flush(5_000);
-    expect(screen.getByText('booking page until none')).toBeInTheDocument();
-    expect(enterCalls()).toBe(2);
-
-    // That rejected lock expires the session on the server; the pending rejoin
-    // then takes a new position without another click.
-    await act(async () => {
-      socketHandlers.get('queue:expired')?.({
-        queueSessionId: 'queue-session-old',
-        state: 'EXPIRED',
-        autoEnter: false,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    expect(enterCalls()).toBe(3);
     expect(screen.getByText('queue waiting')).toBeInTheDocument();
   });
 
-  it('keeps the pre-existing seat screen when the route opens on a recovery session', async () => {
-    // Back from a failed payment after the window closed.
+  it('stays on the re-entry screen after one automatic re-entry finds the same closed admission', async () => {
     vi.setSystemTime(ACTIVE_UNTIL + 30_000);
-    postMock.mockResolvedValueOnce(paymentRecoverySnapshot());
+    postMock.mockResolvedValue(snapshot());
+
+    renderBookingRoute();
+    await flush();
+    await flush(10_000);
+
+    expect(bookingPageRenders.count).toBe(0);
+    expect(enterCalls()).toBe(2);
+    expect(screen.getByText('queue expired')).toBeInTheDocument();
+  });
+
+  it('offers to continue the payment of an order bound to a closed window, not the seat screen', async () => {
+    vi.setSystemTime(ACTIVE_UNTIL + 30_000);
+    postMock.mockResolvedValueOnce(recoverySnapshot());
 
     renderBookingRoute();
     await flush();
     await flush(1_300);
 
-    expect(screen.getByText('booking page until none')).toBeInTheDocument();
-    expect(screen.queryByText('queue expired')).not.toBeInTheDocument();
+    expect(bookingPageRenders.count).toBe(0);
+    expect(
+      screen.getByRole('heading', { name: '결제 대기 중인 예매가 있습니다' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '결제 이어하기' })).toHaveAttribute(
+      'href',
+      '/booking/performance-reentry/confirm?resumeOrderId=order-awaiting-payment',
+    );
+    expect(screen.getByRole('link', { name: '내 예매 보기' })).toHaveAttribute(
+      'href',
+      '/mypage?tab=reservations',
+    );
+    expect(screen.queryByText(/queue expired/)).not.toBeInTheDocument();
     expect(toastWarningMock).not.toHaveBeenCalled();
     expect(enterCalls()).toBe(1);
   });
 
-  it('takes a new position with one click when the rejoin finds the old admission expired', async () => {
-    vi.setSystemTime(ADMITTED_AT + 9 * 60_000);
-    postMock
-      .mockResolvedValueOnce(snapshot())
-      // The reconcile on the rejoin request expired the old admission.
-      .mockResolvedValueOnce(expiredSnapshot())
-      .mockResolvedValueOnce(newWaitingSnapshot());
+  it('shows a new waiting position when the confirm step rejoin button returns here', async () => {
+    // The confirm rejoin cancelled the pending order and released the seats,
+    // so the server queues the buyer again.
+    vi.setSystemTime(ACTIVE_UNTIL + 30_000);
+    postMock.mockResolvedValueOnce(newWaitingSnapshot());
 
     renderBookingRoute();
     await flush();
-    await flush(60_000 + 100);
-    expect(screen.getByText('queue expired')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
-    await flush();
-    await flush();
-
-    expect(enterCalls()).toBe(3);
     expect(screen.getByText('queue waiting')).toBeInTheDocument();
+    expect(bookingPageRenders.count).toBe(0);
+    expect(enterCalls()).toBe(1);
   });
 
-  it('enters automatically only once per rejoin click', async () => {
+  it('releases the held seats once the server confirms the window ended, then rejoins with one click', async () => {
     vi.setSystemTime(ADMITTED_AT + 9 * 60_000);
+    holdSeatsInStore();
     postMock
       .mockResolvedValueOnce(snapshot())
-      .mockResolvedValue(expiredSnapshot());
+      .mockResolvedValueOnce(newWaitingSnapshot());
+    getMock.mockReset();
+    getMock.mockResolvedValueOnce(expiredSnapshot());
 
     renderBookingRoute();
     await flush();
+    expect(screen.getByText(`booking page until ${ACTIVE_UNTIL}`)).toBeInTheDocument();
+
+    // The window closes on the seat screen: re-entry screen at once.
     await flush(60_000 + 100);
+    expect(screen.getByText('queue expired')).toBeInTheDocument();
+    // The seats wait for the server's answer (an order may still need them).
+    expect(unlockAllMock).not.toHaveBeenCalled();
+
+    await flush(2_000);
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(unlockAllMock).toHaveBeenCalledTimes(1);
+    expect(unlockAllMock).toHaveBeenCalledWith({ showtimeId: SHOWTIME_ID });
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    expect(screen.getByText('queue expired')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
     await flush();
-    await flush();
-    await flush(10_000);
+    expect(enterCalls()).toBe(2);
+    expect(screen.getByText('queue waiting')).toBeInTheDocument();
+    expect(unlockAllMock).toHaveBeenCalledTimes(1);
+  });
 
-    expect(enterCalls()).toBe(3);
+  it('keeps the seats of an order still awaiting payment when the window ends', async () => {
+    vi.setSystemTime(ADMITTED_AT + 9 * 60_000);
+    holdSeatsInStore();
+    postMock.mockResolvedValueOnce(snapshot({ state: 'PAYMENT_RECOVERY' }));
+    getMock.mockReset();
+    getMock.mockResolvedValueOnce(recoverySnapshot());
+
+    renderBookingRoute();
+    await flush();
+    await flush(1_300);
+    expect(screen.getByText(`booking page until ${ACTIVE_UNTIL}`)).toBeInTheDocument();
+
+    await flush(60_000 + 2_100);
+
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('link', { name: '결제 이어하기' })).toBeInTheDocument();
+    expect(unlockAllMock).not.toHaveBeenCalled();
+    expect(useBookingStore.getState().selectedSeats).toHaveLength(1);
+  });
+
+  it('leaves the seat screen and releases its seats when a seat lock is refused by the queue', async () => {
+    // Another tab bought with the same admission (one admission, one order).
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    holdSeatsInStore();
+    postMock.mockResolvedValueOnce(snapshot());
+    getMock.mockReset();
+    getMock.mockResolvedValueOnce(expiredSnapshot());
+
+    renderBookingRoute();
+    await flush();
+    expect(screen.getByText(`booking page until ${ACTIVE_UNTIL}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'seat lock refused by the queue' }));
+    await flush();
+
+    // Re-read at once, not at the original window end 8 minutes later.
+    expect(getMock).toHaveBeenCalledWith('/api/v1/queue/sessions/queue-session-old', {
+      showErrorToast: false,
+    });
     expect(screen.getByText('queue expired')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'retry' })).toBeInTheDocument();
+    expect(unlockAllMock).toHaveBeenCalledWith({ showtimeId: SHOWTIME_ID });
   });
 });

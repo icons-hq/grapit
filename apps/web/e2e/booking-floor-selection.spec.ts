@@ -27,18 +27,22 @@ const UPCOMING_SHOWTIME = upcomingKstShowtime(14);
 const SHOWTIME_ISO = UPCOMING_SHOWTIME.iso;
 const SHOWTIME_DATE_LABEL = UPCOMING_SHOWTIME.dateLabel;
 const LOCK_EXPIRES_AT = Date.now() + 8 * 60 * 1000;
-const ADMITTED_QUEUE_SNAPSHOT = {
-  queueSessionId: 'queue-floor-browser',
-  state: 'ADMITTED',
-  position: 0,
-  waitingCount: 0,
-  etaSeconds: 0,
-  remainingSeats: 12,
-  autoEnter: true,
-  admittedAt: new Date().toISOString(),
-  activeUntilAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-  reentryGraceUntilAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
-};
+// Built per request: the route never opens the seat screen for an admission
+// whose access window already closed, so the window must be open when served.
+function admittedQueueSnapshot() {
+  return {
+    queueSessionId: 'queue-floor-browser',
+    state: 'ADMITTED',
+    position: 0,
+    waitingCount: 0,
+    etaSeconds: 0,
+    remainingSeats: 12,
+    autoEnter: true,
+    admittedAt: new Date().toISOString(),
+    activeUntilAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    reentryGraceUntilAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
+  };
+}
 
 const FIRST_FLOOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280">
@@ -200,7 +204,7 @@ async function stubFloorBrowserRoutes(
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(ADMITTED_QUEUE_SNAPSHOT),
+        body: JSON.stringify(admittedQueueSnapshot()),
       });
     },
   );
@@ -209,7 +213,7 @@ async function stubFloorBrowserRoutes(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(ADMITTED_QUEUE_SNAPSHOT),
+      body: JSON.stringify(admittedQueueSnapshot()),
     });
   });
 

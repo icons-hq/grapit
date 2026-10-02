@@ -14,6 +14,11 @@ import {
   SEAT_STATUS_THROTTLE_LIMIT,
 } from '../seat-status-throttle.js';
 import { AdmissionGuard } from '../../queue/guards/admission.guard.js';
+import {
+  EDGE_CLIENT_IP_HEADER,
+  EDGE_PROXY_SECRET_HEADER,
+  EDGE_PROXY_SHARED_SECRET_ENV,
+} from '../../../common/request-ip.js';
 
 const SHOWTIME_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SEATS_PATH = `/booking/schedules/${SHOWTIME_ID}/seats`;
@@ -30,7 +35,7 @@ function signAccessToken(sub: string, secret = JWT_SECRET): string {
  */
 describe('GET /booking/schedules/:showtimeId/seats', () => {
   let app: INestApplication;
-  let agent: Agent | undefined;
+  let agent: Agent;
   const bookingService = {
     getSeatStatus: vi.fn(async (showtimeId: string) => ({ showtimeId, seats: {} })),
   };
@@ -64,8 +69,8 @@ describe('GET /booking/schedules/:showtimeId/seats', () => {
   });
 
   afterEach(async () => {
-    agent?.destroy();
-    agent = undefined;
+    // Unset when beforeEach failed before creating it.
+    (agent as Agent | undefined)?.destroy();
     await app?.close();
     vi.unstubAllEnvs();
   });
@@ -106,6 +111,24 @@ describe('GET /booking/schedules/:showtimeId/seats', () => {
     expect(await readSeats({})).toEqual([200]);
   });
 
+  it('counts rotating IPv6 addresses of one /64 in one bucket (audit #5)', async () => {
+    vi.stubEnv(EDGE_PROXY_SHARED_SECRET_ENV, 'edge-secret');
+    const fromEdge = (clientIp: string) => ({
+      [EDGE_PROXY_SECRET_HEADER]: 'edge-secret',
+      [EDGE_CLIENT_IP_HEADER]: clientIp,
+    });
+    const statuses: number[] = [];
+    for (let i = 0; i <= SEAT_STATUS_THROTTLE_LIMIT; i++) {
+      // A new interface identifier on every request, same subscriber prefix.
+      statuses.push(...(await readSeats(fromEdge(`2001:db8:1:2::${(i + 1).toString(16)}`))));
+    }
+
+    expect(statuses.slice(0, SEAT_STATUS_THROTTLE_LIMIT).every((status) => status === 200)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+    // Another /64 (another subscriber) keeps its own budget.
+    expect(await readSeats(fromEdge('2001:db8:1:3::1'))).toEqual([200]);
+  });
+
   it('does not let forged tokens open new buckets', async () => {
     const forged = (i: number) => ({ Authorization: `Bearer ${signAccessToken(`bot-${i}`, 'wrong-secret')}` });
     const statuses: number[] = [];
@@ -135,6 +158,19 @@ describe('resolveSeatStatusThrottleTracker', () => {
     }))).toBe('seat-status:user:buyer-a');
     expect(resolveSeatStatusThrottleTracker(createRequest({ cookie: 'refreshToken=random-2' })))
       .toBe('seat-status:ip:203.0.113.7');
+  });
+
+  it('groups anonymous IPv6 clients by /64 and keeps IPv4 clients per address', () => {
+    function requestFrom(ip: string) {
+      return { headers: {}, ip, socket: { remoteAddress: ip } };
+    }
+
+    const first = resolveSeatStatusThrottleTracker(requestFrom('2001:db8:1:2::a'));
+    expect(resolveSeatStatusThrottleTracker(requestFrom('2001:db8:1:2:ffff:1:2:3'))).toBe(first);
+    expect(resolveSeatStatusThrottleTracker(requestFrom('2001:db8:1:3::a'))).not.toBe(first);
+    expect(first.startsWith('seat-status:ip:')).toBe(true);
+    expect(resolveSeatStatusThrottleTracker(requestFrom('203.0.113.8')))
+      .toBe('seat-status:ip:203.0.113.8');
   });
 
   it('falls back to the client IP for expired, forged or unverifiable tokens', () => {

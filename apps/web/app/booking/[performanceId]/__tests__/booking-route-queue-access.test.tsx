@@ -7,18 +7,23 @@ import {
   recordServerTimeSample,
   resetServerClockForTests,
 } from '@/lib/server-clock';
+import { useBookingStore } from '@/stores/use-booking-store';
 
 const {
   queueRetryMock,
+  queueRecheckMock,
   refetchRuntimeFlagsMock,
   toastWarningMock,
+  unlockAllMock,
   useQueueMock,
   useBookingAvailabilityMock,
   useAuthStoreMock,
 } = vi.hoisted(() => ({
   queueRetryMock: vi.fn(),
+  queueRecheckMock: vi.fn(),
   refetchRuntimeFlagsMock: vi.fn(),
   toastWarningMock: vi.fn(),
+  unlockAllMock: vi.fn(),
   useQueueMock: vi.fn(),
   useBookingAvailabilityMock: vi.fn(),
   useAuthStoreMock: vi.fn(),
@@ -48,16 +53,25 @@ vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: useAuthStoreMock,
 }));
 
+vi.mock('@/hooks/use-booking', () => ({
+  useUnlockAllSeats: () => ({ mutate: unlockAllMock }),
+}));
+
 vi.mock('@/components/booking/booking-page', () => ({
   BookingPage: ({
     performanceId,
     queueAccessExpiresAt,
+    onQueueAccessRejected,
   }: {
     performanceId: string;
     queueAccessExpiresAt?: number | null;
+    onQueueAccessRejected?: () => void;
   }) => (
     <div>
       booking page {performanceId} until {String(queueAccessExpiresAt ?? 'none')}
+      <button type="button" onClick={() => onQueueAccessRejected?.()}>
+        queue refused a seat lock
+      </button>
     </div>
   ),
 }));
@@ -89,7 +103,9 @@ function admittedQueue(overrides: Record<string, unknown> = {}) {
     admittedAt: new Date(ADMITTED_AT).toISOString(),
     activeUntilAt: new Date(ACTIVE_UNTIL).toISOString(),
     reentryGraceUntilAt: new Date(ACTIVE_UNTIL + 180_000).toISOString(),
+    recoveryOrderId: null,
     retry: queueRetryMock,
+    recheck: queueRecheckMock,
     enterNow: vi.fn(),
     ...overrides,
   };
@@ -116,6 +132,7 @@ describe('BookingRoute queue access window (audit #32)', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     resetServerClockForTests();
+    useBookingStore.getState().resetBooking();
     useBookingAvailabilityMock.mockReturnValue({
       bookingAvailable: true,
       isAdminBookingBypassActive: false,
@@ -166,6 +183,33 @@ describe('BookingRoute queue access window (audit #32)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
     expect(queueRetryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the queue for the current status when a seat lock is refused by the queue (audit #32)', () => {
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    renderBookingRoute();
+
+    fireEvent.click(screen.getByRole('button', { name: 'queue refused a seat lock' }));
+
+    expect(queueRecheckMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the seats of the showtime once the queue reports the admission ended', () => {
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    const view = renderBookingRoute();
+    expect(unlockAllMock).not.toHaveBeenCalled();
+
+    useQueueMock.mockReturnValue(admittedQueue({ status: 'expired', isReady: false }));
+    view.rerender(
+      <Suspense fallback={<div>loading params</div>}>
+        <BookingRoute params={fulfilledParams({ performanceId: 'performance-queue' })} />
+      </Suspense>,
+    );
+
+    expect(screen.getByText('queue expired')).toBeInTheDocument();
+    expect(unlockAllMock).toHaveBeenCalledTimes(1);
+    expect(unlockAllMock).toHaveBeenCalledWith({ showtimeId: 'showtime-queue' });
   });
 
   it('judges the access window on the server clock, not a fast device clock', () => {

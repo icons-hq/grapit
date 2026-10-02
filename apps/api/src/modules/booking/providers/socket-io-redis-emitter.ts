@@ -78,3 +78,20 @@ export async function publishSocketIoRoomEvent(
     encodeSocketIoRoomEvent(namespace, room, event, payload),
   );
 }
+
+/**
+ * Publishes one payload as several events, one Valkey message each, in the
+ * given order. Subscribers receive them in that order (same connection), so a
+ * client handling both a new and a legacy event name sees the new one first.
+ */
+export async function publishSocketIoRoomEvents(
+  publisher: SocketIoRedisPublisher,
+  namespace: string,
+  room: string,
+  events: readonly string[],
+  payload: unknown,
+): Promise<void> {
+  for (const event of events) {
+    await publishSocketIoRoomEvent(publisher, namespace, room, event, payload);
+  }
+}

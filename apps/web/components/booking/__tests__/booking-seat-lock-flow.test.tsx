@@ -43,6 +43,8 @@ const hoisted = vi.hoisted(() => {
     toastInfoMock: vi.fn(),
     toastErrorMock: vi.fn(),
     performanceRef: { current: null as unknown },
+    /** Props of every SeatMapViewer render, to check reference stability. */
+    viewerRenders: [] as Array<{ seatStates: unknown; onSeatClick: unknown; floorKey?: string }>,
     headerRef: {
       current: null as null | { expiresAt: number | null; onExpire: () => void },
     },
@@ -132,6 +134,7 @@ vi.mock('@/components/booking/seat-legend', () => ({
 
 vi.mock('@/components/booking/seat-map-viewer', () => ({
   SeatMapViewer: ({
+    floorKey,
     seatConfig,
     seatStates,
     selectedSeatIds,
@@ -139,13 +142,16 @@ vi.mock('@/components/booking/seat-map-viewer', () => ({
     onSeatClick,
     maxSelect,
   }: {
+    floorKey?: string;
     seatConfig: { tiers: Array<{ seatIds: string[] }> };
     seatStates: Map<string, string>;
     selectedSeatIds: Set<string>;
     myLockedSeatIds?: Set<string>;
     onSeatClick: (seatId: string) => void;
     maxSelect: number;
-  }) => (
+  }) => {
+    hoisted.viewerRenders.push({ seatStates, onSeatClick, floorKey });
+    return (
     <div>
       {seatConfig.tiers.flatMap((tier) => tier.seatIds).map((seatId) => {
         const state = seatStates.get(seatId) ?? 'available';
@@ -171,7 +177,8 @@ vi.mock('@/components/booking/seat-map-viewer', () => ({
         );
       })}
     </div>
-  ),
+    );
+  },
 }));
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -437,6 +444,7 @@ describe('BookingPage seat lock flow', () => {
     hoisted.toastInfoMock.mockReset();
     hoisted.toastErrorMock.mockReset();
     hoisted.headerRef.current = null;
+    hoisted.viewerRenders.length = 0;
     server.held.clear();
     server.takenByOthers.clear();
     server.lockGates.clear();
@@ -1209,5 +1217,125 @@ describe('BookingPage seat lock flow', () => {
     const state = useBookingStore.getState();
     expect(state.selectedSeats.map((item) => item.seatKey)).toEqual(['1F:A-2']);
     expect(state.expiresAt).toBe(heldFor(SHOWTIME_A).get('1F:A-2'));
+  });
+
+  describe('seat-update fan-out (audit #11)', () => {
+    function createTwoFloorPerformance() {
+      const performance = createPerformance();
+      const secondFloor = {
+        ...performance.seatMap,
+        id: 'performance-a-seat-map-2f',
+        floorKey: '2F',
+        floorLabel: '2층',
+        sortOrder: 1,
+        svgUrl: '/2F-map.svg',
+        seatConfig: { tiers: [{ tierName: 'VIP', color: '#6C3CE0', seatIds: ['B-1', 'B-2'] }] },
+        totalSeats: 2,
+      };
+      return { ...performance, seatMaps: [performance.seatMap, secondFloor] };
+    }
+
+    it('keeps the shown floor\'s seat states and click handler when another floor changes', async () => {
+      hoisted.performanceRef.current = createTwoFloorPerformance();
+      server.takenByOthers.add('2F:B-2');
+      selectShowtimeInStore(SHOWTIME_A);
+      const { queryClient } = renderBookingPage();
+      await screen.findByRole('button', { name: '좌석 A-1' });
+      await waitFor(() => expect(queryClient.getQueryData(['seat-status', SHOWTIME_A])).toBeDefined());
+      await settle();
+
+      const before = hoisted.viewerRenders.at(-1)!;
+      expect(before.floorKey).toBe('1F');
+      const rendersBefore = hoisted.viewerRenders.length;
+
+      // A seat-update batch for the second floor only.
+      await act(async () => {
+        queryClient.setQueryData(
+          ['seat-status', SHOWTIME_A],
+          (old: { showtimeId: string; seats: Record<string, string> }) => ({
+            ...old,
+            seats: { ...old.seats, '2F:B-1': 'locked', '2F:B-2': 'available' },
+          }),
+        );
+      });
+
+      // The page re-rendered for the new data (TanStack notifies on a timer).
+      await waitFor(() => expect(hoisted.viewerRenders.length).toBeGreaterThan(rendersBefore));
+      await settle();
+      const after = hoisted.viewerRenders.at(-1)!;
+      expect(after.seatStates).toBe(before.seatStates);
+      expect(after.onSeatClick).toBe(before.onSeatClick);
+
+      // A change on the shown floor still reaches the seat map.
+      await act(async () => {
+        queryClient.setQueryData(
+          ['seat-status', SHOWTIME_A],
+          (old: { showtimeId: string; seats: Record<string, string> }) => ({
+            ...old,
+            seats: { ...old.seats, '1F:A-3': 'sold' },
+          }),
+        );
+      });
+      await waitFor(() => (
+        expect(hoisted.viewerRenders.at(-1)!.seatStates).not.toBe(before.seatStates)
+      ));
+      const changed = hoisted.viewerRenders.at(-1)!;
+      expect((changed.seatStates as Map<string, string>).get('A-3')).toBe('sold');
+      expect(changed.onSeatClick).toBe(before.onSeatClick);
+      expect(screen.getByRole('button', { name: '좌석 A-3' })).toHaveAttribute('data-state', 'sold');
+    });
+
+    it('hands the seat map one shared empty state while the floor has no seat states', async () => {
+      selectShowtimeInStore(SHOWTIME_A);
+      const { queryClient } = renderBookingPage();
+      await screen.findByRole('button', { name: '좌석 A-1' });
+      await waitFor(() => expect(queryClient.getQueryData(['seat-status', SHOWTIME_A])).toBeDefined());
+      await settle();
+      const first = hoisted.viewerRenders.at(-1)!;
+      expect((first.seatStates as Map<string, string>).size).toBe(0);
+      const rendersBefore = hoisted.viewerRenders.length;
+
+      // A new (still empty) seat map object re-renders the page with the same reference.
+      await act(async () => {
+        queryClient.setQueryData(['seat-status', SHOWTIME_A], {
+          showtimeId: SHOWTIME_A,
+          seats: {},
+          generatedAt: Date.now(),
+        });
+      });
+      await waitFor(() => expect(hoisted.viewerRenders.length).toBeGreaterThan(rendersBefore));
+      expect(hoisted.viewerRenders.at(-1)!.seatStates).toBe(first.seatStates);
+    });
+
+    it('still uses the latest seat states when a seat is clicked', async () => {
+      const user = userEvent.setup();
+      selectShowtimeInStore(SHOWTIME_A);
+      const { queryClient } = renderBookingPage();
+      const seatA2 = await screen.findByRole('button', { name: '좌석 A-2' });
+      await waitFor(() => expect(queryClient.getQueryData(['seat-status', SHOWTIME_A])).toBeDefined());
+      await settle();
+      const clickHandler = hoisted.viewerRenders.at(-1)!.onSeatClick as (seatId: string) => void;
+
+      // Taken by someone else after the handler was created.
+      await act(async () => {
+        queryClient.setQueryData(
+          ['seat-status', SHOWTIME_A],
+          (old: { showtimeId: string; seats: Record<string, string> }) => ({
+            ...old,
+            seats: { ...old.seats, '1F:A-2': 'locked' },
+          }),
+        );
+      });
+      await waitFor(() => expect(seatA2).toHaveAttribute('data-state', 'locked'));
+      expect(hoisted.viewerRenders.at(-1)!.onSeatClick).toBe(clickHandler);
+
+      await act(async () => {
+        clickHandler('A-2');
+      });
+      expect(hoisted.toastInfoMock).toHaveBeenCalledWith(SEAT_TAKEN);
+      expect(hoisted.postMock).not.toHaveBeenCalled();
+      await user.click(screen.getByRole('button', { name: '좌석 A-1' }));
+      await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(1));
+    });
   });
 });

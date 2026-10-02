@@ -5,7 +5,7 @@ import { io, type Socket } from 'socket.io-client';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
-import { getServerNowMs } from '@/lib/server-clock';
+import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
@@ -88,6 +88,12 @@ type QueueSnapshot = {
   admittedAt: string | null;
   activeUntilAt: string | null;
   reentryGraceUntilAt: string | null;
+  // End of the payment recovery of a PAYMENT_RECOVERY session (older APIs
+  // omit it; reentryGraceUntilAt is the same instant there).
+  paymentRecoveryUntilAt?: string | null;
+  // Set on a PAYMENT_RECOVERY session whose seat window closed while an order
+  // still awaits payment: only that payment may continue, not the seat screen.
+  recoveryOrderId?: string | null;
 };
 
 type QueueEnterResponse = QueueSnapshot & {
@@ -122,7 +128,11 @@ type UseQueueResult = {
   admittedAt: string | null;
   activeUntilAt: string | null;
   reentryGraceUntilAt: string | null;
+  /** Order awaiting payment when only payment recovery is allowed. */
+  recoveryOrderId: string | null;
   retry: () => Promise<void>;
+  /** Reads the current session status at once (e.g. after a queue 403). */
+  recheck: () => Promise<void>;
   enterNow: () => void;
 };
 
@@ -174,11 +184,27 @@ function isImmediateAdmission(snapshot: QueueSnapshot): boolean {
   );
 }
 
-function normalizeSnapshot(snapshot: QueueSnapshot): QueueSnapshot {
-  return {
-    ...snapshot,
-    autoEnter: snapshot.autoEnter || snapshot.state === 'PAYMENT_RECOVERY',
-  };
+/**
+ * A PAYMENT_RECOVERY session bound to an order still awaiting payment after
+ * its seat window closed. Seat locks and prepare are refused for it, so it
+ * never opens the seat screen; the route offers to continue that payment.
+ */
+function isRecoveryOnly(snapshot: QueueSnapshot): boolean {
+  return (
+    snapshot.state === 'PAYMENT_RECOVERY' &&
+    typeof snapshot.recoveryOrderId === 'string' &&
+    snapshot.recoveryOrderId.length > 0
+  );
+}
+
+/**
+ * An admission whose seat window (activeUntilAt) already closed on the
+ * server-corrected clock. Seat locks and prepare would be refused, so it must
+ * not open (or keep) the seat screen.
+ */
+function isClosedAdmission(snapshot: QueueSnapshot): boolean {
+  const activeUntilAtMs = parseTimeMs(snapshot.activeUntilAt);
+  return activeUntilAtMs !== null && getServerNowMs() >= activeUntilAtMs;
 }
 
 function parseTimeMs(value: unknown): number | null {
@@ -197,6 +223,12 @@ function readErrorField(error: ApiClientError, key: string): unknown {
   }
 
   return (data as Record<string, unknown>)[key];
+}
+
+/** Whether the error body carries the field at all (`null` included). */
+function hasErrorField(error: ApiClientError, key: string): boolean {
+  const data = error.data;
+  return Boolean(data) && typeof data === 'object' && Object.hasOwn(data as object, key);
 }
 
 function isBookingNotOpenError(error: unknown): error is ApiClientError {
@@ -313,10 +345,12 @@ function mapQueueEntryError(error: unknown): QueueStatus {
 }
 
 /**
- * Status poll / admission check failures. A missing (404) or rejected (403)
- * session cannot recover on its own, so it moves to the re-entry surface.
- * Anything else (429, 5xx, network) is transient: keep the current surface and
- * let the next scheduled check retry. Returns null for transient errors.
+ * Status poll / admission check failures. A sale that closed meanwhile (403
+ * with a closed-sale code or message, e.g. NO_BOOKABLE_SHOWTIME) moves to the
+ * closed surface. Any other missing (404) or rejected (403) session cannot
+ * recover on its own, so it moves to the re-entry surface. Anything else
+ * (429, 5xx, network) is transient: keep the current surface and let the next
+ * scheduled check retry. Returns null for transient errors.
  */
 function mapQueueSessionError(error: unknown): QueueStatus | null {
   if (!(error instanceof ApiClientError)) {
@@ -328,6 +362,10 @@ function mapQueueSessionError(error: unknown): QueueStatus | null {
     return securityStatus;
   }
 
+  if (error.statusCode === 403 && isBookingClosedError(error)) {
+    return 'closed';
+  }
+
   if (error.statusCode === 404 || error.statusCode === 403) {
     return 'expired';
   }
@@ -335,15 +373,20 @@ function mapQueueSessionError(error: unknown): QueueStatus | null {
   return null;
 }
 
+/**
+ * When the route asks the server whether the admission ended: at the seat
+ * window end while the seat screen is shown, and at the payment recovery end
+ * for a recovery-only session.
+ */
 function resolveAdmissionCheckAt(snapshot: QueueSnapshot): number | null {
-  if (snapshot.state === 'PAYMENT_RECOVERY') {
+  if (isRecoveryOnly(snapshot)) {
     return (
-      parseTimeMs(snapshot.reentryGraceUntilAt) ??
-      parseTimeMs(snapshot.activeUntilAt)
+      parseTimeMs(snapshot.paymentRecoveryUntilAt) ??
+      parseTimeMs(snapshot.reentryGraceUntilAt)
     );
   }
 
-  if (snapshot.state === 'ADMITTED') {
+  if (isAdmittedState(snapshot.state)) {
     return parseTimeMs(snapshot.activeUntilAt);
   }
 
@@ -389,6 +432,9 @@ export function useQueue({
   const overdueOpenRetryCountRef = useRef(0);
   // Consecutive transient failures of the automatic (background) re-entry.
   const transientEntryRetryCountRef = useRef(0);
+  // An admission whose seat window had already closed is re-entered once on
+  // its own; reset by every entry the user starts.
+  const closedAdmissionReentryUsedRef = useRef(false);
   const enterQueueRef = useRef<(options?: { background?: boolean }) => Promise<void>>(
     async () => undefined,
   );
@@ -419,22 +465,55 @@ export function useQueue({
     }
   }, []);
 
+  const scheduleEntryRetry = useCallback(
+    (delayMs: number) => {
+      clearEntryRetryTimer();
+      entryRetryTimerRef.current = setTimeout(() => {
+        entryRetryTimerRef.current = null;
+        void enterQueueRef.current({ background: true });
+      }, delayMs);
+    },
+    [clearEntryRetryTimer],
+  );
+
   const applySnapshot = useCallback(
     (
       nextSnapshot: QueueSnapshot,
       options: { enterImmediately?: boolean } = {},
     ) => {
-      const normalized = normalizeSnapshot(nextSnapshot);
-      setSnapshot(normalized);
+      setSnapshot(nextSnapshot);
 
-      if (normalized.state === 'EXPIRED') {
+      if (nextSnapshot.state === 'EXPIRED') {
         clearAutoEnterTimer();
         setStatus('expired');
         updateReady(false);
         return;
       }
 
-      if (isAdmittedState(normalized.state)) {
+      if (isRecoveryOnly(nextSnapshot)) {
+        // Only the bound order's payment may continue (the route offers it);
+        // the seat screen would refuse every seat lock.
+        clearAutoEnterTimer();
+        setStatus('admitted');
+        updateReady(false);
+        return;
+      }
+
+      if (isAdmittedState(nextSnapshot.state)) {
+        if (isClosedAdmission(nextSnapshot)) {
+          // Defensive: the server should not hand out an admission whose seat
+          // window already closed. Show the re-entry surface instead of a
+          // seat screen without a countdown, and enter once more on its own.
+          clearAutoEnterTimer();
+          setStatus('expired');
+          updateReady(false);
+          if (!closedAdmissionReentryUsedRef.current) {
+            closedAdmissionReentryUsedRef.current = true;
+            scheduleEntryRetry(0);
+          }
+          return;
+        }
+
         setStatus('admitted');
         if (isReadyRef.current) {
           // Already on the booking screen: a refreshed admitted snapshot must
@@ -443,7 +522,7 @@ export function useQueue({
         }
 
         clearAutoEnterTimer();
-        if (options.enterImmediately && normalized.autoEnter) {
+        if (options.enterImmediately && nextSnapshot.autoEnter) {
           updateReady(true);
         } else {
           updateReady(false);
@@ -458,7 +537,7 @@ export function useQueue({
       setStatus('waiting');
       updateReady(false);
     },
-    [clearAutoEnterTimer, updateReady],
+    [clearAutoEnterTimer, scheduleEntryRetry, updateReady],
   );
 
   const handleSessionError = useCallback(
@@ -469,6 +548,7 @@ export function useQueue({
       }
 
       clearAutoEnterTimer();
+      setClosedReason(nextStatus === 'closed' ? resolveClosedReason(error) : null);
       setStatus(nextStatus);
       updateReady(false);
     },
@@ -486,17 +566,6 @@ export function useQueue({
       });
     },
     [applySnapshot],
-  );
-
-  const scheduleEntryRetry = useCallback(
-    (delayMs: number) => {
-      clearEntryRetryTimer();
-      entryRetryTimerRef.current = setTimeout(() => {
-        entryRetryTimerRef.current = null;
-        void enterQueueRef.current({ background: true });
-      }, delayMs);
-    },
-    [clearEntryRetryTimer],
   );
 
   // Delay until the next automatic entry attempt after a not-open answer.
@@ -528,17 +597,21 @@ export function useQueue({
       const serverNowMs =
         parseTimeMs(readErrorField(error, 'serverNow')) ??
         parseTimeMs(readErrorField(error, 'timestamp'));
-      const clockOffsetMs = serverNowMs === null ? 0 : serverNowMs - receivedAtMs;
+      // Without a server time in the body, use the offset measured from other
+      // responses: the device clock alone would delay a slow device's entry.
+      const clockOffsetMs =
+        serverNowMs === null ? getServerClockOffsetMs() : serverNowMs - receivedAtMs;
       // Convert a server open time into this device's clock.
       const toDeviceClock = (startsAtMs: number | null) =>
         startsAtMs === null ? null : startsAtMs - clockOffsetMs;
 
-      const reportedStartsAtMs = parseTimeMs(readErrorField(error, 'bookingStartsAt'));
-      if (reportedStartsAtMs !== null) {
-        return toDeviceClock(reportedStartsAtMs);
+      if (hasErrorField(error, 'bookingStartsAt')) {
+        // The API states the open time, `null` meaning "not scheduled yet";
+        // reading the public detail again would only add a counted view.
+        return toDeviceClock(parseTimeMs(readErrorField(error, 'bookingStartsAt')));
       }
 
-      // Until the 403 body keeps bookingStartsAt, read it from performance
+      // Older API bodies without bookingStartsAt: read it from performance
       // detail. Reuse that only while it is fresh, and never once the cached
       // open time has passed while the server still refuses entry: the open
       // time was moved, so read it again instead of looping on the old one.
@@ -579,6 +652,7 @@ export function useQueue({
       clearEntryRetryTimer();
       if (!options.background) {
         transientEntryRetryCountRef.current = 0;
+        closedAdmissionReentryUsedRef.current = false;
         setStatus('loading');
         updateReady(false);
         setLoadingSlow(false);
@@ -697,12 +771,16 @@ export function useQueue({
     updateReady,
   ]);
 
-  // Once the booking screen is shown (or the session ended) the queue socket is
-  // no longer needed; closing it frees a long-lived connection slot per buyer.
+  const recoveryOnly = isRecoveryOnly(snapshot);
+
+  // Once the booking screen is shown (or the session ended, or only payment
+  // recovery is left) the queue socket is no longer needed; closing it frees a
+  // long-lived connection slot per buyer.
   const queueSocketWanted =
     enabled &&
     Boolean(snapshot.queueSessionId) &&
     !isReady &&
+    !recoveryOnly &&
     (status === 'loading' || status === 'waiting' || status === 'admitted');
 
   useEffect(() => {
@@ -789,7 +867,10 @@ export function useQueue({
     };
   }, [enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId, status]);
 
-  const admissionCheckAt = isReady ? resolveAdmissionCheckAt(snapshot) : null;
+  const admissionCheckAt =
+    isReady || (recoveryOnly && status === 'admitted')
+      ? resolveAdmissionCheckAt(snapshot)
+      : null;
 
   useEffect(() => {
     if (!enabled || admissionCheckAt === null || !snapshot.queueSessionId) {
@@ -846,6 +927,19 @@ export function useQueue({
 
   const retry = useCallback(() => enterQueue(), [enterQueue]);
 
+  const currentQueueSessionId = snapshot.queueSessionId;
+  const recheck = useCallback(async () => {
+    if (!enabled || !currentQueueSessionId) {
+      return;
+    }
+
+    try {
+      await loadQueueSession(currentQueueSessionId);
+    } catch (error) {
+      handleSessionError(error);
+    }
+  }, [currentQueueSessionId, enabled, handleSessionError, loadQueueSession]);
+
   const result = useMemo<UseQueueResult>(
     () => ({
       status,
@@ -864,10 +958,24 @@ export function useQueue({
       admittedAt: snapshot.admittedAt,
       activeUntilAt: snapshot.activeUntilAt,
       reentryGraceUntilAt: snapshot.reentryGraceUntilAt,
+      recoveryOrderId:
+        recoveryOnly && status === 'admitted' ? (snapshot.recoveryOrderId ?? null) : null,
       retry,
+      recheck,
       enterNow,
     }),
-    [bookingOpensAt, closedReason, enterNow, isReady, loadingSlow, retry, snapshot, status],
+    [
+      bookingOpensAt,
+      closedReason,
+      enterNow,
+      isReady,
+      loadingSlow,
+      recheck,
+      recoveryOnly,
+      retry,
+      snapshot,
+      status,
+    ],
   );
 
   return result;

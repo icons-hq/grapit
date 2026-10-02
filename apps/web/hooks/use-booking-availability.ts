@@ -10,7 +10,27 @@ import {
   getBookingVerificationRequiredCopy,
 } from '@/lib/runtime-flags';
 import { parseServerDeadline } from '@/lib/booking/queue-access';
-import type { PerformanceStatus } from '@grabit/shared';
+import {
+  resolveAdminCapabilitySnapshot,
+  type PerformanceStatus,
+  type UserProfile,
+} from '@grabit/shared';
+
+/**
+ * Same verdict as the API's Admin Booking Bypass (`canUseAdminBookingBypass`):
+ * only a full admin (superuser) skips the queue, the Sitewide Booking Gate and
+ * the sale start. Restricted bundles (scanner, finance, ...) also carry
+ * role='admin' but book like Buyers. Fails closed without capability claims.
+ */
+function canUseAdminBookingBypass(user: UserProfile | null | undefined): boolean {
+  if (!user || user.role !== 'admin') {
+    return false;
+  }
+  if (user.adminCapabilityBundle === undefined || !Array.isArray(user.adminCapabilities)) {
+    return false;
+  }
+  return resolveAdminCapabilitySnapshot(user).superuser;
+}
 
 export function useBookingAvailability(options: {
   performanceStatus?: PerformanceStatus | null;
@@ -18,7 +38,7 @@ export function useBookingAvailability(options: {
 } = {}) {
   const runtimeFlags = useRuntimeFlags();
   const user = useAuthStore((state) => state.user);
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = canUseAdminBookingBypass(user);
   const isEndedPerformance = options.performanceStatus === 'ended';
   const bookingStartsAtMs = parseServerDeadline(options.bookingStartsAt);
   const hasValidBookingStart = bookingStartsAtMs !== null;

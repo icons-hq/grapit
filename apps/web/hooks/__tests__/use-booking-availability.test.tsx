@@ -175,3 +175,93 @@ describe('useBookingAvailability runtime flag state', () => {
     expect(result.current.bookingDisabledMessage).toBe(BOOKING_DISABLED_COPY.ko);
   });
 });
+
+describe('useBookingAvailability Admin Booking Bypass (audit #25)', () => {
+  function adminUser(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'admin-1',
+      email: 'staff@example.test',
+      name: '운영자',
+      phone: '+821012345678',
+      gender: 'unspecified',
+      country: 'KR',
+      birthDate: '1990-01-01',
+      preferredLocale: 'ko',
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      marketingConsent: false,
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+      createdAt: '2026-05-20T00:00:00.000Z',
+      ...overrides,
+    } as never;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetServerClockForTests();
+    vi.setSystemTime(OPENS_AT - 60 * 60_000);
+    runtimeFlagsMock.mockReturnValue(resolvedFlags());
+  });
+
+  afterEach(() => {
+    useAuthStore.setState({ user: null });
+    vi.useRealTimers();
+  });
+
+  it('keeps the CTA closed before the open for a scanner bundle account, like the API', () => {
+    useAuthStore.setState({
+      user: adminUser({
+        adminCapabilityBundle: 'scanner',
+        adminCapabilities: ['field.scan.read', 'field.scan.consume', 'field.scan.sync'],
+      }),
+    });
+
+    const { result } = renderAvailability({ performanceStatus: 'selling', bookingStartsAt: OPENS_AT_ISO });
+
+    expect(result.current.isAdmin).toBe(false);
+    expect(result.current.bookingOpen).toBe(false);
+    expect(result.current.isAdminBookingBypassActive).toBe(false);
+  });
+
+  it('keeps a restricted bundle account behind the sitewide booking gate', () => {
+    runtimeFlagsMock.mockReturnValue(resolvedFlags({ bookingEnabled: false }));
+    useAuthStore.setState({ user: adminUser({ adminCapabilityBundle: 'finance' }) });
+
+    const { result } = renderAvailability({ performanceStatus: 'selling' });
+
+    expect(result.current.bookingOpen).toBe(false);
+    expect(result.current.isAdminBookingBypassActive).toBe(false);
+  });
+
+  it('lets a full admin bypass the queue before the open', () => {
+    useAuthStore.setState({ user: adminUser() });
+
+    const { result } = renderAvailability({ performanceStatus: 'selling', bookingStartsAt: OPENS_AT_ISO });
+
+    expect(result.current.isAdmin).toBe(true);
+    expect(result.current.bookingOpen).toBe(true);
+    expect(result.current.isAdminBookingBypassActive).toBe(true);
+  });
+
+  it('treats a legacy admin without a bundle as a full admin, as the API does', () => {
+    useAuthStore.setState({ user: adminUser({ adminCapabilityBundle: null, adminCapabilities: [] }) });
+
+    const { result } = renderAvailability({ performanceStatus: 'selling', bookingStartsAt: OPENS_AT_ISO });
+
+    expect(result.current.isAdminBookingBypassActive).toBe(true);
+  });
+
+  it('fails closed when the capability claims are missing', () => {
+    useAuthStore.setState({
+      user: adminUser({ adminCapabilityBundle: undefined, adminCapabilities: undefined }),
+    });
+
+    const { result } = renderAvailability({ performanceStatus: 'selling', bookingStartsAt: OPENS_AT_ISO });
+
+    expect(result.current.isAdmin).toBe(false);
+    expect(result.current.bookingOpen).toBe(false);
+    expect(result.current.isAdminBookingBypassActive).toBe(false);
+  });
+});

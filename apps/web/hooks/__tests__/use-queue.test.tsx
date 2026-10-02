@@ -83,6 +83,10 @@ async function flushQueueEffects() {
 describe('useQueue', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Fixture admissions are dated 2026-05-08 / 2026-06-04: keep them open
+    // unless a test moves the clock past their window on purpose.
+    vi.setSystemTime(new Date('2026-05-08T09:00:00.000Z'));
+    resetServerClockForTests();
     vi.clearAllMocks();
     // Drop queued once-responses so one failing test cannot leak into the next.
     postMock.mockReset();
@@ -446,6 +450,76 @@ describe('useQueue', () => {
       // Server is 60s behind the device: open at 10:01:00 on this device.
       expect(result.current.bookingOpensAt).toBe(Date.parse('2026-06-04T10:01:00.000Z'));
       randomSpy.mockRestore();
+    });
+
+    it('trusts an explicit bookingStartsAt: null and never reads the public detail (audit #33)', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      postMock.mockImplementation(async () => {
+        throw new ApiClientErrorMock('예매는 추후 오픈 예정입니다', 403, {
+          errorCode: 'BOOKING_NOT_OPEN',
+          bookingStartsAt: null,
+          serverNow: new Date().toISOString(),
+        });
+      });
+
+      try {
+        const { result } = renderQueue('performance-unscheduled');
+        await flushQueueEffects();
+        expect(result.current.status).toBe('notOpen');
+        expect(result.current.bookingOpensAt).toBeNull();
+
+        // Several periodic re-checks: still no detail GET (each would count a view).
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2 * 60_000);
+        });
+        expect(postMock.mock.calls.length).toBeGreaterThan(3);
+        expect(getMock).not.toHaveBeenCalled();
+      } finally {
+        postMock.mockReset();
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('converts the open time with the measured server clock when the 403 body has no server time', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      // The device clock runs 90s behind the server (server 09:59:50 now).
+      const deviceNow = Date.parse('2026-06-04T09:58:20.000Z');
+      vi.setSystemTime(deviceNow);
+      recordServerTimeSample({
+        serverNowMs: deviceNow + 90_000,
+        requestStartedAtMs: deviceNow - 5,
+        responseReceivedAtMs: deviceNow + 5,
+      });
+      postMock
+        .mockRejectedValueOnce(
+          new ApiClientErrorMock('예매는 추후 오픈 예정입니다', 403, {
+            errorCode: 'BOOKING_NOT_OPEN',
+            bookingStartsAt: '2026-06-04T10:00:00.000Z',
+          }),
+        )
+        .mockResolvedValueOnce(waitingSnapshot('queue-session-on-time'));
+
+      try {
+        const { result } = renderQueue('performance-slow-device');
+        await flushQueueEffects();
+
+        // 10:00:00 server time is 09:58:30 on this device.
+        expect(result.current.bookingOpensAt).toBe(Date.parse('2026-06-04T09:58:30.000Z'));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(9_999);
+        });
+        expect(postMock).toHaveBeenCalledTimes(1);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        await flushQueueEffects();
+        // Entered at the server open time, not 90s later on the device clock.
+        expect(postMock).toHaveBeenCalledTimes(2);
+        expect(result.current.status).toBe('waiting');
+        expect(getMock).not.toHaveBeenCalled();
+      } finally {
+        randomSpy.mockRestore();
+      }
     });
 
     it('does not show the retryable "too many requests" surface for a not-open rejection', async () => {
@@ -828,14 +902,8 @@ describe('useQueue', () => {
         }),
       );
       getMock
-        // Server has not expired it yet: the booking screen must stay mounted.
-        .mockResolvedValueOnce(
-          admittedSnapshot('queue-session-expiry', {
-            waitingCount: 12,
-            activeUntilAt: '2026-06-04T10:10:00.000Z',
-            reentryGraceUntilAt: '2026-06-04T10:13:00.000Z',
-          }),
-        )
+        // A transient failure keeps the booking screen and retries later.
+        .mockRejectedValueOnce(new ApiClientErrorMock('Service Unavailable', 503))
         .mockResolvedValueOnce({
           ...waitingSnapshot('queue-session-expiry'),
           state: 'EXPIRED',
@@ -862,6 +930,196 @@ describe('useQueue', () => {
         await vi.advanceTimersByTimeAsync(15_000);
       });
       expect(getMock).toHaveBeenCalledTimes(2);
+      expect(result.current.status).toBe('expired');
+      expect(result.current.isReady).toBe(false);
+    });
+  });
+
+  describe('admissions whose seat window closed (audit #4, #32)', () => {
+    it('never opens the seat screen for an admission whose window already closed and re-enters once', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock
+        // Window 10:00-10:10 is over; an older API still hands it out.
+        .mockResolvedValueOnce(admittedSnapshot('queue-session-closed'))
+        .mockResolvedValueOnce(waitingSnapshot('queue-session-new', { position: 40 }));
+
+      const { result } = renderQueue('performance-closed-window');
+      await flushQueueEffects();
+      expect(result.current.isReady).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await flushQueueEffects();
+
+      expect(postMock).toHaveBeenCalledTimes(2);
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.status).toBe('waiting');
+      expect(result.current.position).toBe(40);
+    });
+
+    it('re-enters a closed admission automatically only once per entry the user starts', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock.mockResolvedValue(admittedSnapshot('queue-session-closed'));
+
+      const { result } = renderQueue('performance-closed-loop');
+      await flushQueueEffects();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(postMock).toHaveBeenCalledTimes(2);
+      expect(result.current.status).toBe('expired');
+      expect(result.current.isReady).toBe(false);
+
+      // A manual retry may again re-enter once.
+      await act(async () => {
+        await result.current.retry();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(postMock).toHaveBeenCalledTimes(4);
+      expect(result.current.status).toBe('expired');
+    });
+
+    it('leaves the seat screen when the status check finds the window closed', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+      postMock
+        .mockResolvedValueOnce(admittedSnapshot('queue-session-stale'))
+        .mockResolvedValueOnce(waitingSnapshot('queue-session-next', { position: 7 }));
+      // An older API still reports the admission after its window.
+      getMock.mockResolvedValueOnce(admittedSnapshot('queue-session-stale', { waitingCount: 3 }));
+
+      const { result } = renderQueue('performance-stale');
+      await flushQueueEffects();
+      expect(result.current.isReady).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60_000 + 2_000);
+      });
+      await flushQueueEffects();
+      // The one automatic re-entry runs on the next timer turn.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await flushQueueEffects();
+
+      expect(getMock).toHaveBeenCalledTimes(1);
+      expect(result.current.isReady).toBe(false);
+      expect(postMock).toHaveBeenCalledTimes(2);
+      expect(result.current.status).toBe('waiting');
+    });
+
+    it('does not auto-enter a PAYMENT_RECOVERY session the server did not mark for entry', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:05:00.000Z'));
+      postMock.mockResolvedValueOnce(
+        admittedSnapshot('queue-session-recovering', {
+          state: 'PAYMENT_RECOVERY',
+          autoEnter: false,
+        }),
+      );
+
+      const { result } = renderQueue('performance-recovering');
+      await flushQueueEffects();
+
+      // Inside the window it is a normal admission, not an immediate one.
+      expect(result.current.status).toBe('admitted');
+      expect(result.current.autoEnter).toBe(false);
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.recoveryOrderId).toBeNull();
+    });
+
+    it('offers only payment recovery for an order bound to a closed window', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock.mockResolvedValueOnce(
+        admittedSnapshot('queue-session-recovery', {
+          state: 'PAYMENT_RECOVERY',
+          autoEnter: false,
+          paymentRecoveryUntilAt: '2026-06-04T10:13:00.000Z',
+          recoveryOrderId: 'order-awaiting-payment',
+        }),
+      );
+      getMock.mockResolvedValueOnce(waitingSnapshot('queue-session-after-recovery', { position: 9 }));
+
+      const { result } = renderQueue('performance-recovery');
+      await flushQueueEffects();
+
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.recoveryOrderId).toBe('order-awaiting-payment');
+      // No queue socket for a session that can only pay, and no re-entry loop.
+      expect(socketMock.connect).not.toHaveBeenCalled();
+      expect(postMock).toHaveBeenCalledTimes(1);
+
+      // The recovery end (paymentRecoveryUntilAt + grace) is checked once.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60_000 + 1_999);
+      });
+      expect(getMock).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await flushQueueEffects();
+      expect(getMock).toHaveBeenCalledTimes(1);
+      expect(result.current.recoveryOrderId).toBeNull();
+      expect(result.current.status).toBe('waiting');
+      expect(result.current.position).toBe(9);
+    });
+  });
+
+  describe('status checks after the sale closed (audit #2, #4)', () => {
+    it('maps a 403 NO_BOOKABLE_SHOWTIME status answer to the closed surface instead of re-entry', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-session-sold-out'));
+      getMock.mockRejectedValueOnce(
+        new ApiClientErrorMock('이미 시작된 회차는 예매할 수 없습니다.', 403, {
+          errorCode: 'NO_BOOKABLE_SHOWTIME',
+        }),
+      );
+
+      try {
+        const { result } = renderQueue('performance-sold-out');
+        await flushQueueEffects();
+        expect(result.current.status).toBe('waiting');
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15_000);
+        });
+
+        expect(result.current.status).toBe('closed');
+        expect(result.current.closedReason).toBe('unavailable');
+        expect(result.current.isReady).toBe(false);
+        // No polling or re-entry for a sale that ended.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60_000);
+        });
+        expect(getMock).toHaveBeenCalledTimes(1);
+        expect(postMock).toHaveBeenCalledTimes(1);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('re-reads the status at once when asked (a queue 403 on the seat screen)', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:02:00.000Z'));
+      postMock.mockResolvedValueOnce(admittedSnapshot('queue-session-used'));
+      getMock.mockResolvedValueOnce({
+        ...waitingSnapshot('queue-session-used'),
+        state: 'EXPIRED',
+        position: 0,
+      });
+
+      const { result } = renderQueue('performance-used');
+      await flushQueueEffects();
+      expect(result.current.isReady).toBe(true);
+
+      await act(async () => {
+        await result.current.recheck();
+      });
+
+      expect(getMock).toHaveBeenCalledWith('/api/v1/queue/sessions/queue-session-used', {
+        showErrorToast: false,
+      });
       expect(result.current.status).toBe('expired');
       expect(result.current.isReady).toBe(false);
     });

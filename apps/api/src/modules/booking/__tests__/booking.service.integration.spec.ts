@@ -50,7 +50,8 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
       from: () => ({
         where: () => queryRows(unavailableRows),
         innerJoin: () => {
-          const rows = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+          // One row type for both fixtures, so queryRows infers a single T.
+          const rows: Array<Record<string, unknown>> = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
@@ -301,9 +302,12 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     const room = `showtime:${showtimeId}`;
     const channel = buildSocketIoRoomChannel('/booking', room);
     try {
-      const received = new Promise<Buffer>((resolve) => {
+      const messages: Buffer[] = [];
+      const received = new Promise<Buffer[]>((resolve) => {
         subscriber.on('pmessageBuffer', (_pattern: Buffer, messageChannel: Buffer, message: Buffer) => {
-          if (messageChannel.toString() === channel) resolve(message);
+          if (messageChannel.toString() !== channel) return;
+          messages.push(message);
+          if (messages.length === 2) resolve(messages);
         });
       });
       // Same pattern the Socket.IO Redis adapter subscribes to.
@@ -312,12 +316,12 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
       const gateway = new BookingGateway(redis);
       await expect(gateway.publishSeatUpdate(showtimeId, seatKey, 'available')).resolves.toBe(true);
 
-      expect(await received).toEqual(
-        encodeSocketIoRoomEvent('/booking', room, 'seat-update', {
-          seatId: seatKey,
-          status: 'available',
-        }),
-      );
+      // seat-update.v2 first, then the legacy event for pre-v2 web bundles.
+      const payload = { seatId: seatKey, status: 'available' };
+      expect(await received).toEqual([
+        encodeSocketIoRoomEvent('/booking', room, 'seat-update.v2', payload),
+        encodeSocketIoRoomEvent('/booking', room, 'seat-update', payload),
+      ]);
     } finally {
       subscriber.disconnect();
     }

@@ -56,10 +56,41 @@ vi.mock('sonner', () => ({
 }));
 
 import { toast } from 'sonner';
-import { useBookingSocket } from '../use-socket';
+import {
+  SEAT_UPDATE_EVENT,
+  SEAT_UPDATE_FLUSH_MAX_DELAY_MS,
+  SEAT_UPDATE_V2_EVENT,
+  useBookingSocket,
+} from '../use-socket';
 import { createBookingSocket } from '@/lib/socket-client';
 import { SEAT_STATUS_RECONNECT_JITTER_MS } from '@/lib/booking/seat-resync';
+import {
+  clearSeatUpdateEvents,
+  overlayRecentSeatEvents,
+} from '@/lib/booking/seat-event-overlay';
 import { useAuthStore } from '@/stores/use-auth-store';
+
+type SeatStatusCache = { showtimeId: string; seats: Record<string, string> };
+type CacheUpdater = (old: SeatStatusCache | undefined) => SeatStatusCache | undefined;
+
+/** Animation frames under test control: they run only when flushed. */
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrameId = 1;
+
+function runAnimationFrames() {
+  const pending = [...frames.values()];
+  frames.clear();
+  for (const callback of pending) callback(performance.now());
+}
+
+/** The cache after applying every setQueryData updater so far. */
+function applyCacheUpdates(initial: SeatStatusCache): SeatStatusCache | undefined {
+  let cache: SeatStatusCache | undefined = initial;
+  for (const [, updater] of (mockQueryClient.setQueryData as Mock).mock.calls as Array<[unknown, CacheUpdater]>) {
+    cache = updater(cache);
+  }
+  return cache;
+}
 
 describe('useBookingSocket', () => {
   beforeEach(() => {
@@ -69,9 +100,20 @@ describe('useBookingSocket', () => {
     mockStore.selectedSeats = [];
     useAuthStore.setState({ user: null });
     mockFindQuery.mockReturnValue(undefined);
+    frames.clear();
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      const id = nextFrameId++;
+      frames.set(id, callback);
+      return id;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => {
+      frames.delete(id);
+    }));
   });
 
   afterEach(() => {
+    clearSeatUpdateEvents();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -117,10 +159,12 @@ describe('useBookingSocket', () => {
     expect(mockStore.setConnected).toHaveBeenCalledWith(false);
   });
 
-  it('applies seat-update events to the seat-status cache', () => {
+  it('applies seat-update events to the seat-status cache on the next frame', () => {
     renderHook(() => useBookingSocket('test-showtime-id'));
 
-    socketHandler('seat-update')({ seatId: '1F:A-1', status: 'locked' });
+    socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+    expect(mockQueryClient.setQueryData).not.toHaveBeenCalled();
+    runAnimationFrames();
 
     expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
     const [queryKey, updater] = (mockQueryClient.setQueryData as Mock).mock.calls[0]! as [
@@ -174,10 +218,188 @@ describe('useBookingSocket', () => {
     // A payload that still names another user is not trusted either: the lock
     // response (409) and the my-locks read-back decide.
     seatUpdate({ seatId: '1F:A-2', status: 'locked', userId: 'other-user' });
+    runAnimationFrames();
 
-    expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(3);
+    // One cache write for the frame; every locked seat is shown as taken.
+    expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+    expect(applyCacheUpdates({ showtimeId: 'test-showtime-id', seats: {} })?.seats).toEqual({
+      'A-1': 'locked',
+      '1F:A-2': 'locked',
+    });
     expect(mockStore.removeSeat).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  describe('frame batching (audit #11)', () => {
+    it('applies a frame of events with one cache write where the latest state of a seat wins', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      const seatUpdate = socketHandler(SEAT_UPDATE_V2_EVENT);
+
+      for (let i = 1; i <= 50; i += 1) {
+        seatUpdate({ seatId: `1F:B-${i}`, status: 'locked' });
+      }
+      seatUpdate({ seatId: '1F:A-1', status: 'locked' });
+      seatUpdate({ seatId: '1F:A-1', status: 'available' });
+      seatUpdate({ seatId: '1F:A-2', status: 'available' });
+      seatUpdate({ seatId: '1F:A-2', status: 'sold' });
+      expect(mockQueryClient.setQueryData).not.toHaveBeenCalled();
+
+      runAnimationFrames();
+
+      expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+      const seats = applyCacheUpdates({
+        showtimeId: 'test-showtime-id',
+        seats: { '1F:A-9': 'sold', '1F:A-1': 'sold' },
+      })?.seats;
+      expect(seats).toMatchObject({ '1F:A-9': 'sold', '1F:A-1': 'available', '1F:A-2': 'sold', '1F:B-50': 'locked' });
+      expect(Object.keys(seats ?? {})).toHaveLength(53);
+
+      // Nothing left to write on the next frame.
+      runAnimationFrames();
+      expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+    });
+
+    it('merges into the cache present at flush time, keeping a seat-status read that landed first', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+      runAnimationFrames();
+
+      const [, updater] = (mockQueryClient.setQueryData as Mock).mock.calls[0] as [unknown, CacheUpdater];
+      // A poll replaced the map between the event and the frame.
+      expect(updater({ showtimeId: 'test-showtime-id', seats: { '1F:A-3': 'sold' } })).toEqual({
+        showtimeId: 'test-showtime-id',
+        seats: { '1F:A-3': 'sold', '1F:A-1': 'locked' },
+      });
+      expect(updater(undefined)).toBeUndefined();
+    });
+
+    it('records each event for the snapshot overlay when it arrives, not when it is flushed', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      const requestStartedAtMs = Date.now();
+      socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+
+      // A snapshot read before the event, answered before the frame runs.
+      expect(
+        overlayRecentSeatEvents(
+          'test-showtime-id',
+          { showtimeId: 'test-showtime-id', seats: { '1F:A-1': 'available' } } as never,
+          { requestStartedAtMs },
+        ).seats,
+      ).toEqual({ '1F:A-1': 'locked' });
+    });
+
+    it('flushes within the time cap when no frame runs (hidden tab)', () => {
+      // Timers only: animation frames stay under the test's control.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        renderHook(() => useBookingSocket('test-showtime-id'));
+        socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+
+        vi.advanceTimersByTime(SEAT_UPDATE_FLUSH_MAX_DELAY_MS - 1);
+        expect(mockQueryClient.setQueryData).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+        // The frame that was also requested does not write again.
+        runAnimationFrames();
+        expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('flushes at once when the tab visibility changes', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops buffered events on unmount instead of writing them to the left showtime', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        const { unmount } = renderHook(() => useBookingSocket('test-showtime-id'));
+        socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+
+        unmount();
+        runAnimationFrames();
+        vi.advanceTimersByTime(SEAT_UPDATE_FLUSH_MAX_DELAY_MS * 2);
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        expect(mockQueryClient.setQueryData).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('seat-update.v2 rollout (audit #92 compatibility)', () => {
+    it('listens to both the v2 and the legacy event', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+
+      expect(SEAT_UPDATE_V2_EVENT).toBe('seat-update.v2');
+      expect(SEAT_UPDATE_EVENT).toBe('seat-update');
+      socketHandler(SEAT_UPDATE_V2_EVENT);
+      socketHandler(SEAT_UPDATE_EVENT);
+    });
+
+    it('applies a v2 locked event', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+
+      socketHandler(SEAT_UPDATE_V2_EVENT)({ seatId: '1F:A-1', status: 'locked' });
+      runAnimationFrames();
+
+      expect(applyCacheUpdates({ showtimeId: 'test-showtime-id', seats: {} })?.seats).toEqual({
+        '1F:A-1': 'locked',
+      });
+    });
+
+    it('applies an event received as both v2 and legacy once', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      const v2 = socketHandler(SEAT_UPDATE_V2_EVENT);
+      const legacy = socketHandler(SEAT_UPDATE_EVENT);
+
+      v2({ seatId: '1F:A-1', status: 'available' });
+      runAnimationFrames();
+      legacy({ seatId: '1F:A-1', status: 'available' });
+      runAnimationFrames();
+
+      expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(1);
+    });
+
+    it('never lets a late legacy copy undo a newer v2 state of the same seat', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      const v2 = socketHandler(SEAT_UPDATE_V2_EVENT);
+      const legacy = socketHandler(SEAT_UPDATE_EVENT);
+
+      // Released, then locked by someone else before the release's legacy copy arrives.
+      v2({ seatId: '1F:A-1', status: 'available' });
+      v2({ seatId: '1F:A-1', status: 'locked' });
+      legacy({ seatId: '1F:A-1', status: 'available' });
+      runAnimationFrames();
+
+      expect(applyCacheUpdates({ showtimeId: 'test-showtime-id', seats: {} })?.seats).toEqual({
+        '1F:A-1': 'locked',
+      });
+    });
+
+    it('still applies legacy events from an API without v2 (rollback)', () => {
+      renderHook(() => useBookingSocket('test-showtime-id'));
+      const legacy = socketHandler(SEAT_UPDATE_EVENT);
+
+      legacy({ seatId: '1F:A-1', status: 'locked' });
+      legacy({ seatId: '1F:A-2', status: 'sold' });
+      runAnimationFrames();
+      legacy({ seatId: '1F:A-1', status: 'available' });
+      runAnimationFrames();
+
+      expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(2);
+      expect(applyCacheUpdates({ showtimeId: 'test-showtime-id', seats: {} })?.seats).toEqual({
+        '1F:A-1': 'available',
+        '1F:A-2': 'sold',
+      });
+    });
   });
 
   it('reloads seat-status once after the first join (audit #27)', () => {

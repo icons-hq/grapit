@@ -748,22 +748,30 @@ function connectSocket(config, label) {
   });
 }
 
+// The API sends every seat change as `seat-update.v2` and all but `locked`
+// also as the legacy `seat-update`; an API before that change sends only the
+// legacy event. Listen to both so the smoke works on either side of a rollout.
+const SEAT_UPDATE_EVENTS = ['seat-update.v2', 'seat-update'];
+
 function waitForSeatUpdate(socket, seatId, status) {
   return new Promise((resolve, reject) => {
+    const stopListening = () => {
+      for (const event of SEAT_UPDATE_EVENTS) socket.off(event, onUpdate);
+    };
     const timeout = setTimeout(() => {
-      socket.off('seat-update', onUpdate);
+      stopListening();
       reject(new Error(`Timed out waiting for seat-update ${seatId}:${status}`));
     }, 20000);
 
     function onUpdate(payload) {
       if (payload?.seatId === seatId && payload?.status === status) {
         clearTimeout(timeout);
-        socket.off('seat-update', onUpdate);
+        stopListening();
         resolve(payload);
       }
     }
 
-    socket.on('seat-update', onUpdate);
+    for (const event of SEAT_UPDATE_EVENTS) socket.on(event, onUpdate);
   });
 }
 

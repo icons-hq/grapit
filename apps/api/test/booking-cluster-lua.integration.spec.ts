@@ -73,7 +73,8 @@ function createBookingService(redis: Cluster, maxTicketsPerUser = 1): BookingSer
       from: () => ({
         where: () => queryRows(unavailableRows),
         innerJoin: () => {
-          const rows = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+          // One row type for both fixtures, so queryRows infers a single T.
+          const rows: Array<Record<string, unknown>> = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],

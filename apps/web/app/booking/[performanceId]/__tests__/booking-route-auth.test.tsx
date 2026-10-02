@@ -43,6 +43,10 @@ vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: useAuthStoreMock,
 }));
 
+vi.mock('@/hooks/use-booking', () => ({
+  useUnlockAllSeats: () => ({ mutate: vi.fn() }),
+}));
+
 vi.mock('@/components/booking/booking-page', () => ({
   BookingPage: ({ performanceId }: { performanceId: string }) => (
     <div>booking page {performanceId}</div>
