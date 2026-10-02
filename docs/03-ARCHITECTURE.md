@@ -390,7 +390,7 @@ Important non-sensitive production invariants:
 - API requires Redis/Valkey runtime wiring
 - managed-demo Web/API minimum instances are `0`, with a maximum of `4`; repository variables select this posture while workflow defaults preserve the warm ticket-opening posture
 - managed-demo API background processing is producer-only; the bounded Job always enables processing, and the warm ticket-opening default restores continuous API workers
-- worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window
+- worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window; a sweep failure does not skip the window, and both a sweep failure and a pg-boss that is not processing jobs end the execution with a non-zero exit code
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
 
 ### 8.4 Runtime Configuration
@@ -408,6 +408,10 @@ Production convention:
 - Cloud Run environment variables and Secret Manager bindings provide runtime configuration.
 - API validates production frontend origin and Redis/Valkey pub/sub readiness at bootstrap.
 - Missing production Redis URL or invalid Valkey mode fails startup.
+- pg-boss initialization is retried `PGBOSS_START_MAX_ATTEMPTS` times (default `3`); in production a final failure aborts startup instead of serving with background jobs disabled. Non-production processes keep a degraded producer that never enqueues.
+- Each process has two PostgreSQL pools: the application pool (`DB_POOL_MAX`) and the pg-boss pool (`PGBOSS_POOL_MAX`, default `3` with background processing, `1` producer-only). Connections are labeled by `DB_APPLICATION_NAME` (`grabit-api` or `grabit-background-worker`, plus a `-pgboss` suffix). The connection budget is in `docs/runbooks/managed-demo-cost-floor.md`.
+- The application pool logs and discards idle-client errors (Cloud SQL failover, `pg_terminate_backend`) instead of crashing the process. Optional `DB_STATEMENT_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` session limits are unset by default.
+- The API enables Nest shutdown hooks. On SIGTERM pg-boss stops gracefully for up to 8 seconds and fails unfinished jobs back for retry before the HTTP server closes.
 
 ### 8.5 Object Storage And Uploads
 

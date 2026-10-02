@@ -33,7 +33,7 @@ flowchart LR
   Job --> Valkey
 ```
 
-The Job boots only the modules needed for pg-boss, payment/refund retry, QR email, cancelled-seat release, and pending-payment expiration. It runs one immediate expiration sweep, processes queued jobs for 30 seconds, and closes pg-boss, Nest, Redis, and PostgreSQL clients. At a five-minute schedule this is roughly 262,800 vCPU-seconds per month before startup variance, close to the Cloud Run Jobs free allocation.
+The Job boots only the modules needed for pg-boss, payment/refund retry, QR email, cancelled-seat release, and pending-payment expiration. It runs one immediate expiration sweep, processes queued jobs for 30 seconds, and closes pg-boss, Nest, Redis, and PostgreSQL clients. A failed sweep is logged and still keeps the 30-second queue window open; the execution then exits non-zero. An execution whose pg-boss could not start or register workers also exits non-zero, so either case raises the failed-execution alert. At a five-minute schedule this is roughly 262,800 vCPU-seconds per month before startup variance, close to the Cloud Run Jobs free allocation.
 
 ## Non-negotiable gates before mutation
 
@@ -292,6 +292,38 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 8. Enable `BOOKING_ENABLED=true` only after the evidence gates pass.
 
 Official references: [Cloud Run minimum instances and scale to zero](https://cloud.google.com/run/docs/configuring/min-instances), [Cloud Run Jobs v2 patch](https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs/patch), [Cloud Run WebSockets](https://cloud.google.com/run/docs/triggering/websockets), [Cloud SQL instance settings](https://cloud.google.com/sql/docs/postgres/instance-settings), [Memorystore for Valkey node specifications](https://cloud.google.com/memorystore/docs/valkey/instance-node-specification), [Cloudflare Worker Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), and [Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+
+### PostgreSQL connection budget
+
+Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow default `4`, managed-demo `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API). Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, or the Cloud SQL tier, verify:
+
+```text
+API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)
++ worker Job (DB_POOL_MAX + PGBOSS_POOL_MAX), unless the Job is paused
++ rollout overlap (old and new revisions both running during a deploy)
++ migration, Cloud SQL Auth Proxy, and operator sessions
+< max_connections − superuser_reserved_connections
+```
+
+- Workflow defaults at ticket opening: `40 × (4 + 3) = 280` for the API. Read the real limits with `SHOW max_connections;` and `SHOW superuser_reserved_connections;` on the target instance; do not assume a tier default.
+- Do not deploy during a sale window. If a deploy cannot be avoided, budget a second API term for the overlapping revision.
+- Managed demo (`db-f1-micro`): `4 × (2 + 1) + (2 + 3) = 17` before rollout overlap and operator sessions, so keep manual sessions short and avoid parallel deploys.
+- During the load test, record pool usage per process and pool. Expected `application_name` values are `grabit-api`, `grabit-api-pgboss`, `grabit-background-worker`, and `grabit-background-worker-pgboss` (a value embedded in `DATABASE_URL` overrides them):
+
+  ```sql
+  SELECT application_name, state, count(*)
+  FROM pg_stat_activity
+  WHERE datname = current_database()
+  GROUP BY 1, 2
+  ORDER BY 3 DESC;
+  ```
+
+- Treat any `timeout exceeded when trying to connect` log line during the confirm-concentrated load test as a failed capacity gate: raise `DB_POOL_MAX` within the budget above or lower API concurrency, then repeat the test.
+- `DB_STATEMENT_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` are unset by default. Set them only from load evidence. The idle-in-transaction limit must exceed the longest external call made inside a transaction (the legacy reservation cancel awaits a Toss cancel inside its transaction), and the statement limit also applies to admin reports and CSV exports.
+- Production API and worker processes retry pg-boss startup `PGBOSS_START_MAX_ATTEMPTS` times (default `3`, 1s then 2s backoff) and then exit non-zero, so Cloud Run replaces the instance instead of serving without background jobs. A revision that keeps failing startup after a capacity change usually means exhausted connection slots or an unreachable database; check this budget first.
+- On SIGTERM (scale-in, prewarm step-down, revision replacement) the API stops pg-boss gracefully for up to 8 seconds and fails unfinished jobs back to pg-boss (`retry`, or `failed` once the retry limit is used), so they are retried immediately instead of after the 15-minute expiration.
+- Migration `0038_booking_lookup_indexes` adds `reservation_seats(reservation_id)` and `payments(toss_order_id)` indexes with plain `CREATE INDEX` inside the Drizzle migration transaction, which blocks writes to those tables while each index builds. Apply it through the normal deploy migration outside a sale window and confirm with `EXPLAIN` that `SELECT * FROM reservation_seats WHERE reservation_id = $1` uses `idx_reservation_seats_reservation_id`.
+- Ask Cloud SQL for a maintenance deny period covering the sale and venue-entry windows. Idle pool connections dropped by maintenance or `pg_terminate_backend` are now logged and replaced, but in-flight queries still fail.
 
 ### Relaunch incident regression requirement
 

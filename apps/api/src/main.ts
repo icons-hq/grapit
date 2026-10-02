@@ -88,6 +88,11 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
+  // SIGTERM (Cloud Run scale-in/revision replacement) runs Nest shutdown hooks:
+  // pg-boss stops gracefully and fails unfinished jobs back for retry, and
+  // worker intervals are cleared before the HTTP server is disposed.
+  app.enableShutdownHooks();
+
   const port = process.env['PORT'] ?? 8080;
   await app.listen(port);
   console.log(`API server running on http://localhost:${port}`);
