@@ -14,6 +14,29 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-235-open-audit-remediation',
+    prNumber: 235,
+    title: '오픈 전 점검의 결제·예매·운영 안전장치 보강',
+    summary:
+      '오픈 전 점검에서 확인한 결제 확정, 환불, 예매 제한, 관리자 권한, 현장 검표 문제를 고치고 배포·오픈 준비 절차를 정리했습니다.',
+    highlights: [
+      '승인 금액·통화·결제수단 불일치와 결과를 알 수 없는 결제의 자동 대조·보상 취소',
+      '회차 시작 시 판매 마감, 같은 인증 휴대폰 계정 합산 매수 제한, 공연별 결제수단 적용',
+      '관리자 환불 결과 구분, 금액이 바뀌면 미리보기 재확인, 멈춘 환불은 PG 상태부터 대조',
+      '전체 관리자만 예매 우회, 공용 스캐너 권한 제한과 권한 상승·예매 보유 회원 탈퇴 차단',
+      '공지·FAQ 수정 후 게시 유지, 언어별 대체 노출과 변경 이력, 0원 가격·지난 판매 시작 공개 차단',
+      '카메라로 연 검표 탭의 회차 유지, 거절 스캔 기록과 취소 처리 중 티켓 안내',
+    ],
+    category: 'patch',
+    date: '2026-10-02',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/235',
+    evidence: [
+      '점검 174건을 29개 작업 단위로 나눠 단위별 수정·재검토 후 통합',
+      'API·Web·shared 단위 테스트와 PostgreSQL·Valkey 통합 테스트, 변경 화면 실제 렌더 확인',
+      '배포 전·배포 직후·오픈 리허설 운영 조치 runbook과 migration 잠금 영향 정리',
+    ],
+  },
+  {
     id: 'pr-234-admin-workflow-redesign',
     prNumber: 234,
     title: '티켓 운영 중심으로 관리자 화면과 메뉴 개선',
