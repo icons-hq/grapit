@@ -85,7 +85,7 @@ Payment and reservation finalization are server-authoritative.
 - Toss Payments is the current payment provider integration.
 - The queue admission token stays in its httpOnly cookie; reservations do not store it and responses do not echo it.
 - The payment confirm response uses the buyer's display locale for translated performance titles.
-- The payment branch API chooses synchronous or asynchronous handling based on payment method.
+- The payment branch API chooses synchronous or asynchronous handling based on payment method. It admits a Prepared Checkout by the same order binding as payment confirm, so resuming a payment works only in the browser session that prepared it (or one with a live queue admission); elsewhere it is refused before the buyer authenticates with the payment provider.
 - Payment confirm validates amount, order identity, lock ownership, queue admission (bound to the pending order until its server payment deadline), and payment state before finalizing reservation state. A confirmed purchase returns its queue slot to the waiting line. When confirm succeeds, that queue admission ends: choosing more seats needs a new queue entry, while another order already prepared in the same admission can still be confirmed through its own order binding.
 - Toss webhook handling records provider events and re-checks provider state before applying final state changes.
 - A confirmed reservation with completed payment issues a seat-level QR credential per active Ticket Item and schedules one QR reminder email per reservation when eligible.

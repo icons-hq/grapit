@@ -239,6 +239,63 @@ describe('AdmissionGuard', () => {
     expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
   });
 
+  it('validates the provider handoff through the order binding like payment confirm', async () => {
+    const context = createExecutionContext({
+      // The queue window and its cookie may have ended: a Prepared Checkout is
+      // resumed without a new prepare.
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/payments/branch',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith({
+      orderId: 'ORDER-1',
+      userId: 'user-1',
+      identity: {
+        userId: 'user-1',
+        refreshTokenFamilyId: 'family-1',
+        deviceSlotId: 'family-1',
+      },
+      admissionToken: undefined,
+    });
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+    const request = context.switchToHttp().getRequest() as {
+      queueAdmission?: Record<string, string>;
+    };
+    expect(request.queueAdmission).toMatchObject({ admissionToken: 'order-bound' });
+  });
+
+  it('refuses a provider handoff whose order is bound to another browser', async () => {
+    queueService.assertAdmissionForOrder.mockRejectedValueOnce(
+      new ForbiddenException('대기열 입장 인증이 필요합니다'),
+    );
+    const context = createExecutionContext({
+      cookies: { refreshToken: 'other-browser-refresh' },
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/Payments/Branch/',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+  });
+
+  it('still requires the browser session and the order id for the provider handoff', async () => {
+    const withoutSession = createExecutionContext({
+      cookies: {},
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/payments/branch',
+    });
+    await expect(guard.canActivate(withoutSession)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+
+    const withoutOrder = createExecutionContext({
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: {},
+      originalUrl: '/api/v1/payments/branch',
+    });
+    await expect(guard.canActivate(withoutOrder)).rejects.toThrow('대기열 입장 정보가 필요합니다');
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
   it('keeps requiring the admission cookie for seat lock and prepare', async () => {
     for (const originalUrl of ['/api/v1/booking/seats/lock', '/api/v1/reservations/prepare']) {
       const context = createExecutionContext({
@@ -314,6 +371,10 @@ describe('AdmissionGuard', () => {
       resolve(__dirname, '../reservation/reservation.controller.ts'),
       'utf-8',
     );
+    const paymentControllerSource = await readFile(
+      resolve(__dirname, '../payment/payment.controller.ts'),
+      'utf-8',
+    );
 
     expect(guardSource).toContain('grabit_queue_admission');
     expect(guardSource).toContain('userId');
@@ -322,5 +383,6 @@ describe('AdmissionGuard', () => {
     expect(guardSource).toContain('queueSessionId');
     expect(bookingControllerSource).toContain('AdmissionGuard');
     expect(reservationControllerSource).toContain('AdmissionGuard');
+    expect(paymentControllerSource).toMatch(/@UseGuards\(AdmissionGuard\)\s+@Post\('branch'\)/);
   });
 });

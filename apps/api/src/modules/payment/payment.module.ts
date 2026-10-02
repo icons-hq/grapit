@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BookingModule } from '../booking/booking.module.js';
 import { CancellationModule } from '../cancellation/cancellation.module.js';
+import { QueueModule } from '../queue/queue.module.js';
 import { TicketModule } from '../ticket/ticket.module.js';
 import { PaymentController } from './payment.controller.js';
 import { PaymentWebhookController } from './payment-webhook.controller.js';
@@ -11,7 +12,9 @@ import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 import { AbandonedPaymentHandoffService } from './abandoned-payment-handoff.service.js';
 
 @Module({
-  imports: [BookingModule, TicketModule, CancellationModule],
+  // QueueModule provides the QueueService of the AdmissionGuard on the provider
+  // handoff; imported explicitly like BookingModule does for its guard.
+  imports: [BookingModule, TicketModule, CancellationModule, QueueModule],
   controllers: [PaymentController, PaymentWebhookController],
   providers: [
     TossPaymentsClient,

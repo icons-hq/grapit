@@ -50,11 +50,11 @@ export function isQueueAccessDeadline(
 type QueueAccessLocale = 'ko' | 'en' | 'th' | 'zh-CN';
 
 /**
- * Server messages (403) of a seat lock or prepare refused for the queue
- * admission itself: the window ended, the admission was used up by a purchase
- * in another tab, or the admission cookie is missing or for another
- * performance. Other 403s (sales closed, booking disabled) are not about the
- * queue.
+ * Server messages (403) of a seat lock, prepare or payment handoff refused for
+ * the queue admission itself: the window ended, the admission was used up by a
+ * purchase in another tab, the admission cookie is missing or for another
+ * performance, or (handoff) the order is bound to another browser session.
+ * Other 403s (sales closed, booking disabled) are not about the queue.
  */
 const QUEUE_ACCESS_REJECTION_PREFIXES = [
   '대기열 입장 시간이 만료되었습니다',
@@ -120,6 +120,50 @@ export function getQueueAccessClosedCopy(
   locale: string | undefined,
 ): QueueAccessClosedCopy {
   return QUEUE_ACCESS_CLOSED_COPY[resolveQueueAccessLocale(locale)];
+}
+
+export interface QueueResumeRefusedCopy {
+  /** Heading of the checkout notice and label of the blocked pay button. */
+  title: string;
+  body: string;
+  toast: string;
+}
+
+/**
+ * Checkout resuming a Prepared Checkout whose provider handoff was refused with
+ * a queue 403: the order is bound to the browser session that prepared it (or
+ * needs a live queue admission), as for payment confirm. Typical cases are
+ * "continue payment" opened on another device or browser, or a session that
+ * was signed out and in again. The order itself is still payable from the
+ * bound browser until its deadline.
+ */
+const QUEUE_RESUME_REFUSED_COPY: Record<QueueAccessLocale, QueueResumeRefusedCopy> = {
+  ko: {
+    title: '이 화면에서는 결제를 이어갈 수 없습니다',
+    body: '이 예매는 결제를 시작한 기기·브라우저의 로그인 세션에서만 이어서 결제할 수 있습니다. 그곳에서 결제 기한 안에 완료하거나, 대기열에 다시 입장해 새로 예매해 주세요. 다시 입장하면 이 예매가 취소되고 좌석이 해제됩니다.',
+    toast: '결제를 시작한 기기·브라우저에서 결제를 이어 주세요.',
+  },
+  en: {
+    title: 'Payment can’t continue here',
+    body: 'This booking can only be paid in the signed-in session of the device and browser where you started paying. Finish it there before the payment deadline, or rejoin the queue to book again. Rejoining cancels this booking and releases its seats.',
+    toast: 'Continue the payment on the device and browser where you started it.',
+  },
+  th: {
+    title: 'ไม่สามารถชำระเงินต่อในหน้านี้ได้',
+    body: 'การจองนี้ชำระเงินต่อได้เฉพาะในเซสชันที่เข้าสู่ระบบบนอุปกรณ์และเบราว์เซอร์ที่คุณเริ่มชำระเงินเท่านั้น กรุณาชำระให้เสร็จที่นั่นก่อนหมดเวลาชำระ หรือเข้าคิวใหม่เพื่อจองอีกครั้ง เมื่อเข้าคิวใหม่ การจองนี้จะถูกยกเลิกและที่นั่งจะถูกปล่อย',
+    toast: 'กรุณาชำระเงินต่อบนอุปกรณ์และเบราว์เซอร์ที่คุณเริ่มชำระเงิน',
+  },
+  'zh-CN': {
+    title: '无法在此页面继续付款',
+    body: '此预订只能在开始付款的设备和浏览器的登录会话中继续付款。请在付款期限内在该处完成付款，或重新排队再次预订。重新排队会取消此预订并释放座位。',
+    toast: '请在开始付款的设备和浏览器上继续付款。',
+  },
+};
+
+export function getQueueResumeRefusedCopy(
+  locale: string | undefined,
+): QueueResumeRefusedCopy {
+  return QUEUE_RESUME_REFUSED_COPY[resolveQueueAccessLocale(locale)];
 }
 
 export interface QueuePaymentRecoveryCopy {

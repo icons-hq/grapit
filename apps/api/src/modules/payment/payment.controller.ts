@@ -1,7 +1,8 @@
-import { Body, Controller, HttpCode, Post, Request } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Request, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { paymentMethodSchema } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { PaymentService } from './payment.service.js';
 
 const paymentBranchRequestSchema = z.object({
@@ -35,6 +36,16 @@ type AsyncPaymentReturnDto = z.infer<typeof asyncPaymentReturnSchema>;
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
+  /**
+   * Provider Handoff of a prepared order. It starts the provider checkout and
+   * extends the payment deadline, so it is admitted by the same rule as
+   * payment confirm (AdmissionGuard, order-bound path): the order binding of
+   * this browser (refresh token family and device slot), or the queue
+   * admission cookie as a fallback. A resume from another browser is refused
+   * here with a queue 403, before the buyer authenticates with the provider,
+   * instead of at confirm after the authentication.
+   */
+  @UseGuards(AdmissionGuard)
   @Post('branch')
   getTossPaymentBranch(
     @Body(new ZodValidationPipe(paymentBranchRequestSchema))

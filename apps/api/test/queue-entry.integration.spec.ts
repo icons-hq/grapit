@@ -2,16 +2,17 @@ import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import IORedis from 'ioredis';
-import { HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, type ExecutionContext } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as schema from '../src/database/schema/index.js';
 import {
   bookingPolicies,
   performances,
+  refreshTokens,
   reservations,
   seatInventories,
   seatMaps,
@@ -19,13 +20,15 @@ import {
   users,
 } from '../src/database/schema/index.js';
 import { QueueService } from '../src/modules/queue/queue.service.js';
+import { AdmissionGuard } from '../src/modules/queue/guards/admission.guard.js';
 import type { QueueGateway } from '../src/modules/queue/queue.gateway.js';
 
 /**
  * Queue entry gate against real Postgres 16 and Valkey 8.
  * Covers the SQL sellable-showtime cutoff (C1), that rejected entries never
- * create queue keys, remaining seats over the showtimes on sale, and re-entry
- * after the active window (D2) with the real order-binding query.
+ * create queue keys, remaining seats over the showtimes on sale, re-entry
+ * after the active window (D2) with the real order-binding query, and the
+ * AdmissionGuard rule of the provider handoff (`POST /payments/branch`).
  *
  * 실행: pnpm --filter @grabit/api exec vitest run --config vitest.integration.config.ts test/queue-entry.integration.spec.ts
  */
@@ -339,5 +342,115 @@ describe('QueueService entry gate (integration)', () => {
     expect(rejoin).not.toHaveProperty('recoveryOrderId');
     expect(await redis.get(sessionKey)).toBeNull();
     expect(await redis.sismember(`{queue:${performanceId}}:active`, admitted.queueSessionId)).toBe(0);
+  });
+
+  it('admits the provider handoff of a prepared order only for the browser bound to it, after the window too', async () => {
+    const performanceId = await seedPerformance({ showtimeOffsetsMs: [86_400_000] });
+    await seedSeatMap(performanceId, 10);
+    const [showtime] = await db.select().from(showtimes)
+      .where(eq(showtimes.performanceId, performanceId));
+    const [buyer] = await db.insert(users).values({
+      email: `${randomUUID()}@example.test`,
+      name: 'Buyer',
+      phone: '+821012345679',
+      gender: 'unspecified',
+      birthDate: '1990-01-01',
+    }).returning();
+    // Two signed-in browsers of the same buyer: the PC that prepared the order
+    // and a phone that opens "continue payment" from the reservation list.
+    const refreshToken = async (family: string) => {
+      const token = `refresh-${family}-${randomUUID()}`;
+      await db.insert(refreshTokens).values({
+        userId: buyer!.id,
+        tokenHash: createHash('sha256').update(token).digest('hex'),
+        family,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      });
+      return token;
+    };
+    const pcRefresh = await refreshToken('family-pc');
+    const phoneRefresh = await refreshToken('family-phone');
+    const pcIdentity = {
+      userId: buyer!.id,
+      refreshTokenFamilyId: 'family-pc',
+      deviceSlotId: 'family-pc',
+    };
+
+    const admitted = await service.enterPerformanceQueue({ performanceId, identity: pcIdentity });
+    expect(admitted.state).toBe('ADMITTED');
+    // The queue window has closed; only the order binding can authorise now.
+    const sessionKey = `{queue:${performanceId}}:session:${admitted.queueSessionId}`;
+    const record = JSON.parse((await redis.get(sessionKey))!) as Record<string, string>;
+    const activeUntilAt = new Date(Date.now() - 60_000).toISOString();
+    await redis.set(sessionKey, JSON.stringify({ ...record, activeUntilAt }), 'KEEPTTL');
+
+    const orderId = `GRP-${randomUUID()}`;
+    const [order] = await db.insert(reservations).values({
+      userId: buyer!.id,
+      showtimeId: showtime!.id,
+      reservationNumber: randomUUID().slice(0, 28),
+      tossOrderId: orderId,
+      status: 'PENDING_PAYMENT',
+      totalAmount: 52_000,
+      cancelDeadline: new Date(Date.now() + 86_400_000),
+      queueSessionId: admitted.queueSessionId,
+      refreshFamilyId: pcIdentity.refreshTokenFamilyId,
+      deviceSlotKey: pcIdentity.deviceSlotId,
+      admittedAt: new Date(record['admittedAt']!),
+      admissionActiveUntilAt: new Date(activeUntilAt),
+      reentryGraceUntilAt: new Date(record['reentryGraceUntilAt']!),
+      paymentDeadlineAt: new Date(Date.now() + 5 * 60_000),
+    }).returning();
+
+    const guard = new AdmissionGuard(service);
+    const branchRequest = (cookies: Record<string, string>) => {
+      const request = {
+        user: { id: buyer!.id, role: 'user' },
+        cookies,
+        body: { orderId, paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' } },
+        originalUrl: '/api/v1/payments/branch',
+        queueAdmission: undefined as { queueSessionId: string; admissionToken: string } | undefined,
+      };
+      const context = {
+        switchToHttp: () => ({ getRequest: () => request }),
+      } as unknown as ExecutionContext;
+      return { request, context };
+    };
+
+    // Another browser without an admission is refused with the queue 403
+    // before any handoff (no checkoutStartedAt, deadline unchanged).
+    const phone = branchRequest({ refreshToken: phoneRefresh });
+    const refused = await rejection(guard.canActivate(phone.context));
+    expect(refused).toBeInstanceOf(ForbiddenException);
+    expect(refused.message).toBe('대기열 입장 인증이 필요합니다');
+
+    // The browser that prepared it hands off without the expired admission cookie.
+    const pc = branchRequest({ refreshToken: pcRefresh });
+    await expect(guard.canActivate(pc.context)).resolves.toBe(true);
+    expect(pc.request.queueAdmission).toMatchObject({
+      queueSessionId: admitted.queueSessionId,
+      admissionToken: 'order-bound',
+    });
+
+    // Like payment confirm, a live admission of the other browser for the same
+    // performance is the fallback.
+    const phoneAdmission = await service.enterPerformanceQueue({
+      performanceId,
+      identity: { userId: buyer!.id, refreshTokenFamilyId: 'family-phone', deviceSlotId: 'family-phone' },
+    });
+    expect(phoneAdmission.state).toBe('ADMITTED');
+    const admittedPhone = branchRequest({
+      refreshToken: phoneRefresh,
+      grabit_queue_admission: phoneAdmission.admissionToken!,
+    });
+    await expect(guard.canActivate(admittedPhone.context)).resolves.toBe(true);
+    expect(admittedPhone.request.queueAdmission?.queueSessionId).toBe(phoneAdmission.queueSessionId);
+
+    const [unchanged] = await db.select().from(reservations).where(eq(reservations.id, order!.id));
+    expect(unchanged).toMatchObject({
+      status: 'PENDING_PAYMENT',
+      checkoutStartedAt: null,
+      paymentDeadlineAt: order!.paymentDeadlineAt,
+    });
   });
 });

@@ -31,7 +31,9 @@ import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import {
   getQueueAccessClosedCopy,
+  getQueueResumeRefusedCopy,
   isQueueAccessDeadline,
+  isQueueAccessRejection,
   parseServerDeadline,
 } from '@/lib/booking/queue-access';
 import { isShowtimeSalesClosedError } from '@/lib/booking/showtime-sales';
@@ -97,6 +99,12 @@ function isQueueAccessExpiredError(err: unknown): boolean {
     && err.message.trim() === QUEUE_ACCESS_EXPIRED_MESSAGE;
 }
 
+/** Any queue 403 (window ended, admission missing, order bound to another browser session). */
+function isQueueAccessRejectionError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err
+    && isQueueAccessRejection(Number(err.statusCode), err.message);
+}
+
 function getLocalizedLockFailureMessage(
   message: string,
   copy: ReturnType<typeof getVisibleCopy>['bookingExtra']['confirm'],
@@ -128,6 +136,7 @@ function ConfirmPageContent() {
   const queueAccessExpiresAt = useBookingStore((s) => s.queueAccessExpiresAt);
   const queueAccessWindowClosed = useServerTimeReached(queueAccessExpiresAt);
   const queueAccessCopy = getQueueAccessClosedCopy(locale);
+  const resumeRefusedCopy = getQueueResumeRefusedCopy(locale);
   // C1 sales cutoff: once the showtime starts (server clock), prepare answers 403, so the
   // pay button closes at the same instant instead of after a failed request.
   const showtimeStarted = useServerTimeReached(parseServerDeadline(showDateTime));
@@ -151,6 +160,9 @@ function ConfirmPageContent() {
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
   const [paymentMethodRejected, setPaymentMethodRejected] = useState(false);
+  // The handoff of a resumed order was refused with a queue 403 (order bound to
+  // another browser session and no live admission here).
+  const [resumeAccessRefused, setResumeAccessRefused] = useState(false);
   const [paymentReturnError, setPaymentReturnError] = useState<PaymentFailureGuidance | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [preparedReview, setPreparedReview] = useState<PrepareReservationResponse | null>(null);
@@ -377,10 +389,12 @@ function ConfirmPageContent() {
   // A Prepared Checkout before Provider Handoff keeps its order, seats, method and
   // quote (ADR 0010), so paying it again with the saved method needs no new prepare:
   // the handoff (`POST /payments/branch`) re-validates the method and the seat locks,
-  // and payment confirm is authorised by the order binding until the payment deadline.
-  // Prepare needs the queue access window, which has usually closed when a buyer comes
-  // back from the booking route's payment recovery screen or the reservation list, so
-  // these resumes skip it. A foreign method without a stored quote (or a changed
+  // and both the handoff and payment confirm are admitted through the order binding
+  // (the browser session that prepared it) until the payment deadline. Prepare needs
+  // the queue access window, which has usually closed when a buyer comes back from the
+  // booking route's payment recovery screen or the reservation list, so these resumes
+  // skip it. Another browser session is refused at the handoff with a queue 403, before
+  // the provider checkout. A foreign method without a stored quote (or a changed
   // method) still prepares, inside the window.
   const restoredReservation = recovery.reservation;
   const resumesPreparedCheckout = Boolean(returnOrderId)
@@ -390,12 +404,14 @@ function ConfirmPageContent() {
     && (Boolean(restoredReservation?.providerChargeQuote)
       || !isForeignCheckout(paymentMethod));
   const queueAccessClosed = queueAccessWindowClosed && !resumesPreparedCheckout;
+  const resumeRefused = resumeAccessRefused && resumesPreparedCheckout;
 
   async function handlePayment() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
     if (showtimeStarted) return;
     if (queueAccessClosed) return;
+    if (resumeRefused) return;
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
@@ -414,6 +430,7 @@ function ConfirmPageContent() {
     setPaymentReturnError(null);
     setIsProcessing(true);
     let prepareSucceeded = false;
+    let resumedWithoutPrepare = false;
     const requestedBooking = useBookingStore.getState();
     const isCurrentBookingRequest = () => {
       const current = useBookingStore.getState();
@@ -449,6 +466,7 @@ function ConfirmPageContent() {
                 : {}),
             }
           : null;
+      resumedWithoutPrepare = resumedCheckout !== null;
       const result = resumedCheckout ?? await prepareMutation.mutateAsync({
         orderId,
         showtimeId: selectedShowtimeId ?? '',
@@ -546,6 +564,14 @@ function ConfirmPageContent() {
         }
       }
       if (mountedRef.current) setIsProcessing(false);
+      if (resumedWithoutPrepare && isQueueAccessRejectionError(err)) {
+        // The handoff refused this browser session for the order before any provider
+        // checkout; the order stays payable from the session bound to it.
+        if (mountedRef.current) setResumeAccessRefused(true);
+        toast.error(resumeRefusedCopy.toast);
+        if (returnOrderId) void refetchRecovery();
+        return;
+      }
       if (isPaymentMethodNotAllowedError(err)) {
         // Not a seat failure: keep the seats and let the buyer choose an allowed method.
         setPaymentMethodRejected(true);
@@ -627,6 +653,7 @@ function ConfirmPageContent() {
     || !!lockFailureMessage
     || showtimeStarted
     || queueAccessClosed
+    || resumeRefused
     || !agreed
     || !widgetAgreementAgreed
     || isProcessing
@@ -637,6 +664,8 @@ function ConfirmPageContent() {
     ? bookingDisabledMessage
     : showtimeStarted
     ? showtimeClosedMessage
+    : resumeRefused
+    ? resumeRefusedCopy.title
     : queueAccessClosed
     ? queueAccessCopy.title
     : lockFailureMessage
@@ -743,7 +772,24 @@ function ConfirmPageContent() {
           </section>
         )}
 
-        {isPaymentDeadlineExpired && !queueAccessClosed && !showtimeStarted && (
+        {resumeRefused && !showtimeStarted && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{resumeRefusedCopy.title}</p>
+            <p className="mt-1 text-sm text-red-700">{resumeRefusedCopy.body}</p>
+            {/* Rejoining cancels this order and releases its seats. */}
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {queueAccessCopy.rejoin}
+            </Button>
+          </section>
+        )}
+
+        {isPaymentDeadlineExpired && !queueAccessClosed && !resumeRefused && !showtimeStarted && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-red-700">
               {t('paymentRecovery.expiredTitle')}

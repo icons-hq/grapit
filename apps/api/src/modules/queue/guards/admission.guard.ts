@@ -38,13 +38,18 @@ type AuthenticatedRequest = Request & {
   };
 };
 
-// Placeholder stored on the request when payment confirm was authorised by the
-// order binding without an admission cookie; it is never a valid token.
+// Placeholder stored on the request when an order-bound request (payment
+// handoff or confirm) was authorised by the order binding without an admission
+// cookie; it is never a valid token.
 const ORDER_BOUND_ADMISSION_TOKEN = 'order-bound';
 
 // Matched against the normalised route path (lower-case, no query or trailing
 // slash), so every spelling Express routes to these handlers is recognised.
-const PAYMENT_CONFIRM_PATH_SUFFIX = '/payments/confirm';
+// The provider handoff (`/payments/branch`) and payment confirm act on an
+// existing order and share one rule: the order binding of this browser, or the
+// Redis admission of the cookie as a fallback. `/payments/branch/release` only
+// hands an order back and is not guarded.
+const ORDER_BOUND_PATH_SUFFIXES = ['/payments/confirm', '/payments/branch'] as const;
 const RESERVATION_PREPARE_PATH_SUFFIX = '/reservations/prepare';
 
 @Injectable()
@@ -75,9 +80,10 @@ export class AdmissionGuard implements CanActivate {
 
     // Payment confirm can arrive after the admission cookie (13 minutes) has
     // expired, e.g. after 3DS or an app switch inside the extended payment
-    // grace. It is authorised by the pending order binding instead, so only
-    // the browser session (refresh token family) is mandatory there.
-    const requiresAdmissionCookie = !this.isPaymentConfirmPath(request);
+    // grace, and a Prepared Checkout may be handed off again after the queue
+    // window closed. Both are authorised by the pending order binding instead,
+    // so only the browser session (refresh token family) is mandatory there.
+    const requiresAdmissionCookie = !this.isOrderBoundPath(request);
     if (!refreshToken || (requiresAdmissionCookie && !admissionToken)) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
@@ -116,7 +122,7 @@ export class AdmissionGuard implements CanActivate {
     admissionToken: string | undefined,
     userId: string,
   ) {
-    if (this.isPaymentConfirmPath(request)) {
+    if (this.isOrderBoundPath(request)) {
       const orderId = this.readString(request.body, 'orderId');
       if (!orderId) {
         throw new ForbiddenException('대기열 입장 정보가 필요합니다');
@@ -156,8 +162,9 @@ export class AdmissionGuard implements CanActivate {
     return typeof value === 'string' && value.length > 0 ? value : null;
   }
 
-  private isPaymentConfirmPath(request: AuthenticatedRequest): boolean {
-    return resolveRoutePath(request).endsWith(PAYMENT_CONFIRM_PATH_SUFFIX);
+  private isOrderBoundPath(request: AuthenticatedRequest): boolean {
+    const path = resolveRoutePath(request);
+    return ORDER_BOUND_PATH_SUFFIXES.some((suffix) => path.endsWith(suffix));
   }
 
   private createAdminBypassAdmission(userId: string): NonNullable<

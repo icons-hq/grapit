@@ -14,7 +14,9 @@ import type { PaymentMethodSelection } from '@/components/booking/toss-payment-w
  * Checkout reached from the booking route's payment recovery screen (or the
  * reservation list) after the queue access window closed. The server refuses
  * prepare then (AdmissionGuard needs activeUntilAt), while the handoff and
- * payment confirm still accept the prepared order through its order binding.
+ * payment confirm still accept the prepared order through its order binding,
+ * and refuse another browser session with a queue 403 (the handoff before the
+ * provider checkout; see payment-branch-admission.http.spec.ts in the API).
  */
 const boundary = vi.hoisted(() => ({
   prepare: vi.fn(), read: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), requestPayment: vi.fn(),
@@ -158,6 +160,30 @@ describe('Checkout resume after the queue access window closed (audit #4, #32)',
     }));
     expect(boundary.cancel).not.toHaveBeenCalled();
     expect(boundary.unlock).not.toHaveBeenCalled();
+  });
+
+  it('stops a resume whose handoff refuses this browser session, before any provider checkout', async () => {
+    // "Continue payment" opened on another device: the order is bound to the
+    // browser session that prepared it, so POST /payments/branch answers the
+    // queue 403 (the widget rethrows it) and no provider checkout opens.
+    boundary.requestPayment.mockReset().mockRejectedValue(
+      Object.assign(new Error('대기열 입장 인증이 필요합니다'), { statusCode: 403 }),
+    );
+    mountPage();
+
+    await agreeAndPay();
+
+    expect(await screen.findByText('이 예매는 결제를 시작한 기기·브라우저의 로그인 세션에서만 이어서 결제할 수 있습니다. 그곳에서 결제 기한 안에 완료하거나, 대기열에 다시 입장해 새로 예매해 주세요. 다시 입장하면 이 예매가 취소되고 좌석이 해제됩니다.'))
+      .toBeInTheDocument();
+    const pays = screen.getAllByRole('button', { name: '이 화면에서는 결제를 이어갈 수 없습니다' });
+    for (const pay of pays) expect(pay).toBeDisabled();
+    expect(screen.getByRole('button', { name: '대기열 다시 입장하기' })).toBeEnabled();
+    expect(boundary.requestPayment).toHaveBeenCalledTimes(1);
+    expect(boundary.prepare).not.toHaveBeenCalled();
+    // The order stays payable from the bound session: nothing is cancelled or released.
+    expect(boundary.cancel).not.toHaveBeenCalled();
+    expect(boundary.unlock).not.toHaveBeenCalled();
+    expect(screen.queryByText('대기열 입장 시간이 끝났습니다')).not.toBeInTheDocument();
   });
 
   it('is not blocked by the passed queue access deadline of a seat screen in the same tab', async () => {
