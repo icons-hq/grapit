@@ -93,6 +93,8 @@ export type PaymentCancellationProviderResponse = {
 export interface FinalizeFullPaymentCancellationResult {
   releaseJobId: string;
   releaseEnqueued: boolean;
+  /** Webhook replay found the cancellation already applied under the lock. */
+  alreadyFinalized?: true;
 }
 
 type CancellationSource = FinalizeFullPaymentCancellationInput['source'];
@@ -112,12 +114,6 @@ const REDACTED_PROVIDER_METADATA_VALUE = '[REDACTED]';
 const SENSITIVE_PROVIDER_METADATA_KEY =
   /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
 
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 function resolveLocalPaymentStatus(
   providerResponse: PaymentCancellationProviderResponse | undefined,
@@ -228,8 +224,24 @@ export class PaymentCancellationFinalizerService {
     const localPaymentStatus = resolveLocalPaymentStatus(input.providerResponse);
     const seatReleaseStates: SeatReleaseState[] = [];
 
+    let alreadyFinalized = false;
     await this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT id FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      const lockedReservation = await tx.execute(sql`SELECT id, status FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      if (input.source === 'cancel_webhook') {
+        // A webhook that read its snapshot before a concurrent finalizer
+        // committed must not re-apply the cancellation (history, fees, seats).
+        const lockedStatus = (lockedReservation as { rows?: Array<Record<string, unknown>> } | undefined)
+          ?.rows?.[0]?.['status'];
+        const lockedTicketItem = input.ticketItemCancellation
+          ? await tx.execute(sql`SELECT status FROM ticket_items WHERE id = ${input.ticketItemCancellation.ticketItemId}`)
+          : undefined;
+        const lockedTicketItemStatus = (lockedTicketItem as { rows?: Array<Record<string, unknown>> } | undefined)
+          ?.rows?.[0]?.['status'];
+        if (lockedStatus === 'CANCELLED' || lockedTicketItemStatus === 'cancelled') {
+          alreadyFinalized = true;
+          return;
+        }
+      }
       const remainingTicketItems = input.ticketItemCancellation
         ? await tx.select({ id: ticketItems.id }).from(ticketItems).where(and(
             eq(ticketItems.reservationId, input.context.reservation.id),
@@ -321,15 +333,17 @@ export class PaymentCancellationFinalizerService {
             status: localPaymentStatus,
             cancelledAt: now,
             cancelReason: input.reason,
-            providerMetadata: {
-              ...toRecord(input.context.payment.providerMetadata),
+            // Merge into the stored metadata instead of rewriting it from the
+            // caller's earlier snapshot, so records written concurrently under
+            // the order lease (e.g. duplicate DONE compensations) survive.
+            providerMetadata: sql`coalesce(${payments.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
               refundCompletedAt: now.toISOString(),
               cancellationSource: input.source,
               ...(fullReservationCancellationQuote
                 ? { cancellationQuote: fullReservationCancellationQuote }
                 : {}),
               ...(providerCancellation ? { providerCancellation } : {}),
-            },
+            })}::jsonb`,
           })
           .where(eq(payments.id, input.context.payment.id))
           .returning({ id: payments.id });
@@ -615,6 +629,10 @@ export class PaymentCancellationFinalizerService {
         );
       }
     });
+
+    if (alreadyFinalized) {
+      return { releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false, alreadyFinalized: true };
+    }
 
     const seatIdentitiesNeedingReleaseJob = seatReleaseStates
       .filter((state) =>

@@ -211,6 +211,25 @@ describe('TrafficDefenseService', () => {
     expect(appModuleSource).toContain('TrafficDefenseService');
     expect(appModuleSource).toContain('resolveDefaultTracker');
   });
+
+  it('rate-limits async payment returns per account without matching other payment routes', () => {
+    const service = new TrafficDefenseService();
+    const policy = service
+      .getThrottlerOptions()
+      .find((candidate) => candidate.name === 'async-payment-return');
+
+    expect(policy).toMatchObject({ ttl: 60_000, limit: 6 });
+    expect(policy?.skipIf?.(createExecutionContext(
+      createRequest({ originalUrl: '/api/v1/payments/async-return' }),
+    ))).toBe(false);
+    expect(policy?.skipIf?.(createExecutionContext(
+      createRequest({ originalUrl: '/api/v1/payments/toss/webhook' }),
+    ))).toBe(true);
+    expect(service.resolveTracker('async-payment-return', createRequest({
+      originalUrl: '/api/v1/payments/async-return',
+      user: { id: 'user-1' },
+    }))).toBe('async-payment-return:user:user-1');
+  });
 });
 
 function createExecutionContext(request: ReturnType<typeof createRequest>) {

@@ -14,6 +14,10 @@ import {
 } from './toss-payments.client.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 import { resolvePaymentCancelSecretScope } from './payment-cancel-policy.js';
+import {
+  REJECTED_DONE_ASYNC_STATUSES,
+  isSettledOrCompensatedPaymentState,
+} from './async-done-compensation.js';
 
 const paymentStatusPriority = {
   READY: 0,
@@ -24,6 +28,27 @@ const paymentStatusPriority = {
   CANCELED: 4,
   PARTIAL_CANCELED: 4,
 } as const;
+
+/**
+ * Provider payment states each webhook status can legitimately advance to.
+ * Terminal statuses (ABORTED, EXPIRED, CANCELED) have no successors, so a
+ * disagreement with them is never treated as an out-of-order delivery.
+ */
+const PROVIDER_PAYMENT_STATUS_SUCCESSORS: Record<string, readonly string[]> = {
+  READY: ['IN_PROGRESS', 'WAITING_FOR_DEPOSIT', 'DONE', 'PARTIAL_CANCELED', 'CANCELED', 'ABORTED', 'EXPIRED'],
+  IN_PROGRESS: ['WAITING_FOR_DEPOSIT', 'DONE', 'PARTIAL_CANCELED', 'CANCELED', 'ABORTED', 'EXPIRED'],
+  WAITING_FOR_DEPOSIT: ['DONE', 'PARTIAL_CANCELED', 'CANCELED', 'ABORTED', 'EXPIRED'],
+  DONE: ['PARTIAL_CANCELED', 'CANCELED'],
+  PARTIAL_CANCELED: ['CANCELED'],
+};
+
+function isProviderPaymentStatusAhead(
+  webhookStatus: string | undefined,
+  providerStatus: string,
+): boolean {
+  return webhookStatus !== undefined
+    && (PROVIDER_PAYMENT_STATUS_SUCCESSORS[webhookStatus]?.includes(providerStatus) ?? false);
+}
 
 const tossWebhookDatetimeSchema = z.string().min(1);
 const tossWebhookOptionalStringSchema = z.preprocess(
@@ -134,13 +159,28 @@ export class PaymentWebhookController {
     }
 
     try {
-      const {
-        webhook: providerVerifiedWebhook,
-        providerResponse,
-      } = await this.withProviderVerifiedState(
+      const verified = await this.withProviderVerifiedState(
         webhook,
         request?.tossWebhookSecretScope,
       );
+      if (verified.stale) {
+        // An out-of-order delivery whose state the provider has already moved
+        // past is authentic but obsolete; the later event carries the outcome.
+        await this.paymentService.markWebhookEventProcessed(
+          webhook.eventId,
+          'IGNORED_STALE_PROVIDER_STATE',
+          verified.staleMessage,
+        );
+        return {
+          acknowledged: true,
+          duplicate: false,
+          processingResultCode: 'IGNORED_STALE_PROVIDER_STATE',
+        };
+      }
+      const {
+        webhook: providerVerifiedWebhook,
+        providerResponse,
+      } = verified;
       const progress = await this.paymentService.findAsyncPaymentProgress(
         this.requireWebhookOrderId(providerVerifiedWebhook),
         this.requireWebhookPaymentKey(providerVerifiedWebhook),
@@ -200,6 +240,18 @@ export class PaymentWebhookController {
     providerResponse: TossPaymentResponse,
   ): Promise<{ code: string; message?: string }> {
     if (body.eventType === 'CANCEL_STATUS_CHANGED' || this.hasTerminalFullCancel(body, providerResponse)) {
+      if (body.eventType === 'CANCEL_STATUS_CHANGED' && body.data.cancelStatus === 'ABORTED') {
+        // A compensation cancel the PG aborted leaves the captured money in
+        // place; record it so the recovery sweep re-requests the cancel.
+        const aborted = await this.paymentService.recordCompensationCancelAborted(body);
+        if (aborted) {
+          return {
+            code: 'ASYNC_DONE_COMPENSATION_CANCEL_ABORTED',
+            message: `${aborted} payment compensation cancel aborted; recovery scheduled`,
+          };
+        }
+      }
+
       if (
         progress?.reservationStatus === 'CANCELLED'
         || (
@@ -302,7 +354,10 @@ export class PaymentWebhookController {
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
     webhookSecretScope?: 'overseas-card',
-  ): Promise<{ webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }> {
+  ): Promise<
+    | { stale: false; webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }
+    | { stale: true; staleMessage: string }
+  > {
     const cancelPaymentSnapshot = body.eventType === 'CANCEL_STATUS_CHANGED'
       ? await this.resolveCancelPaymentSnapshot(body)
       : null;
@@ -315,7 +370,10 @@ export class PaymentWebhookController {
     const queried = queryOptions
       ? await this.tossPaymentsClient.queryPayment(queryPaymentKey, queryOptions)
       : await this.tossPaymentsClient.queryPayment(queryPaymentKey);
-    this.assertProviderStateMatchesWebhook(body, queried);
+    const verification = this.assertProviderStateMatchesWebhook(body, queried);
+    if (verification.stale) {
+      return { stale: true, staleMessage: verification.message };
+    }
 
     const providerData: TossWebhookRequestBody['data'] = {
       ...body.data,
@@ -323,6 +381,8 @@ export class PaymentWebhookController {
       orderId: queried.orderId,
       status: queried.status,
       method: queried.method ?? body.data.method,
+      // Amount checks must compare the provider's currency, not the callback's.
+      currency: queried.currency ?? body.data.currency,
       totalAmount: queried.totalAmount,
       easyPay: body.data.easyPay,
     };
@@ -340,6 +400,7 @@ export class PaymentWebhookController {
     }
 
     return {
+      stale: false,
       webhook: {
         ...body,
         data: providerData,
@@ -428,12 +489,19 @@ export class PaymentWebhookController {
       || (!isCancelEvent && (
         body.data.method === 'FOREIGN_EASY_PAY'
         || this.isAlipayWebhook(body)
+        || this.isTrueMoneyWebhook(body)
       ))
     ) {
       return { secretKeyScope: 'foreign-easy-pay' };
     }
 
     return undefined;
+  }
+
+  /** Live payloads carry TrueMoney only as easyPay with a null provider. */
+  private isTrueMoneyWebhook(body: TossWebhookRequestBody): boolean {
+    const easyPay = body.data.easyPay?.trim().toUpperCase();
+    return easyPay === 'TRUEMONEY' || easyPay === '트루머니';
   }
 
   private isOverseasCardWebhook(body: TossWebhookRequestBody): boolean {
@@ -453,13 +521,17 @@ export class PaymentWebhookController {
     return easyPay === 'ALIPAY' || easyPay === '알리페이';
   }
 
+  /**
+   * Identity disagreements (paymentKey, orderId, amount, unknown cancel) stay
+   * 400. A status-only disagreement where the provider has already advanced
+   * past the event is an out-of-order delivery and is acknowledged as stale.
+   */
   private assertProviderStateMatchesWebhook(
     body: TossWebhookRequestBody,
     queried: TossPaymentResponse,
-  ): void {
+  ): { stale: false } | { stale: true; message: string } {
     if (body.eventType === 'CANCEL_STATUS_CHANGED') {
-      this.assertProviderCancelStateMatchesWebhook(body, queried);
-      return;
+      return this.assertProviderCancelStateMatchesWebhook(body, queried);
     }
 
     const mismatches: string[] = [];
@@ -472,10 +544,6 @@ export class PaymentWebhookController {
       mismatches.push('orderId');
     }
 
-    if (queried.status !== body.data.status) {
-      mismatches.push('status');
-    }
-
     if (
       typeof body.data.totalAmount === 'number'
       && queried.totalAmount !== body.data.totalAmount
@@ -484,17 +552,35 @@ export class PaymentWebhookController {
       mismatches.push('totalAmount');
     }
 
+    const statusDiffers = queried.status !== body.data.status;
+    if (
+      mismatches.length === 0
+      && statusDiffers
+      && isProviderPaymentStatusAhead(body.data.status, queried.status)
+    ) {
+      return {
+        stale: true,
+        message: `provider status ${queried.status} is ahead of webhook status ${body.data.status ?? 'unknown'}`,
+      };
+    }
+
+    if (statusDiffers) {
+      mismatches.push('status');
+    }
+
     if (mismatches.length > 0) {
       throw new BadRequestException(
         `Toss provider state mismatch: ${mismatches.join(', ')}`,
       );
     }
+
+    return { stale: false };
   }
 
   private assertProviderCancelStateMatchesWebhook(
     body: TossWebhookRequestBody,
     queried: TossPaymentResponse,
-  ): void {
+  ): { stale: false } | { stale: true; message: string } {
     const mismatches: string[] = [];
 
     if (body.data.paymentKey && queried.paymentKey !== body.data.paymentKey) {
@@ -513,6 +599,20 @@ export class PaymentWebhookController {
     }
 
     if (!this.findMatchingCancel(body, queried)) {
+      const sameRequest = body.eventType === 'CANCEL_STATUS_CHANGED'
+        ? queried.cancels?.filter((cancel) => cancel.cancelRequestId === body.data.cancelRequestId) ?? []
+        : [];
+      if (
+        mismatches.length === 0
+        && body.data.cancelStatus === 'IN_PROGRESS'
+        && sameRequest.some((cancel) => cancel.cancelStatus === 'DONE' || cancel.cancelStatus === 'ABORTED')
+      ) {
+        // The same cancel request already reached a final result.
+        return {
+          stale: true,
+          message: `cancel ${body.data.cancelRequestId} already ${sameRequest.at(-1)?.cancelStatus ?? 'final'} at provider`,
+        };
+      }
       mismatches.push('cancel');
     }
 
@@ -521,6 +621,8 @@ export class PaymentWebhookController {
         `Toss provider state mismatch: ${mismatches.join(', ')}`,
       );
     }
+
+    return { stale: false };
   }
 
   private findMatchingCancel(
@@ -627,10 +729,32 @@ export class PaymentWebhookController {
     }
 
     if (
+      incomingStatus === 'DONE'
+      && progress.paymentKey
+      && progress.paymentKey !== body.data.paymentKey
+      && isSettledOrCompensatedPaymentState(progress)
+    ) {
+      // A provider-verified DONE for another paymentKey of an order whose
+      // payment is already accepted, cancelled or compensated is a second
+      // charge. The service refunds it; ignoring it here would leave it at the PG.
+      return false;
+    }
+
+    if (
       progress.paymentStatus === 'CANCELED'
       || progress.paymentStatus === 'PARTIAL_CANCELED'
     ) {
       return true;
+    }
+
+    if (
+      incomingStatus === 'DONE'
+      && progress.paymentStatus === 'ABORTED'
+      && REJECTED_DONE_ASYNC_STATUSES.has(progress.paymentAsyncStatus ?? '')
+    ) {
+      // A rejected DONE whose compensating cancel did not complete must be
+      // re-applied so the service can refund the captured charge.
+      return false;
     }
 
     if (

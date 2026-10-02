@@ -15,6 +15,7 @@ const TRAFFIC_POLICY_NAMES = [
   'lock-seat',
   'prepare-reservation',
   'confirm-payment',
+  'async-payment-return',
   'signup',
 ] as const;
 
@@ -106,6 +107,17 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       {
         method: 'POST',
         patterns: [/\/payments\/confirm$/],
+      },
+    ],
+  },
+  // The pending return page reconciles once per mount; each call may query Toss.
+  'async-payment-return': {
+    ttl: 60_000,
+    limit: 6,
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/payments\/async-return$/],
       },
     ],
   },

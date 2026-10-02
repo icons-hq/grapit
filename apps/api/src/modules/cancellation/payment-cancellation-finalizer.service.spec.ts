@@ -53,6 +53,8 @@ type UpdateCall = {
   values: Record<string, unknown>;
   whereArgs: unknown[];
   returningSelection?: unknown;
+  /** Rendered SQL of a jsonb merge, when providerMetadata was an SQL patch. */
+  providerMetadataSql?: string;
 };
 
 type SeatInventoryReturningRow = {
@@ -183,12 +185,15 @@ function createTransactionMock(options: {
     return {
       set(values: Record<string, unknown>) {
         const capturedValues = { ...values };
-        if (table === refunds && values.providerMetadata && typeof values.providerMetadata === 'object'
+        let providerMetadataSql: string | undefined;
+        if ((table === refunds || table === payments) && values.providerMetadata
+          && typeof values.providerMetadata === 'object'
           && 'queryChunks' in values.providerMetadata) {
-          const patch = new PgDialect().sqlToQuery(values.providerMetadata as SQL).params[0];
-          capturedValues.providerMetadata = JSON.parse(patch as string);
+          const query = new PgDialect().sqlToQuery(values.providerMetadata as SQL);
+          capturedValues.providerMetadata = JSON.parse(query.params[0] as string);
+          providerMetadataSql = query.sql;
         }
-        const call: UpdateCall = { table, values: capturedValues, whereArgs: [] };
+        const call: UpdateCall = { table, values: capturedValues, whereArgs: [], providerMetadataSql };
         calls.push(call);
         return {
           where: vi.fn((...whereArgs: unknown[]) => {
@@ -346,6 +351,31 @@ describe('PaymentCancellationFinalizerService', () => {
     vi.useRealTimers();
   });
 
+  it('never rewrites payment metadata from the caller snapshot, so a concurrently stored duplicate DONE compensation survives', async () => {
+    const { service, transaction } = createService({ isAvailable: false, send: vi.fn() });
+    // The caller read the row before a duplicate DONE compensation was recorded.
+    const staleSnapshot = createContext({
+      payment: {
+        id: 'payment-1',
+        paymentKey: 'pay-key-1',
+        providerMetadata: {
+          secretKeyScope: 'overseas-card',
+          duplicatePaymentCompensations: [],
+          asyncDoneCompensationOpen: false,
+        },
+      },
+    });
+
+    await service.finalizeFullPaymentCancellation(baseInput({ context: staleSnapshot }));
+
+    const paymentUpdate = transaction.updateCalls.find((call) => call.table === payments);
+    expect(paymentUpdate?.providerMetadataSql).toMatch(/^coalesce\("payments"\."provider_metadata", '\{\}'::jsonb\) \|\| \$1::jsonb$/);
+    // Only the cancellation facts are patched; no snapshot key can overwrite
+    // duplicatePaymentCompensations or asyncDoneCompensationOpen written meanwhile.
+    expect(Object.keys(paymentUpdate?.values.providerMetadata as Record<string, unknown>).sort())
+      .toEqual(['cancellationSource', 'providerCancellation', 'refundCompletedAt']);
+  });
+
   it('finalizes a full cancellation, merges payment metadata, and sets item refund SQL fields', async () => {
     const pgBoss = {
       isAvailable: false,
@@ -387,18 +417,21 @@ describe('PaymentCancellationFinalizerService', () => {
         updatedAt: NOW,
       });
 
-    expect(transaction.updateCalls.find((call) => call.table === payments)?.values)
+    const paymentUpdate = transaction.updateCalls.find((call) => call.table === payments);
+    expect(paymentUpdate?.values)
       .toMatchObject({
         status: 'CANCELED',
         cancelledAt: NOW,
         cancelReason: '사용자 환불',
-        providerMetadata: {
-          requestedProvider: 'OVERSEAS_CARD',
-          secretKeyScope: 'overseas-card',
-          refundCompletedAt: NOW.toISOString(),
-          cancellationSource: 'refund_request',
-        },
       });
+    // Stored keys (requestedProvider, secretKeyScope) are kept by the jsonb merge.
+    expect(paymentUpdate?.values.providerMetadata).toEqual({
+      refundCompletedAt: NOW.toISOString(),
+      cancellationSource: 'refund_request',
+      providerCancellation: { status: 'CANCELED' },
+    });
+    expect(paymentUpdate?.providerMetadataSql)
+      .toBe(`coalesce("payments"."provider_metadata", '{}'::jsonb) || $1::jsonb`);
 
     expect(transaction.updateCalls.find((call) => call.table === tickets)?.values)
       .toMatchObject({
@@ -913,8 +946,6 @@ describe('PaymentCancellationFinalizerService', () => {
     const paymentMetadata = transaction.updateCalls.find((call) => call.table === payments)
       ?.values.providerMetadata;
     expect(paymentMetadata).toMatchObject({
-      requestedProvider: 'OVERSEAS_CARD',
-      secretKeyScope: 'overseas-card',
       refundCompletedAt: NOW.toISOString(),
       cancellationSource: 'refund_request',
       providerCancellation: {
@@ -1593,5 +1624,53 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(pgBoss.send).not.toHaveBeenCalled();
     expect(transactionCommitted).not.toHaveBeenCalled();
     expect(transaction.selectCalls).toHaveLength(1);
+  });
+
+  it('does not re-apply a webhook cancellation when a concurrent finalizer already cancelled the reservation', async () => {
+    const pgBoss = { isAvailable: true, send: vi.fn() };
+    const { service, transaction } = createService(pgBoss);
+    transaction.tx.execute.mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CANCELLED' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(
+      baseInput({ refundId: undefined, source: 'cancel_webhook', reason: 'provider cancellation' }),
+    );
+
+    expect(result).toEqual({ releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false, alreadyFinalized: true });
+    expect(transaction.updateCalls).toHaveLength(0);
+    expect(pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it('does not re-apply a webhook seat cancellation when the Ticket Item was already finalized', async () => {
+    const pgBoss = { isAvailable: true, send: vi.fn() };
+    const { service, transaction } = createService(pgBoss);
+    transaction.tx.execute
+      .mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CONFIRMED' }] })
+      .mockResolvedValueOnce({ rows: [{ status: 'cancelled' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(baseInput({
+      refundId: undefined,
+      source: 'cancel_webhook',
+      reason: 'provider cancellation',
+      ticketItemCancellation: {
+        ticketItemId: 'ticket-item-1',
+        cancellationFee: 4000,
+        serviceFeeRefund: 0,
+        refundableAmount: 46000,
+      },
+      context: createContext({ seats: [{ seatId: '1F:A-10' }] }),
+    }));
+
+    expect(result.alreadyFinalized).toBe(true);
+    expect(transaction.updateCalls).toHaveLength(0);
+  });
+
+  it('keeps finalizing refund-driven cancellations without the webhook replay guard', async () => {
+    const { service, transaction } = createService({ isAvailable: false, send: vi.fn() });
+    transaction.tx.execute.mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CANCELLED' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(baseInput());
+
+    expect(result.alreadyFinalized).toBeUndefined();
+    expect(transaction.updateCalls.some((call) => call.table === refunds)).toBe(true);
   });
 });
