@@ -7,12 +7,19 @@ import {
   Get,
   HttpException,
   HttpStatus,
+  Inject,
   NotFoundException,
   Param,
   Post,
   ServiceUnavailableException,
   type INestApplication,
 } from '@nestjs/common';
+import {
+  HealthCheck,
+  HealthCheckService,
+  HealthIndicatorService,
+  TerminusModule,
+} from '@nestjs/terminus';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -88,12 +95,36 @@ class ProbeController {
   }
 }
 
+// Same shape as apps/api/src/health: Terminus throws ServiceUnavailableException
+// with its result object when an indicator is down.
+@Controller('health')
+class HealthProbeController {
+  constructor(
+    @Inject(HealthCheckService) private readonly health: HealthCheckService,
+    @Inject(HealthIndicatorService) private readonly indicators: HealthIndicatorService,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.indicators.check('redis').down({
+        mode: 'cluster',
+        client: 'ioredis-cluster',
+        configured: true,
+        message: 'Connection is closed.',
+      }),
+    ]);
+  }
+}
+
 describe('global exception filters (as registered by main.ts)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [ProbeController],
+      imports: [TerminusModule.forRoot({ logger: false })],
+      controllers: [ProbeController, HealthProbeController],
     }).compile();
     app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalFilters(...createGlobalExceptionFilters());
@@ -132,6 +163,38 @@ describe('global exception filters (as registered by main.ts)', () => {
         message: '잠시 후 다시 시도해주세요',
         retryAfterMs: 42_000,
       });
+    });
+
+    it('keeps the Terminus result on a failed public health check (503)', async () => {
+      const response = await request(app.getHttpServer()).get('/health');
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({
+        statusCode: 503,
+        message: 'Service Unavailable Exception',
+        status: 'error',
+        info: {},
+        error: {
+          redis: {
+            status: 'down',
+            mode: 'cluster',
+            client: 'ioredis-cluster',
+            configured: true,
+            message: 'Connection is closed.',
+          },
+        },
+        details: {
+          redis: {
+            status: 'down',
+            mode: 'cluster',
+            client: 'ioredis-cluster',
+            configured: true,
+            message: 'Connection is closed.',
+          },
+        },
+        timestamp: expect.any(String),
+      });
+      expect(captureException).toHaveBeenCalledTimes(1);
     });
 
     it('keeps validation errors and the plain message contract', async () => {

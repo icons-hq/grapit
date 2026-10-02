@@ -8,9 +8,11 @@ import {
 import type { ArgumentsHost } from '@nestjs/common';
 import * as Sentry from '@sentry/nestjs';
 import type { Response } from 'express';
+import { redactSensitiveText } from '../observability/sentry-redaction.js';
 
 const RESERVED_BODY_KEYS = new Set(['statusCode', 'message', 'timestamp']);
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error';
+const MAX_LOGGED_CAUSES = 3;
 
 interface ErrorResponse {
   status: number;
@@ -88,6 +90,33 @@ function fromUnknownError(exception: unknown): ErrorResponse {
 }
 
 /**
+ * Log line for an unexpected error. Bound SQL parameters in a
+ * `DrizzleQueryError` message (and its stack header) are redacted, and the
+ * cause chain is appended because the wrapper hides the real reason
+ * (pool timeout, deadlock, connection reset).
+ */
+function describeUnexpectedError(exception: unknown): { message: string; stack?: string } {
+  if (!(exception instanceof Error)) {
+    return { message: redactSensitiveText(String(exception)) };
+  }
+
+  const message = redactSensitiveText(exception.message);
+  const lines = [
+    exception.stack
+      ? exception.stack.replace(exception.message, () => message)
+      : `${exception.name}: ${message}`,
+  ];
+
+  let cause: unknown = exception.cause;
+  for (let depth = 0; cause instanceof Error && depth < MAX_LOGGED_CAUSES; depth += 1) {
+    lines.push(`Caused by: ${cause.name}: ${redactSensitiveText(cause.message)}`);
+    cause = cause.cause;
+  }
+
+  return { message, stack: lines.join('\n') };
+}
+
+/**
  * Global HTTP exception filter and catch-all.
  *
  * - `HttpException`: responds with its status and every extra response field.
@@ -114,11 +143,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         tags: { 'http.status_code': String(status) },
       });
       if (!isHttpException) {
-        const error = exception instanceof Error ? exception : undefined;
-        this.logger.error(
-          error?.message ?? String(exception),
-          error?.stack,
-        );
+        const { message, stack } = describeUnexpectedError(exception);
+        this.logger.error(message, stack);
       }
     }
 

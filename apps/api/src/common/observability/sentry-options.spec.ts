@@ -42,7 +42,7 @@ describe('buildSentryInitOptions (#155)', () => {
   });
 
   it('disables incoming request body capture and overrides the default request data integration', () => {
-    const options = buildSentryInitOptions({});
+    const options = buildSentryInitOptions({ NODE_ENV: 'test' });
 
     expect(Sentry.httpIntegration).toHaveBeenCalledWith({
       maxIncomingRequestBodySize: 'none',

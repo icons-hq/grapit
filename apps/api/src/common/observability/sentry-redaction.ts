@@ -1,6 +1,9 @@
 // This module is imported from `instrument.ts`, which must run before any
 // `@nestjs/*` module is loaded so OpenTelemetry can patch it. Keep it free of
 // runtime imports (type-only imports are erased at build time).
+//
+// apps/web/lib/sentry-redaction.ts keeps the same contract for the web
+// runtimes; sentry-redaction.parity.spec.ts checks both give the same result.
 import type { Breadcrumb, Event } from '@sentry/nestjs';
 
 export const SENTRY_FILTERED_VALUE = '[Filtered]';
@@ -46,6 +49,22 @@ const HEADER_ATTRIBUTE_PREFIXES = [
   'http.response.header.',
 ];
 
+// Span attributes that hold bound SQL parameter values. drizzle-orm 0.45 does
+// not emit its own spans, but its tracer sets `drizzle.query.params` when it
+// does; OpenTelemetry semantic conventions use `db.query.parameter.<key>`.
+const QUERY_PARAMETER_KEYS = new Set(['drizzle.query.params']);
+const QUERY_PARAMETER_PREFIXES = ['db.query.parameter.'];
+
+// drizzle-orm wraps every failed query in `DrizzleQueryError` whose message is
+// `Failed query: <sql>\nparams: <bound values>`. The values carry emails, phone
+// numbers, password hashes, refresh token hashes and paymentKey; keep the SQL
+// text (placeholders only) and drop the values.
+const DRIZZLE_QUERY_PARAMS_PATTERN = /(Failed query: [\s\S]*?\n)params: [\s\S]*$/;
+
+// A URL or path (`https://host/p?x`, `/p?x`) followed by a query string or
+// fragment inside free text such as an error message or a span name.
+const URL_QUERY_IN_TEXT_PATTERN = /(\/[^\s?#]*)[?#]\S*/g;
+
 export function isSensitiveHeaderName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   return (
@@ -58,6 +77,24 @@ export function isSensitiveHeaderName(name: string): boolean {
 export function stripUrlQuery(url: string): string {
   const cut = url.search(/[?#]/);
   return cut === -1 ? url : url.slice(0, cut);
+}
+
+/**
+ * Redacts bound SQL parameter values (`DrizzleQueryError` messages) and URL
+ * query strings from free text: exception values, messages, span names and
+ * log lines.
+ */
+export function redactSensitiveText(text: string): string {
+  return text
+    .replace(DRIZZLE_QUERY_PARAMS_PATTERN, `$1params: ${SENTRY_FILTERED_VALUE}`)
+    .replace(URL_QUERY_IN_TEXT_PATTERN, '$1');
+}
+
+function isQueryParameterKey(key: string): boolean {
+  return (
+    QUERY_PARAMETER_KEYS.has(key)
+    || QUERY_PARAMETER_PREFIXES.some((prefix) => key.startsWith(prefix))
+  );
 }
 
 function scrubHeaders(
@@ -82,6 +119,10 @@ function scrubAttributes(data: Record<string, unknown> | undefined): void {
   for (const key of Object.keys(data)) {
     if (QUERY_ONLY_KEYS.has(key)) {
       delete data[key];
+      continue;
+    }
+    if (isQueryParameterKey(key)) {
+      data[key] = SENTRY_FILTERED_VALUE;
       continue;
     }
 
@@ -120,23 +161,63 @@ function scrubRequest(request: Event['request']): void {
   }
 }
 
+// Console breadcrumbs keep the raw `console.*` arguments next to the joined
+// message; an Error argument would be serialized with its own properties
+// (`DrizzleQueryError.params`).
+function scrubConsoleArguments(data: Breadcrumb['data']): void {
+  const args: unknown = data?.['arguments'];
+  if (!data || !Array.isArray(args)) return;
+
+  data['arguments'] = args.map((arg: unknown) => {
+    if (typeof arg === 'string') return redactSensitiveText(arg);
+    if (arg instanceof Error) return redactSensitiveText(`${arg.name}: ${arg.message}`);
+    return arg;
+  });
+}
+
 export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  if (typeof breadcrumb.message === 'string') {
+    breadcrumb.message = redactSensitiveText(breadcrumb.message);
+  }
   scrubAttributes(breadcrumb.data);
+  scrubConsoleArguments(breadcrumb.data);
   return breadcrumb;
 }
 
+function scrubMessages(event: Event): void {
+  for (const exception of event.exception?.values ?? []) {
+    if (typeof exception.value === 'string') {
+      exception.value = redactSensitiveText(exception.value);
+    }
+  }
+  if (typeof event.message === 'string') {
+    event.message = redactSensitiveText(event.message);
+  }
+  if (typeof event.logentry?.message === 'string') {
+    event.logentry.message = redactSensitiveText(event.logentry.message);
+  }
+  if (typeof event.transaction === 'string') {
+    event.transaction = redactSensitiveText(event.transaction);
+  }
+}
+
 /**
- * Removes credentials and request payloads from an error or transaction event
- * before it is sent to Sentry. Mutates and returns the same event.
+ * Removes credentials, request payloads, bound SQL parameter values and URL
+ * query strings from an error or transaction event before it is sent to
+ * Sentry. Mutates and returns the same event.
  */
 export function scrubSentryEvent<T extends Event>(event: T): T {
   scrubRequest(event.request);
+  scrubMessages(event);
 
   for (const breadcrumb of event.breadcrumbs ?? []) {
     scrubSentryBreadcrumb(breadcrumb);
   }
 
   for (const span of event.spans ?? []) {
+    if (typeof span.description === 'string') {
+      span.description = redactSensitiveText(span.description);
+    }
     scrubAttributes(span.data);
   }
 

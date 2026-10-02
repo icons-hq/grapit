@@ -1,8 +1,10 @@
 import type { Breadcrumb, Event } from '@sentry/nestjs';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   SENTRY_FILTERED_VALUE,
   isSensitiveHeaderName,
+  redactSensitiveText,
   scrubSentryBreadcrumb,
   scrubSentryEvent,
   stripUrlQuery,
@@ -14,6 +16,8 @@ const WEBHOOK_SECRET = 'toss-webhook-shared-secret';
 const PHONE = '+821012345678';
 const RESET_TOKEN = 'password-reset-token-value';
 const PAYMENT_KEY = 'tgen_payment_key_value';
+const EMAIL = 'buyer@example.test';
+const PASSWORD_HASH = '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA';
 
 const SECRETS = [
   ACCESS_TOKEN,
@@ -22,7 +26,23 @@ const SECRETS = [
   PHONE,
   RESET_TOKEN,
   PAYMENT_KEY,
+  EMAIL,
+  PASSWORD_HASH,
 ];
+
+// The query a sign-up or payment confirm runs, as drizzle-orm renders it.
+const SIGNUP_SQL = [
+  'insert into "users" ("email", "phone", "password_hash")',
+  'values ($1, $2, $3) returning "id"',
+].join('\n');
+
+function signupQueryError(): DrizzleQueryError {
+  return new DrizzleQueryError(
+    SIGNUP_SQL,
+    [EMAIL, PHONE, PASSWORD_HASH],
+    new Error('timeout exceeded when trying to connect'),
+  );
+}
 
 function expectNoSecrets(value: unknown): void {
   const serialized = JSON.stringify(value);
@@ -150,6 +170,110 @@ describe('scrubSentryEvent (#155)', () => {
       status_code: 500,
     });
     expectNoSecrets(scrubbed);
+  });
+});
+
+describe('scrubSentryEvent free text (#155 via #156 catch-all)', () => {
+  it('drops bound SQL parameters from a DrizzleQueryError exception value', () => {
+    const error = signupQueryError();
+    // Precondition: drizzle-orm puts the bound values in the message itself.
+    expect(error.message).toContain(PHONE);
+
+    const event: Event = {
+      exception: {
+        values: [
+          { type: 'Error', value: 'timeout exceeded when trying to connect' },
+          { type: 'Error', value: error.message },
+        ],
+      },
+    };
+
+    const scrubbed = scrubSentryEvent(event);
+
+    expect(scrubbed.exception?.values?.[0]?.value)
+      .toBe('timeout exceeded when trying to connect');
+    expect(scrubbed.exception?.values?.[1]?.value)
+      .toBe(`Failed query: ${SIGNUP_SQL}\nparams: ${SENTRY_FILTERED_VALUE}`);
+    expectNoSecrets(scrubbed);
+  });
+
+  it('redacts messages, transaction names, span descriptions and attributes', () => {
+    const event: Event = {
+      type: 'transaction',
+      message: signupQueryError().message,
+      logentry: { message: `GET /api/v1/auth/reset?token=${RESET_TOKEN}` },
+      transaction: `GET /api/v1/payments/toss/webhook?tossWebhookSecret=${WEBHOOK_SECRET}`,
+      spans: [
+        {
+          span_id: 'c'.repeat(16),
+          trace_id: 'a'.repeat(32),
+          start_timestamp: 1,
+          description: `GET https://api.example.test/v1/payments?paymentKey=${PAYMENT_KEY}`,
+          data: {
+            'db.statement': 'select "id" from "users" where "phone" = $1',
+            'drizzle.query.params': JSON.stringify([PHONE]),
+            'db.query.parameter.0': PHONE,
+          },
+        },
+      ],
+    };
+
+    const scrubbed = scrubSentryEvent(event);
+
+    expect(scrubbed.message).toBe(`Failed query: ${SIGNUP_SQL}\nparams: ${SENTRY_FILTERED_VALUE}`);
+    expect(scrubbed.logentry?.message).toBe('GET /api/v1/auth/reset');
+    expect(scrubbed.transaction).toBe('GET /api/v1/payments/toss/webhook');
+    expect(scrubbed.spans?.[0]?.description).toBe('GET https://api.example.test/v1/payments');
+    expect(scrubbed.spans?.[0]?.data).toEqual({
+      'db.statement': 'select "id" from "users" where "phone" = $1',
+      'drizzle.query.params': SENTRY_FILTERED_VALUE,
+      'db.query.parameter.0': SENTRY_FILTERED_VALUE,
+    });
+    expectNoSecrets(scrubbed);
+  });
+
+  it('redacts console breadcrumbs carrying a DrizzleQueryError', () => {
+    const error = signupQueryError();
+    const breadcrumb: Breadcrumb = {
+      category: 'console',
+      level: 'error',
+      message: `query failed ${error.message}`,
+      data: { arguments: ['query failed', error, { attempt: 1 }], logger: 'console' },
+    };
+
+    const scrubbed = scrubSentryBreadcrumb(breadcrumb);
+
+    expect(scrubbed.message)
+      .toBe(`query failed Failed query: ${SIGNUP_SQL}\nparams: ${SENTRY_FILTERED_VALUE}`);
+    expect(scrubbed.data).toEqual({
+      arguments: [
+        'query failed',
+        `Error: Failed query: ${SIGNUP_SQL}\nparams: ${SENTRY_FILTERED_VALUE}`,
+        { attempt: 1 },
+      ],
+      logger: 'console',
+    });
+    expectNoSecrets(scrubbed);
+  });
+});
+
+describe('redactSensitiveText', () => {
+  it('keeps ordinary error text unchanged', () => {
+    for (const text of [
+      'Connection is closed.',
+      'timeout exceeded when trying to connect',
+      'Are you sure? Retry #2 failed',
+      'GET /api/v1/health',
+      'select "id" from "users" where "phone" = $1',
+    ]) {
+      expect(redactSensitiveText(text)).toBe(text);
+    }
+  });
+
+  it('strips query strings from URLs and paths inside text', () => {
+    expect(redactSensitiveText(
+      `fetch https://h.test/cb?token=${RESET_TOKEN} then /p?x=1#f done`,
+    )).toBe('fetch https://h.test/cb then /p done');
   });
 });
 

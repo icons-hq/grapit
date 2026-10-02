@@ -106,6 +106,50 @@ describe('web Sentry redaction (#155)', () => {
     expectNoSecrets(scrubbed);
   });
 
+  it('scrubs free text: exception values, transaction names, span names and console breadcrumbs', () => {
+    const failedQuery = `Failed query: select "id" from "users" where "phone" = $1\nparams: ${PHONE}`;
+    const event: Event = {
+      exception: {
+        values: [
+          { type: 'Error', value: failedQuery },
+          { type: 'TypeError', value: `Failed to fetch /auth/reset-password?token=${RESET_TOKEN}` },
+        ],
+      },
+      transaction: `/booking/complete?paymentKey=${PAYMENT_KEY}`,
+      spans: [
+        {
+          span_id: 'c'.repeat(16),
+          trace_id: 'a'.repeat(32),
+          start_timestamp: 1,
+          description: `GET https://api.heygrabit.com/api/v1/auth/verify-email?token=${RESET_TOKEN}`,
+          data: {},
+        },
+      ],
+      breadcrumbs: [
+        {
+          category: 'console',
+          message: `confirm failed ${failedQuery}`,
+          data: { arguments: ['confirm failed', new Error(failedQuery)], logger: 'console' },
+        },
+      ],
+    };
+
+    const scrubbed = scrubSentryEvent(event);
+
+    expect(scrubbed.exception?.values?.map((value) => value.value)).toEqual([
+      `Failed query: select "id" from "users" where "phone" = $1\nparams: ${SENTRY_FILTERED_VALUE}`,
+      'Failed to fetch /auth/reset-password',
+    ]);
+    expect(scrubbed.transaction).toBe('/booking/complete');
+    expect(scrubbed.spans?.[0]?.description)
+      .toBe('GET https://api.heygrabit.com/api/v1/auth/verify-email');
+    expect(scrubbed.breadcrumbs?.[0]?.data?.['arguments']).toEqual([
+      'confirm failed',
+      `Error: Failed query: select "id" from "users" where "phone" = $1\nparams: ${SENTRY_FILTERED_VALUE}`,
+    ]);
+    expectNoSecrets(scrubbed);
+  });
+
   it('scrubs a fetch breadcrumb before it is stored', () => {
     expect(
       scrubSentryBreadcrumb({
