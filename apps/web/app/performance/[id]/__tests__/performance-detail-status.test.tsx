@@ -25,7 +25,10 @@ vi.mock('@/hooks/use-runtime-flags', () => ({
   }),
 }));
 vi.mock('next/image', () => ({
-  default: ({ alt, ...props }: { alt: string; [key: string]: unknown }) => <img alt={alt} {...props} />,
+  default: ({ alt, ...props }: { alt: string; [key: string]: unknown }) => (
+    // eslint-disable-next-line @next/next/no-img-element -- test double for next/image
+    <img alt={alt} {...props} />
+  ),
 }));
 
 const NOW = Date.parse('2026-09-20T10:59:00.000Z');
