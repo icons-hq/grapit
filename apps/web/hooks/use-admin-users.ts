@@ -10,6 +10,7 @@ import {
   ADMIN_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLES,
+  resolveAdminCapabilitySnapshot,
   type AdminCapability,
   type AdminCapabilityBundle,
   type AdminUserDetail as ApiAdminUserDetail,
@@ -93,7 +94,10 @@ export interface AdminUserListItem {
   country: string;
   marketingConsent: boolean;
   adminCapabilityBundle: AdminCapabilityBundle | null;
+  /** Guard-effective capabilities (bundle defaults / superuser resolved). */
   adminCapabilities: AdminCapability[];
+  /** True when the account resolves to superuser (`admin` bundle). */
+  adminSuperuser?: boolean;
   accountStatus: AdminUserAccountStatus;
   withdrawnAt?: string | null;
   withdrawalReason?: string | null;
@@ -397,7 +401,8 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
       withdrawnAt: response.withdrawnAt ?? null,
       withdrawalReason: response.withdrawalReason ?? null,
       withdrawalSource: response.withdrawalSource ?? null,
-      adminCapabilities: resolveEffectiveCapabilities(
+      ...resolveEffectiveAccess(
+        response.role,
         response.adminCapabilityBundle,
         response.adminCapabilities,
       ),
@@ -441,7 +446,8 @@ function mapListItem(
       withdrawnAt: item.withdrawnAt ?? null,
       withdrawalReason: item.withdrawalReason ?? null,
       withdrawalSource: item.withdrawalSource ?? null,
-      adminCapabilities: resolveEffectiveCapabilities(
+      ...resolveEffectiveAccess(
+        item.role,
         item.adminCapabilityBundle,
         item.adminCapabilities,
       ),
@@ -460,7 +466,8 @@ function mapListItem(
     country: item.country,
     marketingConsent: item.marketingConsent,
     adminCapabilityBundle: item.adminCapabilityBundle,
-    adminCapabilities: resolveEffectiveCapabilities(
+    ...resolveEffectiveAccess(
+      item.role,
       item.adminCapabilityBundle,
       item.adminCapabilities,
     ),
@@ -505,14 +512,30 @@ function normalizeAdminUserAccountStatus(
   return 'active';
 }
 
-function resolveEffectiveCapabilities(
+/**
+ * Mirrors the API guards (RolesGuard + AdminCapabilitiesGuard): only role=admin
+ * accounts have admin access, and the `admin` bundle is superuser regardless of
+ * any stored capability list (audit #42).
+ */
+function resolveEffectiveAccess(
+  role: AdminUserRole,
   bundle: AdminCapabilityBundle | null,
   capabilities: readonly AdminCapability[],
-): AdminCapability[] {
-  const normalized = normalizeAdminCapabilities(capabilities);
-  if (normalized.length > 0) return normalized;
-  if (bundle) return [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[bundle]];
-  return [];
+): Pick<AdminUserListItem, 'adminCapabilities' | 'adminSuperuser'> {
+  if (role !== 'admin') {
+    return { adminCapabilities: [], adminSuperuser: false };
+  }
+
+  const snapshot = resolveAdminCapabilitySnapshot({
+    id: 'admin-user',
+    role,
+    adminCapabilityBundle: bundle,
+    adminCapabilities: normalizeAdminCapabilities(capabilities),
+  });
+  return {
+    adminCapabilities: [...snapshot.capabilities],
+    adminSuperuser: snapshot.superuser,
+  };
 }
 
 function normalizeSupportSummary(

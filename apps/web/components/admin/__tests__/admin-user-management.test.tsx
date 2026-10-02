@@ -606,11 +606,12 @@ describe('AdminUserManagement', () => {
     renderWithClient(<AdminUserManagement />, queryClient);
 
     expect(await screen.findByText('박팬')).toBeInTheDocument();
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
 
-    const securityCapability = await screen.findByRole('checkbox', {
-      name: '보안 권한 관리',
-    });
-    await user.click(securityCapability);
+    // Narrowing requires a non-admin bundle; the admin bundle is superuser.
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
+    await user.click(screen.getByRole('checkbox', { name: '배너 관리' }));
 
     const submitButton = screen.getByRole('button', {
       name: '권한 변경 검토',
@@ -636,7 +637,16 @@ describe('AdminUserManagement', () => {
         '/api/v1/admin/users/user-fan-1/permissions',
         expect.objectContaining({
           role: 'admin',
-          adminCapabilityBundle: 'admin',
+          adminCapabilityBundle: 'operator',
+          adminCapabilities: [
+            'event.write',
+            'support.manage',
+            'support.escalate',
+            'reservations.read',
+            'seat.disable',
+            'seat.reactivate',
+            'seat.manual_open',
+          ],
           reason: '보안 담당자 교체로 권한을 회수합니다.',
           confirmed: true,
         }),
@@ -720,7 +730,8 @@ describe('AdminUserManagement', () => {
     renderWithClient(<AdminUserManagement />);
 
     expect(await screen.findByText('예매 내역')).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: '보안 권한 관리' }));
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
     await user.type(screen.getByLabelText('권한 변경 사유'), '권한 회수 테스트');
     await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
     await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
@@ -730,7 +741,160 @@ describe('AdminUserManagement', () => {
     expect(
       within(alert).getByText('권한 변경에 실패했습니다. 현재 상세 화면은 유지됩니다.'),
     ).toBeInTheDocument();
+    expect(within(alert).getByText('Forbidden')).toBeInTheDocument();
     expect(screen.getByText('걸룰스 팬미팅')).toBeInTheDocument();
+  });
+
+  it('shows the admin bundle as effective superuser access and locks capability narrowing', async () => {
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    // The stored list omits refund/settlement, but the admin bundle grants them.
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 전체 관리자 (모든 권한)',
+    );
+    const capabilityFieldset = screen.getByText('세부 권한').closest('fieldset');
+    const checkboxes = within(capabilityFieldset as HTMLElement).getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(20);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeDisabled();
+    }
+    expect(screen.getByRole('checkbox', { name: '관리자 환불 처리' })).toBeChecked();
+    expect(
+      screen.getByText(/전체 관리자 묶음은 모든 권한을 가지므로 세부 권한을 줄일 수 없습니다/),
+    ).toBeInTheDocument();
+  });
+
+  it('sends the canonical empty capability list when granting the admin bundle', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') return Promise.resolve(userStats);
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({ items: [listUser], total: 1, page: 1, limit: 25, totalPages: 1 });
+      }
+      if (path === '/api/v1/admin/users/user-fan-1') {
+        return Promise.resolve({
+          ...detailUser,
+          adminCapabilityBundle: 'operator',
+          adminCapabilities: ['support.manage'],
+        });
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+    mocks.apiPatch.mockResolvedValueOnce(detailUser);
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('적용될 권한: 운영자 묶음 · 1개')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '전체 관리자' }));
+    await user.type(screen.getByLabelText('권한 변경 사유'), '보안 책임자 지정');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/permissions',
+        expect.objectContaining({
+          role: 'admin',
+          adminCapabilityBundle: 'admin',
+          adminCapabilities: [],
+        }),
+      );
+    });
+  });
+
+  it('revokes admin access in one step when only the role is changed to a general member', async () => {
+    const user = userEvent.setup();
+    mocks.apiPatch.mockResolvedValueOnce({
+      ...detailUser,
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Role' }));
+    await user.click(await screen.findByRole('option', { name: '일반 회원' }));
+
+    expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 없음 (일반 회원)',
+    );
+
+    await user.type(screen.getByLabelText('권한 변경 사유'), '계정 탈취 의심으로 긴급 회수');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/permissions',
+        {
+          role: 'user',
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+          reason: '계정 탈취 의심으로 긴급 회수',
+          confirmed: true,
+        },
+      );
+    });
+  });
+
+  it('blocks saving a non-admin bundle with every capability unchecked', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '스캐너' }));
+    for (const name of ['검표 확인', '입장 처리', '보류 스캔 동기화', '현장 특전 지급']) {
+      await user.click(screen.getByRole('checkbox', { name }));
+    }
+    await user.type(screen.getByLabelText('권한 변경 사유'), '권한 정리');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+
+    expect(screen.getByTestId('admin-user-permission-validation')).toHaveTextContent(
+      '세부 권한을 1개 이상 선택하세요',
+    );
+    expect(screen.getByRole('button', { name: '권한 변경 검토' })).toBeDisabled();
+    expect(mocks.apiPatch).not.toHaveBeenCalled();
+  });
+
+  it('shows why an admin withdrawal was blocked by active reservations', async () => {
+    const user = userEvent.setup();
+    const blockedError = Object.assign(
+      new Error(
+        '진행 중인 예매가 있어 탈퇴 처리할 수 없습니다 (관람 예정 확정 예매 2건). 예매를 취소·환불하거나 결제가 정리된 뒤 다시 시도하세요',
+      ),
+      {
+        statusCode: 409,
+        data: {
+          blockers: [
+            { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: 2 },
+          ],
+        },
+      },
+    );
+    mocks.apiPost.mockRejectedValueOnce(blockedError);
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('계정 상태 관리')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('탈퇴 처리 사유'), '사용자 요청');
+    await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }));
+    await user.click(screen.getByRole('button', { name: '탈퇴 처리' }));
+    await user.click(await screen.findByRole('button', { name: '탈퇴 처리 확정' }));
+
+    expect(
+      await screen.findByText(/탈퇴 처리 실패: 진행 중인 예매가 있어 탈퇴 처리할 수 없습니다/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('탈퇴 차단: 관람 예정 확정 예매 2건')).toBeInTheDocument();
+    expect(mocks.toastError).toHaveBeenCalledWith('회원 탈퇴 처리에 실패했습니다.');
   });
 
   it('withdraws a user with reason and explicit confirmation', async () => {

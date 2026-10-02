@@ -23,14 +23,17 @@ import {
 } from 'drizzle-orm';
 import {
   ADMIN_CAPABILITIES,
+  ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   adminUserExportRequestSchema,
   adminUserListQuerySchema,
   adminUserHardDeleteSchema,
   adminUserPermissionUpdateSchema,
   adminUserWithdrawalSchema,
+  parseAdminCapabilityBundle,
   resolveAdminCapabilitySnapshot,
   type AdminCapability,
   type AdminCapabilityBundle,
+  type AdminCapabilitySnapshot,
   type AdminUserDeletionBlocker,
   type AdminUserDetail,
   type AdminUserExportRequest,
@@ -56,6 +59,7 @@ import {
   refreshTokens,
   reservations,
   seatOperationHistory,
+  showtimes,
   socialAccounts,
   supportThreads,
   users,
@@ -68,6 +72,10 @@ import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
 
 const USER_REFRESH_FAMILY_LIMIT = 2;
+// Active reservations per user are bounded by booking limits; the cap only
+// protects the withdrawal check from pathological accounts.
+const WITHDRAWAL_BLOCKER_RESERVATION_LIMIT = 100;
+const WITHDRAWAL_BLOCKER_SAMPLE_LIMIT = 10;
 
 type UserRow = Pick<
   typeof users.$inferSelect,
@@ -169,6 +177,23 @@ export interface AdminUserPermissionUpdateContext {
   userAgent?: string | null;
   requestId?: string | null;
 }
+
+export interface AdminUserWithdrawalReservationBlocker {
+  id: string;
+  reservationNumber: string;
+  status: 'PENDING_PAYMENT' | 'CONFIRMED';
+  showtimeAt: string | null;
+}
+
+export interface AdminUserWithdrawalBlockers {
+  blockers: AdminUserDeletionBlocker[];
+  reservations: AdminUserWithdrawalReservationBlocker[];
+}
+
+type PermissionSubject = Pick<
+  UserRow,
+  'id' | 'email' | 'role' | 'adminCapabilityBundle' | 'adminCapabilities'
+>;
 
 export interface AdminUserExportServiceRequest {
   actorUserId: string;
@@ -367,12 +392,20 @@ export class AdminUserService {
         adminCapabilityBundle: normalized.adminCapabilityBundle,
         adminCapabilities: normalized.adminCapabilities,
       };
+      const afterSubject: PermissionSubject = { ...target, ...afterSnapshot };
       const changedFields = changedPermissionFields(beforeSnapshot, afterSnapshot);
       const isDowngradeToUser = beforeSnapshot.role === 'admin' && afterSnapshot.role === 'user';
 
       if (changedFields.length === 0) {
         return;
       }
+
+      assertWithinDelegationCeiling({
+        actor,
+        targetBefore: target,
+        targetAfter: afterSubject,
+        isSelf: actorUserId === targetUserId,
+      });
 
       if (
         actorUserId === targetUserId &&
@@ -405,6 +438,11 @@ export class AdminUserService {
         await this.enforceUserRefreshFamilyLimit(targetUserId, tx as DrizzleDB);
       }
 
+      // Record the guard-effective access next to the stored fields so the
+      // audit trail shows what the account can actually do (audit #42).
+      const beforeAccess = effectiveAccessSnapshot(target);
+      const afterAccess = effectiveAccessSnapshot(afterSubject);
+
       await this.auditService.write(
         {
           actorUserId,
@@ -413,14 +451,19 @@ export class AdminUserService {
           resourceId: targetUserId,
           status: 'success',
           reason: parsed.reason,
-          changedFields,
+          changedFields: [
+            ...changedFields,
+            ...changedEffectiveAccessFields(beforeAccess, afterAccess),
+          ],
           before: {
             ...beforeSnapshot,
+            ...beforeAccess,
             email: target.email,
             phone: target.phone,
           },
           after: {
             ...afterSnapshot,
+            ...afterAccess,
             email: target.email,
             phone: target.phone,
           },
@@ -507,6 +550,32 @@ export class AdminUserService {
       }
       if (target.accountStatus === 'withdrawn' || target.accountStatus === 'merged') {
         return;
+      }
+
+      // A delegated (non-superuser) security admin cannot lock out an account
+      // that holds more authority than the actor (audit #120).
+      assertWithinDelegationCeiling({
+        actor,
+        targetBefore: target,
+        targetAfter: { ...target, role: 'user', adminCapabilityBundle: null, adminCapabilities: [] },
+        isSelf: false,
+      });
+
+      // Withdrawal blocks login (JwtStrategy rejects withdrawn users) and
+      // deletes social links with no restore path, so paid tickets and
+      // in-flight payments must be resolved first, like self-withdrawal
+      // (audit #44). Checked inside the transaction that writes the status.
+      const activeReservations = await this.findActiveReservationBlockers(
+        targetUserId,
+        tx as DrizzleDB,
+      );
+      if (activeReservations.blockers.length > 0) {
+        throw new ConflictException({
+          code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+          message: withdrawalBlockedMessage(activeReservations.blockers),
+          blockers: activeReservations.blockers,
+          reservations: activeReservations.reservations,
+        });
       }
 
       await this.assertAtLeastOneSecurityAdminRemains(
@@ -851,6 +920,54 @@ export class AdminUserService {
     }
   }
 
+  /**
+   * Same predicate as self-withdrawal (UserService): a payment in flight or a
+   * confirmed ticket for a showtime that has not started yet.
+   */
+  private async findActiveReservationBlockers(
+    userId: string,
+    db: Pick<DrizzleDB, 'select'>,
+    now: Date = new Date(),
+  ): Promise<AdminUserWithdrawalBlockers> {
+    const rows = await db
+      .select({
+        id: reservations.id,
+        reservationNumber: reservations.reservationNumber,
+        status: reservations.status,
+        showtimeAt: showtimes.dateTime,
+      })
+      .from(reservations)
+      .leftJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .where(
+        and(
+          eq(reservations.userId, userId),
+          or(
+            eq(reservations.status, 'PENDING_PAYMENT'),
+            and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, now)),
+          )!,
+        ),
+      )
+      .orderBy(asc(reservations.createdAt))
+      .limit(WITHDRAWAL_BLOCKER_RESERVATION_LIMIT);
+
+    const pendingPayment = rows.filter((row) => row.status === 'PENDING_PAYMENT').length;
+    const upcomingConfirmed = rows.filter((row) => row.status === 'CONFIRMED').length;
+    const blockers: AdminUserDeletionBlocker[] = [
+      { key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: pendingPayment },
+      { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: upcomingConfirmed },
+    ].filter((blocker) => blocker.count > 0);
+
+    return {
+      blockers,
+      reservations: rows.slice(0, WITHDRAWAL_BLOCKER_SAMPLE_LIMIT).map((row) => ({
+        id: row.id,
+        reservationNumber: row.reservationNumber,
+        status: row.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'CONFIRMED',
+        showtimeAt: row.showtimeAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
   private async findHardDeleteBlockers(
     userId: string,
   ): Promise<AdminUserDeletionBlocker[]> {
@@ -1092,19 +1209,44 @@ function toDetail(
   };
 }
 
-function normalizePermissionUpdate(input: AdminUserPermissionUpdate) {
+function normalizePermissionUpdate(input: AdminUserPermissionUpdate): {
+  role: 'user' | 'admin';
+  adminCapabilityBundle: AdminCapabilityBundle | null;
+  adminCapabilities: AdminCapability[];
+} {
   if (input.role === 'user') {
     return {
-      role: 'user' as const,
+      role: 'user',
       adminCapabilityBundle: null,
-      adminCapabilities: [] as AdminCapability[],
+      adminCapabilities: [],
     };
   }
 
+  const bundle = parseAdminCapabilityBundle(input.adminCapabilityBundle);
+  if (!bundle) {
+    // Never default a missing bundle to the superuser `admin` bundle.
+    throw new BadRequestException('관리자 권한 묶음이 필요합니다');
+  }
+
+  if (bundle === 'admin') {
+    // Superuser: the stored list is ignored by the resolver, so persist the
+    // canonical empty list instead of a misleading partial one (audit #42).
+    return {
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+    };
+  }
+
+  const capabilities = normalizeCapabilities(input.adminCapabilities);
   return {
-    role: 'admin' as const,
-    adminCapabilityBundle: input.adminCapabilityBundle ?? 'admin',
-    adminCapabilities: normalizeCapabilities(input.adminCapabilities),
+    role: 'admin',
+    adminCapabilityBundle: bundle,
+    // An empty list means "bundle defaults"; store them explicitly so the
+    // saved row, the editor and the audit snapshot show the effective set.
+    adminCapabilities: capabilities.length > 0
+      ? capabilities
+      : [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[bundle]],
   };
 }
 
@@ -1126,16 +1268,94 @@ function changedPermissionFields(
     .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
 }
 
-function hasSecurityManage(
-  user: Pick<UserRow, 'id' | 'email' | 'role' | 'adminCapabilityBundle' | 'adminCapabilities'>,
-): boolean {
+function hasSecurityManage(user: PermissionSubject): boolean {
+  return resolvePermissionAccess(user).capabilities.includes('security.manage');
+}
+
+/**
+ * Guard-equivalent access: RolesGuard requires role=admin before
+ * AdminCapabilitiesGuard evaluates the bundle/capability snapshot.
+ */
+function resolvePermissionAccess(user: PermissionSubject): AdminCapabilitySnapshot {
+  if (normalizeRole(user.role) !== 'admin') {
+    return { bundle: null, capabilities: [], superuser: false };
+  }
+
   return resolveAdminCapabilitySnapshot({
     id: user.id,
     email: user.email,
     role: user.role,
     adminCapabilityBundle: normalizeBundle(user.adminCapabilityBundle),
     adminCapabilities: normalizeCapabilities(user.adminCapabilities),
-  }).capabilities.includes('security.manage');
+  });
+}
+
+function effectiveAccessSnapshot(user: PermissionSubject): {
+  adminSuperuser: boolean;
+  effectiveAdminCapabilities: AdminCapability[];
+} {
+  const access = resolvePermissionAccess(user);
+  return {
+    adminSuperuser: access.superuser,
+    effectiveAdminCapabilities: [...access.capabilities],
+  };
+}
+
+function changedEffectiveAccessFields(
+  before: ReturnType<typeof effectiveAccessSnapshot>,
+  after: ReturnType<typeof effectiveAccessSnapshot>,
+): string[] {
+  return (['adminSuperuser', 'effectiveAdminCapabilities'] as const)
+    .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
+}
+
+/**
+ * Delegation ceiling (audit #120): only a superuser can grant, change or
+ * remove superuser access. A non-superuser security admin may only touch
+ * accounts whose before/after access stays within the actor's own
+ * capabilities, and can never widen their own access.
+ */
+function assertWithinDelegationCeiling(params: {
+  actor: PermissionSubject;
+  targetBefore: PermissionSubject;
+  targetAfter: PermissionSubject;
+  isSelf: boolean;
+}): void {
+  const actorAccess = resolvePermissionAccess(params.actor);
+  if (actorAccess.superuser) {
+    return;
+  }
+
+  const before = resolvePermissionAccess(params.targetBefore);
+  const after = resolvePermissionAccess(params.targetAfter);
+  if (before.superuser || after.superuser) {
+    throw new ForbiddenException('전체 관리자 권한은 전체 관리자만 부여하거나 변경할 수 있습니다');
+  }
+
+  const outsideCeiling = ADMIN_CAPABILITIES.filter(
+    (capability) =>
+      (before.capabilities.includes(capability) || after.capabilities.includes(capability)) &&
+      !actorAccess.capabilities.includes(capability),
+  );
+  if (outsideCeiling.length > 0) {
+    throw new ForbiddenException(
+      `본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: ${outsideCeiling.join(', ')}`,
+    );
+  }
+
+  if (
+    params.isSelf &&
+    after.capabilities.some((capability) => !before.capabilities.includes(capability))
+  ) {
+    throw new ForbiddenException('자기 자신의 관리자 권한은 늘릴 수 없습니다');
+  }
+}
+
+function withdrawalBlockedMessage(blockers: readonly AdminUserDeletionBlocker[]): string {
+  const summary = blockers
+    .map((blocker) => `${blocker.label} ${blocker.count}건`)
+    .join(', ');
+  return `진행 중인 예매가 있어 탈퇴 처리할 수 없습니다 (${summary}). 예매를 취소·환불하거나 결제가 정리된 뒤 다시 시도하세요`;
 }
 
 function normalizeRole(role: string): 'user' | 'admin' {
@@ -1152,16 +1372,8 @@ function normalizeAdminAccountStatus(
 function normalizeBundle(
   bundle: string | null | undefined,
 ): AdminCapabilityBundle | null {
-  if (
-    bundle === 'operator' ||
-    bundle === 'reviewer' ||
-    bundle === 'approver' ||
-    bundle === 'finance' ||
-    bundle === 'admin'
-  ) {
-    return bundle;
-  }
-  return null;
+  // Shared parser keeps every contract bundle, including `scanner` (audit #122).
+  return parseAdminCapabilityBundle(bundle);
 }
 
 function normalizeCapabilities(

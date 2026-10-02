@@ -15,7 +15,10 @@ import {
   adminSecurityStatusSchema,
   adminSeatOperationRequestSchema,
 } from './admin-operations.schema';
-import { resolveAdminCapabilitySnapshot } from '../types/admin-operations.types';
+import {
+  parseAdminCapabilityBundle,
+  resolveAdminCapabilitySnapshot,
+} from '../types/admin-operations.types';
 
 const VALID_SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -364,14 +367,87 @@ describe('admin operations contract', () => {
 
     const parsed = adminUserPermissionUpdateSchema.parse({
       role: 'admin',
-      adminCapabilityBundle: 'admin',
-      adminCapabilities: ['security.manage'],
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
       reason: 'security owner rotation',
       confirmed: true,
     });
 
     expect(parsed.confirmed).toBe(true);
     expect(parsed.reason).toBe('security owner rotation');
+  });
+
+  it('rejects narrowed capability lists on the superuser admin bundle', () => {
+    // audit #42: bundle=admin is always superuser, so a partial list would be
+    // shown and audited as narrowed while the guard grants every capability.
+    const result = adminUserPermissionUpdateSchema.safeParse({
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+      reason: 'shared scanner account',
+      confirmed: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['adminCapabilities']);
+    expect(result.error?.issues[0]?.message).toMatch(/다른 권한 묶음/);
+
+    for (const adminCapabilities of [[], [...ADMIN_CAPABILITIES]]) {
+      expect(
+        adminUserPermissionUpdateSchema.safeParse({
+          role: 'admin',
+          adminCapabilityBundle: 'admin',
+          adminCapabilities,
+          reason: 'security owner rotation',
+          confirmed: true,
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('accepts a role-only downgrade to user even when bundle and capabilities are left over', () => {
+    // audit #144: emergency revoke must not 400 because the editor still holds
+    // the previous bundle/capabilities; the server clears them for role=user.
+    const parsed = adminUserPermissionUpdateSchema.parse({
+      role: 'user',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'security.manage'],
+      reason: 'compromised account',
+      confirmed: true,
+    });
+
+    expect(parsed.role).toBe('user');
+    expect(() =>
+      adminUserPermissionUpdateSchema.parse({
+        role: 'admin',
+        adminCapabilityBundle: null,
+        adminCapabilities: ['support.manage'],
+        reason: 'missing bundle',
+        confirmed: true,
+      }),
+    ).toThrow(/관리자 권한 묶음/);
+  });
+
+  it('parses every known bundle including scanner and drops unknown bundle values', () => {
+    for (const bundle of ADMIN_CAPABILITY_BUNDLES) {
+      expect(parseAdminCapabilityBundle(bundle)).toBe(bundle);
+    }
+    expect(parseAdminCapabilityBundle('superadmin')).toBeNull();
+    expect(parseAdminCapabilityBundle(null)).toBeNull();
+    expect(parseAdminCapabilityBundle(undefined)).toBeNull();
+
+    // Unknown stored bundle strings must not crash capability guards.
+    const unknownBundle = resolveAdminCapabilitySnapshot({
+      id: 'admin-unknown',
+      role: 'admin',
+      adminCapabilityBundle: 'superadmin',
+      adminCapabilities: ['support.manage'],
+    });
+    expect(unknownBundle).toEqual({
+      bundle: null,
+      capabilities: ['support.manage'],
+      superuser: false,
+    });
   });
 
   it('limits explicit non-admin bundles even when the coarse role remains admin', () => {

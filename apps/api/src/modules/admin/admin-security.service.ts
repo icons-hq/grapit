@@ -1,5 +1,4 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
 import { isIP } from 'node:net';
 import type { Request } from 'express';
 
@@ -10,7 +9,7 @@ import { AdminAuditService } from './admin-audit.service.js';
 
 type AdminSecurityDb = Pick<DrizzleDB, 'select' | 'insert'>;
 type AdminAllowlistSource = 'env_bootstrap' | 'db_managed' | 'temporary_exception';
-type AdminAllowlistStatus = 'active' | 'disabled' | 'expired';
+type AdminAllowlistRecordStatus = 'active' | 'disabled' | 'expired';
 
 export type AdminSecurityDecisionSource =
   | AdminAllowlistSource
@@ -26,10 +25,22 @@ export interface AdminSecurityDecision {
   reason?: string;
 }
 
-export interface AdminSecurityEvaluateContext {
-  actorUserId: string;
-  requestId?: string;
-  userAgent?: string;
+/**
+ * Admin IP allowlist enforcement state. No guard, middleware or edge rule
+ * blocks admin requests by IP today, so the allowlist is evaluated for the
+ * security screen only ("monitoring"). Flip this only together with a real
+ * enforcing guard and a field-scanner exemption policy (audit #43).
+ */
+export const ADMIN_IP_ALLOWLIST_ENFORCED = false;
+
+export type AdminAllowlistMode = 'disabled' | 'monitoring' | 'enforced';
+
+export interface AdminAllowlistStatus {
+  mode: AdminAllowlistMode;
+  enforced: boolean;
+  activeRecords: number;
+  lastChangedAt: string | null;
+  decision: AdminSecurityDecision;
 }
 
 export interface AdminAllowlistChangeInput {
@@ -55,9 +66,11 @@ interface AllowlistRow {
   cidr: string;
   label: string;
   source: AdminAllowlistSource;
-  status: AdminAllowlistStatus;
+  status: AdminAllowlistRecordStatus;
   reason: string;
   expiresAt: Date | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
 }
 
 @Injectable()
@@ -68,18 +81,41 @@ export class AdminSecurityService {
     private readonly options: AdminSecurityServiceOptions = {},
   ) {}
 
-  async evaluateRequest(
-    request: Request,
-    context: AdminSecurityEvaluateContext,
-  ): Promise<AdminSecurityDecision> {
-    const ipAddress = resolveTrustedRequestIp(request);
+  /**
+   * Read-only evaluation of whether the request IP matches the allowlist.
+   * It never blocks and never writes audit rows: status reads are not
+   * allowlist changes (audit #43).
+   */
+  async evaluateRequest(request: Request): Promise<AdminSecurityDecision> {
+    return this.evaluate(resolveTrustedRequestIp(request), await this.loadAllowlistRows());
+  }
 
+  async getAllowlistStatus(request: Request): Promise<AdminAllowlistStatus> {
+    const rows = await this.loadAllowlistRows();
+    const decision = this.evaluate(resolveTrustedRequestIp(request), rows);
+    const now = this.now();
+    const activeDbRecords = rows.filter((row) => isActiveRow(row, now)).length;
+    const lastChangedAt = rows.reduce<Date | null>((latest, row) => {
+      const changedAt = row.updatedAt ?? row.createdAt;
+      return changedAt && (!latest || changedAt > latest) ? changedAt : latest;
+    }, null);
+
+    return {
+      mode: this.mode(),
+      enforced: ADMIN_IP_ALLOWLIST_ENFORCED,
+      activeRecords: this.envCidrs().length + activeDbRecords,
+      lastChangedAt: lastChangedAt?.toISOString() ?? null,
+      decision,
+    };
+  }
+
+  private evaluate(ipAddress: string, rows: AllowlistRow[]): AdminSecurityDecision {
     if (!this.isProduction()) {
       return {
         allowed: true,
         source: 'non_production_bypass',
         ipAddress,
-        reason: 'Admin IP allowlist bypass is explicit outside production.',
+        reason: 'Admin IP allowlist is not evaluated outside production.',
       };
     }
 
@@ -93,28 +129,9 @@ export class AdminSecurityService {
       };
     }
 
-    const dbMatch = await this.findDbMatch(ipAddress, this.db);
+    const now = this.now();
+    const dbMatch = rows.find((row) => isActiveRow(row, now) && ipMatchesCidr(ipAddress, row.cidr));
     if (dbMatch) {
-      await this.audit.write({
-        actorUserId: context.actorUserId,
-        action: 'security.allowlist.update',
-        resourceType: 'admin_access_allowlist',
-        resourceId: dbMatch.id,
-        status: 'success',
-        reason: `Admin access allowed by ${dbMatch.source} allowlist record.`,
-        changedFields: ['cidr', 'source', 'label', 'reason', 'expiresAt'],
-        after: {
-          cidr: dbMatch.cidr,
-          source: dbMatch.source,
-          label: dbMatch.label,
-          reason: dbMatch.reason,
-          expiresAt: dbMatch.expiresAt?.toISOString() ?? null,
-        },
-        ipAddress,
-        userAgent: context.userAgent ?? null,
-        requestId: context.requestId ?? null,
-      });
-
       return {
         allowed: true,
         source: dbMatch.source,
@@ -124,25 +141,13 @@ export class AdminSecurityService {
       };
     }
 
-    await this.audit.write({
-      actorUserId: context.actorUserId,
-      action: 'security.allowlist.update',
-      resourceType: 'admin_access_allowlist',
-      resourceId: ipAddress,
-      status: 'denied',
-      reason: 'Admin request IP did not match env/bootstrap or DB allowlist.',
-      changedFields: ['ipAddress'],
-      after: { ipAddress },
-      ipAddress,
-      userAgent: context.userAgent ?? null,
-      requestId: context.requestId ?? null,
-    });
-
     return {
       allowed: false,
       source: 'denied',
       ipAddress,
-      reason: 'Admin IP address is not allowlisted.',
+      reason: ADMIN_IP_ALLOWLIST_ENFORCED
+        ? 'Admin IP address is not allowlisted.'
+        : 'Admin IP address is outside the allowlist. The allowlist is monitoring-only and does not block requests.',
     };
   }
 
@@ -203,15 +208,21 @@ export class AdminSecurityService {
     return env.NODE_ENV === 'production' || env.GRABIT_ENV === 'production';
   }
 
+  private mode(): AdminAllowlistMode {
+    if (!this.isProduction()) {
+      return 'disabled';
+    }
+    return ADMIN_IP_ALLOWLIST_ENFORCED ? 'enforced' : 'monitoring';
+  }
+
   private findEnvMatch(ipAddress: string): string | undefined {
     return this.envCidrs().find((cidr) => ipMatchesCidr(ipAddress, cidr));
   }
 
-  private async findDbMatch(
-    ipAddress: string,
-    db: Pick<DrizzleDB, 'select'>,
-  ): Promise<AllowlistRow | undefined> {
-    const rows = await db
+  private async loadAllowlistRows(): Promise<AllowlistRow[]> {
+    // The allowlist is a small operator-managed table; load it whole so the
+    // status screen can report counts and the latest change.
+    const rows = await this.db
       .select({
         id: adminAccessAllowlist.id,
         cidr: adminAccessAllowlist.cidr,
@@ -220,16 +231,12 @@ export class AdminSecurityService {
         status: adminAccessAllowlist.status,
         reason: adminAccessAllowlist.reason,
         expiresAt: adminAccessAllowlist.expiresAt,
+        createdAt: adminAccessAllowlist.createdAt,
+        updatedAt: adminAccessAllowlist.updatedAt,
       })
-      .from(adminAccessAllowlist)
-      .where(and(eq(adminAccessAllowlist.status, 'active')));
+      .from(adminAccessAllowlist);
 
-    const now = this.now();
-    return (rows as AllowlistRow[]).find((row) =>
-      row.status === 'active'
-      && (!row.expiresAt || row.expiresAt > now)
-      && ipMatchesCidr(ipAddress, row.cidr),
-    );
+    return rows as AllowlistRow[];
   }
 
   private envCidrs(): string[] {
@@ -251,6 +258,10 @@ export class AdminSecurityService {
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
+}
+
+function isActiveRow(row: AllowlistRow, now: Date): boolean {
+  return row.status === 'active' && (!row.expiresAt || row.expiresAt > now);
 }
 
 function allowlistAuditSnapshot(input: AdminAllowlistChangeInput): Record<string, unknown> {

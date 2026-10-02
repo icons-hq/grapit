@@ -999,7 +999,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   }, [user.id, user.role, user.adminCapabilityBundle, detailCapabilitiesKey]);
 
   const changedFields = useMemo(() => {
-    const nextBundle = bundle === 'none' ? null : bundle;
+    const nextBundle = role === 'user' || bundle === 'none' ? null : bundle;
     const fields: string[] = [];
     if (role !== user.role) fields.push('role');
     if (nextBundle !== user.adminCapabilityBundle) {
@@ -1011,12 +1011,30 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
     return fields;
   }, [bundle, capabilities, role, user.adminCapabilities, user.adminCapabilityBundle, user.role]);
 
+  const isUserRole = role === 'user';
+  const isSuperuserBundle = !isUserRole && bundle === 'admin';
+  const capabilityInputsDisabled =
+    isInactiveAccount || isUserRole || bundle === 'none' || isSuperuserBundle;
+  const validationMessage = permissionValidationMessage(role, bundle, capabilities);
+  const effectiveSummary = effectivePermissionSummary(role, bundle, capabilities);
+
   const canSubmit =
     !isInactiveAccount &&
     reason.trim().length > 0 &&
     impactConfirmed &&
     changedFields.length > 0 &&
+    validationMessage === null &&
     !mutation.isPending;
+
+  function handleRoleChange(value: AdminUserRole) {
+    setRole(value);
+    if (value === 'user') {
+      // Revoking admin access must be a single step: a general member keeps no
+      // bundle or capabilities (audit #144).
+      setBundle('none');
+      setCapabilities([]);
+    }
+  }
 
   function handleBundleChange(value: BundleSelectValue) {
     setBundle(value);
@@ -1038,15 +1056,17 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   }
 
   async function handleConfirm() {
-    if (isInactiveAccount) return;
+    if (isInactiveAccount || validationMessage !== null) return;
 
-    const nextBundle = bundle === 'none' ? null : bundle;
+    const nextBundle = isUserRole || bundle === 'none' ? null : bundle;
     try {
       await mutation.mutateAsync({
         userId: user.id,
         role,
         adminCapabilityBundle: nextBundle,
-        adminCapabilities: capabilities,
+        // The admin bundle is superuser: the server ignores (and rejects
+        // narrowed) capability lists, so send the canonical empty list.
+        adminCapabilities: isUserRole || isSuperuserBundle ? [] : capabilities,
         reason,
         confirmed: true,
       });
@@ -1076,7 +1096,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <Label htmlFor="admin-user-role">Role</Label>
           <Select
             value={role}
-            onValueChange={(value) => setRole(value as AdminUserRole)}
+            onValueChange={(value) => handleRoleChange(value as AdminUserRole)}
             disabled={isInactiveAccount}
           >
             <SelectTrigger id="admin-user-role" aria-label="Role" className="h-11 w-full bg-white">
@@ -1094,7 +1114,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <Select
             value={bundle}
             onValueChange={(value) => handleBundleChange(value as BundleSelectValue)}
-            disabled={isInactiveAccount}
+            disabled={isInactiveAccount || isUserRole}
           >
             <SelectTrigger id="admin-user-bundle" aria-label="Capability bundle" className="h-11 w-full bg-white">
               <SelectValue />
@@ -1114,6 +1134,17 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <legend className="text-sm font-semibold text-gray-700">
             세부 권한
           </legend>
+          <p
+            className="rounded-lg bg-[#F5F5F7] px-3 py-2 text-sm font-semibold text-gray-900"
+            data-testid="admin-user-effective-permissions"
+          >
+            {effectiveSummary}
+          </p>
+          {isSuperuserBundle && (
+            <p className="text-sm text-gray-600">
+              전체 관리자 묶음은 모든 권한을 가지므로 세부 권한을 줄일 수 없습니다. 일부 권한만 부여하려면 다른 권한 묶음을 선택하세요.
+            </p>
+          )}
           <div className="grid gap-2">
             {ADMIN_CAPABILITIES.map((capability) => (
               <label
@@ -1121,12 +1152,12 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
                 className="flex min-h-11 items-start gap-3 rounded-lg border p-3 text-sm"
               >
                 <Checkbox
-                  checked={capabilities.includes(capability)}
+                  checked={isSuperuserBundle || capabilities.includes(capability)}
                   onCheckedChange={(checked) =>
                     handleCapabilityChange(capability, checked)
                   }
                   aria-label={CAPABILITY_LABELS[capability]}
-                  disabled={isInactiveAccount}
+                  disabled={capabilityInputsDisabled}
                 />
                 <span>
                   <span className="block font-semibold text-gray-900">
@@ -1166,12 +1197,24 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           </span>
         </label>
 
+        {validationMessage && !isInactiveAccount && (
+          <p
+            className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-sm font-semibold text-[#8B6306]"
+            data-testid="admin-user-permission-validation"
+          >
+            {validationMessage}
+          </p>
+        )}
+
         {mutation.isError && (
           <div
             role="alert"
             className="rounded-lg bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#C62828]"
           >
-            권한 변경에 실패했습니다. 현재 상세 화면은 유지됩니다.
+            <p>권한 변경에 실패했습니다. 현재 상세 화면은 유지됩니다.</p>
+            {errorMessage(mutation.error) && (
+              <p className="mt-1 font-normal">{errorMessage(mutation.error)}</p>
+            )}
           </div>
         )}
 
@@ -1229,6 +1272,10 @@ function AccountLifecyclePanel({
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBlockers, setDeleteBlockers] = useState<string[]>([]);
+  const [withdrawError, setWithdrawError] = useState<{
+    message: string | null;
+    blockers: string[];
+  } | null>(null);
   const isInactiveAccount = user.accountStatus === 'withdrawn' || user.accountStatus === 'merged';
   const canWithdraw =
     !isInactiveAccount &&
@@ -1244,6 +1291,7 @@ function AccountLifecyclePanel({
     setWithdrawOpen(false);
     setDeleteOpen(false);
     setDeleteBlockers([]);
+    setWithdrawError(null);
   }, [user.id]);
 
   async function handleWithdraw() {
@@ -1251,6 +1299,7 @@ function AccountLifecyclePanel({
       return;
     }
 
+    setWithdrawError(null);
     try {
       await withdrawMutation.mutateAsync({
         userId: user.id,
@@ -1259,7 +1308,13 @@ function AccountLifecyclePanel({
       });
       toast.success('회원이 탈퇴 처리되었습니다.');
       setWithdrawOpen(false);
-    } catch {
+    } catch (error) {
+      // 409 ACCOUNT_WITHDRAWAL_BLOCKED: the message carries the counts; the
+      // structured blockers are shown when the API forwards them.
+      setWithdrawError({
+        message: errorMessage(error),
+        blockers: extractBlockerLabels(error),
+      });
       toast.error('회원 탈퇴 처리에 실패했습니다.');
     }
   }
@@ -1289,7 +1344,7 @@ function AccountLifecyclePanel({
         <h3 className="text-base font-semibold text-gray-900">계정 상태 관리</h3>
       </div>
       <p className="mt-2 text-sm text-gray-600">
-        탈퇴 처리는 로그인과 세션을 차단합니다. DB 완전 삭제는 탈퇴 처리 후 연결 이력이 없을 때만 가능합니다.
+        탈퇴 처리는 로그인과 세션을 차단합니다. 결제 진행 중이거나 관람 예정인 예매가 있으면 탈퇴 처리할 수 없으니 예매를 먼저 취소·환불하세요. DB 완전 삭제는 탈퇴 처리 후 연결 이력이 없을 때만 가능합니다.
       </p>
 
       <div className="mt-4 space-y-4">
@@ -1312,6 +1367,17 @@ function AccountLifecyclePanel({
             />
             <span className="font-semibold">해당 회원의 로그인과 활성 세션이 종료됨을 확인했습니다.</span>
           </label>
+          {withdrawError && (
+            <div
+              role="alert"
+              className="rounded-lg bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]"
+            >
+              <p>탈퇴 처리 실패: {withdrawError.message ?? '잠시 후 다시 시도하세요.'}</p>
+              {withdrawError.blockers.length > 0 && (
+                <p className="mt-1">탈퇴 차단: {withdrawError.blockers.join(', ')}</p>
+              )}
+            </div>
+          )}
           <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
             <Button
               type="button"
@@ -1532,6 +1598,39 @@ function formatCurrency(value: number | null | undefined) {
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function permissionValidationMessage(
+  role: AdminUserRole,
+  bundle: BundleSelectValue,
+  capabilities: readonly AdminCapability[],
+): string | null {
+  if (role !== 'admin') return null;
+  if (bundle === 'none') {
+    return '관리자 역할에는 권한 묶음이 필요합니다. 모든 관리자 권한을 회수하려면 역할을 일반 회원으로 바꾸세요.';
+  }
+  if (bundle !== 'admin' && capabilities.length === 0) {
+    return '세부 권한을 1개 이상 선택하세요. 모든 관리자 권한을 회수하려면 역할을 일반 회원으로 바꾸세요.';
+  }
+  return null;
+}
+
+/** Summary of what the guards will actually allow after saving (audit #42). */
+function effectivePermissionSummary(
+  role: AdminUserRole,
+  bundle: BundleSelectValue,
+  capabilities: readonly AdminCapability[],
+): string {
+  if (role !== 'admin') return '적용될 권한: 없음 (일반 회원)';
+  if (bundle === 'admin') return '적용될 권한: 전체 관리자 (모든 권한)';
+  if (bundle === 'none') return '적용될 권한: 권한 묶음을 선택하세요';
+  return `적용될 권한: ${BUNDLE_LABELS[bundle]} 묶음 · ${capabilities.length}개`;
+}
+
+function errorMessage(error: unknown): string | null {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : null;
 }
 
 function extractBlockerLabels(error: unknown): string[] {
