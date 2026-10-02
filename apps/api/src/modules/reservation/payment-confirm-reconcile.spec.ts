@@ -389,6 +389,42 @@ describe('Payment confirm reconcile (#18)', () => {
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
   });
 
+  it('records a provider-cancelled approval no local row records as a completed compensation (unclaimed cancel)', async () => {
+    // cancelUnclaimedApproval: the claim insert failed, the provider cancel
+    // completed and only this job can take the order out of PENDING_PAYMENT.
+    const deps = createReconcile();
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval({
+      status: 'CANCELED',
+      cancels: [{
+        cancelAmount: 108,
+        cancelReason: '좌석 점유 만료로 인한 자동 취소',
+        canceledAt: '2026-10-02T09:50:00.000Z',
+        cancelStatus: 'DONE',
+      }],
+    }));
+
+    await expect(deps.service.reconcileUnresolvedConfirm(
+      paypalPayload({ reason: 'compensation_cancelled_unrecorded', attempt: 0 }),
+      NOW,
+    )).resolves.toEqual({ status: 'resolved', resolution: 'not_approved' });
+
+    expect(deps.state.payment).toMatchObject({
+      reservationId: 'reservation-1',
+      paymentKey: 'payment-key-1',
+      status: 'CANCELED',
+      asyncStatus: 'compensation_cancelled',
+      cancelReason: '좌석 점유 만료로 인한 자동 취소',
+      cancelledAt: new Date('2026-10-02T09:50:00.000Z'),
+    });
+    expect(deps.state.reservation?.status).toBe('FAILED');
+    expect(deps.state.diagnostics).toEqual([expect.objectContaining({
+      diagnosticKind: 'payment_compensated_cancel',
+      diagnosticCode: 'CONFIRM_APPROVAL_COMPENSATED',
+      diagnosticSource: 'payment_confirm_reconcile',
+    })]);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
   it('keeps retrying while the provider payment is still in progress', async () => {
     const deps = createReconcile();
     deps.tossClient.queryPayment.mockResolvedValue(paypalApproval({ status: 'IN_PROGRESS' }));

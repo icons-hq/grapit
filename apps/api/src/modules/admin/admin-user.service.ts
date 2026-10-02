@@ -53,6 +53,7 @@ import {
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import {
   adminAuditLogs,
   bookingOperationAuditLogs,
@@ -931,7 +932,10 @@ export class AdminUserService {
 
   /**
    * Same predicate as self-withdrawal (UserService): a payment in flight or a
-   * confirmed ticket for a showtime that has not started yet.
+   * confirmed ticket for a showtime that has not started yet. A payment in
+   * flight is PENDING_PAYMENT or a recently FAILED Alipay-family payment that
+   * a late provider DONE can still revive to CONFIRMED with QR tickets
+   * (database/late-done-revivable-reservation.ts, as in account merge).
    */
   private async findActiveReservationBlockers(
     userId: string,
@@ -943,13 +947,15 @@ export class AdminUserService {
       or(
         eq(reservations.status, 'PENDING_PAYMENT'),
         and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, now)),
+        lateDoneRevivableFailedReservationSql('reservations'),
       )!,
     );
     // Counts come from an aggregate, not from the sample, so the 409 message
     // reports every blocking reservation (u12: a capped sample undercounted).
+    // A revivable FAILED row is counted as a payment in flight.
     const [counts] = await db
       .select({
-        pendingPayment: sql<number>`count(*) filter (where ${reservations.status} = 'PENDING_PAYMENT')::int`,
+        pendingPayment: sql<number>`count(*) filter (where ${reservations.status} in ('PENDING_PAYMENT', 'FAILED'))::int`,
         upcomingConfirmed: sql<number>`count(*) filter (where ${reservations.status} = 'CONFIRMED')::int`,
       })
       .from(reservations)
@@ -983,7 +989,8 @@ export class AdminUserService {
       reservations: rows.map((row) => ({
         id: row.id,
         reservationNumber: row.reservationNumber,
-        status: row.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'CONFIRMED',
+        // A revivable FAILED row is a payment in flight, never a confirmed ticket.
+        status: row.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING_PAYMENT',
         showtimeAt: row.showtimeAt?.toISOString() ?? null,
       })),
     };

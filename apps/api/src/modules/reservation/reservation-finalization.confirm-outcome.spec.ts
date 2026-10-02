@@ -844,6 +844,79 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
       .rejects.toBe(rejection);
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
   });
+
+  it('keeps NOT_FOUND_PAYMENT (404, wrong secret key or MID scope) as the TossPaymentError (502 and Sentry)', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const warn = vi.spyOn(
+      (deps.service as never as { logger: { warn: (...args: unknown[]) => void } }).logger,
+      'warn',
+    );
+    const rejection = new TossPaymentError('NOT_FOUND_PAYMENT', '존재하지 않는 결제 정보 입니다.', 404);
+    deps.tossClient.confirmPayment.mockRejectedValue(rejection);
+    // The same wrong key scope fails the lookup too.
+    deps.tossClient.queryPayment.mockRejectedValue(
+      new TossPaymentError('NOT_FOUND_PAYMENT', '존재하지 않는 결제 정보 입니다.', 404),
+    );
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBe(rejection);
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Definite Toss confirm rejection'));
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['REJECT_CARD_COMPANY', 403],
+    ['NOT_FOUND_PAYMENT_SESSION', 404],
+  ])('returns the buyer rejection %s as a 400 and logs the conversion as a warning', async (code, status) => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const warn = vi.spyOn(
+      (deps.service as never as { logger: { warn: (...args: unknown[]) => void } }).logger,
+      'warn',
+    );
+    const rejection = new TossPaymentError(code, '결제 거절', status);
+    deps.tossClient.confirmPayment.mockRejectedValue(rejection);
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({ status: 'IN_PROGRESS' }));
+
+    const error = await deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1')
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toEqual({ message: '결제 거절', code });
+    expect(warn).toHaveBeenCalledWith(
+      `Definite Toss confirm rejection returned to buyer. code=${code}, orderId=order-1, httpStatus=${status}`,
+    );
+  });
+
+  it('logs the conversion when a provider-proven ABORTED payment answers a definite rejection', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const warn = vi.spyOn(
+      (deps.service as never as { logger: { warn: (...args: unknown[]) => void } }).logger,
+      'warn',
+    );
+    deps.tossClient.confirmPayment.mockRejectedValue(
+      new TossPaymentError('REJECT_CARD_COMPANY', '카드사 거절', 403),
+    );
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({ status: 'ABORTED', approvedAt: null }));
+    const tx = {
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          onConflictDoNothing: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 'payment-aborted-1' }]),
+          }),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      })),
+    };
+    deps.db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(warn).toHaveBeenCalledWith(
+      'Definite Toss confirm rejection returned to buyer. code=REJECT_CARD_COMPANY, orderId=order-1, httpStatus=403',
+    );
+  });
 });
 
 describe('ReservationFinalizationService transient DB failure after approval (#17)', () => {
@@ -1910,6 +1983,39 @@ describe('ReservationFinalizationService claimed compensation of a new approval 
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
     expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
       payload: expect.objectContaining({ reason: 'compensation_cancel_pending' }),
+    })]);
+  });
+
+  it('still schedules the reconcile job when the claim row cannot be written and the provider cancel completes', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+    const insert = deps.db.insert.getMockImplementation()!;
+    deps.db.insert.mockImplementation((table: unknown) => {
+      if (table === payments) {
+        return {
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => Promise.reject(new Error('Connection terminated')),
+            }),
+          }),
+        };
+      }
+      return insert(table);
+    });
+    // The default cancel response: CANCELED with a completed cancel.
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    // Nothing local records this cancel; the job records it from the provider
+    // state so the order does not stay PENDING_PAYMENT.
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({
+        reason: 'compensation_cancelled_unrecorded',
+        orderId: 'order-1',
+        paymentKey: 'payment-key-1',
+      }),
     })]);
   });
 

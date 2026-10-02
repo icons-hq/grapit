@@ -6,13 +6,26 @@ import {
   tossWebhookSchema,
 } from './payment-webhook.controller.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
-import type {
-  AsyncPaymentProgressSnapshot,
+import {
   PaymentService,
-  TossWebhookRecordResult,
-  TossWebhookRequestBody,
+  type AsyncPaymentProgressSnapshot,
+  type TossWebhookRecordResult,
+  type TossWebhookRequestBody,
 } from './payment.service.js';
 import type { TossPaymentsClient, TossPaymentResponse } from './toss-payments.client.js';
+
+/**
+ * The provider and method PaymentService stores a webhook payment with (and
+ * later refunds and compensation-cancels it under). Pure prototype helpers.
+ */
+function resolveStoredWebhookMethod(webhook: TossWebhookRequestBody) {
+  const service = PaymentService.prototype as unknown as {
+    resolveWebhookProvider: (payload: TossWebhookRequestBody) => string;
+    resolveWebhookMethod: (payload: TossWebhookRequestBody, provider: string) => string;
+  };
+  const provider = service.resolveWebhookProvider(webhook);
+  return { provider, method: service.resolveWebhookMethod(webhook, provider) };
+}
 
 function createMockPaymentService() {
   return {
@@ -813,6 +826,87 @@ describe('PaymentWebhookController', () => {
       'DONE',
       'payment_status_changed:done',
     );
+  });
+
+  it('drops a callback ALIPAY wallet when the provider lookup reports a domestic card (pay-server-3)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '카드',
+      currency: 'KRW',
+    }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY',
+        easyPay: 'ALIPAY',
+      },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data.method).toBe('카드');
+    expect(webhook.data.provider).toBeUndefined();
+    expect(webhook.data.easyPay).toBeUndefined();
+    expect(webhook.providerVerified).toEqual({ method: '카드', easyPayProvider: null });
+    // Stored (and refunded or compensation-cancelled) as a domestic card, not
+    // as ALIPAY_PLUS/FOREIGN_EASY_PAY under the foreign easy pay scope.
+    expect(resolveStoredWebhookMethod(webhook)).toEqual({ provider: 'CARD', method: 'CARD' });
+  });
+
+  it('keeps the verified Alipay wallet when the provider lookup reports foreign easy pay (pay-server-3)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '해외간편결제',
+      easyPay: { provider: '알리페이' },
+    }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({ method: '해외간편결제', provider: 'ALIPAY', easyPay: '알리페이' });
+    expect(resolveStoredWebhookMethod(webhook)).toEqual({
+      provider: 'ALIPAY_PLUS',
+      method: 'FOREIGN_EASY_PAY',
+    });
+  });
+
+  it('keeps the callback wallet for a foreign easy pay lookup whose wallet it does not recognize', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ method: 'FOREIGN_EASY_PAY' }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({ provider: 'ALIPAY', easyPay: 'ALIPAY' });
+  });
+
+  it('falls back to the callback wallet only when the provider lookup reports no method', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ method: undefined }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY',
+      easyPay: 'ALIPAY',
+    });
   });
 
   it('acknowledges an out-of-order DONE webhook after the provider already moved to CANCELED', async () => {

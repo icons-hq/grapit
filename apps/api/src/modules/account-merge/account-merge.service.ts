@@ -12,6 +12,11 @@ import {
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  LATE_DONE_REVIVE_WINDOW_HOURS,
+  alipayFamilyReservationSql,
+  lateDoneRevivableFailedReservationSql,
+} from '../../database/late-done-revivable-reservation.js';
+import {
   accountMergeBatches,
   accountMergeRowChanges,
   consentAuditLogs,
@@ -126,8 +131,11 @@ const ACCOUNT_MERGE_LIVE_CHECKOUT_WINDOW_HOURS = 1;
  * How long after its last change a PENDING_PAYMENT checkout or a failed
  * Alipay-family payment still counts as able to settle. Older rows of those
  * kinds are stale and move with the merge like any other non-confirmed row.
+ * The failed Alipay-family part is the shared late DONE revive window
+ * (database/late-done-revivable-reservation.ts), also used by member
+ * withdrawal; this name stays as its alias.
  */
-export const ACCOUNT_MERGE_PAYMENT_SETTLE_WINDOW_HOURS = 24;
+export const ACCOUNT_MERGE_PAYMENT_SETTLE_WINDOW_HOURS = LATE_DONE_REVIVE_WINDOW_HOURS;
 
 /** Server-side identity of the connected database, printed by every CLI mode. */
 export interface AccountMergeDatabaseIdentity {
@@ -418,7 +426,7 @@ export class AccountMergeService {
               or (
                 r.status = 'FAILED'
                 and r.updated_at > now() - make_interval(hours => ${ACCOUNT_MERGE_LIVE_CHECKOUT_WINDOW_HOURS})
-                and ${alipayFamilyReservationSql()}
+                and ${alipayFamilyReservationSql('r')}
               )
           ) as "activeCheckoutReservations",
           (
@@ -1104,23 +1112,6 @@ function normalizeCandidateRow(row: CandidateRow): CandidateRow {
 }
 
 /**
- * True for an Alipay-family payment attempt. `r` aliases reservations. Late
- * provider DONE recovery (payment.service canRecoverLateDoneReservation) is
- * limited to these payments.
- */
-function alipayFamilyReservationSql(): SQL {
-  return sql`(
-    upper(coalesce(r.checkout_payment_method ->> 'provider', '')) in ('ALIPAY', 'ALIPAY_PLUS')
-    or exists (
-      select 1
-      from payments pay
-      where pay.reservation_id = r.id
-        and upper(pay.provider) in ('ALIPAY', 'ALIPAY_PLUS')
-    )
-  )`;
-}
-
-/**
  * A reservation whose payment can still change state after a merge (audit
  * #104). `r` aliases reservations. Shared by dry-run classification and the
  * in-transaction revalidation so both see the same groups.
@@ -1131,7 +1122,8 @@ function alipayFamilyReservationSql(): SQL {
  *    at any age: that buyer was or will be charged, so the reservation must
  *    be settled before its owner changes.
  *  - FAILED Alipay-family payments changed within the settle window: a late
- *    DONE webhook can still revive them to CONFIRMED.
+ *    DONE webhook can still revive them to CONFIRMED (the shared
+ *    lateDoneRevivableFailedReservationSql, also a withdrawal blocker).
  * Older PENDING_PAYMENT/FAILED rows are stale and move like any other
  * non-confirmed reservation.
  */
@@ -1150,11 +1142,7 @@ function paymentInFlightReservationSql(): SQL {
         )
       )
     )
-    or (
-      r.status = 'FAILED'
-      and r.updated_at > now() - make_interval(hours => ${ACCOUNT_MERGE_PAYMENT_SETTLE_WINDOW_HOURS})
-      and ${alipayFamilyReservationSql()}
-    )
+    or ${lateDoneRevivableFailedReservationSql('r')}
   )`;
 }
 
