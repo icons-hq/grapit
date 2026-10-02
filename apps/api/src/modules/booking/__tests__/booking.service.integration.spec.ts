@@ -36,7 +36,13 @@ import {
  * Lua script execute at all on Valkey 8 and produce the expected Redis state".
  */
 
-function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingService {
+function createBookingService(
+  redis: IORedis,
+  maxTicketsPerUser = 1,
+  // Seat keys of this user's orders still awaiting payment in the showtime
+  // (the reservations ⋈ reservation_seats read of unlock and lock-all).
+  pendingPaymentSeatKeys: string[] = [],
+): BookingService {
   const unavailableRows: Array<{ id: string; status: string }> = [];
   function queryRows<T>(rows: T[]) {
     return {
@@ -50,8 +56,11 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
       from: () => ({
         where: () => queryRows(unavailableRows),
         innerJoin: () => {
-          // One row type for both fixtures, so queryRows infers a single T.
-          const rows: Array<Record<string, unknown>> = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+          const selects = (field: string) => Object.prototype.hasOwnProperty.call(selection ?? {}, field);
+          // One row type for every fixture, so queryRows infers a single T.
+          const rows: Array<Record<string, unknown>> = selects('seatId')
+            ? pendingPaymentSeatKeys.map((pendingSeatKey) => ({ seatId: pendingSeatKey }))
+            : selects('seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
@@ -356,6 +365,31 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     const lockedSeats = await redis.smembers(lockedSeatsKey);
     expect(lockedSeats).not.toContain(runtimeSeatId);
+  });
+
+  it("lock-all from one session keeps the seats of the same user's order awaiting payment on another device", async () => {
+    // PC and phone use the same account. The phone prepared 1F:A-1 and is in
+    // Toss authentication; the PC session expired and sends lock-all.
+    const service = createBookingService(redis, 3, [seatKey]);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, otherSeatKey);
+    await service.lockSeat(userId, showtimeId, thirdSeatKey);
+
+    const { unlockedSeats } = await service.unlockAllSeats(userId, showtimeId);
+    expect([...unlockedSeats].sort()).toEqual([otherSeatKey, thirdSeatKey]);
+
+    expect(await redis.get(lockKey)).toBe(userId);
+    expect(await redis.smembers(userSeatsKey)).toEqual([runtimeSeatId]);
+    expect(await redis.smembers(lockedSeatsKey)).toEqual([runtimeSeatId]);
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(otherSeatKey)}`)).toBeNull();
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(thirdSeatKey)}`)).toBeNull();
+
+    // A single unlock of the seat being paid for is refused as well.
+    await expect(service.unlockSeat(userId, showtimeId, seatKey)).resolves.toBe(false);
+    expect(await redis.get(lockKey)).toBe(userId);
+
+    // The phone's payment confirm still owns its seat lock.
+    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatKey])).resolves.toBeUndefined();
   });
 
   it('unlock for non-owner returns 0 (no-op)', async () => {

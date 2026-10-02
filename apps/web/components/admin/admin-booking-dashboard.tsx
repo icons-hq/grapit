@@ -285,10 +285,14 @@ export function AdminBookingDashboard() {
           }
         },
         onError: (error) => {
-          // Only a server answer (ApiClientError carries its HTTP status) says what happened.
-          // A network failure may have reached the PG, so never present it as "not refunded".
+          // Only a server answer that says nothing happened (4xx, or 503: the PG could not be
+          // queried and nothing changed) is shown as is. A network failure or any other 5xx
+          // (an unhandled 500, a 502/504/524 from the proxy) may have come after the PG call, so
+          // it is reported as an unknown result, never as "not refunded". The modal stays open.
           toast.error(
-            hasServerStatus(error) && error.message
+            hasServerStatus(error)
+              && error.message
+              && (error.statusCode < 500 || error.statusCode === 503)
               ? error.message
               : REFUND_RESULT_UNKNOWN_MESSAGE,
           );

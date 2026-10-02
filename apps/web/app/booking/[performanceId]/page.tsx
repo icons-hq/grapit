@@ -158,10 +158,14 @@ export default function BookingRoute({
   // hold, where neither the owner nor anybody else can buy them. Only the
   // server's answer that the admission ended with no order awaiting payment
   // (accessEndedByServer) releases them: never the local clock, a rejoin click
-  // still waiting for its answer or a failed check, since unlock-all drops
-  // every lock of the showtime, including the seats of an order still payable
-  // in recovery. No seat screen opens while the release is in flight, so it
-  // cannot land after the next admission's seat locks and erase them.
+  // still waiting for its answer or a failed check. Seat locks belong to the
+  // account, not to this tab: unlock-all would also drop seats another device
+  // of the same account holds. The server keeps seats of the account's orders
+  // still awaiting payment, and this route only sends the release when this
+  // tab itself selected seats (the account-wide my-locks cache includes other
+  // devices' seats, so it is not a reason to release). No seat screen opens
+  // while the release is in flight, so it cannot land after the next
+  // admission's seat locks and erase them.
   const {
     mutate: releaseShowtimeSeats,
     isPending: releasingSeats,
@@ -186,8 +190,8 @@ export default function BookingRoute({
     }
 
     seatScreenShownRef.current = false;
-    const { selectedShowtimeId } = useBookingStore.getState();
-    if (selectedShowtimeId) {
+    const { selectedShowtimeId, selectedSeats } = useBookingStore.getState();
+    if (selectedShowtimeId && selectedSeats.length > 0) {
       releaseShowtimeSeats({ showtimeId: selectedShowtimeId });
     }
     useBookingStore.getState().clearSeats();

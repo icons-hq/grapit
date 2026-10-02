@@ -114,6 +114,18 @@ function admittedQueue(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A seat this tab itself selected (and locked) on the seat screen. */
+const SELECTED_SEAT = {
+  seatId: 'A-1',
+  tierName: 'VIP',
+  price: 110_000,
+  row: 'A',
+  number: '1',
+  floorKey: '1F',
+  floorLabel: '1층',
+  seatKey: '1F:A-1',
+};
+
 function renderBookingRoute() {
   return render(
     <Suspense fallback={<div>loading params</div>}>
@@ -200,7 +212,7 @@ describe('BookingRoute queue access window (audit #32)', () => {
 
   it('releases the seats of the showtime once the queue reports the admission ended', () => {
     vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
-    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue', selectedSeats: [SELECTED_SEAT] });
     const view = renderBookingRoute();
     expect(unlockAllMock).not.toHaveBeenCalled();
 
@@ -216,13 +228,35 @@ describe('BookingRoute queue access window (audit #32)', () => {
     expect(screen.getByText('queue expired')).toBeInTheDocument();
     expect(unlockAllMock).toHaveBeenCalledTimes(1);
     expect(unlockAllMock).toHaveBeenCalledWith({ showtimeId: 'showtime-queue' });
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+  });
+
+  it('sends no unlock-all when this tab selected no seats (another device of the account may hold some)', () => {
+    // PC and phone use the same account. The phone holds seats (possibly in
+    // Toss authentication); the PC session ends without a selection of its own.
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue', selectedSeats: [] });
+    const view = renderBookingRoute();
+
+    useQueueMock.mockReturnValue(
+      admittedQueue({ status: 'expired', isReady: false, accessEndedByServer: true }),
+    );
+    view.rerender(
+      <Suspense fallback={<div>loading params</div>}>
+        <BookingRoute params={fulfilledParams({ performanceId: 'performance-queue' })} />
+      </Suspense>,
+    );
+
+    expect(screen.getByText('queue expired')).toBeInTheDocument();
+    expect(unlockAllMock).not.toHaveBeenCalled();
+    expect(useBookingStore.getState().selectedShowtimeId).toBe('showtime-queue');
   });
 
   it('keeps the seats while the queue has no server answer on the ended admission', () => {
     // A rejoin click (or a failed check) leaves the seat screen before the
     // server said whether an order still awaits payment.
     vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
-    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue', selectedSeats: [SELECTED_SEAT] });
     const view = renderBookingRoute();
     const rerender = () =>
       view.rerender(
@@ -257,7 +291,7 @@ describe('BookingRoute queue access window (audit #32)', () => {
 
   it('holds the next seat screen until the release of the ended admission lands', () => {
     vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
-    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue', selectedSeats: [SELECTED_SEAT] });
     const view = renderBookingRoute();
     const rerender = () =>
       view.rerender(

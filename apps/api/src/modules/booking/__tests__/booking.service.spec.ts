@@ -637,6 +637,11 @@ describe('BookingService', () => {
   });
 
   describe('unlockSeat', () => {
+    beforeEach(() => {
+      // No order of this user awaits payment in the showtime.
+      mockDb.select.mockReturnValue(chainResult([]));
+    });
+
     it('returns true when Lua script confirms ownership and deletes lock', async () => {
       mockRedis.eval.mockResolvedValue(1);
 
@@ -693,9 +698,41 @@ describe('BookingService', () => {
         'available',
       );
     });
+
+    it("keeps a seat of the user's order still awaiting payment (another device may be paying)", async () => {
+      mockDb.select.mockReturnValue(chainResult([{ seatId: '1F:A-1' }]));
+      mockRedis.eval.mockResolvedValue(1);
+
+      await expect(service.unlockSeat(userId, showtimeId, 'A-1')).resolves.toBe(false);
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it('still releases a seat outside the pending order', async () => {
+      mockDb.select.mockReturnValue(chainResult([{ seatId: '1F:A-2' }]));
+      mockRedis.eval.mockResolvedValue(1);
+
+      await expect(service.unlockSeat(userId, showtimeId, 'A-1')).resolves.toBe(true);
+      expect(mockRedis.eval).toHaveBeenCalledOnce();
+    });
+
+    it('releases nothing when the pending order read fails (fail closed, TTL expires the lock)', async () => {
+      mockDb.select.mockImplementation(() => {
+        throw new Error('connection terminated');
+      });
+
+      await expect(service.unlockSeat(userId, showtimeId, 'A-1')).rejects.toThrow('connection terminated');
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+    });
   });
 
   describe('unlockAllSeats', () => {
+    beforeEach(() => {
+      // No order of this user awaits payment in the showtime.
+      mockDb.select.mockReturnValue(chainResult([]));
+    });
+
     it('unlocks owned seats atomically without deleting a newer user selection', async () => {
       mockRedis.smembers.mockResolvedValue(['A-1', 'A-2']);
       mockRedis.eval.mockResolvedValue(1);
@@ -716,6 +753,40 @@ describe('BookingService', () => {
       mockRedis.smembers.mockResolvedValue([]);
       expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: [] });
       expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockDb.select).not.toHaveBeenCalled();
+    });
+
+    it("keeps the seats of the user's order awaiting payment on another device and releases the rest", async () => {
+      // PC session expired and sends lock-all while the phone (same account)
+      // prepared 1F:A-1 and is in Toss authentication.
+      mockRedis.smembers.mockResolvedValue([
+        encodeSeatRuntimeId('1F:A-1'),
+        encodeSeatRuntimeId('1F:A-2'),
+        'A-3',
+      ]);
+      mockDb.select.mockReturnValue(chainResult([{ seatId: '1F:A-1' }, { seatId: '1F:A-3' }]));
+      mockRedis.eval.mockResolvedValue(1);
+
+      expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: ['1F:A-2'] });
+
+      expect(mockRedis.eval).toHaveBeenCalledOnce();
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      expect(callArgs[2]).toBe(`{${showtimeId}}:seat:${encodeSeatRuntimeId('1F:A-2')}`);
+      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledOnce();
+      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, '1F:A-2', 'available');
+      // One pending-order read for the whole release, not one per seat.
+      expect(mockDb.select).toHaveBeenCalledOnce();
+    });
+
+    it('releases nothing when the pending order read fails (fail closed)', async () => {
+      mockRedis.smembers.mockResolvedValue([encodeSeatRuntimeId('1F:A-1')]);
+      mockDb.select.mockImplementation(() => {
+        throw new Error('connection terminated');
+      });
+
+      await expect(service.unlockAllSeats(userId, showtimeId)).rejects.toThrow('connection terminated');
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
   });
 
@@ -1376,6 +1447,7 @@ describe('BookingService', () => {
         vi.setSystemTime(changedAt);
         try {
           mockRedis.eval.mockResolvedValue(1); // UNLOCK_SEAT_LUA: caller owned the lock
+          mockDb.select.mockReturnValue(chainResult([])); // no order awaiting payment
           await expect(service.unlockSeat(userId, showtimeId, '1F:A-1')).resolves.toBe(true);
 
           // Read up to SEAT_STATUS_CLOCK_SKEW_MS "after" the change by another

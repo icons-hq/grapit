@@ -82,7 +82,8 @@
 
 .grabit-admin .admin-booking-workspace .admin-stat-card { min-height: 96px; }
 
-.grabit-admin.admin-booking-dialog { width: min(840px, calc(100vw - 32px)); max-width: none; max-height: 90dvh; background: #fff; }
+/* The single grid track must not grow to the min-content of a nowrap table: wide tables scroll inside their own container. */
+.grabit-admin.admin-booking-dialog { width: min(840px, calc(100vw - 32px)); max-width: none; max-height: 90dvh; background: #fff; grid-template-columns: minmax(0, 1fr); }
 
 .grabit-admin .admin-audit-table td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
 .grabit-admin .admin-audit-table code { overflow-wrap: anywhere; }

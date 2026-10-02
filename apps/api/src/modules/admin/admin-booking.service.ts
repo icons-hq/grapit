@@ -274,6 +274,37 @@ function adminBookingAggregateCacheKey(filters: AdminBookingQueryParams): string
   return `${ADMIN_BOOKING_AGGREGATE_CACHE_PREFIX}${digest}`;
 }
 
+/**
+ * Non-personal filter dimensions of an admin booking read for the timeout log, as `key=value`
+ * pairs (`all` for an unset filter). The free-text search and seat query are personal or
+ * operator-typed input, so only whether they were set is logged; dates likewise.
+ */
+function describeAdminBookingReadScope(filters: AdminBookingQueryParams): string {
+  const logValue = (value: string | undefined): string => {
+    const trimmed = value?.trim();
+    if (!trimmed) return 'all';
+    const bounded = trimmed.slice(0, 80);
+    // Single token per value, so one log line cannot be split or forged by a filter value.
+    return /^[\w:.-]+$/.test(bounded) ? bounded : JSON.stringify(bounded);
+  };
+  const isSet = (value: string | undefined): boolean => Boolean(value?.trim());
+  return [
+    `performanceId=${logValue(filters.performanceId)}`,
+    `showtimeId=${logValue(filters.showtimeId)}`,
+    `reservationStatus=${logValue(filters.reservationStatus ?? filters.status)}`,
+    `funnelStatus=${logValue(filters.funnelStatus)}`,
+    `paymentStatus=${logValue(filters.paymentStatus)}`,
+    `paymentMethod=${logValue(filters.paymentMethod)}`,
+    `audienceRegion=${logValue(filters.audienceRegion)}`,
+    `seatTier=${logValue(filters.seatTier)}`,
+    `floorKey=${logValue(filters.floorKey)}`,
+    `hasDateFrom=${isSet(filters.dateFrom)}`,
+    `hasDateTo=${isSet(filters.dateTo)}`,
+    `hasSearch=${isSet(filters.search)}`,
+    `hasSeatQuery=${isSet(filters.seatQuery)}`,
+  ].join(' ');
+}
+
 function isAdminBookingAggregates(value: unknown): value is AdminBookingAggregates {
   if (!value || typeof value !== 'object') {
     return false;
@@ -1201,7 +1232,12 @@ export class AdminBookingService {
 
     const result = await this.runBoundedAdminRead(
       (db) => this.readBookingsPage(db, params, whereClause, cachedAggregates),
-      { aggregateCacheKey, page: params.page ?? 1, aggregatesCached: Boolean(cachedAggregates) },
+      {
+        aggregateCacheKey,
+        page: params.page ?? 1,
+        aggregatesCached: Boolean(cachedAggregates),
+        filters: describeAdminBookingReadScope(params),
+      },
     );
 
     if (!cachedAggregates) {
@@ -1418,7 +1454,7 @@ export class AdminBookingService {
    */
   private async runBoundedAdminRead<T>(
     run: (db: AdminReadDb) => Promise<T>,
-    scope: { aggregateCacheKey: string; page: number; aggregatesCached: boolean },
+    scope: { aggregateCacheKey: string; page: number; aggregatesCached: boolean; filters: string },
   ): Promise<T> {
     const startedAt = Date.now();
     try {
@@ -1430,10 +1466,13 @@ export class AdminBookingService {
       }, { accessMode: 'read only' });
     } catch (error) {
       if (isPostgresQueryCanceled(error)) {
-        // Evidence for which scopes exceed the budget during an open. The cache key is the hashed filter
-        // set (never the raw search text), so repeated timeouts of one scope can be counted.
+        // Evidence for which scopes exceed the budget during an open: the performance, showtime and
+        // other filter dimensions say which range it was, and the cache key (the hashed full filter
+        // set) separates scopes that differ only by search text. Raw search and seat query text are
+        // never logged.
         this.logger.warn(
           `Admin booking read hit statement_timeout=${ADMIN_BOOKING_QUERY_TIMEOUT_MS}ms after ${Date.now() - startedAt}ms `
+          + `${scope.filters} `
           + `aggregateKey=${scope.aggregateCacheKey} page=${scope.page} aggregatesCached=${scope.aggregatesCached}`,
         );
         throw new ServiceUnavailableException(

@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, isNull } from 'drizzle-orm';
+import { eq, and, or, isNull, gte } from 'drizzle-orm';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -16,6 +16,8 @@ import { bookingPolicies } from '../../database/schema/booking-policies.js';
 import { performances } from '../../database/schema/performances.js';
 import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
+import { reservations } from '../../database/schema/reservations.js';
+import { reservationSeats } from '../../database/schema/reservation-seats.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
@@ -688,10 +690,58 @@ export class BookingService {
   }
 
   /**
-   * Releases a seat lock only if the caller is the owner.
-   * Removes from both user-seats and locked-seats Redis sets.
+   * Runtime seat ids of the caller's orders in this showtime that payment
+   * confirm can still accept: PENDING_PAYMENT before
+   * max(payment_deadline_at, admission_active_until_at), the rule the queue's
+   * findRecoveryOrderId uses. Seat locks belong to the user, not to a browser
+   * session, so another device of the same account may be paying for these
+   * seats right now; lock-all and single unlock leave them alone (confirm
+   * needs the lock). A failed read propagates and nothing is released (fail
+   * closed): the locks still expire with their TTL.
+   */
+  private async findPendingPaymentRuntimeSeatIds(
+    userId: string,
+    showtimeId: string,
+  ): Promise<Set<string>> {
+    const now = new Date();
+    const rows = await this.db
+      .select({ seatId: reservationSeats.seatId })
+      .from(reservations)
+      .innerJoin(reservationSeats, eq(reservationSeats.reservationId, reservations.id))
+      .where(
+        and(
+          eq(reservations.userId, userId),
+          eq(reservations.showtimeId, showtimeId),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          or(
+            gte(reservations.paymentDeadlineAt, now),
+            gte(reservations.admissionActiveUntilAt, now),
+          ),
+        ),
+      );
+
+    return new Set(rows.map((row) => parseRuntimeSeatIdentity(row.seatId).runtimeSeatId));
+  }
+
+  /**
+   * Releases a seat lock only if the caller is the owner and the seat is not
+   * in one of the caller's orders still awaiting payment (see
+   * findPendingPaymentRuntimeSeatIds). Returns false when nothing was released.
    */
   async unlockSeat(userId: string, showtimeId: string, seatId: string): Promise<boolean> {
+    const runtimeSeatId = parseRuntimeSeatIdentity(seatId).runtimeSeatId;
+    const pendingPaymentSeatIds = await this.findPendingPaymentRuntimeSeatIds(userId, showtimeId);
+    if (pendingPaymentSeatIds.has(runtimeSeatId)) {
+      return false;
+    }
+    return this.unlockOwnedSeat(userId, showtimeId, seatId);
+  }
+
+  /**
+   * Releases a seat lock only if the caller is the owner. Removes from both
+   * user-seats and locked-seats Redis sets. Callers check pending payment seats.
+   */
+  private async unlockOwnedSeat(userId: string, showtimeId: string, seatId: string): Promise<boolean> {
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
     const lockKey = `{${showtimeId}}:seat:${seatIdentity.runtimeSeatId}`;
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
@@ -716,13 +766,25 @@ export class BookingService {
     return true;
   }
 
-  /** Releases the current selection using the same atomic owner check as a single unlock. */
+  /**
+   * Releases the caller's seat locks in a showtime using the same atomic owner
+   * check as a single unlock. The set is per user, not per browser session, so
+   * seats of the caller's orders still awaiting payment (possibly on another
+   * device) are kept and left out of unlockedSeats.
+   */
   async unlockAllSeats(userId: string, showtimeId: string): Promise<UnlockAllResponse> {
     const members = await this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`);
     const unlockedSeats: string[] = [];
+    if (members.length === 0) {
+      return { unlockedSeats };
+    }
+    const pendingPaymentSeatIds = await this.findPendingPaymentRuntimeSeatIds(userId, showtimeId);
     for (const runtimeSeatId of members) {
       const seatId = decodeRuntimeSeatId(runtimeSeatId);
-      if (await this.unlockSeat(userId, showtimeId, seatId)) {
+      if (pendingPaymentSeatIds.has(parseRuntimeSeatIdentity(seatId).runtimeSeatId)) {
+        continue;
+      }
+      if (await this.unlockOwnedSeat(userId, showtimeId, seatId)) {
         unlockedSeats.push(seatId);
       }
     }

@@ -2776,6 +2776,45 @@ describe('AdminBookingService', () => {
       expect(message).not.toContain('01055551234');
     });
 
+    it('logs which performance, showtime and filter dimensions timed out, never the search or seat query text', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+      const performanceId = '11111111-1111-4111-8111-000000000301';
+      const showtimeId = '22222222-2222-4222-8222-000000000401';
+
+      await expect(service.getBookings({
+        performanceId,
+        showtimeId,
+        funnelStatus: 'SOLD',
+        paymentMethod: 'CARD',
+        seatTier: 'R석',
+        floorKey: '2F',
+        search: 'buyer@example.com',
+        seatQuery: 'A-17',
+        dateFrom: '2026-10-01',
+      })).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      const message = String(warnSpy.mock.calls[0]?.[0]);
+      expect(message).toContain(`performanceId=${performanceId}`);
+      expect(message).toContain(`showtimeId=${showtimeId}`);
+      expect(message).toContain('reservationStatus=all');
+      expect(message).toContain('funnelStatus=SOLD');
+      expect(message).toContain('paymentStatus=all');
+      expect(message).toContain('paymentMethod=CARD');
+      expect(message).toContain('seatTier="R석"');
+      expect(message).toContain('floorKey=2F');
+      expect(message).toContain('hasDateFrom=true');
+      expect(message).toContain('hasDateTo=false');
+      expect(message).toContain('hasSearch=true');
+      expect(message).toContain('hasSeatQuery=true');
+      expect(message).not.toContain('buyer@example.com');
+      expect(message).not.toContain('A-17');
+      expect(message).not.toContain('2026-10-01');
+    });
+
     it('reuses cached stats and tier stats across pages of the same filter instead of re-aggregating', async () => {
       const cache = createMockCache();
       const cachedService = new AdminBookingService(
