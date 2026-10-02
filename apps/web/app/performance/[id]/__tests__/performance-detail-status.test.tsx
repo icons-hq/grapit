@@ -2,6 +2,10 @@ import { Suspense } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import type { PerformanceWithDetails } from '@grabit/shared';
+import {
+  recordServerTimeSample,
+  resetServerClockForTests,
+} from '@/lib/server-clock';
 import PerformanceDetailPage from '../page';
 
 const localeMock = vi.hoisted(() => ({ activeLocale: 'ko' }));
@@ -98,6 +102,7 @@ describe('PerformanceDetailPage sale status display', () => {
   });
 
   afterEach(() => {
+    resetServerClockForTests();
     vi.useRealTimers();
   });
 
@@ -134,11 +139,27 @@ describe('PerformanceDetailPage sale status display', () => {
       vi.advanceTimersByTime(0);
     });
 
-    // The CTA clock belongs to useBookingAvailability (#35 stale-clock fix is owned by
-    // the booking-time unit). Whatever it decides, badge and schedule must agree with it.
+    // The CTA verdict belongs to useBookingAvailability (server clock, #35/#97).
+    // Whatever it decides, badge and schedule must agree with it.
     const ctaOpen = screen.queryAllByRole('link', { name: '예매하기' }).length > 0;
     expect(screen.queryByLabelText('상태: 오픈예정') === null).toBe(ctaOpen);
     expect(screen.queryByText(/KST$/) !== null).toBe(ctaOpen);
+  });
+
+  it('follows the server-clock verdict of the booking CTA when the device clock is slow', () => {
+    // Device clock reads one minute before the start; the server is 30 seconds past it.
+    recordServerTimeSample({
+      serverNowMs: Date.parse(OPEN) + 30_000,
+      requestStartedAtMs: Date.now() - 50,
+      responseReceivedAtMs: Date.now() + 50,
+    });
+    detailMock.performance = performance({ status: 'upcoming', bookingStartsAt: OPEN });
+    renderDetail();
+
+    expect(screen.getAllByRole('link', { name: '예매하기' })).not.toHaveLength(0);
+    expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
+    expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
+    expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
   });
 
   it('keeps a selling performance with a future booking start in the upcoming state', () => {

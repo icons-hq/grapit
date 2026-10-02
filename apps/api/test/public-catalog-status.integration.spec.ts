@@ -6,7 +6,9 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
+import { CacheService } from '../src/modules/performance/cache.service.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
+import type { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { PerformanceController } from '../src/modules/performance/performance.controller.js';
 import { SearchService } from '../src/modules/search/search.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
@@ -54,8 +56,13 @@ describe('Public catalog sale status — PostgreSQL', () => {
         await db.insert(schema.bookingPolicies).values({ performanceId: event!.id, bookingStartsAt: row.startsAt });
       }
     }
-    const cache = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
-    const catalog = new PerformanceService(db, cache as never);
+    // Real CacheService over an always-missing Redis double: every read loads
+    // from PostgreSQL and the TTL each loader chose is captured on set.
+    const redis = { get: vi.fn().mockResolvedValue(null), set: vi.fn().mockResolvedValue('OK'), del: vi.fn() };
+    const cache = new CacheService(redis as never);
+    vi.spyOn(cache, 'set');
+    const viewCounter = { record: vi.fn() } as unknown as PerformanceViewCounter;
+    const catalog = new PerformanceService(db, cache, viewCounter);
     const list = (status: 'selling' | 'upcoming' | 'ended') => catalog.findByGenre('artist_celebrity',
       { page: 1, limit: 20, sort: 'latest', ended: true, sub: category, status });
 
@@ -64,7 +71,7 @@ describe('Public catalog sale status — PostgreSQL', () => {
       [ids.sellingOpen, ids.sellingNoPolicy, ids.upcomingOpened].sort());
     expect(selling.data.every((card) => card.status === 'selling')).toBe(true);
     // The on-sale page must expire when the selling row waiting for its start opens, not at the default TTL.
-    const sellingTtl = cache.set.mock.calls.at(-1)?.[2] as number;
+    const sellingTtl = vi.mocked(cache.set).mock.calls.at(-1)?.[2] as number;
     expect(sellingTtl).toBeGreaterThan(0);
     expect(sellingTtl).toBeLessThanOrEqual(20);
 
@@ -81,7 +88,7 @@ describe('Public catalog sale status — PostgreSQL', () => {
     expect(hot.map((card) => card.id)).not.toContain(ids.closingBeforeStart);
     expect(hot.every((card) => card.status === 'selling')).toBe(true);
     // The most viewed row opens in 20s; the hot list must expire then, not after the default TTL.
-    const hotTtl = cache.set.mock.calls.at(-1)?.[2] as number;
+    const hotTtl = vi.mocked(cache.set).mock.calls.at(-1)?.[2] as number;
     expect(hotTtl).toBeGreaterThan(0);
     expect(hotTtl).toBeLessThanOrEqual(20);
 

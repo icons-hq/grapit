@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne, or, lte, gt, isNull } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray, ne, or, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,

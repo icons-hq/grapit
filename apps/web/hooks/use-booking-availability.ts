@@ -61,8 +61,11 @@ export function useBookingAvailability(options: {
     isAdmin,
     bookingAvailable,
     bookingOpen,
-    /** The clock bookingOpen was evaluated with; status displays must use the same instant. */
-    nowMs,
+    /**
+     * The server-clock verdict bookingOpen was evaluated with. Status displays
+     * (badge, schedule) must derive from it so they flip with the booking CTA.
+     */
+    isBeforeScheduledBookingStart,
     verificationRequiredForBooking: verificationRequired,
     isAdminBookingBypassActive:
       !verificationRequired &&

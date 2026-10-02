@@ -24,7 +24,7 @@ import {
 } from '@/components/performance/status-badge';
 import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
-import { resolveTimeAwarePerformanceStatus } from '@/components/performance/performance-display-status';
+import { resolveBookingStartPerformanceStatus } from '@/components/performance/performance-display-status';
 import { PerformancePeriod } from '@/components/performance/performance-period';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
@@ -72,7 +72,7 @@ export default function PerformanceDetailPage({
     verificationRequiredForBooking,
     bookingDisabledMessage,
     bookingEnabled,
-    nowMs,
+    isBeforeScheduledBookingStart,
   } = useBookingAvailability({
     performanceStatus: performance?.status,
     bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
@@ -104,11 +104,12 @@ export default function PerformanceDetailPage({
 
   const showDescriptionSection = performance.descriptionVisible !== false;
   const showSalesSection = performance.salesInfoVisible !== false;
-  // Same clock as the booking CTA so the badge and schedule flip together at the booking start.
-  const saleStatus = resolveTimeAwarePerformanceStatus(
+  // Same server-clock verdict as the booking CTA so the badge and schedule flip
+  // together with it at the booking start, even on a skewed device clock.
+  const saleStatus = resolveBookingStartPerformanceStatus(
     performance.status,
     performance.bookingPolicy?.bookingStartsAt,
-    nowMs,
+    isBeforeScheduledBookingStart,
   );
   const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
 

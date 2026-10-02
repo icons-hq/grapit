@@ -31,10 +31,28 @@ export function resolveTimeAwarePerformanceStatus(
   bookingStartsAt: string | null | undefined,
   nowMs: number,
 ): PerformanceStatus {
-  if (status === 'ended') return status;
   const startsAtMs = parseBookingStartMs(bookingStartsAt);
-  if (startsAtMs === null) return status;
-  if (startsAtMs > nowMs) return 'upcoming';
+  return resolveBookingStartPerformanceStatus(
+    status,
+    bookingStartsAt,
+    startsAtMs !== null && startsAtMs > nowMs,
+  );
+}
+
+/**
+ * The same rule as resolveTimeAwarePerformanceStatus, driven by a verdict that
+ * was already taken (for example useBookingAvailability's server-clock
+ * `isBeforeScheduledBookingStart`), so a status display and the booking CTA
+ * that share the verdict cannot disagree when the device clock is off.
+ */
+export function resolveBookingStartPerformanceStatus(
+  status: PerformanceStatus,
+  bookingStartsAt: string | null | undefined,
+  isBeforeBookingStart: boolean,
+): PerformanceStatus {
+  if (status === 'ended') return status;
+  if (parseBookingStartMs(bookingStartsAt) === null) return status;
+  if (isBeforeBookingStart) return 'upcoming';
   return status === 'upcoming' ? 'selling' : status;
 }
 
@@ -112,7 +130,7 @@ export function getCatalogBookingStartRefetchDelay(
   cards: CatalogRefetchCards | undefined,
   fetchedAtMs: number,
   nowMs: number = Date.now(),
-  jitterMs: number = getClientRefetchJitterMs(),
+  jitterMs?: number,
 ): number | false {
   if (!cards?.length || !(fetchedAtMs > 0)) return false;
   const next = getNextBookingStartMs(
@@ -122,7 +140,9 @@ export function getCatalogBookingStartRefetchDelay(
     fetchedAtMs - CATALOG_BOOKING_START_REFETCH_GRACE_MS,
   );
   if (next === null) return false;
-  const refetchAtMs = next + CATALOG_BOOKING_START_REFETCH_GRACE_MS + jitterMs;
+  // The per-client jitter is drawn only once a refetch is actually scheduled.
+  const refetchAtMs =
+    next + CATALOG_BOOKING_START_REFETCH_GRACE_MS + (jitterMs ?? getClientRefetchJitterMs());
   // A target that already passed (for example a re-render after the tick was
   // missed) fires on the next tick rather than being dropped.
   return Math.min(Math.max(1, refetchAtMs - nowMs), MAX_TIMEOUT_MS);
