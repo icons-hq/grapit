@@ -10,6 +10,7 @@ import {
   useSeatStatus,
 } from '../use-booking';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { clearSeatUpdateEvents, recordSeatUpdateEvent } from '@/lib/booking/seat-event-overlay';
 
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 
@@ -49,6 +50,7 @@ describe('seat-status resync (audit #27, #8)', () => {
   });
 
   afterEach(() => {
+    clearSeatUpdateEvents();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -177,5 +179,41 @@ describe('seat-status resync (audit #27, #8)', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(result.current.data?.requestSeq).toBeGreaterThan(first);
+  });
+
+  it('does not let a cached seat-status snapshot undo a socket event applied meanwhile (u07 × w1a)', async () => {
+    const { Wrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useSeatStatus('showtime-1'), { wrapper: Wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.data?.seats).toEqual({});
+
+    // A poll goes out; the API answers from a snapshot read 900ms earlier.
+    let resolveSnapshot: (value: unknown) => void = () => undefined;
+    getMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+    const snapshotReadAt = Date.now() - 900;
+    await act(async () => {
+      void queryClient.invalidateQueries({ queryKey: ['seat-status', 'showtime-1'] });
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // While it is in flight another buyer locks A-1 (the socket handler).
+    act(() => {
+      recordSeatUpdateEvent('showtime-1', { seatId: 'A-1', status: 'locked' });
+      queryClient.setQueryData(['seat-status', 'showtime-1'], (old: { seats: Record<string, string> }) => ({
+        ...old,
+        seats: { ...old.seats, 'A-1': 'locked' },
+      }));
+    });
+
+    await act(async () => {
+      resolveSnapshot({ showtimeId: 'showtime-1', seats: {}, generatedAt: snapshotReadAt });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.data?.seats).toEqual({ 'A-1': 'locked' });
   });
 });

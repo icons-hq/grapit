@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import type { SeatUpdateEvent, SeatStatusResponse } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
 import { refetchAfterInFlight, SEAT_STATUS_RECONNECT_JITTER_MS } from '@/lib/booking/seat-resync';
+import { clearSeatUpdateEvents, recordSeatUpdateEvent } from '@/lib/booking/seat-event-overlay';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
@@ -103,6 +104,9 @@ export function useBookingSocket(showtimeId: string | null): void {
     });
 
     socket.on('seat-update', (data: SeatUpdateEvent) => {
+      // Kept briefly so a seat-status snapshot read before this event (the API
+      // serves one up to 1s old) does not undo it (useSeatStatus overlay).
+      recordSeatUpdateEvent(showtimeId, data);
       // Update React Query cache directly
       queryClient.setQueryData<SeatStatusResponse>(
         ['seat-status', showtimeId],
@@ -125,6 +129,7 @@ export function useBookingSocket(showtimeId: string | null): void {
 
     return () => {
       disposed = true;
+      clearSeatUpdateEvents(showtimeId);
       if (resyncTimer !== null) {
         clearTimeout(resyncTimer);
       }

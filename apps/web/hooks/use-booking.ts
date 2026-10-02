@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
 import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
 import { refetchAfterInFlight } from '@/lib/booking/seat-resync';
+import { overlayRecentSeatEvents } from '@/lib/booking/seat-event-overlay';
 import {
   CONFIRM_PAYMENT_MAX_RETRIES,
   getConfirmPaymentRetryDelayMs,
@@ -402,14 +403,20 @@ export function useSeatStatus(showtimeId: string | null) {
 
   return useQuery({
     queryKey: seatStatusQueryKey(showtimeId),
-    queryFn: () => {
+    queryFn: async () => {
       // Background resyncs must not toast every poll; only the first load does.
       const state = queryClient.getQueryState(seatStatusQueryKey(showtimeId));
       const isFirstLoad = !state || (state.dataUpdateCount === 0 && state.errorUpdateCount === 0);
-      return apiClient.get<SeatStatusResponse>(
+      const requestStartedAtMs = Date.now();
+      const response = await apiClient.get<SeatStatusResponse>(
         `/api/v1/booking/schedules/${showtimeId}/seats`,
         { showErrorToast: isFirstLoad },
       );
+      // The snapshot can predate seat-update events already applied from the
+      // socket (it is cached up to 1s, see generatedAt); keep those events.
+      return showtimeId
+        ? overlayRecentSeatEvents(showtimeId, response, { requestStartedAtMs })
+        : response;
     },
     enabled: !!showtimeId,
     staleTime: SEAT_STATUS_STALE_MS,
