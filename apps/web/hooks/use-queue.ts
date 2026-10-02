@@ -2,11 +2,52 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
 const WAITING_POLL_JITTER_MS = 5_000;
+// Fast enter responses (immediate admission) skip the queue surface; slower
+// ones show the loading surface instead of a blank screen.
+export const QUEUE_LOADING_SURFACE_DELAY_MS = 600;
+// Spread the automatic re-entry at the booking open time over a few seconds.
+export const QUEUE_OPEN_RETRY_JITTER_MS = 3_000;
+// Without a known open time, re-check entry at this interval (plus jitter);
+// well inside the 20/min queue-entry limit, so refreshing is never faster.
+export const QUEUE_OPEN_UNKNOWN_RETRY_MS = 15_000;
+// Re-check long pre-open waits so a moved open time is picked up.
+export const QUEUE_OPEN_MAX_WAIT_MS = 5 * 60_000;
+// The open time read from performance detail (before the 403 body carries it)
+// is reused only for this long.
+export const QUEUE_OPEN_TIME_CACHE_MS = 60_000;
+// The open time has passed but entry is still refused (moved open time or
+// clock skew): back off instead of retrying in a tight loop.
+export const QUEUE_OPEN_OVERDUE_RETRY_BASE_MS = 2_000;
+export const QUEUE_OPEN_OVERDUE_RETRY_MAX_MS = 60_000;
+// Automatic re-entry hitting 429/5xx/network errors keeps the not-open surface
+// and retries with these delays before falling back to the manual retry surface.
+export const QUEUE_OPEN_TRANSIENT_RETRY_DELAYS_MS = [2_000, 4_000, 8_000] as const;
+// After the booking screen is shown the queue socket is closed, so the
+// admission window end is confirmed with a single status request instead.
+export const QUEUE_ADMISSION_CHECK_GRACE_MS = 2_000;
+export const QUEUE_ADMISSION_RECHECK_MS = 15_000;
+
+const BOOKING_NOT_OPEN_ERROR_CODE = 'BOOKING_NOT_OPEN';
+const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
+const PERFORMANCE_NOT_FOUND_ERROR_CODE = 'PERFORMANCE_NOT_FOUND';
+const PERFORMANCE_NOT_FOUND_MESSAGE = '공연을 찾을 수 없습니다';
+const BOOKING_CLOSED_ERROR_CODES = new Set([
+  'BOOKING_ENDED',
+  'NO_BOOKABLE_SHOWTIME',
+  'PERFORMANCE_NOT_FOUND',
+]);
+const BOOKING_CLOSED_MESSAGES = new Set([
+  '판매가 종료된 공연입니다',
+  '이미 시작된 회차는 예매할 수 없습니다.',
+  '예매 가능한 회차가 없습니다.',
+  '공연을 찾을 수 없습니다',
+]);
 
 type QueueTransportState =
   | 'WAITING'
@@ -16,20 +57,29 @@ type QueueTransportState =
 
 export type QueueStatus =
   | 'loading'
+  | 'notOpen'
   | 'waiting'
   | 'admitted'
   | 'expired'
+  | 'closed'
   | 'authRequired'
   | 'retry'
   | 'challenge'
   | 'blocked';
+
+// Why the closed surface is shown: the performance does not exist (or the id
+// is malformed), or it exists but nothing can be booked now.
+export type QueueClosedReason = 'notFound' | 'unavailable';
 
 type QueueSnapshot = {
   queueSessionId: string;
   state: QueueTransportState;
   position: number;
   waitingCount: number;
+  // Upper bound of the wait; etaMinSeconds is the lower bound.
   etaSeconds: number;
+  etaMinSeconds?: number;
+  etaUnavailable?: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   admittedAt: string | null;
@@ -58,9 +108,14 @@ type UseQueueResult = {
   position: number;
   waitingCount: number;
   etaSeconds: number;
+  etaMinSeconds: number;
+  etaUnavailable: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   isReady: boolean;
+  isSlowLoading: boolean;
+  bookingOpensAt: number | null;
+  closedReason: QueueClosedReason | null;
   admittedAt: string | null;
   activeUntilAt: string | null;
   reentryGraceUntilAt: string | null;
@@ -74,6 +129,8 @@ const EMPTY_SNAPSHOT: QueueSnapshot = {
   position: 0,
   waitingCount: 0,
   etaSeconds: 0,
+  etaMinSeconds: 0,
+  etaUnavailable: false,
   remainingSeats: 0,
   autoEnter: false,
   admittedAt: null,
@@ -121,10 +178,113 @@ function normalizeSnapshot(snapshot: QueueSnapshot): QueueSnapshot {
   };
 }
 
-function mapQueueError(error: unknown): QueueStatus {
+function parseTimeMs(value: unknown): number | null {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readErrorField(error: ApiClientError, key: string): unknown {
+  const data = error.data;
+  if (!data || typeof data !== 'object') {
+    return undefined;
+  }
+
+  return (data as Record<string, unknown>)[key];
+}
+
+function isBookingNotOpenError(error: unknown): error is ApiClientError {
+  return (
+    error instanceof ApiClientError &&
+    error.statusCode === 403 &&
+    (readErrorField(error, 'errorCode') === BOOKING_NOT_OPEN_ERROR_CODE ||
+      error.message === BOOKING_NOT_OPEN_MESSAGE)
+  );
+}
+
+function isBookingClosedError(error: ApiClientError): boolean {
+  if (error.statusCode === 400) {
+    // Malformed performance id on queue entry.
+    return true;
+  }
+
+  if (error.statusCode !== 403 && error.statusCode !== 404) {
+    return false;
+  }
+
+  const errorCode = readErrorField(error, 'errorCode');
+  return (
+    (typeof errorCode === 'string' && BOOKING_CLOSED_ERROR_CODES.has(errorCode)) ||
+    BOOKING_CLOSED_MESSAGES.has(error.message)
+  );
+}
+
+function resolveClosedReason(error: unknown): QueueClosedReason {
+  if (!(error instanceof ApiClientError)) {
+    return 'unavailable';
+  }
+
+  if (
+    error.statusCode === 400 ||
+    readErrorField(error, 'errorCode') === PERFORMANCE_NOT_FOUND_ERROR_CODE ||
+    error.message === PERFORMANCE_NOT_FOUND_MESSAGE
+  ) {
+    return 'notFound';
+  }
+
+  return 'unavailable';
+}
+
+/**
+ * Failures that say nothing about the queue itself (rate limit, server or
+ * network trouble). The automatic re-entry at the open time retries these
+ * instead of showing the manual retry surface at the busiest moment.
+ */
+function isTransientEntryError(error: unknown): boolean {
+  if (!(error instanceof ApiClientError)) {
+    // fetch rejected: network failure or aborted request.
+    return true;
+  }
+
+  if (mapSecurityError(error)) {
+    return false;
+  }
+
+  return (
+    error.statusCode === 429 ||
+    error.statusCode >= 500 ||
+    error.message === 'TRAFFIC_RATE_LIMITED'
+  );
+}
+
+function openRetryJitterMs(): number {
+  return Math.floor(Math.random() * QUEUE_OPEN_RETRY_JITTER_MS);
+}
+
+function mapSecurityError(error: ApiClientError): QueueStatus | null {
+  if (error.statusCode === 401) {
+    return 'authRequired';
+  }
+
+  if (error.statusCode === 403 && error.message === 'SECURITY_CHALLENGE_REQUIRED') {
+    return 'challenge';
+  }
+
+  if (error.statusCode === 403 && error.message === 'SECURITY_BLOCKED') {
+    return 'blocked';
+  }
+
+  return null;
+}
+
+function mapQueueEntryError(error: unknown): QueueStatus {
   if (error instanceof ApiClientError) {
-    if (error.statusCode === 401) {
-      return 'authRequired';
+    const securityStatus = mapSecurityError(error);
+    if (securityStatus) {
+      return securityStatus;
     }
 
     if (
@@ -134,18 +294,8 @@ function mapQueueError(error: unknown): QueueStatus {
       return 'retry';
     }
 
-    if (
-      error.statusCode === 403 &&
-      error.message === 'SECURITY_CHALLENGE_REQUIRED'
-    ) {
-      return 'challenge';
-    }
-
-    if (
-      error.statusCode === 403 &&
-      error.message === 'SECURITY_BLOCKED'
-    ) {
-      return 'blocked';
+    if (isBookingClosedError(error)) {
+      return 'closed';
     }
 
     if (
@@ -159,6 +309,56 @@ function mapQueueError(error: unknown): QueueStatus {
   return 'retry';
 }
 
+/**
+ * Status poll / admission check failures. A missing (404) or rejected (403)
+ * session cannot recover on its own, so it moves to the re-entry surface.
+ * Anything else (429, 5xx, network) is transient: keep the current surface and
+ * let the next scheduled check retry. Returns null for transient errors.
+ */
+function mapQueueSessionError(error: unknown): QueueStatus | null {
+  if (!(error instanceof ApiClientError)) {
+    return null;
+  }
+
+  const securityStatus = mapSecurityError(error);
+  if (securityStatus) {
+    return securityStatus;
+  }
+
+  if (error.statusCode === 404 || error.statusCode === 403) {
+    return 'expired';
+  }
+
+  return null;
+}
+
+function resolveAdmissionCheckAt(snapshot: QueueSnapshot): number | null {
+  if (snapshot.state === 'PAYMENT_RECOVERY') {
+    return (
+      parseTimeMs(snapshot.reentryGraceUntilAt) ??
+      parseTimeMs(snapshot.activeUntilAt)
+    );
+  }
+
+  if (snapshot.state === 'ADMITTED') {
+    return parseTimeMs(snapshot.activeUntilAt);
+  }
+
+  return null;
+}
+
+async function fetchBookingStartsAtMs(performanceId: string): Promise<number | null> {
+  try {
+    const performance = await apiClient.get<PerformanceWithDetails>(
+      `/api/v1/performances/${encodeURIComponent(performanceId)}`,
+      { showErrorToast: false },
+    );
+    return parseTimeMs(performance?.bookingPolicy?.bookingStartsAt);
+  } catch {
+    return null;
+  }
+}
+
 export function useQueue({
   performanceId,
   enabled = true,
@@ -166,13 +366,53 @@ export function useQueue({
   const [snapshot, setSnapshot] = useState<QueueSnapshot>(EMPTY_SNAPSHOT);
   const [status, setStatus] = useState<QueueStatus>('loading');
   const [isReady, setIsReady] = useState(false);
+  const [loadingSlow, setLoadingSlow] = useState(false);
+  const [bookingOpensAt, setBookingOpensAt] = useState<number | null>(null);
+  const [closedReason, setClosedReason] = useState<QueueClosedReason | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const autoEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingSurfaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const entryRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isReadyRef = useRef(false);
+  // Bumped when the entry effect is torn down so in-flight entry attempts do
+  // not schedule retries for an unmounted or disabled route.
+  const entryGenerationRef = useRef(0);
+  const bookingStartsAtFallbackRef = useRef<{
+    performanceId: string;
+    startsAtMs: number | null;
+    fetchedAtMs: number;
+  } | null>(null);
+  // Consecutive not-open answers after the known open time already passed.
+  const overdueOpenRetryCountRef = useRef(0);
+  // Consecutive transient failures of the automatic (background) re-entry.
+  const transientEntryRetryCountRef = useRef(0);
+  const enterQueueRef = useRef<(options?: { background?: boolean }) => Promise<void>>(
+    async () => undefined,
+  );
+
+  const updateReady = useCallback((ready: boolean) => {
+    isReadyRef.current = ready;
+    setIsReady(ready);
+  }, []);
 
   const clearAutoEnterTimer = useCallback(() => {
     if (autoEnterTimerRef.current) {
       clearTimeout(autoEnterTimerRef.current);
       autoEnterTimerRef.current = null;
+    }
+  }, []);
+
+  const clearLoadingSurfaceTimer = useCallback(() => {
+    if (loadingSurfaceTimerRef.current) {
+      clearTimeout(loadingSurfaceTimerRef.current);
+      loadingSurfaceTimerRef.current = null;
+    }
+  }, []);
+
+  const clearEntryRetryTimer = useCallback(() => {
+    if (entryRetryTimerRef.current) {
+      clearTimeout(entryRetryTimerRef.current);
+      entryRetryTimerRef.current = null;
     }
   }, []);
 
@@ -187,19 +427,25 @@ export function useQueue({
       if (normalized.state === 'EXPIRED') {
         clearAutoEnterTimer();
         setStatus('expired');
-        setIsReady(false);
+        updateReady(false);
         return;
       }
 
       if (isAdmittedState(normalized.state)) {
         setStatus('admitted');
+        if (isReadyRef.current) {
+          // Already on the booking screen: a refreshed admitted snapshot must
+          // not unmount it again.
+          return;
+        }
+
         clearAutoEnterTimer();
         if (options.enterImmediately && normalized.autoEnter) {
-          setIsReady(true);
+          updateReady(true);
         } else {
-          setIsReady(false);
+          updateReady(false);
           autoEnterTimerRef.current = setTimeout(() => {
-            setIsReady(true);
+            updateReady(true);
           }, AUTO_ENTER_DELAY_MS);
         }
         return;
@@ -207,9 +453,23 @@ export function useQueue({
 
       clearAutoEnterTimer();
       setStatus('waiting');
-      setIsReady(false);
+      updateReady(false);
     },
-    [clearAutoEnterTimer],
+    [clearAutoEnterTimer, updateReady],
+  );
+
+  const handleSessionError = useCallback(
+    (error: unknown) => {
+      const nextStatus = mapQueueSessionError(error);
+      if (!nextStatus) {
+        return;
+      }
+
+      clearAutoEnterTimer();
+      setStatus(nextStatus);
+      updateReady(false);
+    },
+    [clearAutoEnterTimer, updateReady],
   );
 
   const loadQueueSession = useCallback(
@@ -225,58 +485,225 @@ export function useQueue({
     [applySnapshot],
   );
 
-  const enterQueue = useCallback(async () => {
-    if (!enabled || !performanceId) {
-      return;
+  const scheduleEntryRetry = useCallback(
+    (delayMs: number) => {
+      clearEntryRetryTimer();
+      entryRetryTimerRef.current = setTimeout(() => {
+        entryRetryTimerRef.current = null;
+        void enterQueueRef.current({ background: true });
+      }, delayMs);
+    },
+    [clearEntryRetryTimer],
+  );
+
+  // Delay until the next automatic entry attempt after a not-open answer.
+  const resolveNotOpenRetryDelay = useCallback((opensAtMs: number | null): number => {
+    const nowMs = Date.now();
+    if (opensAtMs === null) {
+      overdueOpenRetryCountRef.current = 0;
+      return QUEUE_OPEN_UNKNOWN_RETRY_MS + openRetryJitterMs();
     }
 
-    clearAutoEnterTimer();
-    setStatus('loading');
-    setIsReady(false);
+    if (opensAtMs > nowMs) {
+      overdueOpenRetryCountRef.current = 0;
+      return Math.min(opensAtMs - nowMs, QUEUE_OPEN_MAX_WAIT_MS) + openRetryJitterMs();
+    }
 
-    try {
-      const response = await apiClient.post<QueueEnterResponse>(
-        `/api/v1/queue/performances/${performanceId}/enter`,
-        undefined,
-        { showErrorToast: false },
-      );
+    // The open time has passed but the server still refuses entry.
+    const overdueCount = overdueOpenRetryCountRef.current;
+    overdueOpenRetryCountRef.current = overdueCount + 1;
+    return (
+      Math.min(
+        QUEUE_OPEN_OVERDUE_RETRY_BASE_MS * 2 ** overdueCount,
+        QUEUE_OPEN_OVERDUE_RETRY_MAX_MS,
+      ) + openRetryJitterMs()
+    );
+  }, []);
 
-      if (!response.queueSessionId) {
-        setStatus('retry');
+  const resolveBookingOpensAt = useCallback(
+    async (error: ApiClientError, receivedAtMs: number): Promise<number | null> => {
+      const serverNowMs =
+        parseTimeMs(readErrorField(error, 'serverNow')) ??
+        parseTimeMs(readErrorField(error, 'timestamp'));
+      const clockOffsetMs = serverNowMs === null ? 0 : serverNowMs - receivedAtMs;
+      // Convert a server open time into this device's clock.
+      const toDeviceClock = (startsAtMs: number | null) =>
+        startsAtMs === null ? null : startsAtMs - clockOffsetMs;
+
+      const reportedStartsAtMs = parseTimeMs(readErrorField(error, 'bookingStartsAt'));
+      if (reportedStartsAtMs !== null) {
+        return toDeviceClock(reportedStartsAtMs);
+      }
+
+      // Until the 403 body keeps bookingStartsAt, read it from performance
+      // detail. Reuse that only while it is fresh, and never once the cached
+      // open time has passed while the server still refuses entry: the open
+      // time was moved, so read it again instead of looping on the old one.
+      const cached = bookingStartsAtFallbackRef.current;
+      if (
+        cached?.performanceId === performanceId &&
+        receivedAtMs - cached.fetchedAtMs < QUEUE_OPEN_TIME_CACHE_MS
+      ) {
+        const cachedOpensAtMs = toDeviceClock(cached.startsAtMs);
+        const fetchedBeforeOverdueOpen =
+          cachedOpensAtMs !== null &&
+          cachedOpensAtMs <= receivedAtMs &&
+          cached.fetchedAtMs < cachedOpensAtMs;
+        if (!fetchedBeforeOverdueOpen) {
+          return cachedOpensAtMs;
+        }
+      }
+
+      const startsAtMs = await fetchBookingStartsAtMs(performanceId);
+      bookingStartsAtFallbackRef.current = {
+        performanceId,
+        startsAtMs,
+        fetchedAtMs: Date.now(),
+      };
+      return toDeviceClock(startsAtMs);
+    },
+    [performanceId],
+  );
+
+  const enterQueue = useCallback(
+    async (options: { background?: boolean } = {}) => {
+      if (!enabled || !performanceId) {
         return;
       }
 
-      if (!response.state) {
-        await loadQueueSession(response.queueSessionId);
-        return;
+      const generation = entryGenerationRef.current;
+      clearAutoEnterTimer();
+      clearEntryRetryTimer();
+      if (!options.background) {
+        transientEntryRetryCountRef.current = 0;
+        setStatus('loading');
+        updateReady(false);
+        setLoadingSlow(false);
+        clearLoadingSurfaceTimer();
+        loadingSurfaceTimerRef.current = setTimeout(() => {
+          loadingSurfaceTimerRef.current = null;
+          setLoadingSlow(true);
+        }, QUEUE_LOADING_SURFACE_DELAY_MS);
       }
 
-      applySnapshot(response, {
-        enterImmediately: isImmediateAdmission(response),
-      });
-    } catch (error) {
-      setStatus(mapQueueError(error));
-      setIsReady(false);
-    }
-  }, [applySnapshot, clearAutoEnterTimer, enabled, loadQueueSession, performanceId]);
+      try {
+        const response = await apiClient.post<QueueEnterResponse>(
+          `/api/v1/queue/performances/${performanceId}/enter`,
+          undefined,
+          { showErrorToast: false },
+        );
+
+        transientEntryRetryCountRef.current = 0;
+        overdueOpenRetryCountRef.current = 0;
+        setBookingOpensAt(null);
+        setClosedReason(null);
+        if (!response.queueSessionId) {
+          setStatus('retry');
+          return;
+        }
+
+        if (!response.state) {
+          await loadQueueSession(response.queueSessionId);
+          return;
+        }
+
+        applySnapshot(response, {
+          enterImmediately: isImmediateAdmission(response),
+        });
+      } catch (error) {
+        updateReady(false);
+        if (isBookingNotOpenError(error)) {
+          transientEntryRetryCountRef.current = 0;
+          const opensAtMs = await resolveBookingOpensAt(error, Date.now());
+          if (generation !== entryGenerationRef.current) {
+            return;
+          }
+          setBookingOpensAt(opensAtMs);
+          setClosedReason(null);
+          setStatus('notOpen');
+          scheduleEntryRetry(resolveNotOpenRetryDelay(opensAtMs));
+          return;
+        }
+
+        if (options.background && isTransientEntryError(error)) {
+          const attempt = transientEntryRetryCountRef.current;
+          const delayMs = QUEUE_OPEN_TRANSIENT_RETRY_DELAYS_MS[attempt];
+          if (delayMs !== undefined) {
+            if (generation !== entryGenerationRef.current) {
+              return;
+            }
+            // Keep the not-open surface ("entering now") and retry quietly.
+            transientEntryRetryCountRef.current = attempt + 1;
+            scheduleEntryRetry(delayMs + openRetryJitterMs());
+            return;
+          }
+        }
+
+        transientEntryRetryCountRef.current = 0;
+        const nextStatus = mapQueueEntryError(error);
+        setBookingOpensAt(null);
+        setClosedReason(nextStatus === 'closed' ? resolveClosedReason(error) : null);
+        setStatus(nextStatus);
+      } finally {
+        clearLoadingSurfaceTimer();
+        setLoadingSlow(false);
+      }
+    },
+    [
+      applySnapshot,
+      clearAutoEnterTimer,
+      clearEntryRetryTimer,
+      clearLoadingSurfaceTimer,
+      enabled,
+      loadQueueSession,
+      performanceId,
+      resolveBookingOpensAt,
+      resolveNotOpenRetryDelay,
+      scheduleEntryRetry,
+      updateReady,
+    ],
+  );
+
+  useEffect(() => {
+    enterQueueRef.current = enterQueue;
+  }, [enterQueue]);
 
   useEffect(() => {
     if (!enabled) {
       clearAutoEnterTimer();
+      clearEntryRetryTimer();
       setStatus('loading');
-      setIsReady(false);
+      updateReady(false);
       return;
     }
 
     void enterQueue();
 
     return () => {
+      entryGenerationRef.current += 1;
       clearAutoEnterTimer();
+      clearEntryRetryTimer();
+      clearLoadingSurfaceTimer();
     };
-  }, [clearAutoEnterTimer, enabled, enterQueue]);
+  }, [
+    clearAutoEnterTimer,
+    clearEntryRetryTimer,
+    clearLoadingSurfaceTimer,
+    enabled,
+    enterQueue,
+    updateReady,
+  ]);
+
+  // Once the booking screen is shown (or the session ended) the queue socket is
+  // no longer needed; closing it frees a long-lived connection slot per buyer.
+  const queueSocketWanted =
+    enabled &&
+    Boolean(snapshot.queueSessionId) &&
+    !isReady &&
+    (status === 'loading' || status === 'waiting' || status === 'admitted');
 
   useEffect(() => {
-    if (!enabled || !snapshot.queueSessionId) {
+    if (!queueSocketWanted) {
       return;
     }
 
@@ -317,9 +744,11 @@ export function useQueue({
       socket.off('queue:admitted', handleAdmitted);
       socket.off('queue:expired', handleExpired);
       socket.disconnect();
-      socketRef.current = null;
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
-  }, [applySnapshot, enabled, snapshot.queueSessionId]);
+  }, [applySnapshot, queueSocketWanted, snapshot.queueSessionId]);
 
   useEffect(() => {
     if (!enabled || status !== 'waiting' || !snapshot.queueSessionId) {
@@ -337,11 +766,13 @@ export function useQueue({
           return;
         }
 
-        void loadQueueSession(queueSessionId).finally(() => {
-          if (!stopped) {
-            schedulePoll();
-          }
-        });
+        void loadQueueSession(queueSessionId)
+          .catch(handleSessionError)
+          .finally(() => {
+            if (!stopped) {
+              schedulePoll();
+            }
+          });
       }, WAITING_POLL_INTERVAL_MS + jitter);
     };
 
@@ -353,19 +784,62 @@ export function useQueue({
         clearTimeout(timer);
       }
     };
-  }, [enabled, loadQueueSession, snapshot.queueSessionId, status]);
+  }, [enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId, status]);
+
+  const admissionCheckAt = isReady ? resolveAdmissionCheckAt(snapshot) : null;
+
+  useEffect(() => {
+    if (!enabled || admissionCheckAt === null || !snapshot.queueSessionId) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const queueSessionId = snapshot.queueSessionId;
+
+    const scheduleCheck = (delayMs: number) => {
+      timer = setTimeout(() => {
+        if (stopped) {
+          return;
+        }
+
+        void loadQueueSession(queueSessionId)
+          .catch(handleSessionError)
+          .finally(() => {
+            if (!stopped) {
+              scheduleCheck(QUEUE_ADMISSION_RECHECK_MS);
+            }
+          });
+      }, delayMs);
+    };
+
+    scheduleCheck(
+      Math.max(0, admissionCheckAt - Date.now()) + QUEUE_ADMISSION_CHECK_GRACE_MS,
+    );
+
+    return () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [admissionCheckAt, enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId]);
 
   useEffect(() => {
     return () => {
       clearAutoEnterTimer();
+      clearEntryRetryTimer();
+      clearLoadingSurfaceTimer();
       socketRef.current?.disconnect();
       socketRef.current = null;
     };
-  }, [clearAutoEnterTimer]);
+  }, [clearAutoEnterTimer, clearEntryRetryTimer, clearLoadingSurfaceTimer]);
 
   const enterNow = useCallback(() => {
-    setIsReady(true);
-  }, []);
+    updateReady(true);
+  }, [updateReady]);
+
+  const retry = useCallback(() => enterQueue(), [enterQueue]);
 
   const result = useMemo<UseQueueResult>(
     () => ({
@@ -374,16 +848,21 @@ export function useQueue({
       position: snapshot.position,
       waitingCount: snapshot.waitingCount,
       etaSeconds: snapshot.etaSeconds,
+      etaMinSeconds: snapshot.etaMinSeconds ?? 0,
+      etaUnavailable: snapshot.etaUnavailable === true,
       remainingSeats: snapshot.remainingSeats,
       autoEnter: status === 'admitted' && snapshot.autoEnter,
       isReady,
+      isSlowLoading: status === 'loading' && loadingSlow,
+      bookingOpensAt: status === 'notOpen' ? bookingOpensAt : null,
+      closedReason: status === 'closed' ? closedReason : null,
       admittedAt: snapshot.admittedAt,
       activeUntilAt: snapshot.activeUntilAt,
       reentryGraceUntilAt: snapshot.reentryGraceUntilAt,
-      retry: enterQueue,
+      retry,
       enterNow,
     }),
-    [enterNow, enterQueue, isReady, snapshot, status],
+    [bookingOpensAt, closedReason, enterNow, isReady, loadingSlow, retry, snapshot, status],
   );
 
   return result;

@@ -138,6 +138,12 @@
           "description": "예매 가능한 순번과 남은 좌석 수를 불러오고 있습니다.",
           "helper": "대기열 상태는 잠시 후 자동으로 갱신됩니다."
         },
+        "notOpen": {
+          "badge": "오픈 전",
+          "title": "예매 오픈 전입니다. 오픈 시각에 자동으로 대기열에 입장합니다",
+          "description": "이 화면을 열어 두면 오픈 시각에 맞춰 자동으로 입장을 시도합니다.",
+          "helper": "새로고침이나 반복 클릭은 필요하지 않습니다. 남은 시간은 서버 시각 기준입니다."
+        },
         "waiting": {
           "badge": "대기 중",
           "title": "예매 대기열에서 입장 순서를 기다리고 있습니다",
@@ -155,6 +161,12 @@
           "title": "대기열 입장 시간이 만료되었습니다. 다시 입장해 주세요.",
           "description": "새로운 순번을 받아 다시 예매 대기열에 입장해주세요.",
           "helper": "재입장 후에도 남은 좌석 수와 예상 대기 시간은 계속 확인할 수 있습니다."
+        },
+        "closed": {
+          "badge": "예매 불가",
+          "title": "지금 예매할 수 있는 회차가 없습니다",
+          "description": "판매가 종료되었거나 모든 회차가 이미 시작되었습니다.",
+          "helper": "공연 정보에서 다른 일정이나 판매 상태를 확인해주세요."
         },
         "authRequired": {
           "badge": "로그인 필요",
@@ -181,18 +193,38 @@
           "helper": "차단이 계속되면 잠시 후 다시 시도하거나 고객센터에 문의해주세요."
         }
       },
+      "notFound": {
+        "badge": "예매 불가",
+        "title": "공연을 찾을 수 없습니다",
+        "description": "주소가 잘못되었거나 더 이상 공개되지 않는 공연입니다.",
+        "helper": "홈에서 공연을 다시 찾아 주세요."
+      },
       "metrics": {
         "position": "현재 순번",
         "eta": "예상 대기",
         "remainingSeats": "남은 좌석",
         "ready": "입장 가능",
-        "soon": "곧 입장"
+        "soon": "곧 입장",
+        "etaCalculating": "계산 중",
+        "etaWithin": "{minutes}분 이내",
+        "etaUnavailable": "산정 불가",
+        "etaOverLimit": "{hours}시간 넘게 걸릴 수 있음",
+        "etaAbout": "약 {minutes}분",
+        "etaRange": "약 {min}~{max}분",
+        "opensIn": "오픈까지",
+        "opening": "입장 시도 중",
+        "openTimeUnknown": "오픈 시각 확인 중"
       },
       "infoLabel": "안내",
       "autoEnterInfo": "입장이 승인되면 자동으로 좌석 선택 화면으로 이어집니다.",
       "safetyInfo": "대기열 입장은 좌석 확보를 보장하지 않습니다. 좌석을 선택하고 점유가 확인되면 해당 좌석이 잠시 확보됩니다.",
+      "etaInfo": "예상 대기 시간은 현재 순번과 입장 처리 주기(앞선 입장자가 이용할 수 있는 시간)로 계산한 범위이며, 상황에 따라 달라질 수 있습니다. 차례가 되면 자동으로 이동하니 이 화면을 열어 두세요.",
+      "openTimeUnknownInfo": "예매 오픈 시각이 아직 공개되지 않았습니다. 이 화면이 약 {seconds}초마다 오픈 여부를 확인하고, 열리면 자동으로 대기열에 들어갑니다.",
+      "soldOutRisk": "앞선 대기 인원이 남은 좌석보다 많아 순서가 오기 전에 매진될 수 있습니다.",
       "retryAction": "다시 시도",
-      "enterNowAction": "지금 입장하기"
+      "enterNowAction": "지금 입장하기",
+      "backAction": "공연 정보로 돌아가기",
+      "backHomeAction": "홈으로 이동"
     },
     "paymentDeadline": {
       "badge": "결제 가능 시간",

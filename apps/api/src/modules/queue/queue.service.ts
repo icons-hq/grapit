@@ -40,7 +40,6 @@ export const QUEUE_WAIT_SESSION_SECONDS = 1_800;
 const QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS = 60;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
-const QUEUE_POSITION_STEP_SECONDS = 5;
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
 // Queue requests run at most one reconcile per performance per interval.
 const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
@@ -48,7 +47,34 @@ const QUEUE_RECONCILE_MAX_FILL_ROUNDS = 5;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
 const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
+// Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
+// min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active, and a slot is
+// returned only when that session's authority window ends (expireStaleSessions).
+// Each slot is therefore held at least for the active window and at most for the
+// active window plus the payment-recovery grace (resolveAuthorityExpiry).
+// If slots are ever returned earlier (e.g. on purchase), lower the minimum hold.
+export const QUEUE_SLOT_MIN_HOLD_SECONDS = QUEUE_ACTIVE_WINDOW_SECONDS;
+export const QUEUE_SLOT_MAX_HOLD_SECONDS =
+  QUEUE_ACTIVE_WINDOW_SECONDS + QUEUE_REENTRY_GRACE_SECONDS;
+// An ended slot is only noticed by the next reconcile, which runs on queue
+// requests; waiting clients poll every 15-20 s, so allow one poll per cycle.
+const QUEUE_ETA_RECONCILE_LATENCY_SECONDS = 20;
+export const QUEUE_ETA_CYCLE_MAX_SECONDS =
+  QUEUE_SLOT_MAX_HOLD_SECONDS + QUEUE_ETA_RECONCILE_LATENCY_SECONDS;
+// Beyond this the estimate is reported as unavailable instead of a huge number.
+export const QUEUE_ETA_MAX_SECONDS = 3 * 60 * 60;
 const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
+const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
+const PERFORMANCE_NOT_FOUND_MESSAGE = '공연을 찾을 수 없습니다';
+const SHOWTIME_ALREADY_STARTED_MESSAGE = '이미 시작된 회차는 예매할 수 없습니다.';
+const NO_SHOWTIME_MESSAGE = '예매 가능한 회차가 없습니다.';
+
+export const QUEUE_ENTRY_ERROR_CODES = {
+  performanceNotFound: 'PERFORMANCE_NOT_FOUND',
+  bookingNotOpen: 'BOOKING_NOT_OPEN',
+  bookingEnded: 'BOOKING_ENDED',
+  noBookableShowtime: 'NO_BOOKABLE_SHOWTIME',
+} as const;
 
 export const WAITING = 'WAITING';
 export const ADMITTED = 'ADMITTED';
@@ -65,6 +91,63 @@ return 0
 
 function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
   return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
+}
+
+export type QueueWaitEstimate = {
+  // Upper bound of the wait in seconds (also what older clients display).
+  etaSeconds: number;
+  // Lower bound of the wait in seconds.
+  etaMinSeconds: number;
+  // true when no honest estimate exists: no seat left to admit into, no rank,
+  // or the upper bound exceeds QUEUE_ETA_MAX_SECONDS.
+  etaUnavailable: boolean;
+};
+
+const NO_WAIT_ESTIMATE: QueueWaitEstimate = {
+  etaSeconds: 0,
+  etaMinSeconds: 0,
+  etaUnavailable: false,
+};
+
+/**
+ * Deterministic wait range for the current admission algorithm. The waiting
+ * line moves in cycles of `min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS)`
+ * admissions, and every cycle takes between the minimum and maximum slot hold.
+ * Position p is admitted in cycle ceil(p / cycleCapacity): no earlier than
+ * (cycles - 1) minimum holds and no later than `cycles` maximum holds (plus
+ * the reconcile latency of each cycle).
+ * The range does not depend on when the session was first observed, so wave-
+ * shaped admission (an opening burst, then a cycle every 10-13 minutes) cannot
+ * make it under-report the wait the way a short line-movement sample does.
+ */
+export function estimateQueueWait(params: {
+  position: number;
+  remainingSeats: number;
+}): QueueWaitEstimate {
+  const position = Math.floor(params.position);
+  const remainingSeats = Math.floor(params.remainingSeats);
+
+  if (!(position > 0)) {
+    return { etaSeconds: 0, etaMinSeconds: 0, etaUnavailable: true };
+  }
+
+  if (!(remainingSeats > 0)) {
+    // Reconcile admits nobody until seats come back (sold out or all held).
+    return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
+  }
+
+  const cycleCapacity = Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS);
+  const cycles = Math.ceil(position / cycleCapacity);
+  const maxSeconds = cycles * QUEUE_ETA_CYCLE_MAX_SECONDS;
+  if (maxSeconds > QUEUE_ETA_MAX_SECONDS) {
+    return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
+  }
+
+  return {
+    etaSeconds: maxSeconds,
+    etaMinSeconds: (cycles - 1) * QUEUE_SLOT_MIN_HOLD_SECONDS,
+    etaUnavailable: false,
+  };
 }
 
 export type QueueSessionState =
@@ -106,6 +189,8 @@ export type QueueSessionSnapshot = {
   position: number;
   waitingCount: number;
   etaSeconds: number;
+  etaMinSeconds: number;
+  etaUnavailable: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   admittedAt: string | null;
@@ -370,28 +455,68 @@ export class QueueService {
     };
   }
 
+  /**
+   * Queue entry gate. Runs before any queue key is created so unknown, hidden,
+   * ended or fully started performances never get a waiting session.
+   * Sales cutoff (C1): a showtime is sellable only while now < showtimes.date_time,
+   * and the cutoff has no admin bypass.
+   */
   private async assertPerformanceBookingOpen(
     performanceId: string,
     actorRole: string | undefined,
   ): Promise<void> {
-    if (actorRole === 'admin') {
-      return;
-    }
-
+    const now = new Date();
     const [row] = await this.db
       .select({
         status: performances.status,
+        publishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
+        showtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${eq(showtimes.performanceId, performances.id)})`,
+        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), gt(showtimes.dateTime, now))})`,
       })
       .from(performances)
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
       .where(eq(performances.id, performanceId));
 
-    if (row?.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt)) {
-      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+    const isAdmin = actorRole === 'admin';
+    if (!row || (!isAdmin && row.publishState !== 'published')) {
+      throw new NotFoundException({
+        message: PERFORMANCE_NOT_FOUND_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.performanceNotFound,
+      });
     }
-    if (row?.status === 'upcoming' && !isBookingStartReached(row.bookingStartsAt)) {
-      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+
+    if (row.status === 'ended') {
+      throw new ForbiddenException({
+        message: BOOKING_ENDED_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.bookingEnded,
+      });
+    }
+
+    if (Number(row.sellableShowtimeCount ?? 0) <= 0) {
+      throw new ForbiddenException({
+        message:
+          Number(row.showtimeCount ?? 0) > 0
+            ? SHOWTIME_ALREADY_STARTED_MESSAGE
+            : NO_SHOWTIME_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.noBookableShowtime,
+      });
+    }
+
+    if (isAdmin) {
+      return;
+    }
+
+    const bookingNotOpen =
+      (row.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt, now)) ||
+      (row.status === 'upcoming' && !isBookingStartReached(row.bookingStartsAt, now));
+    if (bookingNotOpen) {
+      throw new ForbiddenException({
+        message: BOOKING_NOT_OPEN_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.bookingNotOpen,
+        bookingStartsAt: row.bookingStartsAt?.toISOString() ?? null,
+        serverNow: now.toISOString(),
+      });
     }
   }
 
@@ -1013,14 +1138,17 @@ export class QueueService {
       context ?? (await this.readSnapshotContext(record));
     const state = this.resolveVisibleState(record);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
-    const etaSeconds = position > 1 ? (position - 1) * QUEUE_POSITION_STEP_SECONDS : 0;
+    const estimate =
+      state === WAITING ? estimateQueueWait({ position, remainingSeats }) : NO_WAIT_ESTIMATE;
 
     return {
       queueSessionId: record.queueSessionId,
       state,
       position,
       waitingCount,
-      etaSeconds,
+      etaSeconds: estimate.etaSeconds,
+      etaMinSeconds: estimate.etaMinSeconds,
+      etaUnavailable: estimate.etaUnavailable,
       remainingSeats,
       autoEnter: state === ADMITTED,
       admittedAt: record.admittedAt,

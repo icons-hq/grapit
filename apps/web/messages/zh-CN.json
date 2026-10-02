@@ -138,6 +138,12 @@
           "description": "正在加载您的排位、预计等待时间和剩余座位数。",
           "helper": "队列信息会在稍后自动刷新。"
         },
+        "notOpen": {
+          "badge": "尚未开售",
+          "title": "预订尚未开放，开放时将自动进入排队",
+          "description": "请保持此页面打开，开放时系统会自动尝试进入排队。",
+          "helper": "无需刷新或反复点击，倒计时以服务器时间为准。"
+        },
         "waiting": {
           "badge": "等待中",
           "title": "您正在票务排队中等待进入",
@@ -155,6 +161,12 @@
           "title": "入场时限已过，请重新排队。",
           "description": "请重新进入队列以获得新的入场时间窗口。",
           "helper": "重新排队后，您仍可查看排位、预计等待时间和剩余座位数。"
+        },
+        "closed": {
+          "badge": "无法预订",
+          "title": "当前没有可预订的场次",
+          "description": "销售已结束，或所有场次均已开演。",
+          "helper": "请在演出页面查看其他日期或最新销售状态。"
         },
         "authRequired": {
           "badge": "请先登录",
@@ -181,18 +193,38 @@
           "helper": "如果仍被阻止，请稍后重试并联系客户支持。"
         }
       },
+      "notFound": {
+        "badge": "无法预订",
+        "title": "找不到该演出",
+        "description": "链接可能有误，或该演出已不再公开。",
+        "helper": "请从首页重新查找演出。"
+      },
       "metrics": {
         "position": "当前排位",
         "eta": "预计等待时间",
         "remainingSeats": "剩余座位",
         "ready": "可进入",
-        "soon": "即将进入"
+        "soon": "即将进入",
+        "etaCalculating": "计算中",
+        "etaWithin": "{minutes}分钟内",
+        "etaUnavailable": "无法估算",
+        "etaOverLimit": "可能超过{hours}小时",
+        "etaAbout": "约{minutes}分钟",
+        "etaRange": "约{min}~{max}分钟",
+        "opensIn": "距离开售",
+        "opening": "正在进入",
+        "openTimeUnknown": "正在确认开售时间"
       },
       "infoLabel": "队列详情",
       "autoEnterInfo": "一旦获得入场资格，系统会自动打开座位选择页面。",
       "safetyInfo": "进入排队不代表已获得座位。选择座位并确认保留后，才会暂时为您保留该座位。",
+      "etaInfo": "预计等待时间是根据您的排位和前面已入场用户可保留的时长计算的范围，可能会有变化。轮到您时将自动进入，请保持此页面打开。",
+      "openTimeUnknownInfo": "开售时间尚未公布。此页面约每{seconds}秒检查一次，开售后会自动进入排队。",
+      "soldOutRisk": "排在您前面的人数多于剩余座位，可能在轮到您之前售罄。",
       "retryAction": "重试",
-      "enterNowAction": "立即进入"
+      "enterNowAction": "立即进入",
+      "backAction": "返回演出信息",
+      "backHomeAction": "返回首页"
     },
     "paymentDeadline": {
       "badge": "支付时限",

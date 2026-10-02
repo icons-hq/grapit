@@ -138,6 +138,12 @@
           "description": "We are loading your position, ETA, and remaining seats.",
           "helper": "Queue details refresh automatically in a moment."
         },
+        "notOpen": {
+          "badge": "Not open yet",
+          "title": "Booking has not opened yet. You will join the queue automatically when it opens",
+          "description": "Keep this page open and we will try to enter the queue at the opening time.",
+          "helper": "No need to refresh or click repeatedly. The countdown follows the server clock."
+        },
         "waiting": {
           "badge": "Waiting",
           "title": "You are waiting in the booking queue",
@@ -155,6 +161,12 @@
           "title": "Your entry window expired. Please rejoin the queue.",
           "description": "Rejoin the queue to receive a fresh admission window.",
           "helper": "After rejoining, you can still see position, ETA, and remaining seats."
+        },
+        "closed": {
+          "badge": "Unavailable",
+          "title": "There are no showtimes available to book",
+          "description": "Sales have ended or every showtime has already started.",
+          "helper": "Check the event page for other dates or the latest sales status."
         },
         "authRequired": {
           "badge": "Login required",
@@ -181,18 +193,38 @@
           "helper": "If the block continues, wait a while and contact support."
         }
       },
+      "notFound": {
+        "badge": "Unavailable",
+        "title": "We could not find this event",
+        "description": "The link may be wrong, or the event is no longer public.",
+        "helper": "Find the event again from the home page."
+      },
       "metrics": {
         "position": "Current position",
         "eta": "Estimated wait",
         "remainingSeats": "Remaining seats",
         "ready": "Ready to enter",
-        "soon": "Soon"
+        "soon": "Soon",
+        "etaCalculating": "Calculating",
+        "etaWithin": "Within {minutes} min",
+        "etaUnavailable": "Not available",
+        "etaOverLimit": "May take over {hours} h",
+        "etaAbout": "About {minutes} min",
+        "etaRange": "About {min}–{max} min",
+        "opensIn": "Opens in",
+        "opening": "Entering now",
+        "openTimeUnknown": "Checking opening time"
       },
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
       "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
+      "etaInfo": "The estimated wait is a range based on your position and how long the buyers admitted ahead of you can keep their turn. It may change, and you will move on automatically when your turn comes, so keep this page open.",
+      "openTimeUnknownInfo": "The booking open time has not been announced yet. This page checks about every {seconds} seconds and joins the queue automatically once booking opens.",
+      "soldOutRisk": "More people are ahead of you than there are seats left, so tickets may sell out before your turn.",
       "retryAction": "Try again",
-      "enterNowAction": "Enter now"
+      "enterNowAction": "Enter now",
+      "backAction": "Back to event",
+      "backHomeAction": "Go to home"
     },
     "paymentDeadline": {
       "badge": "Payment deadline",

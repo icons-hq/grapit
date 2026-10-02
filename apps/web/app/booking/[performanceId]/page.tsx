@@ -22,6 +22,8 @@ export default function BookingRoute({
   const { performanceId } = use(params);
   const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
   const authRedirectPath = `${getLocalizedPathname('/auth', locale)}?returnTo=${encodeURIComponent(bookingPath)}`;
+  const performancePath = getLocalizedPathname(`/performance/${performanceId}`, locale);
+  const homePath = getLocalizedPathname('/', locale);
 
   const {
     bookingAvailable,
@@ -109,7 +111,21 @@ export default function BookingRoute({
   }
 
   if (queue.status === 'loading') {
-    return null;
+    // Immediate admissions skip the queue surface; a slow queue entry shows the
+    // loading surface instead of a blank page.
+    if (!queue.isSlowLoading) {
+      return null;
+    }
+
+    return (
+      <QueueWaiting
+        status="loading"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
+    );
   }
 
   return (
@@ -117,12 +133,20 @@ export default function BookingRoute({
       status={queue.status}
       position={queue.position}
       etaSeconds={queue.etaSeconds}
+      etaMinSeconds={queue.etaMinSeconds}
+      etaUnavailable={queue.etaUnavailable}
       remainingSeats={queue.remainingSeats}
       autoEnter={queue.autoEnter}
+      bookingOpensAt={queue.bookingOpensAt}
+      closedReason={queue.closedReason}
       onRetry={() => {
         void queue.retry();
       }}
       onEnterNow={queue.enterNow}
+      onBack={() => {
+        // A missing performance has no detail page to go back to.
+        router.push(queue.closedReason === 'notFound' ? homePath : performancePath);
+      }}
     />
   );
 }
