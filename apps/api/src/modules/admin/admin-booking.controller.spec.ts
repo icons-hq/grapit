@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
-import { adminBookingListQuerySchema } from '@grabit/shared';
+import { adminBookingListQuerySchema, adminRefundSchema } from '@grabit/shared';
 import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { AdminBookingController } from './admin-booking.controller.js';
@@ -161,6 +161,56 @@ describe('AdminBookingController', () => {
         userAgent: 'Vitest Admin Console',
       }),
     );
+  });
+
+  it('returns the real refund outcome and forwards the preview amounts the operator confirmed', async () => {
+    const refundResult = {
+      outcome: 'rights_restored',
+      message: '결제사가 환불을 거절했습니다. 티켓과 결제는 유지되며, 결제 상태를 확인한 뒤 다시 시도해주세요',
+      currentState: 'FAILED',
+      idempotent: false,
+      retryEnqueued: false,
+      refundableAmount: 48000,
+      refundTimeline: null,
+      providerRefund: null,
+    };
+    const adminBookingService = {
+      refundBooking: vi.fn().mockResolvedValue(refundResult),
+    };
+    const controller = new AdminBookingController(adminBookingService as never);
+    const body = adminRefundSchema.parse({
+      reason: '고객 요청',
+      expectedRefundableAmount: 48000,
+      expectedProviderRefundAmountMinor: 48000,
+    });
+
+    const response = await controller.refundBooking('reservation-1', 'admin-1', body);
+
+    expect(response).toEqual(refundResult);
+    expect(response).not.toHaveProperty('message', '환불이 처리되었습니다');
+    expect(adminBookingService.refundBooking).toHaveBeenCalledWith(
+      'reservation-1',
+      'admin-1',
+      '고객 요청',
+      {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+        expectedRefundableAmount: 48000,
+        expectedProviderRefundAmountMinor: 48000,
+      },
+    );
+  });
+
+  it('omits expected amounts when an older client does not send them', async () => {
+    const adminBookingService = { refundBooking: vi.fn().mockResolvedValue({ outcome: 'completed' }) };
+    const controller = new AdminBookingController(adminBookingService as never);
+
+    await controller.refundBooking('reservation-1', 'admin-1', adminRefundSchema.parse({ reason: '관리자 환불' }));
+
+    expect(adminBookingService.refundBooking.mock.calls[0]![3]).toEqual({
+      fullRefundOverride: false,
+      enteredTicketOverride: false,
+    });
   });
 
   it('requires refund.admin_refund capability for admin refund preview and execution endpoints', () => {

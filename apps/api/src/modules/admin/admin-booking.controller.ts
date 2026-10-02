@@ -26,6 +26,7 @@ import {
   adminSeatOperationRequestSchema,
   type AdminBookingListQueryInput,
   type AdminRefundInput,
+  type AdminRefundResult,
   type AdminReservationExportFilter,
   type AdminSeatOperationRequest,
 } from '@grabit/shared';
@@ -141,12 +142,21 @@ export class AdminBookingController {
     @Param('id') id: string,
     @CurrentUser('id') operatorUserId: string,
     @Body(new ZodValidationPipe(adminRefundSchema)) body: AdminRefundInput,
-  ) {
-    await this.adminBookingService.refundBooking(id, operatorUserId, body.reason, {
+  ): Promise<AdminRefundResult> {
+    // The response carries the actual refund outcome; PG rejection or pending
+    // PG work must not be shown to the operator as a completed refund.
+    return this.adminBookingService.refundBooking(id, operatorUserId, body.reason, {
       fullRefundOverride: body.fullRefundOverride,
       enteredTicketOverride: body.enteredTicketOverride,
+      // Amounts confirmed in the preview; RefundService answers 409 when the
+      // current quote differs (e.g. a fee tier boundary passed meanwhile).
+      ...(body.expectedRefundableAmount !== undefined
+        ? { expectedRefundableAmount: body.expectedRefundableAmount }
+        : {}),
+      ...(body.expectedProviderRefundAmountMinor !== undefined
+        ? { expectedProviderRefundAmountMinor: body.expectedProviderRefundAmountMinor }
+        : {}),
     });
-    return { message: '환불이 처리되었습니다' };
   }
 
   @Post('bookings/:id/manual-open')

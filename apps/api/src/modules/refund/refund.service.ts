@@ -521,10 +521,22 @@ export class RefundService {
 
     const preview = this.buildPreview(context, existingRefund, options);
     if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
+    // Same provider amount and PG balance check as the buyer preview, so the operator confirms the exact
+    // PG cancel amount (incl. USD minor units) that requestAdminRefund later compares against. A PG query
+    // failure does not block (the request path keeps the refund retryable), but a quote that cannot become
+    // a PG cancel command would be rejected by the request path too, so the preview says so up front.
     const providerCheck = await this.checkProviderRefundBalance(context, preview.cancellationQuote, {
       audience: 'admin',
       tolerateQueryFailure: true,
     });
+    if (!providerCheck.providerRefund) {
+      return {
+        ...preview,
+        providerRefund: null,
+        canRequestRefund: false,
+        blockedReason: '이 결제는 자동 환불 금액을 만들 수 없습니다. 전액 환불 여부를 확인하거나 결제사에서 직접 처리해주세요.',
+      };
+    }
     return {
       ...preview,
       providerRefund: providerCheck.providerRefund,
@@ -1120,6 +1132,11 @@ export class RefundService {
     } catch (error) {
       // The request path validates the command itself; a balance check never adds a new failure mode.
       if (!options.tolerateQueryFailure) throw error;
+      this.logger.warn(
+        `Provider refund command could not be built for the balance check. reservationId=${context.reservation.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       return { providerRefund: null, blockedReason: null };
     }
     let provider: TossPaymentResponse;

@@ -6,7 +6,9 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { asc, eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -29,9 +31,11 @@ import {
   paymentWebhookEvents,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { CacheService } from '../performance/cache.service.js';
 import {
   RefundService,
   type AdminRefundRequestOptions,
+  type RefundRequestResponse,
 } from '../refund/refund.service.js';
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
@@ -43,6 +47,8 @@ import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared
 import type {
   AdminBookingFunnelStatus,
   AdminBookingListItem,
+  AdminRefundOutcome,
+  AdminRefundResult,
   AdminBookingTierStats,
   AdminTicketStatusCounts,
   AdminReservationExportFilter,
@@ -58,6 +64,16 @@ import type {
   ReservationStatus,
 } from '@grabit/shared';
 
+const ADMIN_BOOKING_PAGE_SIZE = 20;
+/**
+ * Booking list stats/tier aggregates are shared for this many seconds per
+ * filter set (page excluded). Paging and repeated clicks reuse them.
+ */
+export const ADMIN_BOOKING_AGGREGATE_CACHE_TTL_SECONDS = 30;
+const ADMIN_BOOKING_AGGREGATE_CACHE_PREFIX = 'cache:admin:bookings:aggregates:v1:';
+/** Upper bound for each admin booking list/aggregate statement on the primary. */
+export const ADMIN_BOOKING_QUERY_TIMEOUT_MS = 5_000;
+const POSTGRES_QUERY_CANCELED = '57014';
 const RAW_EXPORT_TYPE = 'raw_pii';
 const FAILED_CANCELLED_CONTACTS_EXPORT_TYPE = 'failed_cancelled_contacts';
 const ACTIVE_TICKET_MANIFEST_EXPORT_TYPE = 'active_ticket_manifest';
@@ -215,6 +231,67 @@ type AdminBookingQueryParams = {
   search?: string;
   page?: number;
 };
+
+/** Read-only query surface shared by the pool and a read transaction. */
+type AdminReadDb = Pick<DrizzleDB, 'select'>;
+
+type AdminBookingAggregates = {
+  stats: BookingStats;
+  tierStats: AdminBookingTierStats[];
+};
+
+type AdminBookingListResult = AdminBookingAggregates & {
+  bookings: AdminBookingListItem[];
+  total: number;
+};
+
+/**
+ * Cache key for the filter-wide aggregates. Every filter that changes the
+ * aggregate SQL is part of the key (page is not). The filter values are
+ * hashed so user input never becomes part of a Valkey key verbatim.
+ */
+function adminBookingAggregateCacheKey(filters: AdminBookingQueryParams): string {
+  const normalized = {
+    reservationStatus: filters.reservationStatus ?? filters.status ?? null,
+    performanceId: filters.performanceId ?? null,
+    showtimeId: filters.showtimeId ?? null,
+    funnelStatus: filters.funnelStatus ?? null,
+    paymentStatus: filters.paymentStatus ?? null,
+    paymentMethod: filters.paymentMethod ?? null,
+    audienceRegion: filters.audienceRegion ?? null,
+    seatTier: filters.seatTier ?? null,
+    floorKey: filters.floorKey ?? null,
+    seatQuery: filters.seatQuery ?? null,
+    dateFrom: filters.dateFrom ?? null,
+    dateTo: filters.dateTo ?? null,
+    search: filters.search?.trim() || null,
+  };
+  const digest = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+  return `${ADMIN_BOOKING_AGGREGATE_CACHE_PREFIX}${digest}`;
+}
+
+function isAdminBookingAggregates(value: unknown): value is AdminBookingAggregates {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<AdminBookingAggregates>;
+  return Boolean(candidate.stats)
+    && typeof candidate.stats === 'object'
+    && typeof candidate.stats?.totalBookings === 'number'
+    && Array.isArray(candidate.tierStats);
+}
+
+function isPostgresQueryCanceled(error: unknown): boolean {
+  let current: unknown = error;
+  // Drizzle wraps driver errors (DrizzleQueryError.cause = pg DatabaseError).
+  for (let depth = 0; current && typeof current === 'object' && depth < 5; depth += 1) {
+    if ((current as { code?: unknown }).code === POSTGRES_QUERY_CANCELED) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 type AdminRefundStatus =
   | 'requested'
@@ -1011,6 +1088,66 @@ function mergeTierStats(
     );
 }
 
+function resolveAdminRefundOutcome(response: RefundRequestResponse): AdminRefundOutcome {
+  switch (response.refundTimeline?.currentState) {
+    case 'COMPLETED':
+      return 'completed';
+    case 'FAILED':
+      // RefundService marks a failed refund as re-requestable only after it
+      // restored the buyer's tickets because the PG definitely rejected it.
+      return response.canRequestRefund ? 'rights_restored' : 'failed';
+    default:
+      // REQUESTED / SENT_TO_PG / PROCESSING_AT_PG, or an unknown state:
+      // nothing is confirmed yet, so never report it as completed.
+      return 'processing';
+  }
+}
+
+function adminRefundResultMessage(
+  outcome: AdminRefundOutcome,
+  response: RefundRequestResponse,
+): string {
+  switch (outcome) {
+    case 'completed':
+      return response.idempotent
+        ? '이미 환불이 완료된 예매입니다'
+        : '환불이 완료되었습니다';
+    case 'rights_restored':
+      return '결제사가 환불을 거절했습니다. 티켓과 결제는 유지되며, 결제 상태를 확인한 뒤 다시 시도해주세요';
+    case 'failed':
+      return response.idempotent
+        ? '이미 실패로 기록된 환불입니다. 결제사 취소 내역을 확인해 수동으로 처리해주세요'
+        : '환불에 실패했습니다. 결제사 취소 내역을 확인해 수동으로 처리해주세요';
+    case 'processing':
+      if (!response.refundTimeline) {
+        return '환불 상태를 확인하지 못했습니다. 예매 상세에서 환불 상태를 확인해주세요';
+      }
+      return response.retryEnqueued
+        ? '결제사에서 환불을 처리 중입니다. 자동으로 다시 확인합니다'
+        : '결제사에서 환불을 처리 중입니다. 완료 여부를 예매 상세에서 확인해주세요';
+  }
+}
+
+function toAdminRefundResult(response: RefundRequestResponse): AdminRefundResult {
+  const outcome = resolveAdminRefundOutcome(response);
+  return {
+    outcome,
+    message: adminRefundResultMessage(outcome, response),
+    currentState: response.refundTimeline?.currentState ?? null,
+    idempotent: response.idempotent,
+    retryEnqueued: response.retryEnqueued,
+    refundableAmount: response.refundableAmount,
+    refundTimeline: response.refundTimeline,
+    providerRefund: response.providerRefund ?? null,
+  };
+}
+
+function pickDefined<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as Partial<T>;
+}
+
 @Injectable()
 export class AdminBookingService {
   private readonly logger = new Logger(AdminBookingService.name);
@@ -1020,75 +1157,49 @@ export class AdminBookingService {
     private readonly bookingGateway: BookingGateway,
     private readonly refundService: RefundService,
     @Optional() private readonly injectedAuditService?: AdminAuditService,
+    @Optional() @Inject(CacheService) private readonly cache?: CacheService,
   ) {}
 
   private get auditService(): AdminAuditService {
     return this.injectedAuditService ?? new AdminAuditService(this.db);
   }
 
-  async getBookings(params: {
-    status?: string;
-    reservationStatus?: string;
-    performanceId?: string;
-    showtimeId?: string;
-    funnelStatus?: string;
-    paymentStatus?: string;
-    paymentMethod?: string;
-    audienceRegion?: string;
-    seatTier?: string;
-    floorKey?: string;
-    seatQuery?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    search?: string;
-    page?: number;
-  }): Promise<{
-    bookings: AdminBookingListItem[];
-    stats: BookingStats;
-    tierStats: AdminBookingTierStats[];
-    total: number;
-  }> {
-    const { page = 1 } = params;
-    const limit = 20;
-    const offset = (page - 1) * limit;
+  async getBookings(params: AdminBookingQueryParams): Promise<AdminBookingListResult> {
     const whereClause = buildAdminBookingWhereClause(params);
+    // stats and tierStats aggregate the whole filtered range. Paging or
+    // re-clicking the same filter must not recompute them on the primary, so
+    // they are shared for a short TTL across operators and instances.
+    const aggregateCacheKey = adminBookingAggregateCacheKey(params);
+    const cachedAggregates = await this.readCachedBookingAggregates(aggregateCacheKey);
 
-    const [statsRow] = await this.db
-      .select({
-        totalBookings: sql<number>`count(distinct ${reservations.id})::int`,
-        completedRevenue: completedRevenueSql(),
-        soldCount: countDistinctReservationsWhereSql(soldReservationConditionSql()),
-        pendingPaymentCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
-        paymentProcessingCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
-        failedCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
-        expiredPaymentCount: countDistinctReservationsWhereSql(expiredPaymentFailureConditionSql()),
-        abortedPaymentCount: countDistinctReservationsWhereSql(abortedPaymentFailureConditionSql()),
-        localDeadlineExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('local_deadline_expired')),
-        providerExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_expired')),
-        providerAbortedCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_aborted')),
-        buyerCancelledBeforeConfirmCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('buyer_cancelled_before_confirm')),
-        unreconciledProviderExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('unreconciled_provider_expired')),
-        compensatedCancelCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('compensated_cancel')),
-        otherPaymentFailureCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('other')),
-        cancelProcessingCount: countDistinctReservationsWhereSql(cancelProcessingReservationConditionSql()),
-        cancelledCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('CANCELLED')),
-        partialCancelledCount: countDistinctReservationsWhereSql(partialCancelledReservationConditionSql()),
-      })
-      .from(reservations)
-      .innerJoin(users, eq(reservations.userId, users.id))
-      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .leftJoin(payments, eq(payments.reservationId, reservations.id))
-      .leftJoin(
-        reservationPaymentFailureDiagnostics,
-        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
-      )
-      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
-      .where(whereClause) as BookingStatsRow[];
+    const result = await this.runBoundedAdminRead((db) =>
+      this.readBookingsPage(db, params, whereClause, cachedAggregates));
 
-    const stats = mapBookingStats(statsRow);
+    if (!cachedAggregates) {
+      await this.cache?.set(
+        aggregateCacheKey,
+        { stats: result.stats, tierStats: result.tierStats } satisfies AdminBookingAggregates,
+        ADMIN_BOOKING_AGGREGATE_CACHE_TTL_SECONDS,
+      );
+    }
 
-    const rows = await this.db
+    return result;
+  }
+
+  private async readBookingsPage(
+    db: AdminReadDb,
+    params: AdminBookingQueryParams,
+    whereClause: SQL | undefined,
+    cachedAggregates: AdminBookingAggregates | null,
+  ): Promise<AdminBookingListResult> {
+    const { page = 1 } = params;
+    const limit = ADMIN_BOOKING_PAGE_SIZE;
+    const offset = (page - 1) * limit;
+
+    const stats = cachedAggregates?.stats
+      ?? mapBookingStats(await this.selectBookingStatsRow(db, whereClause));
+
+    const rows = await db
       .select({
         reservation: {
           id: reservations.id,
@@ -1149,7 +1260,7 @@ export class AdminBookingService {
     // Batch-fetch all ticket items for all reservations (eliminates N+1)
     const reservationIds = rows.map((r) => r.reservation.id);
     const allTicketItems = reservationIds.length > 0
-      ? await this.db
+      ? await db
           .select()
           .from(ticketItems)
           .where(inArray(ticketItems.reservationId, reservationIds))
@@ -1165,7 +1276,7 @@ export class AdminBookingService {
       (reservationId) => (ticketItemsByReservation.get(reservationId)?.length ?? 0) === 0,
     );
     const allReservationSeats = reservationIdsWithoutTicketItems.length > 0
-      ? await this.db
+      ? await db
           .select()
           .from(reservationSeats)
           .where(inArray(reservationSeats.reservationId, reservationIdsWithoutTicketItems))
@@ -1220,7 +1331,8 @@ export class AdminBookingService {
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
       };
     });
-    const tierStats = await this.getTierStats(params, whereClause);
+    const tierStats = cachedAggregates?.tierStats
+      ?? await this.getTierStats(db, params, whereClause);
 
     return {
       bookings,
@@ -1230,12 +1342,86 @@ export class AdminBookingService {
     };
   }
 
+  private async selectBookingStatsRow(
+    db: AdminReadDb,
+    whereClause: SQL | undefined,
+  ): Promise<BookingStatsRow | undefined> {
+    const [statsRow] = await db
+      .select({
+        totalBookings: sql<number>`count(distinct ${reservations.id})::int`,
+        completedRevenue: completedRevenueSql(),
+        soldCount: countDistinctReservationsWhereSql(soldReservationConditionSql()),
+        pendingPaymentCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
+        paymentProcessingCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
+        failedCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
+        expiredPaymentCount: countDistinctReservationsWhereSql(expiredPaymentFailureConditionSql()),
+        abortedPaymentCount: countDistinctReservationsWhereSql(abortedPaymentFailureConditionSql()),
+        localDeadlineExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('local_deadline_expired')),
+        providerExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_expired')),
+        providerAbortedCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_aborted')),
+        buyerCancelledBeforeConfirmCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('buyer_cancelled_before_confirm')),
+        unreconciledProviderExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('unreconciled_provider_expired')),
+        compensatedCancelCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('compensated_cancel')),
+        otherPaymentFailureCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('other')),
+        cancelProcessingCount: countDistinctReservationsWhereSql(cancelProcessingReservationConditionSql()),
+        cancelledCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('CANCELLED')),
+        partialCancelledCount: countDistinctReservationsWhereSql(partialCancelledReservationConditionSql()),
+      })
+      .from(reservations)
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
+      .where(whereClause) as BookingStatsRow[];
+
+    return statsRow;
+  }
+
+  /**
+   * Runs admin list/aggregate reads in a read-only transaction with a
+   * statement timeout, so one broad admin query cannot hold primary CPU that
+   * seat locking and payment confirmation share during an open.
+   */
+  private async runBoundedAdminRead<T>(run: (db: AdminReadDb) => Promise<T>): Promise<T> {
+    try {
+      return await this.db.transaction(async (tx) => {
+        await tx.execute(
+          sql.raw(`set local statement_timeout = ${ADMIN_BOOKING_QUERY_TIMEOUT_MS}`),
+        );
+        return run(tx);
+      }, { accessMode: 'read only' });
+    } catch (error) {
+      if (isPostgresQueryCanceled(error)) {
+        throw new ServiceUnavailableException(
+          '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 기간을 선택해 범위를 좁혀주세요',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async readCachedBookingAggregates(
+    key: string,
+  ): Promise<AdminBookingAggregates | null> {
+    if (!this.cache) {
+      return null;
+    }
+    const cached = await this.cache.get<AdminBookingAggregates>(key);
+    return isAdminBookingAggregates(cached) ? cached : null;
+  }
+
   private async getTierStats(
+    db: AdminReadDb,
     params: AdminBookingQueryParams,
     whereClause: SQL | undefined,
   ): Promise<AdminBookingTierStats[]> {
     const ticketItemWhere = buildTicketItemStatsWhereClause(params, whereClause);
-    const tierRows = await this.db
+    const tierRows = await db
       .select({
         tierName: ticketItems.tierName,
         price: sql<number>`min(${ticketItems.price})::int`,
@@ -1275,13 +1461,14 @@ export class AdminBookingService {
       .orderBy(ticketItems.tierName) as AdminBookingTierStatsRow[];
 
     const capacityRows = params.showtimeId
-      ? await this.getTierCapacityRows(params)
+      ? await this.getTierCapacityRows(db, params)
       : [];
 
     return mergeTierStats(tierRows, capacityRows);
   }
 
   private async getTierCapacityRows(
+    db: AdminReadDb,
     params: AdminBookingQueryParams,
   ): Promise<AdminBookingTierCapacityRow[]> {
     if (!params.showtimeId) {
@@ -1310,7 +1497,7 @@ export class AdminBookingService {
       );
     }
 
-    return await this.db
+    return await db
       .select({
         tierName: performanceSeatTiers.tierName,
         price: performanceSeatTiers.price,
@@ -1482,33 +1669,15 @@ export class AdminBookingService {
     operatorUserId: string,
     reason: string,
     options: AdminRefundRequestOptions = {},
-  ): Promise<void> {
+  ): Promise<AdminRefundResult> {
+    let refundResult: RefundRequestResponse;
     try {
-      const refundResult = await this.refundService.requestAdminRefund(
+      refundResult = await this.refundService.requestAdminRefund(
         reservationId,
         operatorUserId,
         reason,
         options,
       );
-
-      await this.auditService.write({
-        actorUserId: operatorUserId,
-        action: 'refund.admin_refund',
-        resourceType: 'reservation',
-        resourceId: reservationId,
-        status: 'success',
-        reason,
-        changedFields: ['refund'],
-        before: {},
-        after: {
-          refund: {
-            idempotent: refundResult.idempotent,
-            retryEnqueued: refundResult.retryEnqueued,
-            currentState: refundResult.refundTimeline?.currentState ?? null,
-            overrideOptions: options,
-          },
-        },
-      });
     } catch (error) {
       await this.auditService.write({
         actorUserId: operatorUserId,
@@ -1533,6 +1702,50 @@ export class AdminBookingService {
       });
       throw error;
     }
+
+    const result = toAdminRefundResult(refundResult);
+    // RefundService reports PG rejections, recorded failures and pending PG
+    // work as normal responses. Audit and report what actually happened
+    // instead of treating every response as a completed refund.
+    await this.auditService.write({
+      actorUserId: operatorUserId,
+      action: 'refund.admin_refund',
+      resourceType: 'reservation',
+      resourceId: reservationId,
+      status: result.outcome === 'failed' || result.outcome === 'rights_restored'
+        ? 'failed'
+        : 'success',
+      reason,
+      changedFields: ['refund'],
+      before: {},
+      after: {
+        refund: {
+          outcome: result.outcome,
+          idempotent: result.idempotent,
+          retryEnqueued: result.retryEnqueued,
+          currentState: result.currentState,
+          refundableAmount: result.refundableAmount,
+          overrideOptions: pickDefined({
+            fullRefundOverride: options.fullRefundOverride,
+            enteredTicketOverride: options.enteredTicketOverride,
+          }),
+          expected: pickDefined({
+            expectedRefundableAmount: options.expectedRefundableAmount,
+            expectedProviderRefundAmountMinor: options.expectedProviderRefundAmountMinor,
+          }),
+        },
+      },
+    }).catch((auditError: unknown) => {
+      // The PG cancel cannot be undone at this point, so an audit outage
+      // must not make the operator believe the refund did not happen.
+      this.logger.error(
+        `Failed to write admin refund audit for reservationId=${reservationId} outcome=${result.outcome}: ${
+          auditError instanceof Error ? auditError.message : 'unknown'
+        }`,
+      );
+    });
+
+    return result;
   }
 
   async getRefundPreview(
@@ -1740,6 +1953,10 @@ export class AdminBookingService {
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(ticketItems, eq(ticketItems.reservationId, reservations.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      // funnelStatusEqualsSql references refunds.status (cancel-processing
+      // attention). refunds.reservation_id is unique, so this join cannot
+      // multiply the per-ticket export rows.
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
   }

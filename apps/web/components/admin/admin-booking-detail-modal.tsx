@@ -192,6 +192,24 @@ function canManualOpenCancelledSeats(booking: AdminBookingDetail): boolean {
   );
 }
 
+export interface AdminRefundRequestOptions {
+  fullRefundOverride: boolean;
+  enteredTicketOverride: boolean;
+  /** Refund amount shown in the preview the operator confirmed. */
+  expectedRefundableAmount: number;
+  /** PG cancel amount (minor units) shown in the preview, when known. */
+  expectedProviderRefundAmountMinor?: number;
+}
+
+function formatProviderRefund(
+  providerRefund: { currency: 'KRW' | 'USD'; amountDecimal: string } | null | undefined,
+): string | null {
+  if (!providerRefund) return null;
+  return providerRefund.currency === 'USD'
+    ? `USD ${providerRefund.amountDecimal}`
+    : `${Number(providerRefund.amountDecimal).toLocaleString('ko-KR')}원`;
+}
+
 interface AdminBookingDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -199,10 +217,7 @@ interface AdminBookingDetailModalProps {
   onRefund: (
     id: string,
     reason: string,
-    options: {
-      fullRefundOverride: boolean;
-      enteredTicketOverride: boolean;
-    },
+    options: AdminRefundRequestOptions,
   ) => void;
   isRefunding: boolean;
 }
@@ -232,18 +247,25 @@ export function AdminBookingDetailModal({
     { fullRefundOverride, enteredTicketOverride },
     open && showRefundForm && Boolean(bookingId) && canAdminRefund,
   );
-  const refundQuote = refundPreviewQuery.data?.cancellationQuote ?? null;
-  // Server-side blockers (provider balance mismatch, closed cancellation window without override).
-  const refundBlockedReason = refundPreviewQuery.data?.blockedReason ?? null;
+  const refundPreview = refundPreviewQuery.data;
+  const refundQuote = refundPreview?.cancellationQuote ?? null;
   const refundPreviewCalculating =
     refundPreviewQuery.isLoading || refundPreviewQuery.isFetching;
+  // Server-side blockers (provider balance mismatch, closed cancellation window without override,
+  // no PG cancel command). A preview is also non-requestable when a refund is already in
+  // progress/failed.
+  const refundBlockedReason = refundPreview?.blockedReason
+    ?? (refundPreview && !refundPreview.canRequestRefund
+      ? '이미 환불이 진행 중이거나 실패로 기록된 예매입니다. 환불 진행 상태를 확인해주세요.'
+      : null);
+  const providerRefundLabel = formatProviderRefund(refundPreview?.providerRefund);
   const refundConfirmDisabled =
     !refundReason.trim()
     || isRefunding
     || refundPreviewCalculating
     || refundPreviewQuery.isError
     || refundQuote === null
-    || Boolean(refundBlockedReason);
+    || refundBlockedReason !== null;
   const [showManualOpenForm, setShowManualOpenForm] = useState(false);
   const [manualOpenReason, setManualOpenReason] = useState('');
   const manualOpenMutation = useAdminManualOpenSeat();
@@ -261,10 +283,16 @@ export function AdminBookingDetailModal({
   }
 
   function handleRefundConfirm() {
-    if (!bookingId || !refundReason.trim()) return;
+    if (!bookingId || !refundReason.trim() || !refundQuote || refundConfirmDisabled) return;
+    // Send the amounts the operator is looking at; the server rejects the
+    // refund (409) instead of charging a different fee after a tier change.
     onRefund(bookingId, refundReason.trim(), {
       fullRefundOverride,
       enteredTicketOverride,
+      expectedRefundableAmount: refundQuote.refundableAmount,
+      ...(refundPreview?.providerRefund
+        ? { expectedProviderRefundAmountMinor: refundPreview.providerRefund.amountMinor }
+        : {}),
     });
   }
 
@@ -549,6 +577,14 @@ export function AdminBookingDetailModal({
                       : '계산 불가'}
                 </span>
               </div>
+              {!refundPreviewCalculating && providerRefundLabel && refundPreview?.providerRefund?.currency === 'USD' && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-sm text-gray-600">결제사 환불 금액</span>
+                  <span className="text-right text-sm font-semibold text-gray-900">
+                    {providerRefundLabel}
+                  </span>
+                </div>
+              )}
               {refundPreviewQuery.isError && (
                 <p className="mt-2 text-xs font-semibold text-[#C62828]">
                   환불 금액을 계산하지 못했습니다. 잠시 후 다시 시도하세요.

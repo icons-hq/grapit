@@ -583,6 +583,77 @@ describe('RefundService', () => {
     expect(result.cancellationQuote?.items).toHaveLength(2);
   });
 
+  it('shows the admin the provider refund amount that the refund request will compare against', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const queryPayment = vi.fn().mockResolvedValue({
+      totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+    });
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+    expect(result.providerRefund).toMatchObject({ currency: 'KRW', amountMinor: 140000 });
+    expect(result.blockedReason).toBeNull();
+    expect(result.canRequestRefund).toBe(true);
+    expect(queryPayment).toHaveBeenCalledWith('pay-key-1', expect.any(Object));
+  });
+
+  it.each([
+    {
+      name: 'the PG is unreachable',
+      queryPayment: () => vi.fn().mockRejectedValue(new Error('fetch failed')),
+      reason: '결제사 환불 잔액을 확인하지 못했습니다',
+    },
+    {
+      name: 'the PG balance differs from the booking ledger',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 100000, isPartialCancelable: true }),
+      reason: '결제사 환불 잔액이 예매 기록과 다릅니다',
+    },
+    {
+      name: 'the payment method cannot be partially cancelled',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: false }),
+      reason: '자동 부분취소를 지원하지 않습니다',
+    },
+    {
+      name: 'no PG cancel command can be built for a foreign payment',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true }),
+      reason: '자동 환불 금액을 만들 수 없습니다',
+      foreignWithoutChargeData: true,
+    },
+  ])('blocks the admin refund preview when $name', async ({ queryPayment, reason, foreignWithoutChargeData }) => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment: queryPayment() } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    if (foreignWithoutChargeData) {
+      // PayPal charge without provider-currency charge data: the PG cancel
+      // amount cannot be derived, which requestAdminRefund would reject too.
+      context.payment = { ...context.payment, provider: 'PAYPAL', currency: 'USD' };
+    }
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    expect(result.canRequestRefund).toBe(false);
+    expect(result.blockedReason).toContain(reason);
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+  });
+
   it('backfills missing ticket items before user refund requests', async () => {
     const service = new RefundService(
       {} as never,
