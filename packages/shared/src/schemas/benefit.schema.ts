@@ -147,6 +147,39 @@ export const benefitDefinitionListSchema = z
     });
   });
 
+/**
+ * Write-side contract for saving a configuration or running a test from a draft.
+ * The runner only applies mutual exclusion between limited benefits, so a rule
+ * that touches an included benefit would be stored but silently ignored.
+ * Persisted configurations and run snapshots keep using the lenient list schema
+ * so that historical records remain readable.
+ */
+export const benefitDefinitionWriteListSchema = benefitDefinitionListSchema.superRefine(
+  (benefits, ctx) => {
+    const kindByIdentity = new Map(benefits.map((benefit) => [benefit.identity, benefit.kind]));
+    benefits.forEach((benefit, benefitIndex) => {
+      benefit.mutuallyExclusiveWith.forEach((identity, referenceIndex) => {
+        if (benefit.kind === 'included') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [benefitIndex, 'mutuallyExclusiveWith', referenceIndex],
+            message: '기본 포함 특전에는 함께 배정하지 않을 특전을 설정할 수 없습니다',
+          });
+          return;
+        }
+
+        if (kindByIdentity.get(identity) === 'included') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [benefitIndex, 'mutuallyExclusiveWith', referenceIndex],
+            message: '한정 특전은 한정 특전끼리만 함께 배정하지 않도록 설정할 수 있습니다',
+          });
+        }
+      });
+    });
+  },
+);
+
 export const benefitConfigurationSchema = z
   .object({
     id: benefitConfigurationIdSchema,

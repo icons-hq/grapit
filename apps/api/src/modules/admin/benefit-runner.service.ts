@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import {
+  benefitDefinitionWriteListSchema,
   benefitEntitlementExportRowSchema,
   benefitRunRecordSchema,
   type BenefitConfiguration,
@@ -28,13 +29,18 @@ import {
   users,
 } from '../../database/schema/index.js';
 import { AdminAuditService } from './admin-audit.service.js';
-import { AdminBenefitsService } from './admin-benefits.service.js';
+import {
+  AdminBenefitsService,
+  translateBenefitMutationDbError,
+} from './admin-benefits.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
 
 const CONTENT_TYPE = 'text/csv; charset=utf-8' as const;
 const RESULT_SUMMARY_VERSION = 1 as const;
 const PENDING_RUN_ID = '00000000-0000-4000-8000-000000000000';
+// 13 bind parameters per entitlement row; stay far below PostgreSQL's 65,535 limit.
+const ENTITLEMENT_INSERT_CHUNK_SIZE = 1000;
 
 type LimitedBenefit = Extract<BenefitDefinition, { kind: 'limited' }>;
 type BenefitConfigurationRow = typeof ticketBenefitConfigurations.$inferSelect;
@@ -42,6 +48,8 @@ type TicketBenefitRow = typeof ticketBenefits.$inferSelect;
 type BenefitRunRow = typeof ticketBenefitRuns.$inferSelect;
 type BenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
 type BenefitMutationDb = DrizzleDB & Pick<DrizzleDB, 'execute'>;
+/** Run/entitlement CSV row. inactiveReason is CSV-only and not part of the shared row contract. */
+type EntitlementCsvRow = BenefitEntitlementExportRow & { inactiveReason?: string | null };
 
 type TicketCustomerExportMetadata = {
   ticketItemId: string;
@@ -177,6 +185,7 @@ export class BenefitRunnerService {
     if (input.configurationId && configuration.id !== input.configurationId) {
       throw new BadRequestException('요청한 혜택 설정이 현재 회차 설정과 일치하지 않습니다');
     }
+    assertMutualExclusionApplicable(configuration);
 
     const seed = input.operatorProvidedSeedRef ?? context.randomSeed ?? generateInternalSeed();
     const seedRef = redactedSeedRef(seed);
@@ -269,6 +278,7 @@ export class BenefitRunnerService {
       if (configuration.id !== input.configurationId) {
         throw new BadRequestException('요청한 혜택 설정이 현재 회차 설정과 일치하지 않습니다');
       }
+      assertMutualExclusionApplicable(configuration);
 
       const candidates = await this.lockActiveTicketItemCandidates(
         tx as BenefitMutationDb,
@@ -367,6 +377,8 @@ export class BenefitRunnerService {
         updatedAt: run.updatedAt,
         resultSummary: finalSummary,
       });
+    }).catch((error: unknown) => {
+      throw translateBenefitMutationDbError(error);
     });
   }
 
@@ -513,6 +525,8 @@ export class BenefitRunnerService {
         updatedAt: run.updatedAt,
         resultSummary: finalSummary,
       });
+    }).catch((error: unknown) => {
+      throw translateBenefitMutationDbError(error);
     });
   }
 
@@ -548,7 +562,12 @@ export class BenefitRunnerService {
     const row = await this.loadRunRow(this.db, runId);
     const summary = normalizeResultSummary(row.resultSummary);
     const generatedAt = (actor.now ?? new Date()).toISOString();
-    const rows = await this.hydrateExportRowsWithTicketMetadata(summary.exportRows);
+    // A live run summary is a snapshot taken at run time. Later cancellations,
+    // re-runs and rollbacks change the entitlements, so report their current state.
+    const currentRows: EntitlementCsvRow[] = row.mode === 'live'
+      ? await this.withCurrentEntitlementState(runId, summary.exportRows)
+      : summary.exportRows;
+    const rows = await this.hydrateExportRowsWithTicketMetadata(currentRows);
     const csv = withUtf8Bom(safeCsvRows([
       entitlementExportHeader(),
       ...rows.map(entitlementExportRowToCsvValues),
@@ -597,6 +616,7 @@ export class BenefitRunnerService {
         benefitKind: ticketBenefitEntitlements.benefitKind,
         displayCopySnapshot: ticketBenefitEntitlements.displayCopySnapshot,
         state: ticketBenefitEntitlements.state,
+        inactiveReason: ticketBenefitEntitlements.inactiveReason,
         redeemedAt: ticketBenefitEntitlements.redeemedAt,
         createdAt: ticketBenefitEntitlements.createdAt,
       })
@@ -605,7 +625,10 @@ export class BenefitRunnerService {
       .orderBy(asc(ticketBenefitEntitlements.createdAt));
     const generatedAt = (actor.now ?? new Date()).toISOString();
     const exportRows = await this.hydrateExportRowsWithTicketMetadata(
-      (rows as BenefitEntitlementRow[]).map(entitlementRowToExportRow),
+      (rows as BenefitEntitlementRow[]).map((entitlement): EntitlementCsvRow => ({
+        ...entitlementRowToExportRow(entitlement),
+        inactiveReason: entitlement.inactiveReason ?? null,
+      })),
     );
     const csv = withUtf8Bom(safeCsvRows([
       entitlementExportHeader(),
@@ -639,9 +662,50 @@ export class BenefitRunnerService {
     };
   }
 
-  private async hydrateExportRowsWithTicketMetadata(
+  private async withCurrentEntitlementState(
+    runId: string,
     rows: BenefitEntitlementExportRow[],
-  ): Promise<BenefitEntitlementExportRow[]> {
+  ): Promise<EntitlementCsvRow[]> {
+    if (rows.length === 0) {
+      return rows;
+    }
+
+    const current = await this.db
+      .select({
+        id: ticketBenefitEntitlements.id,
+        ticketItemId: ticketBenefitEntitlements.ticketItemId,
+        benefitIdentity: ticketBenefitEntitlements.benefitIdentity,
+        state: ticketBenefitEntitlements.state,
+        inactiveReason: ticketBenefitEntitlements.inactiveReason,
+        redeemedAt: ticketBenefitEntitlements.redeemedAt,
+      })
+      .from(ticketBenefitEntitlements)
+      .where(eq(ticketBenefitEntitlements.runId, runId));
+    const byId = new Map(current.map((entitlement) => [entitlement.id, entitlement]));
+    const byTicketAndBenefit = new Map(current.map((entitlement) => [
+      `${entitlement.ticketItemId}:${entitlement.benefitIdentity}`,
+      entitlement,
+    ]));
+
+    return rows.map((row): EntitlementCsvRow => {
+      const entitlement = byId.get(row.benefitEntitlementId)
+        ?? byTicketAndBenefit.get(`${row.ticketItemId}:${row.benefitIdentity}`);
+      if (!entitlement) {
+        // Never present a win without a stored entitlement as valid.
+        return { ...row, state: 'inactive', redeemedAt: null, inactiveReason: 'entitlement_not_found' };
+      }
+      return {
+        ...row,
+        state: entitlement.state,
+        redeemedAt: entitlement.redeemedAt?.toISOString() ?? null,
+        inactiveReason: entitlement.inactiveReason ?? null,
+      };
+    });
+  }
+
+  private async hydrateExportRowsWithTicketMetadata<T extends BenefitEntitlementExportRow>(
+    rows: T[],
+  ): Promise<T[]> {
     const ticketItemIds = Array.from(new Set(rows.map((row) => row.ticketItemId)));
     if (ticketItemIds.length === 0) {
       return rows;
@@ -688,7 +752,7 @@ export class BenefitRunnerService {
         customerPhone: metadata.customerPhone,
         customerName: metadata.customerName,
         customerEmail: metadata.customerEmail,
-      } as BenefitEntitlementExportRow;
+      } as T;
     });
   }
 
@@ -1096,6 +1160,22 @@ function benefitsAreMutuallyExclusive(
   );
 }
 
+/**
+ * Mutual exclusion is applied only between limited benefits. Configurations
+ * saved before that rule was validated may still carry a rule on an included
+ * benefit; refuse to run them instead of silently ignoring the rule.
+ */
+function assertMutualExclusionApplicable(configuration: BenefitConfiguration): void {
+  const parsed = benefitDefinitionWriteListSchema.safeParse(configuration.benefits);
+  if (parsed.success) {
+    return;
+  }
+  const issue = parsed.error.issues[0];
+  throw new BadRequestException(
+    `저장된 혜택 설정을 그대로 적용할 수 없습니다: ${issue?.message ?? '설정을 확인하세요'}. 설정을 다시 저장한 뒤 실행하세요.`,
+  );
+}
+
 async function inactivateActiveLimitedEntitlements(
   db: DrizzleDB,
   showtimeId: string,
@@ -1128,26 +1208,31 @@ async function insertAssignmentsAsEntitlements(input: {
     return [];
   }
 
-  const inserted = await input.db
-    .insert(ticketBenefitEntitlements)
-    .values(input.assignments.map((assignment) => ({
-      showtimeId: input.showtimeId,
-      ticketItemId: assignment.ticketItemId,
-      benefitIdentity: assignment.benefitIdentity,
-      benefitKind: 'limited' as const,
-      displayCopySnapshot: assignment.displayCopy,
-      source: input.source,
-      runId: input.runId,
-      state: 'active' as const,
-      inactiveReason: null,
-      redeemedAt: null,
-      redeemedByUserId: null,
-      createdAt: input.now,
-      updatedAt: input.now,
-    })))
-    .returning({ id: ticketBenefitEntitlements.id });
+  const ids: string[] = [];
+  for (let offset = 0; offset < input.assignments.length; offset += ENTITLEMENT_INSERT_CHUNK_SIZE) {
+    const chunk = input.assignments.slice(offset, offset + ENTITLEMENT_INSERT_CHUNK_SIZE);
+    const inserted = await input.db
+      .insert(ticketBenefitEntitlements)
+      .values(chunk.map((assignment) => ({
+        showtimeId: input.showtimeId,
+        ticketItemId: assignment.ticketItemId,
+        benefitIdentity: assignment.benefitIdentity,
+        benefitKind: 'limited' as const,
+        displayCopySnapshot: assignment.displayCopy,
+        source: input.source,
+        runId: input.runId,
+        state: 'active' as const,
+        inactiveReason: null,
+        redeemedAt: null,
+        redeemedByUserId: null,
+        createdAt: input.now,
+        updatedAt: input.now,
+      })))
+      .returning({ id: ticketBenefitEntitlements.id });
+    ids.push(...inserted.map((row) => row.id));
+  }
 
-  return inserted.map((row) => row.id);
+  return ids;
 }
 
 function configurationFromRows(
@@ -1367,11 +1452,12 @@ function entitlementExportHeader(): string[] {
     'Customer Phone',
     'Customer Name',
     'Customer Email',
+    'Inactive Reason',
   ];
 }
 
-function entitlementExportRowToCsvValues(row: BenefitEntitlementExportRow): unknown[] {
-  const rowWithMetadata = row as BenefitEntitlementExportRow & {
+function entitlementExportRowToCsvValues(row: EntitlementCsvRow): unknown[] {
+  const rowWithMetadata = row as EntitlementCsvRow & {
     source?: string;
     runMode?: string;
   };
@@ -1393,6 +1479,7 @@ function entitlementExportRowToCsvValues(row: BenefitEntitlementExportRow): unkn
     row.customerPhone ?? '',
     row.customerName ?? '',
     row.customerEmail ?? '',
+    row.inactiveReason ?? '',
   ];
 }
 

@@ -930,8 +930,16 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(entitlements[0]!.state).toBe('redeemed');
   });
 
+  async function repairOperator() {
+    const [operator] = await db.insert(users).values({ email: `${randomUUID()}@example.test`, name: 'Operator',
+      phone: '+821000000000', gender: 'unspecified', birthDate: '1990-01-01', role: 'admin',
+      isPhoneVerified: true, isEmailVerified: true }).returning();
+    return { operatorUserId: operator!.id, reason: 'reviewed included benefit repair' };
+  }
+
   it.each(['dry-run', 'apply'] as const)('benefit repair %s rejects a nonexistent showtime instead of reporting zero missing rights', async (mode) => {
-    await expect(repairIncludedBenefits(db, randomUUID(), mode === 'apply' ? 'a'.repeat(64) : undefined))
+    await expect(repairIncludedBenefits(db, randomUUID(),
+      mode === 'apply' ? { expectedHash: 'a'.repeat(64), ...await repairOperator() } : undefined))
       .rejects.toThrow('BENEFIT_REPAIR_SHOWTIME_NOT_FOUND');
   });
 
@@ -942,8 +950,11 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const before = await repairIncludedBenefits(db, f.showtimeId);
     expect(before).toMatchObject({ mode: 'dry-run', missingTickets: 1, missingEntitlements: 1, appliedEntitlements: 0 });
     expect(await db.select().from(ticketBenefitEntitlements).where(eq(ticketBenefitEntitlements.showtimeId, f.showtimeId))).toHaveLength(0);
-    await expect(repairIncludedBenefits(db, f.showtimeId, 'invalid')).rejects.toThrow('BENEFIT_REPAIR_CANDIDATES_CHANGED');
-    await expect(repairIncludedBenefits(db, f.showtimeId, before.hash)).resolves.toMatchObject({ appliedEntitlements: 1 });
+    const operator = await repairOperator();
+    await expect(repairIncludedBenefits(db, f.showtimeId, { expectedHash: 'b'.repeat(64), ...operator }))
+      .rejects.toThrow('BENEFIT_REPAIR_CANDIDATES_CHANGED');
+    await expect(repairIncludedBenefits(db, f.showtimeId, { expectedHash: before.hash, ...operator }))
+      .resolves.toMatchObject({ appliedEntitlements: 1 });
     expect(await repairIncludedBenefits(db, f.showtimeId)).toMatchObject({ missingTickets: 0, missingEntitlements: 0 });
   });
 

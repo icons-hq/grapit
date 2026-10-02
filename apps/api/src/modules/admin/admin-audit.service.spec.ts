@@ -86,6 +86,7 @@ describe('AdminAuditService', () => {
       'benefits.run.rollback',
       'benefits.run.export',
       'benefits.entitlements.export',
+      'benefits.included_repair.apply',
       'security.allowlist.update',
       'security.permission.update',
       'user.export_raw',

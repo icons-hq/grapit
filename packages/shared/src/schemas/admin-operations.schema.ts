@@ -211,6 +211,7 @@ export const adminAuditActionSchema = z.enum([
   'benefits.run.rollback',
   'benefits.run.export',
   'benefits.entitlements.export',
+  'benefits.included_repair.apply',
   'user.export_raw',
   'user.withdraw',
   'user.hard_delete',

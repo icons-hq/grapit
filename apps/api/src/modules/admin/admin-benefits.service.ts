@@ -4,14 +4,15 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
   benefitConfigurationChangeRecordSchema,
   benefitConfigurationExportRowSchema,
-  benefitDefinitionListSchema,
+  benefitDefinitionWriteListSchema,
   type BenefitConfiguration,
   type BenefitConfigurationChangeRecord,
   type BenefitConfigurationExportRow,
@@ -32,9 +33,18 @@ import { AdminAuditService } from './admin-audit.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 
 const CONTENT_TYPE = 'text/csv; charset=utf-8' as const;
+/**
+ * Benefit writers hold the showtime row in FOR NO KEY UPDATE, which blocks ticket
+ * issuance (FOR SHARE) for the same showtime. Fail fast instead of queueing behind
+ * busy confirms, and cap how long a single statement may keep the lock.
+ */
+export const BENEFIT_MUTATION_LOCK_TIMEOUT = '3s';
+export const BENEFIT_MUTATION_STATEMENT_TIMEOUT = '30s';
+const PG_LOCK_NOT_AVAILABLE = '55P03';
+const PG_QUERY_CANCELED = '57014';
 const benefitSaveInputSchema = z
   .object({
-    benefits: benefitDefinitionListSchema,
+    benefits: benefitDefinitionWriteListSchema,
     reason: z.string().trim().min(1).max(500).optional(),
   })
   .strict();
@@ -42,14 +52,6 @@ const benefitSaveInputSchema = z
 type BenefitSaveInput = z.infer<typeof benefitSaveInputSchema>;
 type BenefitConfigurationRow = typeof ticketBenefitConfigurations.$inferSelect;
 type TicketBenefitRow = typeof ticketBenefits.$inferSelect;
-type TicketItemBenefitCandidate = Pick<
-  typeof ticketItems.$inferSelect,
-  'id' | 'tierName'
->;
-type ActiveIncludedEntitlement = Pick<
-  typeof ticketBenefitEntitlements.$inferSelect,
-  'id' | 'ticketItemId' | 'benefitIdentity'
->;
 type BenefitMutationDb = DrizzleDB & Pick<DrizzleDB, 'execute'>;
 
 export interface AdminBenefitOperationContext {
@@ -212,6 +214,8 @@ export class AdminBenefitsService {
       });
 
       return after;
+    }).catch((error: unknown) => {
+      throw translateBenefitMutationDbError(error);
     });
   }
 
@@ -268,6 +272,15 @@ export class AdminBenefitsService {
     };
   }
 
+  /**
+   * Converges configuration-sourced included entitlements of a showtime to the
+   * given benefits with three set-based statements. The work stays constant in
+   * round-trips no matter how many tickets were sold, and no per-row bind
+   * parameters are sent, so large showtimes neither hold the showtime lock for
+   * long nor exceed the PostgreSQL bind parameter limit.
+   * At most one active row per (ticket item, identity) is guaranteed by
+   * idx_tbe_active_config_included_item_identity (migration 0033).
+   */
   async syncIncludedEntitlementsForShowtime(
     showtimeId: string,
     options: {
@@ -276,136 +289,80 @@ export class AdminBenefitsService {
       now?: Date;
     } = {},
   ): Promise<{ createdCount: number; inactivatedCount: number }> {
-    const db = options.db ?? this.db;
-    const now = options.now ?? new Date();
+    const db = (options.db ?? this.db) as BenefitMutationDb;
+    const now = (options.now ?? new Date()).toISOString();
     const benefits = options.benefits
       ?? (await this.loadActiveConfiguration(db, showtimeId))?.benefits
       ?? [];
     const includedBenefits = benefits.filter((benefit) => benefit.kind === 'included');
+    // {"<identity>": {"tiers": [...], "copy": {...}}}. Existing rows are matched by
+    // ticket item primary key and an identity lookup in this single parameter, so
+    // the plan stays linear without relying on table statistics.
+    const byIdentity = JSON.stringify(Object.fromEntries(includedBenefits.map((benefit) => [
+      benefit.identity,
+      { tiers: benefit.eligibleTierNames, copy: benefit.displayCopy },
+    ])));
+    const desiredCopy = sql`(${byIdentity}::jsonb -> e.benefit_identity::text -> 'copy')`;
 
-    const ticketRows = await db
-      .select({
-        id: ticketItems.id,
-        tierName: ticketItems.tierName,
-      })
-      .from(ticketItems)
-      .where(and(
-        eq(ticketItems.showtimeId, showtimeId),
-        eq(ticketItems.status, 'active'),
-      ));
-    const activeTicketItems = ticketRows as TicketItemBenefitCandidate[];
+    const inactivatedCount = countFromRows(await db.execute(sql`
+      WITH changed AS (
+        UPDATE ticket_benefit_entitlements e
+        SET state = 'inactive', inactive_reason = 'configuration_changed', updated_at = ${now}::timestamptz
+        FROM ticket_items ti
+        WHERE ti.id = e.ticket_item_id
+          AND e.showtime_id = ${showtimeId}
+          AND e.source = 'configuration'
+          AND e.benefit_kind = 'included'
+          AND e.state = 'active'
+          AND NOT (
+            ti.showtime_id = e.showtime_id
+            AND ti.status = 'active'
+            AND coalesce(${byIdentity}::jsonb -> e.benefit_identity::text -> 'tiers', '[]'::jsonb) ? ti.tier_name
+          )
+        RETURNING 1
+      )
+      SELECT count(*)::int AS count FROM changed
+    `));
 
-    const entitlementRows = await db
-      .select({
-        id: ticketBenefitEntitlements.id,
-        ticketItemId: ticketBenefitEntitlements.ticketItemId,
-        benefitIdentity: ticketBenefitEntitlements.benefitIdentity,
-      })
-      .from(ticketBenefitEntitlements)
-      .where(and(
-        eq(ticketBenefitEntitlements.showtimeId, showtimeId),
-        eq(ticketBenefitEntitlements.source, 'configuration'),
-        eq(ticketBenefitEntitlements.benefitKind, 'included'),
-        eq(ticketBenefitEntitlements.state, 'active'),
-      ));
-    const activeEntitlements = entitlementRows as ActiveIncludedEntitlement[];
-
-    const existingByKey = groupEntitlementsByKey(activeEntitlements);
-    const desired = new Map<string, {
-      ticketItemId: string;
-      benefit: Extract<BenefitDefinition, { kind: 'included' }>;
-    }>();
-
-    for (const benefit of includedBenefits) {
-      const eligibleTierNames = new Set(benefit.eligibleTierNames);
-      for (const ticketItem of activeTicketItems) {
-        if (!eligibleTierNames.has(ticketItem.tierName)) {
-          continue;
-        }
-        desired.set(entitlementKey(ticketItem.id, benefit.identity), {
-          ticketItemId: ticketItem.id,
-          benefit,
-        });
-      }
+    if (includedBenefits.length === 0) {
+      return { createdCount: 0, inactivatedCount };
     }
 
-    const toInsert = [...desired.entries()]
-      .filter(([key]) => !existingByKey.has(key))
-      .map(([, desiredEntitlement]) => ({
-        showtimeId,
-        ticketItemId: desiredEntitlement.ticketItemId,
-        benefitIdentity: desiredEntitlement.benefit.identity,
-        benefitKind: 'included' as const,
-        displayCopySnapshot: desiredEntitlement.benefit.displayCopy,
-        source: 'configuration' as const,
-        runId: null,
-        state: 'active' as const,
-        inactiveReason: null,
-        redeemedAt: null,
-        redeemedByUserId: null,
-        createdAt: now,
-        updatedAt: now,
-      }));
-    let createdCount = 0;
-    if (toInsert.length > 0) {
-      const insertedEntitlements = await db
-        .insert(ticketBenefitEntitlements)
-        .values(toInsert)
-        .onConflictDoNothing()
-        .returning({ id: ticketBenefitEntitlements.id });
-      createdCount = insertedEntitlements.length;
-    }
+    // Every row still active here passed the eligibility check above in this
+    // transaction, and the showtime lock keeps ticket issuance out until commit.
+    await db.execute(sql`
+      UPDATE ticket_benefit_entitlements e
+      SET display_copy_snapshot = ${desiredCopy}, inactive_reason = NULL, updated_at = ${now}::timestamptz
+      WHERE e.showtime_id = ${showtimeId}
+        AND e.source = 'configuration'
+        AND e.benefit_kind = 'included'
+        AND e.state = 'active'
+        AND ${byIdentity}::jsonb ? e.benefit_identity::text
+        AND (e.display_copy_snapshot IS DISTINCT FROM ${desiredCopy} OR e.inactive_reason IS NOT NULL)
+    `);
 
-    for (const [key, desiredEntitlement] of desired.entries()) {
-      const [existing] = existingByKey.get(key) ?? [];
-      if (!existing) {
-        continue;
-      }
-      await db
-        .update(ticketBenefitEntitlements)
-        .set({
-          displayCopySnapshot: desiredEntitlement.benefit.displayCopy,
-          inactiveReason: null,
-          updatedAt: now,
-        })
-        .where(eq(ticketBenefitEntitlements.id, existing.id));
-    }
+    const createdCount = countFromRows(await db.execute(sql`
+      WITH inserted AS (
+        INSERT INTO ticket_benefit_entitlements (
+          showtime_id, ticket_item_id, benefit_identity, benefit_kind, display_copy_snapshot,
+          source, run_id, state, inactive_reason, redeemed_at, redeemed_by_user_id, created_at, updated_at
+        )
+        SELECT ti.showtime_id, ti.id, d.key, 'included'::ticket_benefit_kind, d.value -> 'copy',
+          'configuration'::ticket_benefit_entitlement_source, NULL, 'active'::ticket_benefit_entitlement_state,
+          NULL, NULL, NULL, ${now}::timestamptz, ${now}::timestamptz
+        FROM ticket_items ti
+        CROSS JOIN jsonb_each(${byIdentity}::jsonb) AS d
+        WHERE ti.showtime_id = ${showtimeId}
+          AND ti.status = 'active'
+          AND d.value -> 'tiers' ? ti.tier_name
+        ORDER BY ti.id, d.key
+        ON CONFLICT DO NOTHING
+        RETURNING 1
+      )
+      SELECT count(*)::int AS count FROM inserted
+    `));
 
-    const duplicateIds: string[] = [];
-    const configurationChangedIds: string[] = [];
-    for (const [key, entitlements] of existingByKey.entries()) {
-      if (desired.has(key)) {
-        duplicateIds.push(...entitlements.slice(1).map((entitlement) => entitlement.id));
-      } else {
-        configurationChangedIds.push(...entitlements.map((entitlement) => entitlement.id));
-      }
-    }
-
-    if (duplicateIds.length > 0) {
-      await db
-        .update(ticketBenefitEntitlements)
-        .set({
-          state: 'inactive',
-          inactiveReason: 'duplicate_configuration_entitlement',
-          updatedAt: now,
-        })
-        .where(inArray(ticketBenefitEntitlements.id, duplicateIds));
-    }
-    if (configurationChangedIds.length > 0) {
-      await db
-        .update(ticketBenefitEntitlements)
-        .set({
-          state: 'inactive',
-          inactiveReason: 'configuration_changed',
-          updatedAt: now,
-        })
-        .where(inArray(ticketBenefitEntitlements.id, configurationChangedIds));
-    }
-
-    return {
-      createdCount,
-      inactivatedCount: duplicateIds.length + configurationChangedIds.length,
-    };
+    return { createdCount, inactivatedCount };
   }
 
   async exportConfiguration(
@@ -496,10 +453,18 @@ export class AdminBenefitsService {
     await this.assertBenefitResultUnlocked(db, showtimeId);
   }
 
+  /**
+   * Call first inside the mutation transaction. Callers must pass the rejected
+   * transaction promise through translateBenefitMutationDbError.
+   */
   async lockShowtimeForBenefitMutation(
     db: BenefitMutationDb,
     showtimeId: string,
   ): Promise<void> {
+    await db.execute(sql`
+      SELECT set_config('lock_timeout', ${BENEFIT_MUTATION_LOCK_TIMEOUT}, true),
+        set_config('statement_timeout', ${BENEFIT_MUTATION_STATEMENT_TIMEOUT}, true)
+    `);
     const result = await db.execute(sql`
       SELECT id
       FROM showtimes
@@ -678,23 +643,43 @@ function parseMutualExclusionGroup(group: string | null): string[] {
   return group?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
 }
 
-function groupEntitlementsByKey(
-  entitlements: ActiveIncludedEntitlement[],
-): Map<string, ActiveIncludedEntitlement[]> {
-  const byKey = new Map<string, ActiveIncludedEntitlement[]>();
-
-  for (const entitlement of entitlements) {
-    const key = entitlementKey(entitlement.ticketItemId, entitlement.benefitIdentity);
-    const group = byKey.get(key) ?? [];
-    group.push(entitlement);
-    byKey.set(key, group);
-  }
-
-  return byKey;
+function countFromRows(result: unknown): number {
+  const rows = Array.isArray(result)
+    ? result
+    : (result as { rows?: unknown[] } | null)?.rows ?? [];
+  const [row] = rows as Array<{ count?: unknown }>;
+  return Number(row?.count ?? 0);
 }
 
-function entitlementKey(ticketItemId: string, benefitIdentity: string): string {
-  return `${ticketItemId}:${benefitIdentity}`;
+/**
+ * Maps lock and statement timeouts of benefit mutation transactions to
+ * operator-facing errors. Other errors pass through unchanged.
+ */
+export function translateBenefitMutationDbError(error: unknown): unknown {
+  const code = postgresErrorCode(error);
+  if (code === PG_LOCK_NOT_AVAILABLE) {
+    return new ConflictException(
+      '같은 회차의 결제·현장 처리와 겹쳐 특전 작업을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.',
+    );
+  }
+  if (code === PG_QUERY_CANCELED) {
+    return new ServiceUnavailableException(
+      '특전 작업이 제한 시간을 넘어 취소되었습니다. 판매가 한산한 시간에 다시 시도해주세요.',
+    );
+  }
+  return error;
+}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string') {
+      return code;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 function jsonSnapshot(
