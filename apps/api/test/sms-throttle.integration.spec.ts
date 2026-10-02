@@ -15,12 +15,14 @@ import {
   SmsService,
   VERIFY_AND_INCREMENT_LUA,
   smsAttemptsKey,
+  smsGlobalHourlySendCounterKey,
   smsGlobalSendCounterKey,
   smsOtpKey,
   smsResendKey,
   smsSendCounterKey,
   smsVerificationTokenClaimKey,
   smsVerifiedKey,
+  smsVerifyCounterKey,
 } from '../src/modules/sms/sms.service.js';
 import {
   TwilioVerifyApiError,
@@ -42,6 +44,7 @@ import {
  */
 
 const GLOBAL_SEND_LIMIT_PER_MINUTE = 10;
+const GLOBAL_SEND_LIMIT_PER_HOUR = 40;
 // Lower than the number of distinct-phone sends below, to prove the shared
 // client IP is not what limits these routes.
 const DEFAULT_IP_THROTTLE_LIMIT = 3;
@@ -50,12 +53,16 @@ function phoneAt(index: number): string {
   return `+8210${String(55550000 + index)}`;
 }
 
-async function waitForFreshMinuteWindow(minRemainingMs = 8_000): Promise<number> {
-  const remaining = 60_000 - (Date.now() % 60_000);
+async function waitForFreshWindow(windowMs: number, minRemainingMs = 8_000): Promise<number> {
+  const remaining = windowMs - (Date.now() % windowMs);
   if (remaining < minRemainingMs) {
     await new Promise((resolve) => setTimeout(resolve, remaining + 50));
   }
-  return Math.floor(Date.now() / 60_000);
+  return Math.floor(Date.now() / windowMs);
+}
+
+function waitForFreshMinuteWindow(minRemainingMs = 8_000): Promise<number> {
+  return waitForFreshWindow(60_000, minRemainingMs);
 }
 
 describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () => {
@@ -88,6 +95,7 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
         TWILIO_VERIFY_SERVICE_SID: 'VA_integration',
         SMS_VERIFICATION_TOKEN_SECRET: 'integration-token-secret',
         SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: String(GLOBAL_SEND_LIMIT_PER_MINUTE),
+        SMS_GLOBAL_SEND_LIMIT_PER_HOUR: String(GLOBAL_SEND_LIMIT_PER_HOUR),
       }),
       redis,
     );
@@ -193,6 +201,39 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
       expect(globalTtl).toBeLessThanOrEqual(120);
     });
 
+    it('분 budget이 남아 있어도 시간 global budget을 넘으면 429로 막고 분 budget slot을 돌려준다', async () => {
+      const server = app.getHttpServer();
+      await waitForFreshWindow(3_600_000);
+      const minuteIndex = await waitForFreshMinuteWindow();
+      const hourIndex = Math.floor(Date.now() / 3_600_000);
+      const remainingHourBudget = 2;
+      await redis.set(
+        smsGlobalHourlySendCounterKey(hourIndex),
+        String(GLOBAL_SEND_LIMIT_PER_HOUR - remainingHourBudget),
+        'EX',
+        7_200,
+      );
+
+      for (let i = 0; i < remainingHourBudget; i++) {
+        await request(server)
+          .post('/sms/send-code')
+          .send({ phone: phoneAt(300 + i) })
+          .expect(HttpStatus.OK);
+      }
+      const rejectedPhone = phoneAt(400);
+      const rejected = await request(server).post('/sms/send-code').send({ phone: rejectedPhone });
+
+      expect(rejected.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(rejected.body.message).toBe('인증번호 요청이 많아 잠시 후 다시 시도해주세요.');
+      expect(sendSpy).toHaveBeenCalledTimes(remainingHourBudget);
+      expect(await redis.get(smsGlobalSendCounterKey(minuteIndex))).toBe(String(remainingHourBudget));
+      expect(await redis.exists(smsResendKey(rejectedPhone))).toBe(0);
+      expect(await redis.get(smsSendCounterKey(rejectedPhone))).toBe('0');
+      const hourTtl = await redis.ttl(smsGlobalHourlySendCounterKey(hourIndex));
+      expect(hourTtl).toBeGreaterThan(0);
+      expect(hourTtl).toBeLessThanOrEqual(7_200);
+    });
+
     it('공급자 일시 장애로 보내지 못한 요청은 cooldown·시간당 한도·global budget을 되돌린다', async () => {
       const server = app.getHttpServer();
       const windowIndex = await waitForFreshMinuteWindow();
@@ -205,6 +246,9 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
       expect(await redis.exists(smsResendKey(phone))).toBe(0);
       expect(await redis.get(smsSendCounterKey(phone))).toBe('0');
       expect(await redis.get(smsGlobalSendCounterKey(windowIndex))).toBe('0');
+      expect(
+        await redis.get(smsGlobalHourlySendCounterKey(Math.floor(Date.now() / 3_600_000))),
+      ).toBe('0');
       await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
     });
   });
@@ -227,6 +271,27 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
 
       expect(eleventh.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
       expect(checkSpy).toHaveBeenCalledTimes(10);
+    });
+
+    it('진행 중인 인증이 없는 번호(Twilio 404)로 반복 확인해도 15분 한도를 쓰지 않아 다른 사람이 잠글 수 없다', async () => {
+      const server = app.getHttpServer();
+      const phone = phoneAt(6);
+      checkSpy.mockRejectedValue(new TwilioVerifyApiError(404, 20404, 'Not Found'));
+
+      for (let i = 0; i < 11; i++) {
+        await request(server)
+          .post('/sms/verify-code')
+          .send({ phone, code: '000000' })
+          .expect(HttpStatus.GONE);
+      }
+      expect(await redis.get(smsVerifyCounterKey(phone))).toBe('0');
+
+      checkSpy.mockResolvedValueOnce({ sid: 'VE_owner', status: 'approved', valid: true });
+      const owner = await request(server)
+        .post('/sms/verify-code')
+        .send({ phone, code: '123456' })
+        .expect(HttpStatus.OK);
+      expect(owner.body.verified).toBe(true);
     });
   });
 

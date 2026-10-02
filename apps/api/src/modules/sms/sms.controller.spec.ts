@@ -133,7 +133,7 @@ describe('SmsService app-side SMS limits', () => {
     expect(checkSpy).not.toHaveBeenCalled();
   });
 
-  it('SMS_LOCAL_RATE_LIMITS_ENABLED=false bypasses only the per-phone limits, not the global send budget', async () => {
+  it('SMS_LOCAL_RATE_LIMITS_ENABLED=false bypasses only the per-phone limits, not the global send budgets', async () => {
     const mockRedis = {
       set: vi.fn().mockResolvedValue(null),
       eval: vi.fn().mockResolvedValue(1),
@@ -156,12 +156,18 @@ describe('SmsService app-side SMS limits', () => {
     expect(result.success).toBe(true);
     expect(sendSpy).toHaveBeenCalledWith('+821012345678');
     expect(mockRedis.set).not.toHaveBeenCalled();
-    expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+    expect(mockRedis.eval).toHaveBeenCalledTimes(2);
     expect(mockRedis.eval).toHaveBeenCalledWith(
       expect.stringContaining('INCR'),
       1,
       expect.stringMatching(/^sms:global-send:\d+$/),
       120,
+    );
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('INCR'),
+      1,
+      expect.stringMatching(/^sms:global-send-hour:\d+$/),
+      7_200,
     );
   });
 });

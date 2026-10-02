@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BadRequestException, GoneException, HttpException } from '@nestjs/common';
+import { BadRequestException, GoneException, HttpException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   SmsService,
   parseSmsAllowedCountries,
+  parseSmsGlobalSendLimitPerHour,
   parseSmsGlobalSendLimitPerMinute,
   parseSmsLocalRateLimitsEnabled,
   releasePhoneClaimAndRethrow,
   smsAttemptsKey,
+  smsGlobalHourlySendCounterKey,
   smsGlobalSendCounterKey,
   smsOtpKey,
   smsResendKey,
@@ -199,6 +201,18 @@ describe('SmsService', () => {
       expect(() => new SmsService(configService, mockRedis as never)).not.toThrow();
     });
 
+    it('production에서 SMS_ALLOWED_COUNTRIES가 비어 있으면 기동은 하되 경고를 남긴다', () => {
+      process.env['NODE_ENV'] = 'production';
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      new SmsService(createConfigService(), mockRedis as never);
+      expect(warnSpy).toHaveBeenCalledWith({ event: 'sms.allowed_countries_unset' });
+
+      warnSpy.mockClear();
+      new SmsService(createConfigService({ SMS_ALLOWED_COUNTRIES: 'KR,TH,CN' }), mockRedis as never);
+      expect(warnSpy).not.toHaveBeenCalledWith({ event: 'sms.allowed_countries_unset' });
+    });
+
     it('legacy Infobip env를 더 이상 참조하지 않는다', () => {
       const configService = createConfigService();
       new SmsService(configService, mockRedis as never);
@@ -302,10 +316,11 @@ describe('SmsService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled();
     });
 
-    it('Twilio Verify send 성공 시 cooldown·phone counter·global budget을 예약하고 되돌리지 않는다', async () => {
+    it('Twilio Verify send 성공 시 cooldown·phone counter·분/시간 global budget을 예약하고 되돌리지 않는다', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-10-02T00:00:30.000Z'));
       const windowIndex = Math.floor(Date.now() / 60_000);
+      const hourIndex = Math.floor(Date.now() / 3_600_000);
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);
       vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
@@ -327,6 +342,9 @@ describe('SmsService', () => {
       expect(mockRedis.eval).toHaveBeenNthCalledWith(
         2, expect.stringContaining('INCR'), 1, smsGlobalSendCounterKey(windowIndex), 120,
       );
+      expect(mockRedis.eval).toHaveBeenNthCalledWith(
+        3, expect.stringContaining('INCR'), 1, smsGlobalHourlySendCounterKey(hourIndex), 7_200,
+      );
       expect(mockRedis.del).not.toHaveBeenCalled();
       expect(mockRedis.decr).not.toHaveBeenCalled();
     });
@@ -335,6 +353,7 @@ describe('SmsService', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-10-02T00:00:30.000Z'));
       const windowIndex = Math.floor(Date.now() / 60_000);
+      const hourIndex = Math.floor(Date.now() / 3_600_000);
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);
 
@@ -344,6 +363,44 @@ describe('SmsService', () => {
       await expect(service.sendVerificationCode('+821012345678')).rejects.toThrow(
         BadRequestException,
       );
+
+      expect(mockRedis.del).toHaveBeenCalledWith(smsResendKey('+821012345678'));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsSendCounterKey('+821012345678'));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsGlobalSendCounterKey(windowIndex));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsGlobalHourlySendCounterKey(hourIndex));
+    });
+
+    it('예약 도중 Valkey 명령이 실패하면 이미 잡은 cooldown·phone counter를 되돌리고 Twilio를 호출하지 않는다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      mockRedis.eval
+        .mockResolvedValueOnce(1) // phone-axis send counter
+        .mockRejectedValueOnce(new Error('Connection is closed.')); // global minute budget
+      const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification');
+
+      await expect(service.sendVerificationCode('+821012345678')).rejects.toThrow(
+        'Connection is closed.',
+      );
+
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect(mockRedis.del).toHaveBeenCalledWith(smsResendKey('+821012345678'));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsSendCounterKey('+821012345678'));
+      // The failed INCR's own outcome is unknown, so it is not decremented.
+      expect(mockRedis.decr).toHaveBeenCalledTimes(1);
+    });
+
+    it('시간 global budget INCR이 실패하면 분 budget slot까지 되돌린다', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-02T00:00:30.000Z'));
+      const windowIndex = Math.floor(Date.now() / 60_000);
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      mockRedis.eval
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1)
+        .mockRejectedValueOnce(new Error('READONLY'));
+
+      await expect(service.sendVerificationCode('+821012345678')).rejects.toThrow('READONLY');
 
       expect(mockRedis.del).toHaveBeenCalledWith(smsResendKey('+821012345678'));
       expect(mockRedis.decr).toHaveBeenCalledWith(smsSendCounterKey('+821012345678'));
@@ -479,8 +536,28 @@ describe('SmsService', () => {
       expect(captureMessageMock).toHaveBeenCalledWith('SMS global send budget exhausted');
     });
 
-    it('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE=0이면 global send budget을 쓰지 않는다', async () => {
+    it('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE=0이면 분 budget만 끄고 시간 budget은 유지한다', async () => {
       const configService = createConfigService({ SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: '0' });
+      const service = new SmsService(configService, mockRedis as never);
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockResolvedValueOnce({ sid: 'VE_no_budget', status: 'pending', channel: 'sms' });
+
+      await service.sendVerificationCode('+821012345678');
+
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockRedis.eval).toHaveBeenNthCalledWith(
+        1, expect.stringContaining('INCR'), 1, smsSendCounterKey('+821012345678'), 3600,
+      );
+      expect(mockRedis.eval).toHaveBeenNthCalledWith(
+        2, expect.stringContaining('INCR'), 1, expect.stringMatching(/^sms:global-send-hour:/), 7_200,
+      );
+    });
+
+    it('분·시간 global budget을 모두 0으로 두면 phone-axis 한도만 쓴다', async () => {
+      const configService = createConfigService({
+        SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: '0',
+        SMS_GLOBAL_SEND_LIMIT_PER_HOUR: '0',
+      });
       const service = new SmsService(configService, mockRedis as never);
       vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
         .mockResolvedValueOnce({ sid: 'VE_no_budget', status: 'pending', channel: 'sms' });
@@ -491,6 +568,46 @@ describe('SmsService', () => {
       expect(mockRedis.eval).toHaveBeenCalledWith(
         expect.stringContaining('INCR'), 1, smsSendCounterKey('+821012345678'), 3600,
       );
+    });
+
+    it('분 budget 안에서 번호를 돌려도 시간 global budget을 넘으면 429로 막고 분 budget slot까지 되돌린다', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-02T00:40:00.000Z'));
+      const minuteIndex = Math.floor(Date.now() / 60_000);
+      const configService = createConfigService({
+        SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: '100',
+        SMS_GLOBAL_SEND_LIMIT_PER_HOUR: '2',
+      });
+      const service = new SmsService(configService, mockRedis as never);
+      const counters = new Map<string, number>();
+      mockRedis.eval.mockImplementation(async (_script: string, _numKeys: number, key: string) => {
+        const next = (counters.get(key) ?? 0) + 1;
+        counters.set(key, next);
+        return next;
+      });
+      const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockResolvedValue({ sid: 'VE_rotate_hour', status: 'pending', channel: 'sms' });
+      captureMessageMock.mockClear();
+
+      await service.sendVerificationCode('+821022220001');
+      await service.sendVerificationCode('+821022220002');
+      const third = await service.sendVerificationCode('+821022220003')
+        .catch((err: unknown) => err);
+      const fourth = await service.sendVerificationCode('+821022220004')
+        .catch((err: unknown) => err);
+
+      expect(sendSpy).toHaveBeenCalledTimes(2);
+      expect((third as HttpException).getStatus()).toBe(429);
+      expect((third as HttpException).getResponse()).toMatchObject({
+        message: '인증번호 요청이 많아 잠시 후 다시 시도해주세요.',
+        retryAfterMs: 20 * 60_000,
+      });
+      expect((fourth as HttpException).getStatus()).toBe(429);
+      expect(mockRedis.del).toHaveBeenCalledWith(smsResendKey('+821022220003'));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsSendCounterKey('+821022220003'));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsGlobalSendCounterKey(minuteIndex));
+      expect(captureMessageMock).toHaveBeenCalledTimes(1);
+      expect(captureMessageMock).toHaveBeenCalledWith('SMS hourly global send budget exhausted');
     });
 
     it('SMS_ALLOWED_COUNTRIES 밖의 번호는 Valkey·Twilio 작업 전에 recipient block으로 거절한다', async () => {
@@ -531,6 +648,20 @@ describe('SmsService', () => {
         createConfigService({ SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: '1.5' }),
         mockRedis as never,
       )).toThrow(/SMS_GLOBAL_SEND_LIMIT_PER_MINUTE/);
+    });
+
+    it('hourly global send budget defaults to 3000/hour and rejects invalid values at startup', () => {
+      expect(parseSmsGlobalSendLimitPerHour(undefined)).toBe(3000);
+      expect(parseSmsGlobalSendLimitPerHour(' ')).toBe(3000);
+      expect(parseSmsGlobalSendLimitPerHour('0')).toBe(0);
+      expect(parseSmsGlobalSendLimitPerHour('12000')).toBe(12000);
+      expect(() => parseSmsGlobalSendLimitPerHour('-5')).toThrow(
+        /SMS_GLOBAL_SEND_LIMIT_PER_HOUR must be a non-negative integer/,
+      );
+      expect(() => new SmsService(
+        createConfigService({ SMS_GLOBAL_SEND_LIMIT_PER_HOUR: 'lots' }),
+        mockRedis as never,
+      )).toThrow(/SMS_GLOBAL_SEND_LIMIT_PER_HOUR/);
     });
 
     it('allowed countries accept ISO alpha-2 lists and reject other values', () => {
@@ -646,7 +777,7 @@ describe('SmsService', () => {
       });
     });
 
-    it('Twilio expired/not found 결과는 GoneException으로 매핑한다', async () => {
+    it('Twilio expired/not found 결과는 GoneException으로 매핑하고 verify slot을 되돌린다', async () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);
       vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
@@ -655,6 +786,39 @@ describe('SmsService', () => {
       await expect(service.verifyCode('+821012345678', '123456')).rejects.toThrow(
         GoneException,
       );
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsVerifyCounterKey('+821012345678'));
+    });
+
+    it('Twilio max check attempts(60202)도 Gone으로 매핑하고 verify slot을 되돌린다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
+        .mockRejectedValueOnce(new TwilioVerifyApiError(429, 60202, 'Max check attempts reached'));
+
+      await expect(service.verifyCode('+821012345678', '123456')).rejects.toThrow(
+        GoneException,
+      );
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsVerifyCounterKey('+821012345678'));
+    });
+
+    it('발송한 적 없는 번호로 verify를 반복해도 15분 한도를 소모하지 않아 피해자를 잠그지 못한다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      let verifyCount = 0;
+      mockRedis.eval.mockImplementation(async () => ++verifyCount);
+      mockRedis.decr.mockImplementation(async () => --verifyCount);
+      const checkSpy = vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
+        .mockRejectedValue(new TwilioVerifyApiError(404, 20404, 'Not Found'));
+
+      for (let i = 0; i < 11; i++) {
+        await expect(service.verifyCode('+821012345678', '000000')).rejects.toThrow(GoneException);
+      }
+      checkSpy.mockResolvedValueOnce({ sid: 'VE_victim', status: 'approved', valid: true });
+
+      await expect(service.verifyCode('+821012345678', '123456')).resolves.toMatchObject({
+        verified: true,
+      });
+      expect(checkSpy).toHaveBeenCalledTimes(12);
     });
 
     it('Twilio rate limit 결과는 HttpException(429)으로 매핑한다', async () => {

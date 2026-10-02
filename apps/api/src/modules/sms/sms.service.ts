@@ -26,11 +26,16 @@ const SEND_PHONE_LIMIT = 5;                  // D-06: phone 5/3600s
 const SEND_PHONE_WINDOW_SEC = 3600;          // D-06: 1h window
 const VERIFY_PHONE_LIMIT = 10;               // D-07: phone 10/900s
 const VERIFY_PHONE_WINDOW_SEC = 900;         // D-07: 15min window
-// Service-wide send budget per fixed minute. Bounds number-rotation pumping
-// that per-phone limits cannot see. 0 disables it.
+// Service-wide send budgets per fixed minute and per fixed hour. They bound
+// number-rotation pumping that per-phone limits cannot see: the minute budget
+// caps the burst rate, the hour budget caps sustained cost (300/min alone
+// would still allow ~18k sends per hour). 0 disables either one.
 export const DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE = 300;
+export const DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_HOUR = 3000;
 const GLOBAL_SEND_WINDOW_MS = 60_000;
 const GLOBAL_SEND_COUNTER_TTL_SEC = 120;
+const GLOBAL_HOURLY_SEND_WINDOW_MS = 3_600_000;
+const GLOBAL_HOURLY_SEND_COUNTER_TTL_SEC = 7_200;
 
 const VERIFIED_FLAG_TTL_SEC = 600;           // verified flag 10min for signup re-check
 const PHONE_VERIFICATION_TOKEN_TTL_MS = VERIFIED_FLAG_TTL_SEC * 1000;
@@ -154,9 +159,20 @@ export const smsVerificationTokenClaimKey = (e164: string, nonce: string): strin
   }
   return `{sms:${e164}}:token-used:${nonce}`;
 };
-// Service-wide counter, touched only by single-key commands.
+// Service-wide counters, touched only by single-key commands.
 export const smsGlobalSendCounterKey = (windowIndex: number): string =>
   `sms:global-send:${windowIndex}`;
+export const smsGlobalHourlySendCounterKey = (windowIndex: number): string =>
+  `sms:global-send-hour:${windowIndex}`;
+
+interface GlobalSendBudget {
+  layer: 'global_send_budget' | 'global_hourly_send_budget';
+  limit: number;
+  windowMs: number;
+  counterTtlSec: number;
+  key: (windowIndex: number) => string;
+  alertMessage: string;
+}
 
 export interface SendResult { success: boolean; message: string }
 
@@ -253,15 +269,35 @@ export function parseSmsLocalRateLimitsEnabled(value: string | undefined): boole
   return value?.trim().toLowerCase() !== 'false';
 }
 
-export function parseSmsGlobalSendLimitPerMinute(value: string | undefined): number {
+function parseNonNegativeIntegerSetting(
+  value: string | undefined,
+  name: string,
+  defaultValue: number,
+): number {
   if (value === undefined || value.trim() === '') {
-    return DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE;
+    return defaultValue;
   }
   const parsed = Number(value.trim());
   if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE must be a non-negative integer');
+    throw new Error(`${name} must be a non-negative integer`);
   }
   return parsed;
+}
+
+export function parseSmsGlobalSendLimitPerMinute(value: string | undefined): number {
+  return parseNonNegativeIntegerSetting(
+    value,
+    'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE',
+    DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE,
+  );
+}
+
+export function parseSmsGlobalSendLimitPerHour(value: string | undefined): number {
+  return parseNonNegativeIntegerSetting(
+    value,
+    'SMS_GLOBAL_SEND_LIMIT_PER_HOUR',
+    DEFAULT_SMS_GLOBAL_SEND_LIMIT_PER_HOUR,
+  );
 }
 
 export function parseSmsAllowedCountries(value: string | undefined): ReadonlySet<string> | null {
@@ -319,6 +355,8 @@ export class SmsService {
   private readonly verificationTokenSecret: string;
   private readonly localRateLimitsEnabled: boolean;
   private readonly globalSendLimitPerMinute: number;
+  private readonly globalSendLimitPerHour: number;
+  private readonly globalSendBudgets: readonly GlobalSendBudget[];
   private readonly allowedCountries: ReadonlySet<string> | null;
 
   constructor(
@@ -383,6 +421,28 @@ export class SmsService {
     this.globalSendLimitPerMinute = parseSmsGlobalSendLimitPerMinute(
       configService.get<string>('SMS_GLOBAL_SEND_LIMIT_PER_MINUTE'),
     );
+    this.globalSendLimitPerHour = parseSmsGlobalSendLimitPerHour(
+      configService.get<string>('SMS_GLOBAL_SEND_LIMIT_PER_HOUR'),
+    );
+    const globalSendBudgets: GlobalSendBudget[] = [
+      {
+        layer: 'global_send_budget',
+        limit: this.globalSendLimitPerMinute,
+        windowMs: GLOBAL_SEND_WINDOW_MS,
+        counterTtlSec: GLOBAL_SEND_COUNTER_TTL_SEC,
+        key: smsGlobalSendCounterKey,
+        alertMessage: 'SMS global send budget exhausted',
+      },
+      {
+        layer: 'global_hourly_send_budget',
+        limit: this.globalSendLimitPerHour,
+        windowMs: GLOBAL_HOURLY_SEND_WINDOW_MS,
+        counterTtlSec: GLOBAL_HOURLY_SEND_COUNTER_TTL_SEC,
+        key: smsGlobalHourlySendCounterKey,
+        alertMessage: 'SMS hourly global send budget exhausted',
+      },
+    ];
+    this.globalSendBudgets = globalSendBudgets.filter((budget) => budget.limit > 0);
     this.allowedCountries = parseSmsAllowedCountries(
       configService.get<string>('SMS_ALLOWED_COUNTRIES'),
     );
@@ -395,6 +455,14 @@ export class SmsService {
     }
     if (this.globalSendLimitPerMinute === 0) {
       this.logger.warn({ event: 'sms.global_send_budget_disabled' });
+    }
+    if (this.globalSendLimitPerHour === 0) {
+      this.logger.warn({ event: 'sms.global_hourly_send_budget_disabled' });
+    }
+    if (isProduction && !this.isDevMock && this.allowedCountries === null) {
+      // Not fatal: buyers may sign up from any country Twilio Geo Permissions
+      // allow. Architecture 10.4 lists the recommended production value.
+      this.logger.warn({ event: 'sms.allowed_countries_unset' });
     }
   }
 
@@ -411,12 +479,15 @@ export class SmsService {
   /**
    * Reserve every app-side send quota before the provider call.
    * Order matters: the per-phone checks run first so hammering one number
-   * cannot drain the service-wide budget, and a request rejected by the
-   * global budget gives its per-phone slots back.
+   * cannot drain the service-wide budgets, and a request rejected by a
+   * global budget gives its per-phone and earlier global slots back.
    */
   private async reserveSendQuota(e164: string): Promise<() => Promise<void>> {
     const rollbacks: Array<{ op: string; run: () => Promise<unknown> }> = [];
+    let released = false;
     const release = async (): Promise<void> => {
+      if (released) return;
+      released = true;
       // [WR-02] Emit per-op rollback failures so ops can detect stuck-quota
       // states instead of silently pinning a buyer in cooldown.
       const results = await Promise.allSettled(rollbacks.map(({ run }) => run()));
@@ -432,59 +503,70 @@ export class SmsService {
       });
     };
 
-    if (this.localRateLimitsEnabled) {
-      // D-11: 30s resend cooldown via Valkey SET NX
-      const cooldownKey = smsResendKey(e164);
-      const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
-      if (acquired === null) {
-        const ttl = await this.redis.pttl(cooldownKey);
-        this.logger.warn({ event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'resend_cooldown' });
-        throw smsTooManyRequests(ttl);
-      }
-      rollbacks.push({ op: 'cooldown_del', run: () => this.redis.del(cooldownKey) });
-
-      // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
-      const sendCounterKey = smsSendCounterKey(e164);
-      const sendCount = await this.atomicIncr(sendCounterKey, SEND_PHONE_WINDOW_SEC);
-      if (sendCount > SEND_PHONE_LIMIT) {
-        this.logger.warn({
-          event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'phone_axis_send', count: sendCount,
-        });
-        throw smsTooManyRequests(SEND_PHONE_WINDOW_SEC * 1000);
-      }
-      rollbacks.push({ op: 'counter_decr', run: () => this.redis.decr(sendCounterKey) });
-    }
-
-    if (this.globalSendLimitPerMinute > 0) {
-      const now = Date.now();
-      const windowIndex = Math.floor(now / GLOBAL_SEND_WINDOW_MS);
-      const globalKey = smsGlobalSendCounterKey(windowIndex);
-      const globalCount = await this.atomicIncr(globalKey, GLOBAL_SEND_COUNTER_TTL_SEC);
-      if (globalCount > this.globalSendLimitPerMinute) {
-        await release();
-        this.logger.warn({
-          event: 'sms.rate_limited',
-          phone: maskE164ForLog(e164),
-          layer: 'global_send_budget',
-          count: globalCount,
-          limit: this.globalSendLimitPerMinute,
-        });
-        if (globalCount === this.globalSendLimitPerMinute + 1) {
-          // One alert per window: the budget tripping means either an abuse
-          // burst or a launch spike that needs a larger configured budget.
-          Sentry.withScope((scope) => {
-            scope.setTag('provider', 'twilio_verify');
-            scope.setTag('sms_limit', 'global_send_budget');
-            scope.setLevel('warning');
-            Sentry.captureMessage('SMS global send budget exhausted');
-          });
+    try {
+      if (this.localRateLimitsEnabled) {
+        // D-11: 30s resend cooldown via Valkey SET NX
+        const cooldownKey = smsResendKey(e164);
+        const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
+        if (acquired === null) {
+          const ttl = await this.redis.pttl(cooldownKey);
+          this.logger.warn({ event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'resend_cooldown' });
+          throw smsTooManyRequests(ttl);
         }
-        throw smsTooManyRequests(
-          (windowIndex + 1) * GLOBAL_SEND_WINDOW_MS - now,
-          SMS_GLOBAL_RATE_LIMITED_MESSAGE,
-        );
+        rollbacks.push({ op: 'cooldown_del', run: () => this.redis.del(cooldownKey) });
+
+        // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
+        const sendCounterKey = smsSendCounterKey(e164);
+        const sendCount = await this.atomicIncr(sendCounterKey, SEND_PHONE_WINDOW_SEC);
+        if (sendCount > SEND_PHONE_LIMIT) {
+          this.logger.warn({
+            event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'phone_axis_send', count: sendCount,
+          });
+          throw smsTooManyRequests(SEND_PHONE_WINDOW_SEC * 1000);
+        }
+        rollbacks.push({ op: 'counter_decr', run: () => this.redis.decr(sendCounterKey) });
       }
-      rollbacks.push({ op: 'global_counter_decr', run: () => this.redis.decr(globalKey) });
+
+      for (const budget of this.globalSendBudgets) {
+        const now = Date.now();
+        const windowIndex = Math.floor(now / budget.windowMs);
+        const globalKey = budget.key(windowIndex);
+        const globalCount = await this.atomicIncr(globalKey, budget.counterTtlSec);
+        if (globalCount > budget.limit) {
+          await release();
+          this.logger.warn({
+            event: 'sms.rate_limited',
+            phone: maskE164ForLog(e164),
+            layer: budget.layer,
+            count: globalCount,
+            limit: budget.limit,
+          });
+          if (globalCount === budget.limit + 1) {
+            // One alert per window: the budget tripping means either an abuse
+            // burst or a launch spike that needs a larger configured budget.
+            Sentry.withScope((scope) => {
+              scope.setTag('provider', 'twilio_verify');
+              scope.setTag('sms_limit', budget.layer);
+              scope.setLevel('warning');
+              Sentry.captureMessage(budget.alertMessage);
+            });
+          }
+          throw smsTooManyRequests(
+            (windowIndex + 1) * budget.windowMs - now,
+            SMS_GLOBAL_RATE_LIMITED_MESSAGE,
+          );
+        }
+        rollbacks.push({ op: `${budget.layer}_decr`, run: () => this.redis.decr(globalKey) });
+      }
+    } catch (err) {
+      // A Valkey failure part-way through (for example the global INCR after
+      // the cooldown SET) sends no SMS, so give back every slot already
+      // reserved instead of leaving the buyer in cooldown with one hourly
+      // send gone. Limit rejections (HttpException) keep their own handling.
+      if (!(err instanceof HttpException)) {
+        await release();
+      }
+      throw err;
     }
 
     return release;
@@ -573,8 +655,13 @@ export class SmsService {
    * "verified" signal.
    *
    * Additionally, the phone-axis verify counter (D-07 — 10/900s) is
-   * incremented before the provider call so Twilio status differences cannot
-   * be probed without consuming local verification quota.
+   * incremented before the provider call. It is given back when Twilio did
+   * not evaluate a code: transient failures, provider rate limits, and "no
+   * pending verification" (404/20404 not found or expired, 60202 attempts
+   * exhausted). Otherwise anyone could lock a number out of verification for
+   * 15 minutes with 11 free requests, without ever triggering an SMS. Only
+   * checks against a live verification (which needs a send-code first, under
+   * the send limits) count toward the limit.
    */
   async verifyCode(
     phone: string,
@@ -639,21 +726,13 @@ export class SmsService {
     } catch (err) {
       if (err instanceof GoneException) throw err;
       if (err instanceof TwilioVerifyApiError && err.isExpiredOrExhausted) {
+        // No live verification to check a code against: nothing was tried,
+        // so this request must not count toward the verify limit.
+        await this.releaseVerifySlot(e164, verifyCounterKey);
         throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
       }
       if (err instanceof TwilioVerifyApiError && err.isRateLimited) {
-        if (this.localRateLimitsEnabled) {
-          await this.redis
-            .decr(verifyCounterKey)
-            .catch((rollbackErr: unknown) => {
-              this.logger.warn({
-                event: 'sms.rollback_failed',
-                phone: e164,
-                op: 'verify_counter_decr',
-                err: (rollbackErr as Error).message,
-              });
-            });
-        }
+        await this.releaseVerifySlot(e164, verifyCounterKey);
         throw smsTooManyRequests(VERIFY_PHONE_WINDOW_SEC * 1000);
       }
       // Transient Twilio/Valkey failure: the user got no verification
@@ -661,17 +740,8 @@ export class SmsService {
       // Mirrors the sendVerificationCode rollback policy for 5xx/network
       // failures. Without this, each Valkey blip burns one of the user's
       // 10/15min verify attempts without producing any result.
-      if (this.localRateLimitsEnabled && (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota)) {
-        await this.redis
-          .decr(verifyCounterKey)
-          .catch((rollbackErr: unknown) => {
-            this.logger.warn({
-              event: 'sms.rollback_failed',
-              phone: e164,
-              op: 'verify_counter_decr',
-              err: (rollbackErr as Error).message,
-            });
-          });
+      if (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota) {
+        await this.releaseVerifySlot(e164, verifyCounterKey);
       }
       // Provider failure etc. -- log + propagate as user-facing generic message
       Sentry.withScope((scope) => {
@@ -688,6 +758,20 @@ export class SmsService {
       this.logger.error({ event: 'sms.verify_failed', phone: e164, err: (err as Error).message });
       return { verified: false, message: '인증번호 확인에 실패했습니다. 잠시 후 다시 시도해주세요.' };
     }
+  }
+
+  private async releaseVerifySlot(e164: string, verifyCounterKey: string): Promise<void> {
+    if (!this.localRateLimitsEnabled) return;
+    await this.redis
+      .decr(verifyCounterKey)
+      .catch((rollbackErr: unknown) => {
+        this.logger.warn({
+          event: 'sms.rollback_failed',
+          phone: maskE164ForLog(e164),
+          op: 'verify_counter_decr',
+          err: (rollbackErr as Error).message,
+        });
+      });
   }
 
   /**

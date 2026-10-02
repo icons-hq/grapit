@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | A01 | edge proxy 회귀 및 운영 HTTP/www→canonical 301, HTTPS·callback 200 확인 | 실제 외부 공유 링크의 단말별 확인 |
 | A02 | auth 초기화·마이페이지·QR 조회 회귀 | 당시 해외 인앱 브라우저/OS 재현 |
-| A03 | SMS 국가코드·send/verify 오류 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인. 당시 'throttle 테스트'는 운영에 없는 가짜 controller의 IP throttle을 검사해 앱 SMS 제한이 꺼진 상태를 놓쳤다(2026-09 감사 #36). 이제 앱 제한은 번호별 30초 cooldown·시간당 5회 발송·15분 10회 확인과 분당 전체 발송 예산이며, 실제 SmsController·SmsService를 Valkey로 검증한다. IP 축 제한은 공유 IP 장애 때문에 두지 않는다 | 태국 실제 번호 수신·공급자 전달 결과. Twilio Verify rate limit·잔액·비용 알림 설정 확인 |
+| A03 | SMS 국가코드·send/verify 오류 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인. 당시 'throttle 테스트'는 운영에 없는 가짜 controller의 IP throttle을 검사해 앱 SMS 제한이 꺼진 상태를 놓쳤다(2026-09 감사 #36). 이제 앱 제한은 번호별 30초 cooldown·시간당 5회 발송·15분 10회 확인과 분당·시간당 전체 발송 예산이며, 실제 SmsController·SmsService를 Valkey로 검증한다. IP 축 제한은 공유 IP 장애 때문에 두지 않는다 | 태국 실제 번호 수신·공급자 전달 결과. Twilio Verify rate limit·잔액·비용 알림 설정 확인 |
 | A04 | 발송 실패와 인증 불일치 UI/오류 매핑 회귀 | 실제 발송 오류 표시 확인 |
 | A05 | 인증/대체 진입 코드 유지. 운영 Twilio 중국 감시 발송 허용 및 기존 지원 티켓의 발송 활성화·당시 실제 수신 성공 확인 | 다음 판매 전 중국 실제 번호 수신·인증 재검증 |
 | A06 | 소셜 callback 언어별 오류·재시도, refresh 1회 및 실패 후 로딩 종료, 추가정보·공유 IP throttle 회귀 | Naver 운영 앱 승인 및 실제 계정 왕복 |
