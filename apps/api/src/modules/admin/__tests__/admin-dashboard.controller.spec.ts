@@ -6,9 +6,11 @@ import {
   ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import request from 'supertest';
 import { AdminDashboardController } from '../admin-dashboard.controller.js';
 import { AdminDashboardService } from '../admin-dashboard.service.js';
+import { AdminCapabilitiesGuard } from '../../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../../common/guards/roles.guard.js';
 import { DRIZZLE } from '../../../database/drizzle.provider.js';
 import { CacheService } from '../../performance/cache.service.js';
@@ -31,6 +33,9 @@ describe('AdminDashboardController (access control)', () => {
   let mode: RoleMode = 'admin';
 
   beforeAll(async () => {
+    // Vitest does not emit decorator metadata; restore what tsc emits so the real
+    // capability guard (reservations.read) runs after the RolesGuard double.
+    Reflect.defineMetadata('design:paramtypes', [Reflector], AdminCapabilitiesGuard);
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [AdminDashboardController],
       providers: [
@@ -66,8 +71,8 @@ describe('AdminDashboardController (access control)', () => {
           }
           req.user =
             mode === 'admin'
-              ? { id: 'admin-1', roles: ['admin'] }
-              : { id: 'user-1', roles: ['user'] };
+              ? { id: 'admin-1', role: 'admin', roles: ['admin'] }
+              : { id: 'user-1', role: 'user', roles: ['user'] };
           if (!req.user.roles.includes('admin')) {
             throw new ForbiddenException();
           }

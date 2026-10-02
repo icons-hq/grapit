@@ -1358,8 +1358,10 @@ export class ReservationService {
       throw new BadRequestException('예매 동의 항목이 필요합니다');
     }
 
+    // Explicit flow: booking requires only the rows checkout shows (terms, privacy).
     await this.consentService.assertRequiredConsents({
       items: dto.consentItems,
+      sourceFlow: 'booking',
     });
   }
 

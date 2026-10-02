@@ -290,6 +290,13 @@
       "breakpoints": true
     },
     {
+      "idx": 47,
+      "version": "7",
+      "when": 1790067600000,
+      "tag": "0046_privacy_policy_v1_2_consent_items",
+      "breakpoints": true
+    },
+    {
       "idx": 52,
       "version": "7",
       "when": 1790085600000,

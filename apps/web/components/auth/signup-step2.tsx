@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { useLocale } from 'next-intl';
-import type {
-  AuthConsentCaptureItem,
-  ConsentItemKey,
-  ConsentSourceFlow,
-  RegisterStep2Input,
+import {
+  CONSENT_DOCUMENT_VERSIONS,
+  resolveConsentDocumentLanguage,
+  type AuthConsentCaptureItem,
+  type ConsentItemKey,
+  type ConsentSourceFlow,
+  type RegisterStep2Input,
 } from '@grabit/shared';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -54,13 +56,12 @@ export type SignupStep2SubmitData = Omit<RegisterStep2Input, 'consentItems'> & {
   consentItems: AuthConsentCaptureItem[];
 };
 type ConsentRowConfig = {
-  key: ConsentItemKey;
+  key: keyof typeof CONSENT_DOCUMENT_VERSIONS;
   required: boolean;
   legalKey: LegalKey;
 };
 
-const CONSENT_VERSION = '2026-04-28';
-
+// Each row records the version of the document its dialog renders.
 const CONSENT_ROWS: ConsentRowConfig[] = [
   {
     key: 'terms',
@@ -92,7 +93,7 @@ function initialChecked(defaultValues: SignupStep2SubmitData | null, documentLoc
       );
 
       if (defaultItem) {
-        return [row.key, defaultItem.version === CONSENT_VERSION && defaultItem.language === documentLocale && defaultItem.accepted];
+        return [row.key, defaultItem.version === CONSENT_DOCUMENT_VERSIONS[row.key] && defaultItem.language === documentLocale && defaultItem.accepted];
       }
 
       if (row.key === 'terms') {
@@ -120,7 +121,7 @@ export function SignupStep2({
 }: SignupStep2Props) {
   const authCopy = getAuthLaunchCopy(useLocale());
   const consentCopy = authCopy.consent;
-  const documentLocale: 'ko' | 'en' = authCopy.locale === 'ko' ? 'ko' : 'en';
+  const documentLocale = resolveConsentDocumentLanguage(authCopy.locale);
   const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues, documentLocale));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState<LegalKey>('termsOfService');
@@ -155,7 +156,7 @@ export function SignupStep2({
     if (!canProceed) return;
     const consentItems = CONSENT_ROWS.map((row) => ({
       key: row.key,
-      version: CONSENT_VERSION,
+      version: CONSENT_DOCUMENT_VERSIONS[row.key],
       language: documentLocale,
       accepted: checkedItems[row.key],
       required: row.required,
@@ -229,7 +230,7 @@ export function SignupStep2({
                     >
                       {row.required ? consentCopy.required : consentCopy.optional}
                     </span>
-                    <span>v{CONSENT_VERSION}</span>
+                    <span>v{CONSENT_DOCUMENT_VERSIONS[row.key]}</span>
                     <span>{documentLocale}</span>
                   </div>
                 </div>

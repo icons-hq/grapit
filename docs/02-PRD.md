@@ -47,7 +47,7 @@ Auth must protect scarce booking resources and admin surfaces.
 - Refresh-token state supports device-family management and logout. Several tabs refreshing at once, or a temporary API failure during refresh, must not sign the buyer out.
 - Social sign-in is protected against login CSRF and forwarded registration links. Social-only sign-up completes without an email code; a password account linked to a social login keeps its own email verification unless the provider verified the same address.
 - Login email matching is case-insensitive.
-- Itemized consent capture is shared by signup, social completion, and booking flows.
+- Itemized consent capture is shared by signup, social completion, and booking flows. Each row records the version and language of the legal document actually shown; booking records only the booking terms and privacy notice rows it displays.
 - Legal pages are public and linked through the frontend legal routes.
 - Account profile update and withdrawal are available from My Page/user endpoints.
 
