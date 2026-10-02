@@ -24,6 +24,10 @@ const INSTANCE_PROOF_TIMEOUT_MS = 90_000;
 const MAX_SOCKET_CLIENTS = 8;
 const LOG_LOOKUP_TIMEOUT_MS = 60_000;
 const LOG_LOOKUP_INTERVAL_MS = 5_000;
+// The public seat status read may come from a snapshot up to 1 second old on
+// another API instance, so lock/unlock results are confirmed by polling.
+const SEAT_STATE_SETTLE_TIMEOUT_MS = 3_000;
+const SEAT_STATE_POLL_INTERVAL_MS = 250;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
@@ -431,6 +435,16 @@ async function readSeatState(config) {
   return state;
 }
 
+async function waitForSeatState(config, isExpected) {
+  const deadline = Date.now() + SEAT_STATE_SETTLE_TIMEOUT_MS;
+  let state = await readSeatState(config);
+  while (!isExpected(state) && Date.now() < deadline) {
+    await sleep(SEAT_STATE_POLL_INTERVAL_MS);
+    state = await readSeatState(config);
+  }
+  return state;
+}
+
 async function unlockAndVerifySeat(config) {
   const unlock = await fetchWithTimeout(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
     method: 'DELETE',
@@ -442,7 +456,7 @@ async function unlockAndVerifySeat(config) {
     throw new Error(`unlock failed with ${unlock.status}: ${redact(text)}`);
   }
 
-  const afterState = await readSeatState(config);
+  const afterState = await waitForSeatState(config, (state) => state !== 'locked');
   return {
     ok: afterState !== 'locked',
     status: unlock.status,
@@ -489,7 +503,7 @@ async function checkLua(config) {
     });
     locked = Boolean(lock.body?.success);
 
-    const seatState = await readSeatState(config);
+    const seatState = await waitForSeatState(config, (state) => state === 'locked');
     const seatLocked = seatState === 'locked';
     statusSummary = `seat=${config.seatId}, state=${seatState}`;
 

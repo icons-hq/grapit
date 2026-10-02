@@ -26,6 +26,7 @@ import {
 } from '../../database/schema/index.js';
 import { EmailService } from '../auth/email/email.service.js';
 import { resolveTicketEmailDelivery } from './ticket-email-delivery.js';
+import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
@@ -867,9 +868,7 @@ export class QrTicketService implements OnModuleInit {
     ticket: TicketWithSeatRecord,
   ): Promise<void> {
     const ticketToken = await this.buildTicketToken(ticket);
-    const frontendUrl = (
-      this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000'
-    ).replace(/\/$/, '');
+    const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
     const ticketUrl = `${frontendUrl}/mypage/reservations/${row.reservation.id}`;
     const result = await this.emailService.sendQrTicketReminderEmail(row.user.email, {
       reservationNumber: row.reservation.reservationNumber,

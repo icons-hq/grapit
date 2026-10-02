@@ -12,10 +12,19 @@ describe('public read endpoint throttling', () => {
     expect(Reflect.getMetadata(DEFAULT_SKIP_METADATA, SearchController)).toBe(true);
   });
 
-  it('skips the coarse default throttler for health and public seat status reads', () => {
+  it('skips the coarse default throttler for health reads', () => {
     expect(Reflect.getMetadata(DEFAULT_SKIP_METADATA, HealthController.prototype.check)).toBe(true);
+  });
+
+  it('keeps public seat status reads on a dedicated default-throttler budget (audit #8)', () => {
     expect(Reflect.getMetadata(DEFAULT_SKIP_METADATA, BookingController.prototype.getSeatStatus))
-      .toBe(true);
+      .toBeUndefined();
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BookingController.prototype.getSeatStatus))
+      .toBe(60);
+    expect(Reflect.getMetadata('THROTTLER:TTLdefault', BookingController.prototype.getSeatStatus))
+      .toBe(10_000);
+    expect(Reflect.getMetadata('THROTTLER:TRACKERdefault', BookingController.prototype.getSeatStatus))
+      .toEqual(expect.any(Function));
   });
 
   it('keeps write-side booking throttling eligible for the global guard', () => {

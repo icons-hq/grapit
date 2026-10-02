@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
+import { allowSocketIoFrontendOrigin } from '../../config/frontend-origins.js';
 
 type QueueRealtimeSnapshot = {
   queueSessionId: string;
@@ -26,22 +27,7 @@ type QueueRealtimeSnapshot = {
 @WebSocketGateway({
   namespace: '/queue',
   cors: {
-    origin: (
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void,
-    ) => {
-      const allowedOrigin =
-        process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
-      if (
-        process.env['NODE_ENV'] !== 'production' ||
-        !origin ||
-        origin === allowedOrigin
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS not allowed'));
-      }
-    },
+    origin: allowSocketIoFrontendOrigin,
     credentials: true,
   },
 })

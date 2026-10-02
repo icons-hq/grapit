@@ -8,6 +8,14 @@ import {
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
   CONSUME_OWNED_SEAT_LOCKS_LUA,
   EXTEND_OWNED_SEAT_LOCKS_LUA,
+  GET_VALID_LOCKED_SEATS_LUA,
+  LOCKED_SEATS_SWEEP_INTERVAL_MS,
+  lockedSeatsSweepGuardKey,
+  READ_VALID_LOCKED_SEATS_LUA,
+  SEAT_STATUS_CACHE_TTL_MS,
+  SEAT_STATUS_CLOCK_SKEW_MS,
+  SEAT_STATUS_LOCAL_CACHE_TTL_MS,
+  seatStatusCacheKey,
   LOCK_EXPIRED_MESSAGE,
   LOCK_OTHER_OWNER_MESSAGE,
   PAYMENT_CONFIRM_LOCK_TTL,
@@ -15,7 +23,8 @@ import {
   REFRESH_PAYMENT_CONFIRM_LOCK_LUA,
   RELEASE_PAYMENT_CONFIRM_LOCK_LUA,
 } from '../booking.service.js';
-import type { BookingGateway } from '../booking.gateway.js';
+import { encodeSeatRuntimeId } from '@grabit/shared';
+import { BookingGateway } from '../booking.gateway.js';
 import type { FeatureFlagsService } from '../../feature-flags/feature-flags.service.js';
 
 // Mock Redis client
@@ -243,7 +252,6 @@ describe('BookingService', () => {
           showtimeId,
           seatId,
           'locked',
-          userId,
         );
       } finally {
         vi.useRealTimers();
@@ -444,7 +452,6 @@ describe('BookingService', () => {
         showtimeId,
         seatId,
         'locked',
-        userId,
       );
     });
 
@@ -539,7 +546,7 @@ describe('BookingService', () => {
 
         expect(result.success).toBe(true);
         expect(mockRedis.eval).toHaveBeenCalled();
-        expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, seatId, 'locked', userId);
+        expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, seatId, 'locked');
       });
     });
   });
@@ -599,7 +606,6 @@ describe('BookingService', () => {
         showtimeId,
         seatId,
         'available',
-        userId,
       );
     });
   });
@@ -619,7 +625,7 @@ describe('BookingService', () => {
       mockRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
       expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: ['A-1'] });
       expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledTimes(1);
-      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'A-1', 'available', userId);
+      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'A-1', 'available');
     });
     it('does nothing for an empty selection', async () => {
       mockRedis.smembers.mockResolvedValue([]);
@@ -974,8 +980,11 @@ describe('BookingService', () => {
       const numKeys = callArgs[1] as number;
       const flatKeys = callArgs.slice(2, 2 + numKeys) as string[];
       const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(script).toBe(READ_VALID_LOCKED_SEATS_LUA);
       expect(script).toContain('SMEMBERS');
       expect(script).toContain('EXISTS');
+      // The public read path must not write to the lock set (audit #8).
+      expect(script).not.toContain('SREM');
       expect(numKeys).toBe(1);
       expect(flatKeys).toEqual([`{${showtimeId}}:locked-seats`]);
       expect(flatArgs).toEqual([`{${showtimeId}}:seat:`]);
@@ -994,6 +1003,385 @@ describe('BookingService', () => {
       expect(result.seats['1F:A-1']).toBe('locked');
       expect(result.seats['2F:A-1']).toBe('sold');
       expect(result.seats['A-1']).toBeUndefined();
+    });
+
+    describe('load shedding (audit #8)', () => {
+      function deferred<T>() {
+        let resolve!: (value: T) => void;
+        const promise = new Promise<T>((done) => {
+          resolve = done;
+        });
+        return { promise, resolve };
+      }
+
+      function createInstance(gateway: unknown = mockGateway) {
+        return new BookingService(
+          mockRedis as never,
+          mockDb as never,
+          gateway as BookingGateway,
+          mockFeatureFlags as unknown as FeatureFlagsService,
+        );
+      }
+
+      function readCalls() {
+        return mockRedis.eval.mock.calls.filter((call) => call[0] === READ_VALID_LOCKED_SEATS_LUA);
+      }
+
+      function sweepCalls() {
+        return mockRedis.eval.mock.calls.filter((call) => call[0] === GET_VALID_LOCKED_SEATS_LUA);
+      }
+
+      function seatStatus(seats: Record<string, string>) {
+        return { showtimeId, seats, generatedAt: expect.any(Number) };
+      }
+
+      function sharedSnapshot(generatedAt: number, seats: Record<string, string>): string {
+        return JSON.stringify({ generatedAt, response: { showtimeId, seats } });
+      }
+
+      const runtimeSeat = (seatKey: string) => encodeSeatRuntimeId(seatKey);
+
+      it('coalesces concurrent requests for one showtime into a single Redis read and DB query', async () => {
+        const lockedSeats = deferred<string[]>();
+        mockRedis.get.mockResolvedValue(null);
+        mockRedis.eval.mockReturnValueOnce(lockedSeats.promise);
+        mockDb.select.mockReturnValue(chainResult([{ seatId: 'B-1', status: 'sold' }]));
+
+        const requests = Array.from({ length: 50 }, () => service.getSeatStatus(showtimeId));
+        await vi.waitFor(() => expect(readCalls()).toHaveLength(1));
+        lockedSeats.resolve(['A-1']);
+        const results = await Promise.all(requests);
+
+        expect(readCalls()).toHaveLength(1);
+        expect(mockDb.select).toHaveBeenCalledTimes(1);
+        expect(mockRedis.get).toHaveBeenCalledTimes(1);
+        for (const result of results) {
+          expect(result).toEqual(seatStatus({ 'A-1': 'locked', 'B-1': 'sold' }));
+        }
+      });
+
+      it('shares the snapshot across instances through a short-lived Valkey entry', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+        try {
+          mockRedis.get.mockResolvedValue(null);
+          mockRedis.eval.mockResolvedValue(['A-1']);
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          const generatedAt = Date.now();
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual({
+            showtimeId,
+            seats: { 'A-1': 'locked' },
+            generatedAt,
+          });
+
+          expect(mockRedis.set).toHaveBeenCalledWith(
+            seatStatusCacheKey(showtimeId),
+            JSON.stringify({
+              generatedAt,
+              response: { showtimeId, seats: { 'A-1': 'locked' } },
+            }),
+            'PX',
+            SEAT_STATUS_CACHE_TTL_MS,
+          );
+          // The snapshot key must not share the lock hash slot in cluster mode.
+          expect(seatStatusCacheKey(showtimeId)).not.toContain('{');
+
+          const [cacheKey, cachedValue] = mockRedis.set.mock.calls.find(
+            (call) => call[0] === seatStatusCacheKey(showtimeId),
+          ) as [string, string];
+          mockRedis.get.mockImplementation(async (key: string) => (key === cacheKey ? cachedValue : null));
+          mockRedis.eval.mockClear();
+          mockDb.select.mockClear();
+
+          vi.advanceTimersByTime(SEAT_STATUS_CACHE_TTL_MS - 1);
+          await expect(createInstance().getSeatStatus(showtimeId)).resolves.toEqual({
+            showtimeId,
+            seats: { 'A-1': 'locked' },
+            generatedAt,
+          });
+          expect(mockRedis.eval).not.toHaveBeenCalled();
+          expect(mockDb.select).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('serves repeat reads from memory briefly, then recomputes', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+        try {
+          mockRedis.get.mockResolvedValue(null);
+          mockRedis.eval.mockResolvedValueOnce(['A-1']).mockResolvedValue(['A-2']);
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          await service.getSeatStatus(showtimeId);
+          mockRedis.get.mockClear();
+
+          vi.advanceTimersByTime(SEAT_STATUS_LOCAL_CACHE_TTL_MS - 1);
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+          expect(mockRedis.get).not.toHaveBeenCalled();
+          expect(readCalls()).toHaveLength(1);
+
+          // Shared entry gone from Valkey (mock get returns null) -> recompute.
+          vi.advanceTimersByTime(1);
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-2': 'locked' }));
+          expect(readCalls()).toHaveLength(2);
+          expect(mockDb.select).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('never keeps a shared snapshot in memory beyond its shared lifetime', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:10.000Z'));
+        try {
+          const almostExpired = sharedSnapshot(
+            Date.now() - (SEAT_STATUS_CACHE_TTL_MS - 100),
+            { 'A-1': 'locked' },
+          );
+          mockRedis.get.mockResolvedValueOnce(almostExpired).mockResolvedValue(null);
+          mockRedis.eval.mockResolvedValue(['A-2']);
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+          vi.advanceTimersByTime(100);
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-2': 'locked' }));
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('ignores a shared snapshot that is past its lifetime or for another showtime', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:10.000Z'));
+        try {
+          const expired = sharedSnapshot(Date.now() - SEAT_STATUS_CACHE_TTL_MS, { 'Z-9': 'locked' });
+          mockRedis.get.mockResolvedValueOnce(expired);
+          mockRedis.eval.mockResolvedValue(['A-1']);
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+
+          const otherShowtime = JSON.stringify({
+            generatedAt: Date.now(),
+            response: { showtimeId: 'other-showtime', seats: { 'Z-9': 'locked' } },
+          });
+          mockRedis.get.mockResolvedValueOnce(otherShowtime);
+          await expect(createInstance().getSeatStatus(showtimeId)).resolves.toEqual(
+            seatStatus({ 'A-1': 'locked' }),
+          );
+          expect(readCalls()).toHaveLength(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('still answers when the shared cache read or write fails', async () => {
+        mockRedis.get.mockRejectedValue(new Error('cache read failed'));
+        mockRedis.set.mockRejectedValue(new Error('cache write failed'));
+        mockRedis.eval.mockResolvedValue(['A-1']);
+        mockDb.select.mockReturnValue(chainResult([]));
+
+        await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+      });
+
+      it('does not cache a failed computation', async () => {
+        mockRedis.get.mockResolvedValue(null);
+        mockRedis.eval
+          .mockRejectedValueOnce(new Error('Connection is closed.'))
+          .mockResolvedValue(['A-1']);
+        mockDb.select.mockReturnValue(chainResult([]));
+
+        await expect(service.getSeatStatus(showtimeId)).rejects.toThrow('Connection is closed.');
+        await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+      });
+
+      it('sweeps stale locked-seats members at most once per interval with the atomic script', async () => {
+        mockRedis.set.mockResolvedValueOnce('OK');
+        mockRedis.eval.mockResolvedValue(['A-1']);
+
+        expect(await service.sweepStaleLockedSeats(showtimeId)).toBe(true);
+        expect(mockRedis.set).toHaveBeenCalledWith(
+          lockedSeatsSweepGuardKey(showtimeId),
+          '1',
+          'PX',
+          LOCKED_SEATS_SWEEP_INTERVAL_MS,
+          'NX',
+        );
+        expect(sweepCalls()).toHaveLength(1);
+        expect(sweepCalls()[0]?.slice(1)).toEqual([
+          1,
+          `{${showtimeId}}:locked-seats`,
+          `{${showtimeId}}:seat:`,
+        ]);
+        expect(GET_VALID_LOCKED_SEATS_LUA).toContain('SREM');
+
+        // Guard still held (by this or another instance): no second sweep.
+        mockRedis.set.mockResolvedValueOnce(null);
+        expect(await service.sweepStaleLockedSeats(showtimeId)).toBe(false);
+        expect(sweepCalls()).toHaveLength(1);
+
+        mockRedis.set.mockRejectedValueOnce(new Error('Connection is closed.'));
+        expect(await service.sweepStaleLockedSeats(showtimeId)).toBe(false);
+      });
+
+      it('starts the guarded sweep from a recomputation without waiting for it', async () => {
+        const guard = deferred<string | null>();
+        mockRedis.get.mockResolvedValue(null);
+        mockRedis.eval.mockResolvedValue(['A-1']);
+        mockRedis.set.mockImplementation((key: string) =>
+          key === lockedSeatsSweepGuardKey(showtimeId) ? guard.promise : Promise.resolve('OK'),
+        );
+        mockDb.select.mockReturnValue(chainResult([]));
+
+        await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ 'A-1': 'locked' }));
+        expect(sweepCalls()).toHaveLength(0);
+
+        guard.resolve('OK');
+        await vi.waitFor(() => expect(sweepCalls()).toHaveLength(1));
+      });
+
+      it('answers the click -> re-read loop from the cached snapshot plus own changes, without recomputing', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+        try {
+          let writeResult: unknown = 1;
+          mockRedis.eval.mockImplementation(async (script: string) =>
+            script === READ_VALID_LOCKED_SEATS_LUA || script === GET_VALID_LOCKED_SEATS_LUA
+              ? []
+              : writeResult,
+          );
+          mockRedis.get.mockResolvedValue(null);
+          mockRedis.set.mockResolvedValue('OK');
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({}));
+          expect(readCalls()).toHaveLength(1);
+
+          // The web re-reads seat status after every successful lock and unlock.
+          for (let click = 0; click < 5; click++) {
+            vi.advanceTimersByTime(40);
+            mockNoSoldRecord();
+            writeResult = [1, `{${showtimeId}}:seat:${runtimeSeat('1F:A-1')}`, 'A-1', '600'];
+            await service.lockSeat(userId, showtimeId, 'A-1');
+            await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(
+              seatStatus({ '1F:A-1': 'locked' }),
+            );
+
+            vi.advanceTimersByTime(40);
+            writeResult = 1;
+            await expect(service.unlockSeat(userId, showtimeId, 'A-1')).resolves.toBe(true);
+            await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({}));
+          }
+
+          // Ten lock changes, ten re-reads: still the single locked-seats read
+          // (each computation starts with it) and no shared-cache round trip.
+          expect(readCalls()).toHaveLength(1);
+          expect(mockRedis.get).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("applies this instance's change to another instance's snapshot unless that snapshot was read clearly later", async () => {
+        vi.useFakeTimers();
+        const changedAt = new Date('2026-10-01T00:00:00.000Z').getTime();
+        vi.setSystemTime(changedAt);
+        try {
+          mockRedis.eval.mockResolvedValue(1); // UNLOCK_SEAT_LUA: caller owned the lock
+          await expect(service.unlockSeat(userId, showtimeId, '1F:A-1')).resolves.toBe(true);
+
+          // Read up to SEAT_STATUS_CLOCK_SKEW_MS "after" the change by another
+          // instance's clock: it may predate the change, so the change wins.
+          vi.setSystemTime(changedAt + SEAT_STATUS_CLOCK_SKEW_MS + 10);
+          mockRedis.get.mockResolvedValueOnce(
+            sharedSnapshot(changedAt + SEAT_STATUS_CLOCK_SKEW_MS, { '1F:A-1': 'locked', '1F:B-1': 'sold' }),
+          );
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(seatStatus({ '1F:B-1': 'sold' }));
+
+          // Read clearly later: another user locked the seat after our release.
+          vi.setSystemTime(changedAt + SEAT_STATUS_LOCAL_CACHE_TTL_MS + SEAT_STATUS_CLOCK_SKEW_MS + 20);
+          mockRedis.get.mockResolvedValueOnce(
+            sharedSnapshot(changedAt + SEAT_STATUS_CLOCK_SKEW_MS + 1, { '1F:A-1': 'locked' }),
+          );
+          await expect(service.getSeatStatus(showtimeId)).resolves.toEqual(
+            seatStatus({ '1F:A-1': 'locked' }),
+          );
+          expect(readCalls()).toHaveLength(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('applies every seat update this instance broadcasts, including DB-only changes from other services', async () => {
+        const gateway = new BookingGateway();
+        const instance = createInstance(gateway);
+        const otherShowtimeId = '650e8400-e29b-41d4-a716-446655440000';
+        mockRedis.get.mockResolvedValue(null);
+        mockRedis.set.mockResolvedValue('OK');
+        mockRedis.eval.mockResolvedValue([runtimeSeat('1F:A-1')]);
+        mockDb.select.mockReturnValue(
+          chainResult([{ seatId: 'B-1', floorKey: '2F', seatKey: '2F:B-1', status: 'held_cancelled' }]),
+        );
+
+        await expect(instance.getSeatStatus(showtimeId)).resolves.toEqual(
+          seatStatus({ '1F:A-1': 'locked', '2F:B-1': 'held' }),
+        );
+        await instance.getSeatStatus(otherShowtimeId);
+        expect(readCalls()).toHaveLength(2);
+
+        // e.g. the cancelled-seat release, a payment confirm and an admin
+        // disabling a seat, all running in this process.
+        gateway.broadcastSeatUpdate(showtimeId, '2F:B-1', 'available');
+        gateway.broadcastSeatUpdate(showtimeId, '1F:A-1', 'sold', 'buyer-id-ignored');
+        await gateway.publishSeatUpdate(showtimeId, '1F:C-3', 'disabled');
+
+        await expect(instance.getSeatStatus(showtimeId)).resolves.toEqual(
+          seatStatus({ '1F:A-1': 'sold', '1F:C-3': 'disabled' }),
+        );
+        await expect(instance.getSeatStatus(otherShowtimeId)).resolves.toEqual({
+          showtimeId: otherShowtimeId,
+          seats: { '1F:A-1': 'locked', '2F:B-1': 'held' },
+          generatedAt: expect.any(Number),
+        });
+        expect(readCalls()).toHaveLength(2);
+      });
+
+      it('keeps a change for a computation that started before it, however slow the computation is', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const startedAt = new Date('2026-10-01T00:00:00.000Z').getTime();
+        vi.setSystemTime(startedAt);
+        try {
+          const lockedSeats = deferred<string[]>();
+          mockRedis.eval.mockImplementation((script: string) =>
+            script === READ_VALID_LOCKED_SEATS_LUA ? lockedSeats.promise : Promise.resolve(1),
+          );
+          mockRedis.get.mockResolvedValue(null);
+          mockRedis.set.mockResolvedValue('OK');
+          mockDb.select.mockReturnValue(chainResult([]));
+
+          const early = service.getSeatStatus(showtimeId);
+          await vi.waitFor(() => expect(readCalls()).toHaveLength(1));
+
+          vi.setSystemTime(startedAt + 10);
+          await service.unlockSeat(userId, showtimeId, '1F:A-1');
+          const late = service.getSeatStatus(showtimeId);
+
+          // Valkey/DB answer seconds later; another change meanwhile prunes
+          // what no snapshot can need any more.
+          vi.setSystemTime(startedAt + 3 * SEAT_STATUS_CACHE_TTL_MS);
+          await service.unlockSeat(userId, showtimeId, '1F:A-2');
+          lockedSeats.resolve([runtimeSeat('1F:A-1'), runtimeSeat('1F:A-2'), runtimeSeat('1F:A-3')]);
+
+          await expect(early).resolves.toEqual(seatStatus({ '1F:A-3': 'locked' }));
+          await expect(late).resolves.toEqual(seatStatus({ '1F:A-3': 'locked' }));
+          expect(readCalls()).toHaveLength(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
     });
   });
 });

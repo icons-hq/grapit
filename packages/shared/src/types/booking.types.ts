@@ -116,17 +116,27 @@ export interface UnlockAllResponse {
   unlockedSeats: string[];
 }
 
+/**
+ * Payload of the `seat-update` event in the unauthenticated `showtime:{id}`
+ * Socket.IO room. It never identifies who locked or bought a seat; clients
+ * learn the outcome of their own lock from the lock API response.
+ */
 export interface SeatUpdateEvent {
   seatId: string;
   seatKey?: string;
   floorKey?: string;
   status: SeatState;
-  userId?: string;
 }
 
 export interface SeatStatusResponse {
   showtimeId: string;
   seats: Record<string, SeatState>;
+  /**
+   * Server time (epoch ms) at which the underlying snapshot was read. It can
+   * be up to about 1s old; a seat-update event received after this instant is
+   * newer than the snapshot for that seat. Optional for older servers.
+   */
+  generatedAt?: number;
 }
 
 export type ReservationStatus =

@@ -249,6 +249,7 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
       .toEqual({
         showtimeId,
         seats: { [seatKey]: 'locked' },
+        generatedAt: expect.any(Number),
       });
 
     await expect(service.unlockSeat(userId, showtimeId, seatKey))
@@ -260,7 +261,7 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
     expect(await cluster.sismember(lockedSeatsKey, runtimeSeatId)).toBe(0);
     await expect(service.getSeatStatus(showtimeId))
       .resolves
-      .toEqual({ showtimeId, seats: {} });
+      .toEqual({ showtimeId, seats: {}, generatedAt: expect.any(Number) });
   });
 
   it('assertOwnedSeatLocks preserves Phase 19 owner/missing/other-owner behavior under cluster mode', async () => {
