@@ -1,13 +1,18 @@
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { BookingPage } from '@/components/booking/booking-page';
+import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
 import { useBookingStore } from '@/stores/use-booking-store';
 
-const { routerPushMock } = vi.hoisted(() => ({
+const { routerPushMock, serverLocksRef } = vi.hoisted(() => ({
   routerPushMock: vi.fn(),
+  // What the server answers to a my-locks read requested by the page.
+  serverLocksRef: {
+    current: { seatIds: [] as string[], expiresAt: null as number | null },
+  },
 }));
 
 vi.mock('next-intl', () => ({
@@ -41,10 +46,18 @@ vi.mock('@/hooks/use-socket', () => ({
 
 vi.mock('@/hooks/use-booking', () => ({
   useSeatStatus: () => ({ data: { seats: { '1F:A-1': 'locked' } } }),
-  useMyLocks: () => ({ data: { seatIds: [], expiresAt: null } }),
-  useLockSeat: () => ({ mutate: vi.fn(), isPending: false }),
-  useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
-  useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
+  useMyLocks: () => ({
+    data: { seatIds: [], expiresAt: null },
+    // Checkout and expiry re-read my-locks; answer with a snapshot requested
+    // after the click (audit #30/#31 server verification).
+    refetch: async () => ({
+      isError: false,
+      data: { ...serverLocksRef.current, requestSeq: nextSeatSyncSequence() },
+    }),
+  }),
+  useLockSeat: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useUnlockSeat: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
+  useUnlockAllSeats: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
 }));
 
 vi.mock('@/components/booking/booking-header', () => ({
@@ -163,6 +176,7 @@ function renderWithQuery(ui: ReactNode) {
 }
 
 function seedLockedSeat(lockExpiresAt: number) {
+  serverLocksRef.current = { seatIds: [SELECTED_SEAT.seatKey], expiresAt: lockExpiresAt };
   useBookingStore.setState({
     selectedDate: new Date('2026-10-18T00:00:00.000+09:00'),
     selectedShowtimeId: 'showtime-queue',
@@ -174,8 +188,15 @@ function seedLockedSeat(lockExpiresAt: number) {
 
 describe('BookingPage queue access window (audit #32)', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    serverLocksRef.current = { seatIds: [], expiresAt: null };
     useBookingStore.getState().resetBooking();
     routerPushMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('counts down to the queue access end when it closes before the seat lock', () => {
@@ -200,9 +221,11 @@ describe('BookingPage queue access window (audit #32)', () => {
     expect(screen.queryByText('seat hold expired modal')).not.toBeInTheDocument();
   });
 
-  it('still expires the seat hold when the lock ends first', () => {
+  it('still expires the seat hold when the lock ends first', async () => {
     const lockExpiresAt = NOW + 3 * 60_000;
     seedLockedSeat(lockExpiresAt);
+    // The server confirms the hold is gone before the page declares expiry.
+    serverLocksRef.current = { seatIds: [], expiresAt: null };
 
     renderWithQuery(
       <BookingPage
@@ -213,7 +236,7 @@ describe('BookingPage queue access window (audit #32)', () => {
 
     expect(screen.getByText(`header deadline ${lockExpiresAt}`)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'header countdown ends' }));
-    expect(useBookingStore.getState().isTimerExpired).toBe(true);
+    await waitFor(() => expect(useBookingStore.getState().isTimerExpired).toBe(true));
   });
 
   it('shows the access window before any seat is held', () => {
@@ -231,7 +254,7 @@ describe('BookingPage queue access window (audit #32)', () => {
     ).toBeInTheDocument();
   });
 
-  it('carries the earlier deadline into the confirm step', () => {
+  it('carries the earlier deadline into the confirm step', async () => {
     const queueAccessExpiresAt = NOW + 6 * 60_000;
     seedLockedSeat(NOW + 10 * 60_000);
 
@@ -244,6 +267,7 @@ describe('BookingPage queue access window (audit #32)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '다음' }));
 
+    await waitFor(() => expect(routerPushMock).toHaveBeenCalled());
     expect(useBookingStore.getState().expiresAt).toBe(queueAccessExpiresAt);
     // Kept separately so the confirm step can tell an access-window end apart
     // from a seat-lock end.

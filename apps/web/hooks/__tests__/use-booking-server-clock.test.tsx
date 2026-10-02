@@ -87,6 +87,9 @@ describe('useLockSeat opening pre-check on the server clock (audit #97)', () => 
     expect(postMock).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
       showtimeId: 'showtime-open',
       seatId: 'A-1',
+    }, {
+      // The seat page owns lock feedback (audit #10/#27).
+      showErrorToast: false,
     });
   });
 
