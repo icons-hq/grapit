@@ -3,6 +3,8 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import koMessages from '@/messages/ko.json';
 import enMessages from '@/messages/en.json';
+import thMessages from '@/messages/th.json';
+import zhCNMessages from '@/messages/zh-CN.json';
 import { QueueWaiting, formatQueueEta } from '../queue-waiting';
 
 const { useLocaleMock } = vi.hoisted(() => ({
@@ -116,6 +118,28 @@ describe('QueueWaiting', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['notOpen', 'blocked'] as const)(
+    'gives the %s surface a way back for browsers without a back button (audit #91)',
+    (status) => {
+      const onBack = vi.fn();
+      render(
+        <QueueWaiting
+          status={status}
+          position={0}
+          etaSeconds={0}
+          remainingSeats={0}
+          autoEnter={false}
+          bookingOpensAt={null}
+          onBack={onBack}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: koQueue.backAction }));
+      expect(onBack).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('button', { name: koQueue.retryAction })).not.toBeInTheDocument();
+    },
+  );
+
   it('tells visitors of a missing performance that it was not found instead of "sales ended"', () => {
     const onBack = vi.fn();
     render(
@@ -200,13 +224,13 @@ describe('QueueWaiting', () => {
     });
 
     it.each([
-      [{ etaSeconds: 800, etaMinSeconds: 0, position: 1, remainingSeats: 300 }, '14분 이내'],
+      [{ etaSeconds: 800, etaMinSeconds: 0, position: 1, remainingSeats: 300 }, '최대 약 14분'],
       [{ etaSeconds: 1_600, etaMinSeconds: 600, position: 600, remainingSeats: 300 }, '약 10~27분'],
       [{ etaSeconds: 0, position: 0, remainingSeats: 300 }, koQueue.metrics.etaCalculating],
       [{ etaSeconds: 10_800, etaUnavailable: true, position: 12, remainingSeats: 0 }, koQueue.metrics.etaUnavailable],
       [{ etaSeconds: 10_800, etaUnavailable: true, position: 20_000, remainingSeats: 5_000 }, '3시간 넘게 걸릴 수 있음'],
       // Older API responses without the lower bound read as an upper bound.
-      [{ etaSeconds: 165, position: 12, remainingSeats: 24 }, '3분 이내'],
+      [{ etaSeconds: 165, position: 12, remainingSeats: 24 }, '최대 약 3분'],
     ])('formats %o as %s', (params, expected) => {
       expect(formatQueueEta(params, koQueue.metrics)).toBe(expected);
     });
@@ -223,7 +247,33 @@ describe('QueueWaiting', () => {
           { etaSeconds: 800, etaMinSeconds: 0, position: 3, remainingSeats: 300 },
           enMessages.booking.queue.metrics,
         ),
-      ).toBe('Within 14 min');
+      ).toBe('Up to about 14 min');
+    });
+
+    it('words the upper bound as a maximum that can grow as seats sell, in every locale (audit #91)', () => {
+      const params = { etaSeconds: 800, etaMinSeconds: 0, position: 3, remainingSeats: 300 };
+      expect(formatQueueEta(params, thMessages.booking.queue.metrics)).toBe('สูงสุดประมาณ 14 นาที');
+      expect(formatQueueEta(params, zhCNMessages.booking.queue.metrics)).toBe('最多约14分钟');
+      for (const messages of [koMessages, enMessages, thMessages, zhCNMessages]) {
+        // No locale calls the estimate a range or a promise any more.
+        expect(messages.booking.queue.metrics.etaWithin).not.toMatch(/이내|Within|ภายใน|内/);
+      }
+      expect(koQueue.etaInfo).toContain('남은 좌석 수를 기준으로 계산한 최대 시간');
+      expect(koQueue.etaInfo).toContain('늘어날 수 있습니다');
+      expect(enMessages.booking.queue.etaInfo).toContain('can grow as seats sell');
+
+      render(
+        <QueueWaiting
+          status="waiting"
+          position={3}
+          etaSeconds={800}
+          etaMinSeconds={0}
+          remainingSeats={300}
+          autoEnter={false}
+        />,
+      );
+      expect(screen.getByTestId('queue-metric-eta')).toHaveTextContent('최대 약 14분');
+      expect(screen.getByText(koQueue.etaInfo)).toBeInTheDocument();
     });
   });
 });

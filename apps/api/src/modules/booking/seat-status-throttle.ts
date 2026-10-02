@@ -1,6 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
-import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { resolveThrottleIpKey } from '../traffic/throttle-identity.js';
 
 /**
  * Rate limit for the public seat status read (audit #8).
@@ -43,14 +43,16 @@ function readVerifiedSubject(req: Request): string | null {
 /**
  * Booking page readers always carry an access token (the page requires login
  * and queue admission), so they are limited per account and never share a
- * bucket behind carrier NAT. Everything else is limited per trusted client IP.
+ * bucket behind carrier NAT. Everything else is limited per trusted client IP,
+ * IPv6 clients per /64 prefix: a subscriber controls the whole /64 and could
+ * otherwise rotate addresses for a fresh bucket per request.
  */
 export function resolveSeatStatusThrottleTracker(req: Record<string, unknown>): string {
   const request = req as unknown as Request;
   const subject = readVerifiedSubject(request);
   return subject
     ? `seat-status:user:${subject}`
-    : `seat-status:ip:${resolveTrustedRequestIp(request)}`;
+    : `seat-status:ip:${resolveThrottleIpKey(request)}`;
 }
 
 export const SEAT_STATUS_THROTTLE = {

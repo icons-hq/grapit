@@ -298,6 +298,9 @@ function setCurrentUserRole(role: 'user' | 'admin') {
     isPhoneVerified: true,
     marketingConsent: false,
     role,
+    // /users/me always carries the capability claims; a full admin for this suite.
+    adminCapabilityBundle: role === 'admin' ? 'admin' : null,
+    adminCapabilities: [],
     createdAt: '2026-05-06T00:00:00.000Z',
   });
 }
@@ -438,6 +441,8 @@ describe('runtime booking disabled UI', () => {
       isPhoneVerified: true,
       marketingConsent: false,
       role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
       createdAt: '2026-05-06T00:00:00.000Z',
     });
 

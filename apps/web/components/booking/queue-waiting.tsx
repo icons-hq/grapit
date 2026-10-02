@@ -167,7 +167,7 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
     ready: '입장 가능',
     soon: '곧 입장',
     etaCalculating: '계산 중',
-    etaWithin: '{minutes}분 이내',
+    etaWithin: '최대 약 {minutes}분',
     etaUnavailable: '산정 불가',
     etaOverLimit: '{hours}시간 넘게 걸릴 수 있음',
     etaAbout: '약 {minutes}분',
@@ -181,7 +181,7 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
   safetyInfo:
     '대기열 순번, 예상 시간, 남은 좌석 수만 노출되며 내부 인증 정보는 표시되지 않습니다.',
   etaInfo:
-    '예상 대기 시간은 현재 순번과 입장 처리 주기(앞선 입장자가 이용할 수 있는 시간)로 계산한 범위이며, 상황에 따라 달라질 수 있습니다. 차례가 되면 자동으로 이동하니 이 화면을 열어 두세요.',
+    '예상 대기 시간은 지금 남은 좌석 수를 기준으로 계산한 최대 시간입니다. 좌석이 판매되면 한 번에 입장하는 인원이 줄어 더 늘어날 수 있습니다. 차례가 되면 자동으로 이동하니 이 화면을 열어 두세요.',
   openTimeUnknownInfo:
     '예매 오픈 시각이 아직 공개되지 않았습니다. 이 화면이 약 {seconds}초마다 오픈 여부를 확인하고, 열리면 자동으로 대기열에 들어갑니다.',
   soldOutRisk:
@@ -228,7 +228,9 @@ const QUEUE_METRIC_TEST_IDS = {
 /**
  * The server sends a range for the current admission cycles: etaSeconds is the
  * upper bound and etaMinSeconds the lower bound. Shown in whole minutes, never
- * as a to-the-second countdown.
+ * as a to-the-second countdown. The upper bound holds only while the remaining
+ * seats stay the same (seats sold meanwhile shrink each admission cycle), so it
+ * is worded as "at most about N minutes", not as a promise.
  */
 export function formatQueueEta(
   params: {
@@ -566,6 +568,13 @@ export function QueueWaiting({
                 {isNotFound
                   ? queueCopy.backHomeAction ?? FALLBACK_QUEUE_COPY.backHomeAction
                   : queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
+              </Button>
+            )}
+            {/* No other action leads away from these surfaces; in-app browsers
+                may have no back button either. */}
+            {(status === 'notOpen' || status === 'blocked') && onBack && (
+              <Button size="lg" variant="outline" onClick={onBack}>
+                {queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
               </Button>
             )}
           </CardFooter>

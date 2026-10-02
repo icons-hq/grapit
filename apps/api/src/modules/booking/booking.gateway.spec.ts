@@ -2,10 +2,16 @@ import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Logger } from '@nestjs/common';
 import { RedisAdapter } from '@socket.io/redis-adapter';
-import { BookingGateway } from './booking.gateway.js';
+import {
+  BookingGateway,
+  SEAT_UPDATE_EVENT,
+  SEAT_UPDATE_V2_EVENT,
+  seatUpdateEventNames,
+} from './booking.gateway.js';
 import {
   buildSocketIoRoomChannel,
   encodeSocketIoRoomEvent,
+  publishSocketIoRoomEvents,
 } from './providers/socket-io-redis-emitter.js';
 
 const SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
@@ -72,9 +78,38 @@ describe('BookingGateway', () => {
     gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-2', 'sold', BUYER_ID);
 
     expect(to).toHaveBeenCalledWith(ROOM);
-    expect(emit).toHaveBeenNthCalledWith(1, 'seat-update', { seatId: '1F:A-1', status: 'locked' });
-    expect(emit).toHaveBeenNthCalledWith(2, 'seat-update', { seatId: '1F:A-2', status: 'sold' });
+    expect(emit.mock.calls).toEqual([
+      ['seat-update.v2', { seatId: '1F:A-1', status: 'locked' }],
+      ['seat-update.v2', { seatId: '1F:A-2', status: 'sold' }],
+      ['seat-update', { seatId: '1F:A-2', status: 'sold' }],
+    ]);
     expect(JSON.stringify(emit.mock.calls)).not.toContain(BUYER_ID);
+  });
+
+  it('sends a locked seat only as seat-update.v2, every other state as both events (audit #92 rollout)', () => {
+    // Web bundles from before #92 drop a selected seat on a 'locked'
+    // seat-update that does not name the buyer, which is every one now. They
+    // only listen to the legacy event, so it must never carry 'locked'.
+    const gateway = new BookingGateway();
+    const { server, emit } = createServerStub();
+    gateway.server = server as never;
+
+    gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-1', 'locked');
+    expect(emit.mock.calls).toEqual([[SEAT_UPDATE_V2_EVENT, { seatId: '1F:A-1', status: 'locked' }]]);
+
+    emit.mockClear();
+    gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-1', 'available');
+    expect(emit.mock.calls).toEqual([
+      [SEAT_UPDATE_V2_EVENT, { seatId: '1F:A-1', status: 'available' }],
+      [SEAT_UPDATE_EVENT, { seatId: '1F:A-1', status: 'available' }],
+    ]);
+
+    expect(SEAT_UPDATE_V2_EVENT).toBe('seat-update.v2');
+    expect(SEAT_UPDATE_EVENT).toBe('seat-update');
+    expect(seatUpdateEventNames('locked')).toEqual(['seat-update.v2']);
+    for (const status of ['available', 'sold', 'held'] as const) {
+      expect(seatUpdateEventNames(status)).toEqual(['seat-update.v2', 'seat-update']);
+    }
   });
 
   it('tells seat update listeners about every update before emitting it, isolating their failures', async () => {
@@ -94,10 +129,12 @@ describe('BookingGateway', () => {
     gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-1', 'sold', BUYER_ID);
     await gateway.publishSeatUpdate(SHOWTIME_ID, '1F:A-2', 'available');
 
+    // Listeners see each change once, however many events carry it.
+    expect(listener).toHaveBeenCalledTimes(2);
     expect(listener).toHaveBeenNthCalledWith(1, SHOWTIME_ID, '1F:A-1', 'sold');
     expect(listener).toHaveBeenNthCalledWith(2, SHOWTIME_ID, '1F:A-2', 'available');
-    expect(order).toEqual(['listener', 'emit', 'listener', 'emit']);
-    expect(emit).toHaveBeenCalledTimes(2);
+    expect(order).toEqual(['listener', 'emit', 'emit', 'listener', 'emit', 'emit']);
+    expect(emit).toHaveBeenCalledTimes(4);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Seat update listener failed'));
 
     unsubscribe();
@@ -113,7 +150,7 @@ describe('BookingGateway', () => {
 
     await expect(gateway.publishSeatUpdate(SHOWTIME_ID, '1F:A-1', 'available')).resolves.toBe(true);
 
-    expect(emit).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledTimes(2);
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
@@ -123,20 +160,64 @@ describe('BookingGateway', () => {
 
     await expect(gateway.publishSeatUpdate(SHOWTIME_ID, '1F:A-1', 'available')).resolves.toBe(true);
 
-    expect(redis.publish).toHaveBeenCalledOnce();
-    const [channel, message] = redis.publish.mock.calls[0] as [string, Buffer];
-    expect(channel).toBe(`socket.io#/booking#${ROOM}#`);
-    expect(channel).toBe(buildSocketIoRoomChannel('/booking', ROOM));
-
-    const broadcasts = deliverToApiInstance(channel, message, ROOM);
-    expect(broadcasts).toHaveLength(1);
-    const [packet, options] = broadcasts[0]!;
-    expect(packet).toMatchObject({
-      type: 2,
-      nsp: '/booking',
-      data: ['seat-update', { seatId: '1F:A-1', status: 'available' }],
+    // The same rule as inside the API: v2 first, then the legacy event.
+    expect(redis.publish).toHaveBeenCalledTimes(2);
+    const delivered = (redis.publish.mock.calls as Array<[string, Buffer]>).map(([channel, message]) => {
+      expect(channel).toBe(`socket.io#/booking#${ROOM}#`);
+      expect(channel).toBe(buildSocketIoRoomChannel('/booking', ROOM));
+      const broadcasts = deliverToApiInstance(channel, message, ROOM);
+      expect(broadcasts).toHaveLength(1);
+      const [packet, options] = broadcasts[0]!;
+      expect(packet).toMatchObject({ type: 2, nsp: '/booking' });
+      expect([...options.rooms]).toEqual([ROOM]);
+      return packet.data;
     });
-    expect([...options.rooms]).toEqual([ROOM]);
+    expect(delivered).toEqual([
+      ['seat-update.v2', { seatId: '1F:A-1', status: 'available' }],
+      ['seat-update', { seatId: '1F:A-1', status: 'available' }],
+    ]);
+  });
+
+  it('publishes a locked seat through Valkey only as seat-update.v2', async () => {
+    const redis = { publish: vi.fn().mockResolvedValue(1) };
+    const gateway = new BookingGateway(redis);
+
+    await expect(gateway.publishSeatUpdate(SHOWTIME_ID, '1F:A-1', 'locked')).resolves.toBe(true);
+
+    expect(redis.publish.mock.calls).toEqual([
+      [
+        buildSocketIoRoomChannel('/booking', ROOM),
+        encodeSocketIoRoomEvent('/booking', ROOM, 'seat-update.v2', { seatId: '1F:A-1', status: 'locked' }),
+      ],
+    ]);
+  });
+
+  it('publishes several events of one payload in order, each as its own message', async () => {
+    const published: string[] = [];
+    let releaseFirst!: () => void;
+    const firstPublished = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const redis = {
+      publish: vi.fn(async (_channel: string, message: Buffer) => {
+        published.push(message.toString('base64'));
+        if (published.length === 1) await firstPublished;
+        return 1;
+      }),
+    };
+    const payload = { seatId: '1F:A-1', status: 'available' };
+
+    const run = publishSocketIoRoomEvents(redis, '/booking', ROOM, ['seat-update.v2', 'seat-update'], payload);
+    await Promise.resolve();
+    // The second event waits for the first publish (same order on every subscriber).
+    expect(redis.publish).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await run;
+
+    expect(published).toEqual([
+      encodeSocketIoRoomEvent('/booking', ROOM, 'seat-update.v2', payload).toString('base64'),
+      encodeSocketIoRoomEvent('/booking', ROOM, 'seat-update', payload).toString('base64'),
+    ]);
   });
 
   it('is ignored by API instances without sockets in the showtime room', () => {

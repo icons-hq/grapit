@@ -239,14 +239,13 @@ describe('CancelledSeatReleaseWorker', () => {
     }, 'release-job-1');
 
     expect(result.status).toBe('released');
-    expect(redis.publish).toHaveBeenCalledOnce();
-    expect(redis.publish).toHaveBeenCalledWith(
-      buildSocketIoRoomChannel('/booking', 'showtime:showtime-1'),
-      encodeSocketIoRoomEvent('/booking', 'showtime:showtime-1', 'seat-update', {
-        seatId: '1F:A-10',
-        status: 'available',
-      }),
-    );
+    // seat-update.v2 first, then the legacy event that pre-v2 web bundles read.
+    const channel = buildSocketIoRoomChannel('/booking', 'showtime:showtime-1');
+    const payload = { seatId: '1F:A-10', status: 'available' };
+    expect(redis.publish.mock.calls).toEqual([
+      [channel, encodeSocketIoRoomEvent('/booking', 'showtime:showtime-1', 'seat-update.v2', payload)],
+      [channel, encodeSocketIoRoomEvent('/booking', 'showtime:showtime-1', 'seat-update', payload)],
+    ]);
   });
 
   it('keeps the committed release when the Valkey publish fails', async () => {

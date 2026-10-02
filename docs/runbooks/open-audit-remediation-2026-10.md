@@ -15,6 +15,7 @@
 - [ ] 배포 서비스 계정이 `grabit-api`와 `grabit-web`을 읽을 수 있는지(`run.services.get`) 확인한다. booking gate 확인은 두 서비스의 live 값을 읽지 못하면 배포를 실패시킨다. #64
 - [ ] `MIGRATION_FREEZE`가 배포 창에서 `false`인지 확인한다. 창 밖에 main merge가 일어날 수 있으면 `true`로 두어 batch가 자동 적용되지 않게 한다. #60
 - [ ] Abandoned payment handoff review 첫 rollout을 단계로 나눈다: `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false`로 먼저 배포하고 후보 수를 read-only로 센 뒤, Toss 키 권한을 확인하고 승인 후 해제한다. [First rollout of the review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement). #9
+- [ ] 배포 공지와 CS 안내에 '배포 전에 열어 둔 예매 페이지는 새로고침'을 넣는다. API가 먼저 바뀌면 좌석 잠금(`locked`)은 `seat-update.v2`로만 나가고, 이전 web 번들은 이를 듣지 않는다. 그래서 새로고침 전까지 다른 사람의 잠금이 폴링과 409로만 반영된다. 대신 이전 번들이 본인 좌석을 지워 lock을 고아로 남기는 문제는 생기지 않는다. web만 되돌린 경우도 같다. 다음 release에서 legacy `seat-update`를 없앤다([Architecture 6.1](../03-ARCHITECTURE.md#61-seat-locks)). #92
 - [ ] Edge client IP 신뢰 rollout step 0: 현재 운영 API(이전 코드)에 위조 `True-Client-IP`/`X-Forwarded-For` probe를 두 번 보낸다. 값이 계속 줄면 일반 배포로 진행하고, 값이 같으면 Worker secret과 API binding을 이번 코드와 같은 배포에 넣는다. `EDGE_PROXY_SHARED_SECRET`은 Deploy workflow에 연결돼 있지 않으므로 Secret Manager secret을 만든 뒤 API 서비스에 직접 binding한다. [Client IP trust](managed-demo-cost-floor.md#phase-4--cloudflare-edge-proxy-and-load-balancer-retirement). #152 #158
 
 ### 1.2 운영 DB read-only 점검
@@ -189,6 +190,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 - [ ] privacy·pipa_required `2026-04-28` 동의 행 비활성화: web 배포 후 24시간 이상, 티켓 오픈 창 밖, 3.3의 부하 gate 뒤에 별도 migration으로 [고정된 SQL](consent-document-versions.md#bumping-a-document-version)만 쓴다. `version`만으로 거르면 terms·marketing도 꺼져 모든 가입과 prepare가 400이 된다. DELETE는 금지다. #169 #106
 - [ ] 이 release 이전으로 API를 되돌릴 때는 web을 먼저 또는 함께 되돌린다. API만 되돌리면 동의(pipa 없는 예매 payload 400)와 현장 verify(`deviceAttemptId` 400)가 모두 막힌다. web만 되돌리는 것은 안전하다. [동의 rollback](consent-document-versions.md#rollback), [현장 rollback](seat-level-field-operations.md#배포-rollback-순서). #98 #113
+- [ ] 대기열 입장 계약도 같은 이유로 API만 되돌리지 않는다. 이전 API는 활성 창이 지난 결제 복구 입장을 `recoveryOrderId` 없이 재입장 유예 동안 다시 내준다. 그러면 새 web은 자동 재입장 1회 뒤에도 만료 화면에 머물고, 좌석은 seat hold TTL까지 풀지 않는다. 다른 탭의 결제 대기 주문 좌석을 지우지 않기 위한 동작이다. web을 함께 되돌린다([Architecture 6.2](../03-ARCHITECTURE.md#62-queue-admission)). #4 #32
 - [ ] 이후 `UNIQUE(lower(email))`이나 소문자 backfill을 하기 전에 [중복 점검 쿼리](auth-session-operations.md#read-only-duplicate-check-run-before-adding-a-unique-constraint)를 실행하고 중복을 병합 runbook으로 해결한다. `JWT_REFRESH_SECRET`과 `JWT_SECRET`은 오픈 창 동안 회전하지 않는다. #99 #13
 - [ ] QR secret을 교체할 때는 [pinned-version 절차](qr-ticket-secret-rotation.md#교체-절차)를 따른다(main merge 일시 중지, 명시 version으로 `--update-secrets`). #109
 - [ ] `FRONTEND_URL`을 여러 origin으로 바꿀 때는 첫 항목이 소셜 redirect·QR 이메일 링크의 기준이 되도록 순서를 정한다. #93
@@ -212,6 +214,6 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 - 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
-- seat-update 수신은 아직 이벤트마다 좌석 상태 cache를 갱신한다(rAF 또는 100–200ms 묶음 처리 미적용). web에는 `script-src` CSP가 없다. #11 #49
+- web에는 `script-src` CSP가 없다. seat-update는 이제 frame 단위로 묶어 반영하지만, 저사양 Android 실기기 INP는 아직 측정하지 않았다(3.3). #11 #49
 - `scripts/phase26/infra-evidence.mjs`의 연결 수 추정은 pg-boss pool을 빼고 계산하며 템플릿 값(`${{ env.DB_POOL_MAX }}`)을 읽지 못한다. 연결 예산은 Deploy workflow의 database preflight 결과를 쓴다. #54
 - 새 runtime env 예시(`PGBOSS_POOL_MAX`, `PGBOSS_START_MAX_ATTEMPTS`, `DB_APPLICATION_NAME`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`)를 `.env.example`에 넣는 작업은 감사 작업 환경에서 `.env*` 접근이 막혀 하지 못했다. 로컬 설정 담당자가 확인한다. 기본값과 의미는 [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration)와 [Optional runtime settings](managed-demo-cost-floor.md#optional-runtime-settings)에 있다. #54 #55

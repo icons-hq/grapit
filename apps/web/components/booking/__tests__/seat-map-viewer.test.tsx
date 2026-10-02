@@ -1263,6 +1263,38 @@ describe('SeatMapViewer', () => {
       expect(onSeatClick).toHaveBeenCalledWith('A-1');
     });
 
+    it('부모가 같은 props로 다시 그려지면 좌석맵은 다시 렌더하지 않는다 (React.memo)', async () => {
+      // 다른 층 seat-update로 BookingPage만 다시 그려지는 경우: 이 층의 props 참조는 그대로다.
+      const seatStates = new Map<string, SeatState>([['A-1', 'locked']]);
+      const selectedSeatIds = new Set<string>();
+      const onSeatClick = vi.fn();
+      const viewer = (states: ReadonlyMap<string, SeatState> = seatStates) => (
+        <SeatMapViewer
+          svgUrl="https://example.com/seats.svg"
+          seatConfig={mockSeatConfig}
+          seatStates={states}
+          selectedSeatIds={selectedSeatIds}
+          onSeatClick={onSeatClick}
+          maxSelect={4}
+        />
+      );
+      const { container, rerender } = render(viewer());
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+      });
+      const rendersBefore = transformWrapperSpy.mock.calls.length;
+
+      rerender(viewer());
+      rerender(viewer());
+      expect(transformWrapperSpy.mock.calls.length).toBe(rendersBefore);
+
+      // 이 층의 좌석 상태가 바뀌면 다시 그린다.
+      rerender(viewer(new Map<string, SeatState>([['A-1', 'available']])));
+      expect(transformWrapperSpy.mock.calls.length).toBeGreaterThan(rendersBefore);
+      expect(container.querySelector('[data-seat-id="A-1"]')!.getAttribute('fill')).not.toBe('#D1D5DB');
+    });
+
     it('pointerdown 뒤 click 전에 seat-update가 와도 같은 좌석 탭이 선택으로 이어진다', async () => {
       const onSeatClick = vi.fn();
       const { container, rerender } = render(

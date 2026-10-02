@@ -17,6 +17,7 @@ const koMessages = JSON.parse(
       };
       notFound: { title: string };
       openTimeUnknownInfo: string;
+      backAction: string;
       status: {
         notOpen: { title: string };
         waiting: { title: string };
@@ -32,11 +33,12 @@ const koMessages = JSON.parse(
 const waitingSnapshot = {
   queueSessionId: 'queue-session-waiting',
   state: 'WAITING',
-  // Second admission cycle for 24 seats: 10-27 minutes.
+  // Second admission cycle for 24 seats: at most 2 x 800s at the current
+  // remaining seats. A slot has no minimum hold, so the lower bound is 0.
   position: 30,
   waitingCount: 48,
   etaSeconds: 1_600,
-  etaMinSeconds: 600,
+  etaMinSeconds: 0,
   etaUnavailable: false,
   remainingSeats: 24,
   autoEnter: false,
@@ -178,6 +180,7 @@ test.describe('booking queue route', () => {
   test('queue entry with an unannounced open time explains the periodic check', async ({
     page,
   }) => {
+    let detailReads = 0;
     await page.route(
       '**/api/v1/queue/performances/**/enter',
       async (route: Route) => {
@@ -195,6 +198,7 @@ test.describe('booking queue route', () => {
     await page.route(
       `**/api/v1/performances/${queuePerformanceId}`,
       async (route: Route) => {
+        detailReads += 1;
         await fulfillJson(route, 200, {
           id: queuePerformanceId,
           bookingPolicy: { bookingStartsAt: null },
@@ -212,6 +216,12 @@ test.describe('booking queue route', () => {
     await expect(page.getByTestId('queue-open-time-unknown')).toContainText(
       koMessages.booking.queue.openTimeUnknownInfo.replace('{seconds}', '15'),
     );
+    // The 403 body already says the open time is not scheduled.
+    expect(detailReads).toBe(0);
+    // In-app browsers may have no back button: the surface offers one.
+    await expect(
+      page.getByRole('button', { name: koMessages.booking.queue.backAction }),
+    ).toBeVisible();
   });
 
   test('queue entry for a performance without sellable showtimes shows the closed surface', async ({

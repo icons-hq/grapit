@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
+import { memo, useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { TransformWrapper, TransformComponent, MiniMap } from 'react-zoom-pan-pinch';
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { SeatMapConfig, SeatState } from '@grabit/shared';
@@ -525,7 +525,7 @@ function buildTierColorMap(tiers: SeatMapConfig['tiers']) {
   return map;
 }
 
-export function SeatMapViewer({
+function SeatMapViewerComponent({
   svgUrl,
   floorKey,
   floorLabel,
@@ -972,3 +972,10 @@ export function SeatMapViewer({
     </div>
   );
 }
+
+/**
+ * Memoized: the booking page keeps every prop reference stable while only
+ * other floors (or nothing on this floor) change, so a seat-update elsewhere
+ * does not re-run the per-seat comparison of the whole map (audit #11).
+ */
+export const SeatMapViewer = memo(SeatMapViewerComponent);

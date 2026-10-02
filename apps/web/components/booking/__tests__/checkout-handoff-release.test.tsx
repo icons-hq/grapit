@@ -180,7 +180,12 @@ describe('Provider SDK rejection before checkout opens', () => {
     boundary.sdkRequestPayment.mockImplementation(() => new Promise(() => {}));
     await userEvent.setup().click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
     await waitFor(() => expect(boundary.sdkRequestPayment).toHaveBeenCalledTimes(2));
-    expect(boundary.prepare.mock.calls.map(([input]) => input.orderId)).toEqual([ORDER_ID, ORDER_ID]);
+    // The prepared order is reused with its saved method: no new prepare (which needs
+    // the queue access window), the handoff alone re-validates it.
+    expect(boundary.prepare).not.toHaveBeenCalled();
+    expect(boundary.post.mock.calls
+      .filter(([path]) => path === '/api/v1/payments/branch')
+      .map(([, body]) => body.orderId)).toEqual([ORDER_ID, ORDER_ID]);
     expect(boundary.server.checkoutStartedAt).not.toBeNull();
   });
 

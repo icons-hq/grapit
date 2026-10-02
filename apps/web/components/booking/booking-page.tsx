@@ -3,7 +3,7 @@
 import { getSeatSelectionCopy, formatSeatSelectionPrice } from '@/lib/booking/seat-selection-copy';
 import { formatCopy } from '@/lib/i18n/client-copy';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
@@ -45,7 +45,11 @@ import {
   getKstCalendarKey,
   isSameKstCalendarDate,
 } from '@/lib/booking-datetime';
-import { earliestDeadline } from '@/lib/booking/queue-access';
+import {
+  earliestDeadline,
+  getQueueAccessClosedCopy,
+  isQueueAccessRejection,
+} from '@/lib/booking/queue-access';
 import { getServerNowMs } from '@/lib/server-clock';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
@@ -63,6 +67,15 @@ import { SeatMapViewer } from './seat-map-viewer';
 import { TimerExpiredModal } from './timer-expired-modal';
 
 type RuntimeSeatState = SeatState | 'disabled';
+type FloorSeatStates = ReadonlyMap<string, RuntimeSeatState>;
+type SeatStatusSeats = Record<string, string> | undefined;
+
+/**
+ * Shared empty states: a fresh `new Map()` per render would hand the seat map
+ * a new reference on every seat-update and re-run its per-seat comparison.
+ */
+const EMPTY_SEAT_STATES: FloorSeatStates = new Map();
+const EMPTY_FLOOR_SEAT_STATES: ReadonlyMap<string, FloorSeatStates> = new Map();
 
 type RuntimeSeatIdentity = {
   seatId: string;
@@ -88,6 +101,62 @@ function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
 
 function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
   return state === 'locked' || state === 'sold' || state === 'held' || state === 'disabled';
+}
+
+/** Seat states per floor, each keyed by both seatKey and floor-local seatId. */
+function buildSeatStatesByFloorKey(seats: SeatStatusSeats): Map<string, Map<string, RuntimeSeatState>> {
+  const map = new Map<string, Map<string, RuntimeSeatState>>();
+  if (!seats) {
+    return map;
+  }
+
+  for (const [runtimeSeatId, state] of Object.entries(seats)) {
+    const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
+    const floorMap = map.get(seatIdentity.floorKey) ?? new Map<string, RuntimeSeatState>();
+    floorMap.set(seatIdentity.seatKey, state as RuntimeSeatState);
+    floorMap.set(seatIdentity.seatId, state as RuntimeSeatState);
+    map.set(seatIdentity.floorKey, floorMap);
+  }
+
+  return map;
+}
+
+function hasSameSeatStates(previous: FloorSeatStates, next: FloorSeatStates): boolean {
+  if (previous === next) {
+    return true;
+  }
+  if (previous.size !== next.size) {
+    return false;
+  }
+  for (const [seatId, state] of next) {
+    if (previous.get(seatId) !== state) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Keeps the previous Map of every floor whose states did not change (and the
+ * previous outer Map when no floor changed), so a seat-update on another floor
+ * leaves the shown floor's seat map, its props and memoized values untouched.
+ */
+function shareUnchangedFloors(
+  previous: ReadonlyMap<string, FloorSeatStates>,
+  next: ReadonlyMap<string, FloorSeatStates>,
+): ReadonlyMap<string, FloorSeatStates> {
+  let changed = previous.size !== next.size;
+  const shared = new Map<string, FloorSeatStates>();
+  for (const [floorKey, states] of next) {
+    const previousStates = previous.get(floorKey);
+    if (previousStates && hasSameSeatStates(previousStates, states)) {
+      shared.set(floorKey, previousStates);
+    } else {
+      shared.set(floorKey, states);
+      changed = true;
+    }
+  }
+  return changed ? shared : previous;
 }
 
 /**
@@ -266,10 +335,17 @@ function BookingSelectionBar({
 export function BookingPage({
   performanceId,
   queueAccessExpiresAt = null,
+  onQueueAccessRejected,
 }: {
   performanceId: string;
   /** Server queue access window end (epoch ms); seat locks need it too. */
   queueAccessExpiresAt?: number | null;
+  /**
+   * A seat lock was refused for the queue admission itself (window over, the
+   * admission used up by a purchase in another tab, missing admission). The
+   * route re-reads the queue status and leaves the seat screen.
+   */
+  onQueueAccessRejected?: () => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -414,29 +490,34 @@ export function BookingPage({
     return map;
   }, [availableSeatMaps, performance?.priceTiers]);
 
-  const seatStatesByFloorKey = useMemo(() => {
-    const map = new Map<string, Map<string, RuntimeSeatState>>();
-    if (!seatStatusData?.seats) {
-      return map;
-    }
-
-    for (const [runtimeSeatId, state] of Object.entries(seatStatusData.seats)) {
-      const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
-      const floorMap = map.get(seatIdentity.floorKey) ?? new Map<string, RuntimeSeatState>();
-      floorMap.set(seatIdentity.seatKey, state as RuntimeSeatState);
-      floorMap.set(seatIdentity.seatId, state as RuntimeSeatState);
-      map.set(seatIdentity.floorKey, floorMap);
-    }
-
-    return map;
-  }, [seatStatusData]);
-
-  const seatStatesMap = useMemo(
-    () => currentSeatMap
-      ? seatStatesByFloorKey.get(currentSeatMap.floorKey) ?? new Map<string, RuntimeSeatState>()
-      : new Map<string, RuntimeSeatState>(),
-    [currentSeatMap, seatStatesByFloorKey],
+  // Rebuilt only when the cached seats change (one batch of seat-update events
+  // per frame, a poll, a resync). Floors whose states did not change keep the
+  // Map they had, compared by content against the last published states.
+  const seatStatusSeats: SeatStatusSeats = seatStatusData?.seats;
+  const builtSeatStatesByFloorKey = useMemo(
+    () => buildSeatStatesByFloorKey(seatStatusSeats),
+    [seatStatusSeats],
   );
+  const [publishedSeatStates, setPublishedSeatStates] = useState(EMPTY_FLOOR_SEAT_STATES);
+  const seatStatesByFloorKey = useMemo(
+    () => shareUnchangedFloors(publishedSeatStates, builtSeatStatesByFloorKey),
+    [builtSeatStatesByFloorKey, publishedSeatStates],
+  );
+  if (seatStatesByFloorKey !== publishedSeatStates) {
+    // Settles in one extra render pass: the next comparison finds every floor
+    // unchanged and returns the published states themselves.
+    setPublishedSeatStates(seatStatesByFloorKey);
+  }
+
+  // Read by the click handler so it does not change with every seat-update.
+  const seatStatesByFloorKeyRef = useRef(seatStatesByFloorKey);
+  useLayoutEffect(() => {
+    seatStatesByFloorKeyRef.current = seatStatesByFloorKey;
+  }, [seatStatesByFloorKey]);
+
+  const seatStatesMap: FloorSeatStates = currentSeatMap
+    ? seatStatesByFloorKey.get(currentSeatMap.floorKey) ?? EMPTY_SEAT_STATES
+    : EMPTY_SEAT_STATES;
 
   const selectedSeatIds = useMemo(
     () => new Set(
@@ -472,10 +553,10 @@ export function BookingPage({
    * release lands.
    */
   const { viewerSeatStates, viewerMyLockedSeatIds } = useMemo(() => {
-    let seatStates = seatStatesMap;
+    let seatStates: Map<string, RuntimeSeatState> | null = null;
     let myLocked = myLockedSeatIds;
     if (!currentSeatMap || !activeShowtimeId) {
-      return { viewerSeatStates: seatStates, viewerMyLockedSeatIds: myLocked };
+      return { viewerSeatStates: seatStatesMap, viewerMyLockedSeatIds: myLocked };
     }
     for (const operation of seatLocks.pendingSeats) {
       if (operation.showtimeId !== activeShowtimeId) {
@@ -493,12 +574,15 @@ export function BookingPage({
         if (myLocked === myLockedSeatIds) myLocked = new Set(myLockedSeatIds);
         myLocked.add(identity.seatId);
       } else {
-        if (seatStates === seatStatesMap) seatStates = new Map(seatStatesMap);
+        seatStates ??= new Map(seatStatesMap);
         seatStates.set(identity.seatKey, 'available');
         seatStates.set(identity.seatId, 'available');
       }
     }
-    return { viewerSeatStates: seatStates, viewerMyLockedSeatIds: myLocked };
+    return {
+      viewerSeatStates: (seatStates ?? seatStatesMap) as FloorSeatStates,
+      viewerMyLockedSeatIds: myLocked,
+    };
   }, [activeShowtimeId, currentSeatMap, myLockedSeatIds, seatLocks.pendingSeats, seatStatesMap, selectedSeats]);
 
   const seatConfig: SeatMapConfig | null = currentSeatMap?.seatConfig ?? null;
@@ -805,6 +889,14 @@ export function BookingPage({
       closeStartedShowtime(showtimeId);
       return;
     }
+    if (error instanceof ApiClientError && isQueueAccessRejection(error.statusCode, error.message)) {
+      // The queue admission itself is gone (window over, used up by a purchase
+      // in another tab): no seat can be locked here any more. Explain it in
+      // the buyer's language and let the route move to the re-entry surface.
+      toast.error(getQueueAccessClosedCopy(activeLocale).toast, { id: 'queue-access-rejected' });
+      onQueueAccessRejected?.();
+      return;
+    }
     if (!stillWanted) {
       // The user already dropped this seat; nothing to report.
       return;
@@ -833,6 +925,7 @@ export function BookingPage({
     activeLocale,
     closeStartedShowtime,
     copy.commonErrors.server,
+    onQueueAccessRejected,
     seatCopy.selectionConflict,
   ]);
 
@@ -857,7 +950,8 @@ export function BookingPage({
       const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
       const floorSeatMap = availableSeatMaps.find((seatMap) => seatMap.floorKey === seatIdentity.floorKey)
         ?? currentSeatMap;
-      const floorSeatStates = seatStatesByFloorKey.get(floorSeatMap.floorKey) ?? seatStatesMap;
+      const floorSeatStates = seatStatesByFloorKeyRef.current.get(floorSeatMap.floorKey)
+        ?? EMPTY_SEAT_STATES;
       const seatState = floorSeatStates.get(seatIdentity.seatKey) ?? floorSeatStates.get(seatIdentity.seatId);
       const existingSeat = selectedSeats.find(
         (seat) => seat.seatKey === seatIdentity.seatKey
@@ -926,8 +1020,6 @@ export function BookingPage({
       maxTicketsPerUser,
       myLockedSeatIds,
       seatLocks,
-      seatStatesMap,
-      seatStatesByFloorKey,
       selectedSeats,
       ticketLimitCopy,
       tierInfoByFloorKey,

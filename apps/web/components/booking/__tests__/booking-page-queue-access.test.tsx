@@ -4,19 +4,37 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { BookingPage } from '@/components/booking/booking-page';
+import { ApiClientError } from '@/lib/api-client';
+import { getQueueAccessClosedCopy } from '@/lib/booking/queue-access';
 import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
+import { getStatusMessages } from '@/lib/error-messages';
 import { useBookingStore } from '@/stores/use-booking-store';
 
-const { routerPushMock, serverLocksRef } = vi.hoisted(() => ({
+const {
+  routerPushMock,
+  serverLocksRef,
+  localeRef,
+  seatStatesRef,
+  lockMutateAsyncMock,
+  toastErrorMock,
+} = vi.hoisted(() => ({
   routerPushMock: vi.fn(),
   // What the server answers to a my-locks read requested by the page.
   serverLocksRef: {
     current: { seatIds: [] as string[], expiresAt: null as number | null },
   },
+  localeRef: { current: 'ko' },
+  seatStatesRef: { current: { '1F:A-1': 'locked' } as Record<string, string> },
+  lockMutateAsyncMock: vi.fn(),
+  toastErrorMock: vi.fn(),
 }));
 
 vi.mock('next-intl', () => ({
-  useLocale: () => 'ko',
+  useLocale: () => localeRef.current,
+}));
+
+vi.mock('sonner', () => ({
+  toast: { error: toastErrorMock, info: vi.fn(), success: vi.fn(), warning: vi.fn(), loading: vi.fn() },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -45,7 +63,7 @@ vi.mock('@/hooks/use-socket', () => ({
 }));
 
 vi.mock('@/hooks/use-booking', () => ({
-  useSeatStatus: () => ({ data: { seats: { '1F:A-1': 'locked' } } }),
+  useSeatStatus: () => ({ data: { seats: seatStatesRef.current } }),
   useMyLocks: () => ({
     data: { seatIds: [], expiresAt: null },
     // Checkout and expiry re-read my-locks; answer with a snapshot requested
@@ -55,7 +73,7 @@ vi.mock('@/hooks/use-booking', () => ({
       data: { ...serverLocksRef.current, requestSeq: nextSeatSyncSequence() },
     }),
   }),
-  useLockSeat: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useLockSeat: () => ({ mutate: vi.fn(), mutateAsync: lockMutateAsyncMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
 }));
@@ -78,7 +96,14 @@ vi.mock('@/components/booking/booking-header', () => ({
 }));
 
 vi.mock('@/components/booking/seat-map-viewer', () => ({
-  SeatMapViewer: () => <div>seat map ready</div>,
+  SeatMapViewer: ({ onSeatClick }: { onSeatClick: (seatId: string) => void }) => (
+    <div>
+      seat map ready
+      <button type="button" onClick={() => onSeatClick('1F:A-1')}>
+        좌석 A-1
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('@/components/booking/seat-legend', () => ({
@@ -191,6 +216,10 @@ describe('BookingPage queue access window (audit #32)', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     serverLocksRef.current = { seatIds: [], expiresAt: null };
+    localeRef.current = 'ko';
+    seatStatesRef.current = { '1F:A-1': 'locked' };
+    lockMutateAsyncMock.mockReset();
+    toastErrorMock.mockReset();
     useBookingStore.getState().resetBooking();
     routerPushMock.mockReset();
   });
@@ -273,5 +302,81 @@ describe('BookingPage queue access window (audit #32)', () => {
     // from a seat-lock end.
     expect(useBookingStore.getState().queueAccessExpiresAt).toBe(queueAccessExpiresAt);
     expect(routerPushMock).toHaveBeenCalledWith('/booking/performance-queue/confirm');
+  });
+
+  describe('seat lock refused by the queue (audit #32)', () => {
+    function chooseShowtime() {
+      useBookingStore.setState({
+        selectedDate: new Date('2026-10-18T00:00:00.000+09:00'),
+        selectedShowtimeId: 'showtime-queue',
+      });
+      seatStatesRef.current = {};
+    }
+
+    it.each([
+      '대기열 입장 시간이 만료되었습니다',
+      '대기열 입장 인증이 필요합니다',
+      '대기열 입장 정보가 현재 공연과 일치하지 않습니다',
+    ])('hands "%s" to the route and explains it in the buyer language', async (message) => {
+      chooseShowtime();
+      lockMutateAsyncMock.mockRejectedValueOnce(new ApiClientError(message, 403));
+      const onQueueAccessRejected = vi.fn();
+
+      renderWithQuery(
+        <BookingPage
+          performanceId="performance-queue"
+          queueAccessExpiresAt={NOW + 6 * 60_000}
+          onQueueAccessRejected={onQueueAccessRejected}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: '좌석 A-1' }));
+
+      await waitFor(() => expect(onQueueAccessRejected).toHaveBeenCalledTimes(1));
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        getQueueAccessClosedCopy('ko').toast,
+        expect.objectContaining({ id: 'queue-access-rejected' }),
+      );
+    });
+
+    it('shows the English queue copy instead of the generic 403 text', async () => {
+      localeRef.current = 'en';
+      chooseShowtime();
+      lockMutateAsyncMock.mockRejectedValueOnce(
+        new ApiClientError('대기열 입장 시간이 만료되었습니다', 403),
+      );
+      const onQueueAccessRejected = vi.fn();
+
+      renderWithQuery(
+        <BookingPage
+          performanceId="performance-queue"
+          queueAccessExpiresAt={NOW + 6 * 60_000}
+          onQueueAccessRejected={onQueueAccessRejected}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: '좌석 A-1' }));
+
+      await waitFor(() => expect(onQueueAccessRejected).toHaveBeenCalledTimes(1));
+      const [message] = toastErrorMock.mock.calls[0] ?? [];
+      expect(message).toBe(getQueueAccessClosedCopy('en').toast);
+      expect(message).toBe('Your queue access ended, so booking cannot continue. Please rejoin the queue.');
+      expect(message).not.toBe(getStatusMessages()[403]);
+    });
+
+    it('keeps other 403 lock failures on the seat screen', async () => {
+      chooseShowtime();
+      lockMutateAsyncMock.mockRejectedValueOnce(new ApiClientError('예매가 일시 중단되었습니다', 403));
+      const onQueueAccessRejected = vi.fn();
+
+      renderWithQuery(
+        <BookingPage
+          performanceId="performance-queue"
+          onQueueAccessRejected={onQueueAccessRejected}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: '좌석 A-1' }));
+
+      await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith('예매가 일시 중단되었습니다'));
+      expect(onQueueAccessRejected).not.toHaveBeenCalled();
+    });
   });
 });

@@ -1,19 +1,28 @@
 'use client';
 
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
+import { CreditCard } from 'lucide-react';
 import { BookingPage } from '@/components/booking/booking-page';
 import { QueueWaiting } from '@/components/booking/queue-waiting';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardFooter, CardHeader } from '@/components/ui/card';
 import { useQueue } from '@/hooks/use-queue';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useUnlockAllSeats } from '@/hooks/use-booking';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { useBookingStore } from '@/stores/use-booking-store';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { buildAuthRoute } from '@/lib/auth-return';
-import { parseServerDeadline } from '@/lib/booking/queue-access';
-import { getServerNowMs } from '@/lib/server-clock';
+import {
+  getQueuePaymentRecoveryCopy,
+  parseServerDeadline,
+} from '@/lib/booking/queue-access';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -23,14 +32,68 @@ import {
 const QUEUE_ACCESS_WARNING_LEAD_MS = 2 * 60_000;
 
 /**
- * How the access window looked when the queue last handed the route a ready
- * admission. `ready` mirrors the last seen `queue.isReady` so each new arrival
- * (first entry, rejoin) is judged once.
+ * An admission whose seat window closed while an order still awaits payment.
+ * Seat locks and prepare would be refused, so the route only offers to
+ * continue that payment (or to look at the reservation). Checkout resumes the
+ * prepared order without a new prepare and payment confirm is authorised by
+ * the order binding, so the payment can still finish (ARCHITECTURE 6.2).
  */
-type QueueArrival = {
-  ready: boolean;
-  windowClosedOnArrival: boolean;
-};
+function QueuePaymentRecovery({
+  locale,
+  resumeHref,
+  reservationsHref,
+}: {
+  locale: string;
+  resumeHref: string;
+  reservationsHref: string;
+}) {
+  const copy = getQueuePaymentRecoveryCopy(locale);
+
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-neutral-50 via-white to-[#f3efff] px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-3xl items-center justify-center">
+        <Card className="w-full gap-0 overflow-hidden border-neutral-200/80 bg-white/95 py-0 shadow-xl shadow-black/5">
+          <CardHeader className="gap-4 border-b bg-gradient-to-r from-white to-neutral-50/90 pt-6 pb-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1 space-y-4" role="status">
+                <Badge variant="secondary">{copy.badge}</Badge>
+                <div className="space-y-2">
+                  <h1 className="break-keep text-2xl font-semibold tracking-tight text-neutral-950 sm:text-[28px]">
+                    {copy.title}
+                  </h1>
+                  <p className="max-w-2xl whitespace-normal break-keep text-base leading-7 text-neutral-600">
+                    {copy.body}
+                  </p>
+                </div>
+              </div>
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-[#f5f5f7] text-[#6c3ce0]">
+                <CreditCard className="size-7" aria-hidden="true" />
+              </div>
+            </div>
+          </CardHeader>
+          <CardFooter className="flex flex-col gap-3 bg-neutral-50/80 px-6 py-5 sm:flex-row sm:justify-end">
+            <Button asChild size="lg" variant="outline" className="w-full sm:w-auto">
+              <Link href={reservationsHref}>{copy.reservations}</Link>
+            </Button>
+            <Button asChild size="lg" className="w-full sm:w-auto">
+              <Link
+                href={resumeHref}
+                onClick={() => {
+                  // Like the reservation list's resume: checkout restores the
+                  // order from the server, not from this tab's seat screen
+                  // (whose queue access deadline has passed).
+                  useBookingStore.getState().resetBooking();
+                }}
+              >
+                {copy.resume}
+              </Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    </main>
+  );
+}
 
 export default function BookingRoute({
   params,
@@ -44,6 +107,7 @@ export default function BookingRoute({
   const authRedirectPath = `${getLocalizedPathname('/auth', locale)}?returnTo=${encodeURIComponent(bookingPath)}`;
   const performancePath = getLocalizedPathname(`/performance/${performanceId}`, locale);
   const homePath = getLocalizedPathname('/', locale);
+  const reservationsPath = `${getLocalizedPathname('/mypage', locale)}?tab=reservations`;
 
   const {
     bookingAvailable,
@@ -54,82 +118,80 @@ export default function BookingRoute({
     refetch: refetchRuntimeFlags,
   } = useBookingAvailability();
   const { isInitialized: authInitialized, accessToken, user } = useAuthStore();
+  const queueGated = bookingAvailable && !isAdminBookingBypassActive;
   const queue = useQueue({
     performanceId,
     enabled:
       runtimeFlagsResolved &&
       authInitialized &&
       Boolean(accessToken) &&
-      bookingAvailable &&
-      !isAdminBookingBypassActive,
+      queueGated,
   });
+  const {
+    accessEndedByServer,
+    isReady: queueIsReady,
+    recheck: recheckQueue,
+    recoveryOrderId,
+    retry: retryQueue,
+  } = queue;
 
   // Seat locks and prepare both require the queue access window (activeUntilAt)
   // on the server; payment recovery only extends payment confirmation. The seat
   // screen therefore counts down to it, warns ahead and leaves when it closes.
-  const activeUntilAtMs = parseServerDeadline(queue.activeUntilAt);
-  const [queueArrival, setQueueArrival] = useState<QueueArrival>({
-    ready: false,
-    windowClosedOnArrival: false,
-  });
-  let currentArrival = queueArrival;
-  if (queueArrival.ready !== queue.isReady) {
-    // Judged once per arrival (derived state, not an effect) so the decision
-    // does not flip while the user stays on the seat screen.
-    currentArrival = {
-      ready: queue.isReady,
-      windowClosedOnArrival:
-        queue.isReady &&
-        activeUntilAtMs !== null &&
-        getServerNowMs() >= activeUntilAtMs,
-    };
-    setQueueArrival(currentArrival);
-  }
-  // An admission whose window had already closed when it arrived (the server
-  // still reports it, e.g. PAYMENT_RECOVERY after an abandoned payment) cannot
-  // be replaced by rejoining until the server expires it, which happens on the
-  // first seat lock attempt. Trapping it on the expired screen would loop for up
-  // to the recovery grace, so the seat screen keeps the pre-existing path and
-  // only a window that was open on arrival is counted down and closed here.
-  const queueAccessExpiresAtMs =
-    queue.isReady && !currentArrival.windowClosedOnArrival
-      ? activeUntilAtMs
-      : null;
+  // The queue never reports an admission whose window already closed as ready.
+  const queueAccessExpiresAtMs = queueIsReady
+    ? parseServerDeadline(queue.activeUntilAt)
+    : null;
   const queueAccessExpired = useServerTimeReached(queueAccessExpiresAtMs);
+  const showsSeatScreen = queueGated && queueIsReady && !queueAccessExpired;
 
-  // A rejoin the user asked for stays pending until a new position is issued:
-  // when the server answers with the expired old admission (expired by the
-  // reconcile on that request or by a rejected seat lock), enter once more
-  // instead of asking for a second click.
-  const rejoinPendingRef = useRef(false);
-  const { retry: retryQueue, status: queueStatus } = queue;
   const rejoinQueue = useCallback(() => {
-    rejoinPendingRef.current = true;
     void retryQueue();
   }, [retryQueue]);
+  const recheckQueueAccess = useCallback(() => {
+    void recheckQueue();
+  }, [recheckQueue]);
 
+  // Leaving the seat screen because the access ended (window closed, the
+  // admission was used up in another tab, the server expired it) releases the
+  // seats it held instead of leaving them locked for the rest of the seat
+  // hold, where neither the owner nor anybody else can buy them. Only the
+  // server's answer that the admission ended with no order awaiting payment
+  // (accessEndedByServer) releases them: never the local clock, a rejoin click
+  // still waiting for its answer or a failed check, since unlock-all drops
+  // every lock of the showtime, including the seats of an order still payable
+  // in recovery. No seat screen opens while the release is in flight, so it
+  // cannot land after the next admission's seat locks and erase them.
+  const {
+    mutate: releaseShowtimeSeats,
+    isPending: releasingSeats,
+  } = useUnlockAllSeats();
+  const seatScreenShownRef = useRef(false);
   useEffect(() => {
-    if (!rejoinPendingRef.current) {
+    if (showsSeatScreen) {
+      seatScreenShownRef.current = true;
       return;
     }
-    if (
-      queueStatus === 'waiting' ||
-      (queue.isReady && queueAccessExpiresAtMs !== null && !queueAccessExpired)
-    ) {
-      rejoinPendingRef.current = false;
+    if (!seatScreenShownRef.current) {
       return;
     }
-    if (queueStatus === 'expired' && !queue.isReady) {
-      rejoinPendingRef.current = false;
-      void retryQueue();
+    if (recoveryOrderId) {
+      seatScreenShownRef.current = false;
+      return;
     }
-  }, [
-    queue.isReady,
-    queueAccessExpired,
-    queueAccessExpiresAtMs,
-    queueStatus,
-    retryQueue,
-  ]);
+    if (!accessEndedByServer) {
+      // No answer yet (window closed on this device's server-corrected clock,
+      // an entry or check in flight, booking disabled): keep waiting.
+      return;
+    }
+
+    seatScreenShownRef.current = false;
+    const { selectedShowtimeId } = useBookingStore.getState();
+    if (selectedShowtimeId) {
+      releaseShowtimeSeats({ showtimeId: selectedShowtimeId });
+    }
+    useBookingStore.getState().clearSeats();
+  }, [accessEndedByServer, recoveryOrderId, releaseShowtimeSeats, showsSeatScreen]);
 
   const queueAccessEndingSoon = useServerTimeReached(
     queueAccessExpiresAtMs === null
@@ -177,8 +239,7 @@ export default function BookingRoute({
       runtimeFlagsResolved &&
       authInitialized &&
       !accessToken &&
-      bookingAvailable &&
-      !isAdminBookingBypassActive
+      queueGated
     ) {
       router.replace(authRedirectPath);
     }
@@ -186,8 +247,7 @@ export default function BookingRoute({
     accessToken,
     authInitialized,
     authRedirectPath,
-    bookingAvailable,
-    isAdminBookingBypassActive,
+    queueGated,
     router,
     runtimeFlagsResolved,
   ]);
@@ -215,7 +275,7 @@ export default function BookingRoute({
 
   if (authInitialized && verificationPath) return null;
 
-  if (!bookingAvailable || isAdminBookingBypassActive) {
+  if (!queueGated) {
     return <BookingPage performanceId={performanceId} />;
   }
 
@@ -235,7 +295,17 @@ export default function BookingRoute({
     return null;
   }
 
-  if (queue.isReady) {
+  if (recoveryOrderId) {
+    return (
+      <QueuePaymentRecovery
+        locale={locale}
+        resumeHref={`${getLocalizedPathname(`/booking/${performanceId}/confirm`, locale)}?resumeOrderId=${encodeURIComponent(recoveryOrderId)}`}
+        reservationsHref={reservationsPath}
+      />
+    );
+  }
+
+  if (queueIsReady) {
     if (queueAccessExpired) {
       return (
         <QueueWaiting
@@ -249,10 +319,24 @@ export default function BookingRoute({
       );
     }
 
+    if (releasingSeats) {
+      // The previous admission's unlock-all is still in flight (see above).
+      return (
+        <QueueWaiting
+          status="loading"
+          position={0}
+          etaSeconds={0}
+          remainingSeats={0}
+          autoEnter={false}
+        />
+      );
+    }
+
     return (
       <BookingPage
         performanceId={performanceId}
         queueAccessExpiresAt={queueAccessExpiresAtMs}
+        onQueueAccessRejected={recheckQueueAccess}
       />
     );
   }
