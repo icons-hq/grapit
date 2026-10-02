@@ -397,7 +397,6 @@ export class PaymentWebhookController {
     // the payment method policy; callback values only fill what it omits for
     // routing and storage.
     const verifiedEasyPayProvider = readTossEasyPayProvider(queried.easyPay);
-    const verifiedMethod = normalizeTossApprovedMethod(queried.method, queried.easyPay);
     const providerData: TossWebhookRequestBody['data'] = {
       ...body.data,
       paymentKey: queried.paymentKey,
@@ -407,10 +406,7 @@ export class PaymentWebhookController {
       // Amount checks must compare the provider's currency, not the callback's.
       currency: queried.currency ?? body.data.currency,
       totalAmount: queried.totalAmount,
-      easyPay: verifiedEasyPayProvider ?? body.data.easyPay,
-      ...(verifiedMethod.category === 'FOREIGN_EASY_PAY' && verifiedMethod.provider
-        ? { provider: verifiedMethod.provider === 'ALIPAY_PLUS' ? 'ALIPAY' as const : verifiedMethod.provider }
-        : {}),
+      ...this.resolveVerifiedWalletFields(body, queried, verifiedEasyPayProvider),
     };
 
     if (body.eventType === 'PAYMENT_STATUS_CHANGED' && queried.approvedAt) {
@@ -437,6 +433,42 @@ export class PaymentWebhookController {
       },
       providerResponse: queried,
     };
+  }
+
+  /**
+   * The wallet fields (`provider`, `easyPay`) the payment service stores the
+   * payment with (its provider and method, and with them the refund and
+   * compensation cancel scope). When the lookup reports a method, only a
+   * provider-verified foreign easy pay keeps a wallet: a domestic card, transfer
+   * or easy pay drops the callback's `provider`/`easyPay`, so a callback naming
+   * ALIPAY cannot store a card payment as ALIPAY_PLUS/FOREIGN_EASY_PAY. Both
+   * keys are always returned so they overwrite the spread callback data. Only a
+   * lookup without a method falls back to the callback values.
+   */
+  private resolveVerifiedWalletFields(
+    body: TossWebhookRequestBody,
+    queried: TossPaymentResponse,
+    verifiedEasyPayProvider: string | undefined,
+  ): Pick<TossWebhookRequestBody['data'], 'provider' | 'easyPay'> {
+    if (queried.method == null) {
+      return {
+        provider: body.data.provider,
+        easyPay: verifiedEasyPayProvider ?? body.data.easyPay,
+      };
+    }
+
+    const verifiedMethod = normalizeTossApprovedMethod(queried.method, queried.easyPay);
+    if (verifiedMethod.category === 'FOREIGN_EASY_PAY') {
+      const verifiedWallet = verifiedMethod.provider === 'ALIPAY_PLUS'
+        ? 'ALIPAY' as const
+        : verifiedMethod.provider;
+      return {
+        provider: verifiedWallet ?? body.data.provider,
+        easyPay: verifiedEasyPayProvider ?? body.data.easyPay,
+      };
+    }
+
+    return { provider: undefined, easyPay: verifiedEasyPayProvider };
   }
 
   private getProviderQueryOptions(

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BookingModule } from '../booking/booking.module.js';
 import { CancellationModule } from '../cancellation/cancellation.module.js';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { QueueModule } from '../queue/queue.module.js';
 import { TicketModule } from '../ticket/ticket.module.js';
 import { PaymentController } from './payment.controller.js';
@@ -14,7 +15,8 @@ import { AbandonedPaymentHandoffService } from './abandoned-payment-handoff.serv
 @Module({
   // QueueModule provides the QueueService of the AdmissionGuard on the provider
   // handoff; imported explicitly like BookingModule does for its guard.
-  imports: [BookingModule, TicketModule, CancellationModule, QueueModule],
+  // FeatureFlagsModule backs the Sitewide Booking Gate on the handoff.
+  imports: [BookingModule, TicketModule, CancellationModule, QueueModule, FeatureFlagsModule],
   controllers: [PaymentController, PaymentWebhookController],
   providers: [
     TossPaymentsClient,

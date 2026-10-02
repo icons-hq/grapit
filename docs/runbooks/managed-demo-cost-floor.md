@@ -455,7 +455,7 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 
 ## Sitewide booking kill switch
 
-`BOOKING_ENABLED` is one sitewide gate. Per-performance opening is still controlled by publication, sale status and sale time. When it is false, the API rejects non-admin seat lock, prepare and confirm with 403 `예매는 추후 오픈 예정입니다`, and Web `/api/runtime-flags` reports `bookingEnabled:false`. API, Web and the worker get the same repository variable at deploy time.
+`BOOKING_ENABLED` is one sitewide gate. Per-performance opening is still controlled by publication, sale status and sale time. When it is false, the API rejects non-admin seat lock, prepare, provider handoff (`POST /payments/branch`, including a resumed Prepared Checkout) and confirm with 403 `예매는 추후 오픈 예정입니다`, and Web `/api/runtime-flags` reports `bookingEnabled:false`. API, Web and the worker get the same repository variable at deploy time.
 
 Close (emergency or preparation):
 

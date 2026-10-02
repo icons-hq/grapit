@@ -1,5 +1,8 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import { UserService } from './user.service.js';
 import type { UserRepository } from './user.repository.js';
 import type { SmsService } from '../sms/sms.service.js';
@@ -41,6 +44,8 @@ describe('UserService preferred locale persistence', () => {
   let txCalls: string[];
   let lockedAccountStatus: string;
   let blockerRows: Array<Record<string, unknown>>;
+  // The WHERE of the blocker read (reservations LEFT JOIN showtimes).
+  let blockerWhere: SQL | undefined;
   let auditService: { write: ReturnType<typeof vi.fn> };
   let service: UserService;
 
@@ -56,6 +61,7 @@ describe('UserService preferred locale persistence', () => {
     txCalls = [];
     lockedAccountStatus = 'active';
     blockerRows = [];
+    blockerWhere = undefined;
     // users ... FOR UPDATE, or reservations LEFT JOIN showtimes ... LIMIT n.
     const select = vi.fn(() => ({
       from: vi.fn(() => ({
@@ -66,8 +72,9 @@ describe('UserService preferred locale persistence', () => {
           }),
         })),
         leftJoin: vi.fn(() => ({
-          where: vi.fn(() => ({
+          where: vi.fn((condition: SQL) => ({
             limit: vi.fn(() => {
+              blockerWhere = condition;
               txCalls.push('read blockers');
               return Promise.resolve(blockerRows);
             }),
@@ -327,6 +334,41 @@ describe('UserService preferred locale persistence', () => {
     expect(tx.update).not.toHaveBeenCalled();
     expect(tx.delete).not.toHaveBeenCalled();
     expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses self withdrawal while a late DONE can still revive a failed Alipay payment (pay-server-5)', async () => {
+    blockerRows = [{
+      id: 'reservation-alipay',
+      reservationNumber: 'R-ALIPAY',
+      status: 'FAILED',
+      showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+    }];
+
+    const error = await service
+      .withdrawSelf('user-1', { reason: '서비스 이용 종료', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      // Reported as the payment in flight it is.
+      blockers: [expect.objectContaining({ reservationNumber: 'R-ALIPAY', status: 'PENDING_PAYMENT' })],
+    });
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('reads blockers with the shared late DONE revivable predicate (same as admin withdrawal and account merge)', async () => {
+    await service.withdrawSelf('user-1', { reason: '서비스 이용 종료', confirmed: true });
+
+    const dialect = new PgDialect();
+    const render = (query: SQL) => dialect.sqlToQuery(query).sql
+      .replace(/\s+/g, ' ')
+      .replace(/\$\d+/g, '$n');
+    expect(blockerWhere).toBeDefined();
+    expect(render(blockerWhere!))
+      .toContain(`or ${render(lateDoneRevivableFailedReservationSql('reservations'))}`);
+    expect(dialect.sqlToQuery(blockerWhere!).params).toContain(24);
   });
 
   it('does not withdraw again when the locked row was withdrawn by a concurrent request', async () => {

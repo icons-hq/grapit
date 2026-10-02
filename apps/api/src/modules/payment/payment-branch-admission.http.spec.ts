@@ -7,6 +7,10 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { PaymentController } from './payment.controller.js';
 import { PaymentService } from './payment.service.js';
+import {
+  FEATURE_FLAGS_ENV_PROVIDER,
+  FeatureFlagsService,
+} from '../feature-flags/feature-flags.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { QueueService } from '../queue/queue.service.js';
 
@@ -31,6 +35,9 @@ describe('POST /payments/branch queue admission', () => {
     prepareTossPaymentBranch: vi.fn(),
     releaseTossPaymentHandoff: vi.fn(),
   };
+  // Runtime env read by the Sitewide Booking Gate on every request.
+  const runtimeEnv: Record<string, string | undefined> = {};
+  let currentUser: Record<string, unknown> = { id: 'buyer', role: 'user' };
   // Order binding of the browser that prepared ORDER_ID (family-pc).
   const queueService = {
     resolveBrowserIdentity: vi.fn(async (userId: string, refreshToken?: string) => ({
@@ -59,20 +66,26 @@ describe('POST /payments/branch queue admission', () => {
   };
 
   beforeAll(async () => {
-    Reflect.defineMetadata('design:paramtypes', [PaymentService], PaymentController);
+    Reflect.defineMetadata(
+      'design:paramtypes',
+      [PaymentService, FeatureFlagsService],
+      PaymentController,
+    );
     Reflect.defineMetadata('design:paramtypes', [QueueService], AdmissionGuard);
     const module = await Test.createTestingModule({
       controllers: [PaymentController],
       providers: [
         { provide: PaymentService, useValue: paymentService },
         { provide: QueueService, useValue: queueService },
+        { provide: FEATURE_FLAGS_ENV_PROVIDER, useValue: () => runtimeEnv },
+        FeatureFlagsService,
         AdmissionGuard,
       ],
     }).compile();
     app = module.createNestApplication();
     app.use(cookieParser());
-    app.use((req: { user?: { id: string; role: string } }, _res: unknown, next: () => void) => {
-      req.user = { id: 'buyer', role: 'user' };
+    app.use((req: { user?: Record<string, unknown> }, _res: unknown, next: () => void) => {
+      req.user = currentUser;
       next();
     });
     await app.init();
@@ -87,6 +100,8 @@ describe('POST /payments/branch queue admission', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeEnv.BOOKING_ENABLED = 'true';
+    currentUser = { id: 'buyer', role: 'user' };
     paymentService.prepareTossPaymentBranch.mockResolvedValue({ orderId: ORDER_ID, method: 'CARD' });
     paymentService.releaseTossPaymentHandoff.mockResolvedValue({ orderId: ORDER_ID, released: true });
   });
@@ -131,6 +146,59 @@ describe('POST /payments/branch queue admission', () => {
       ...branchBody,
       userId: 'buyer',
     });
+  });
+
+  it('refuses the handoff with 403 once BOOKING_ENABLED=false, before checkoutStartedAt is recorded', async () => {
+    runtimeEnv.BOOKING_ENABLED = 'false';
+
+    const response = await request(app.getHttpServer())
+      .post('/payments/branch')
+      .agent(agent)
+      .set('Cookie', 'refreshToken=pc-refresh')
+      .send(branchBody);
+
+    expect(response.status).toBe(403);
+    expect(response.body.message).toBe('예매는 추후 오픈 예정입니다');
+    // prepareTossPaymentBranch records checkoutStartedAt; it is never reached.
+    expect(paymentService.prepareTossPaymentBranch).not.toHaveBeenCalled();
+  });
+
+  it('lets a full admin hand off under BOOKING_ENABLED=false for the pre-open smoke, like confirm', async () => {
+    runtimeEnv.BOOKING_ENABLED = 'false';
+    currentUser = {
+      id: 'buyer',
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+    };
+
+    const response = await request(app.getHttpServer())
+      .post('/payments/branch')
+      .agent(agent)
+      .set('Cookie', 'refreshToken=pc-refresh')
+      .send(branchBody);
+
+    expect(response.status).toBe(201);
+    expect(paymentService.prepareTossPaymentBranch).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a restricted admin bundle under BOOKING_ENABLED=false like a buyer', async () => {
+    runtimeEnv.BOOKING_ENABLED = 'false';
+    currentUser = {
+      id: 'buyer',
+      role: 'admin',
+      adminCapabilityBundle: 'scanner',
+      adminCapabilities: [],
+    };
+
+    const response = await request(app.getHttpServer())
+      .post('/payments/branch')
+      .agent(agent)
+      .set('Cookie', 'refreshToken=pc-refresh')
+      .send(branchBody);
+
+    expect(response.status).toBe(403);
+    expect(paymentService.prepareTossPaymentBranch).not.toHaveBeenCalled();
   });
 
   it('keeps the handoff release unguarded so a refused or failed checkout can always hand the order back', async () => {

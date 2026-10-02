@@ -118,11 +118,11 @@ ORDER BY p.created_at;
 - [ ] Twilio: Verify rate limit, 잔액·사용량·비용 알림, 상한 있는 자동 충전, 좁은 Geo Permissions를 확인한다. #36
 - [ ] Cloudflare: `/api/v1/auth/*`(login, register, password-reset, email-verification/*)와 `/api/v1/sms/send-code`에 rate-limit 규칙 또는 Turnstile을 검토한다. 공개 카탈로그 read(`/api/v1/performances*`, `/api/v1/home/*`)는 NAT를 고려한 높은 한도로 검토한다. Resend 발송량·429 알림을 건다. #5 #12 #36 #52
 - [ ] Cloudflare: `heygrabit.com/api/runtime-flags`를 캐시하지 않는지 확인한다(`Age` 없음, `cf-cache-status`가 `HIT` 아님). 캐시되면 브라우저 시계 보정이 꺼진다. #67 #95 #97
-- [ ] Sentry(API·Web 프로젝트): Data Scrubber와 Default Scrubbers를 켜고 Additional Sensitive Fields에 `phone`, `paymentKey`, `refreshToken`, `tossWebhookSecret`, `ticket`을 넣는다. 새 `http.status_code:500` 이벤트와 `toss.code` 502 급증 alert rule을 만들고 dry-run한다. spike protection과 rate limit을 확인한다. #155 #156 #118
+- [ ] Sentry(API·Web 프로젝트): Data Scrubber와 Default Scrubbers를 켜고 Additional Sensitive Fields에 `phone`, `paymentKey`, `refreshToken`, `tossWebhookSecret`, `ticket`을 넣는다. 새 `http.status_code:500` 이벤트와 `toss.code` 502 급증 alert rule을 만들고 dry-run한다. confirm의 `NOT_FOUND_PAYMENT`(404)도 이 502로 남는다. 주로 secret key·MID scope 라우팅 오류 신호다. 구매자 세션 만료(`NOT_FOUND_PAYMENT_SESSION`)와 카드 거절은 Sentry 없는 400이다. spike protection과 rate limit을 확인한다. #155 #156 #118
 - [ ] Cloud Monitoring: Cloud Run API 5xx 비율 알림 정책을 Sentry와 별도로 만든다. #156
 - [ ] Cloud Logging log-based alert를 아래 문자열에 건다. 결제 계열은 [결제 승인 확인 계약](show-relaunch-reliability.md#결제-승인-확인-계약-2026-09-30-오픈-감사-반영)과 [handoff review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement)에 대응 절차가 있다. #1 #18 #72 #73 #75 #76 #85 #9 #146 #109
   - `PAYMENT_CONFIRM_OUTCOME_UNKNOWN`(reason에 `closed_showtime_lookup_failed`, `pre_approval_<gate>_lookup_failed`, `finalization_commit_unverified` 포함)
-  - `CRITICAL: provider approval does not match the order`, `CRITICAL: order committed with another payment`, `CRITICAL: compensation cancel failed`
+  - `CRITICAL: provider approval does not match the order`, `CRITICAL: order committed with another payment`, `CRITICAL: compensation cancel failed`, `CRITICAL: unclaimed compensation cancel has no reconcile context`
   - `CRITICAL: payment confirm reconcile not scheduled`, `CRITICAL: payment confirm reconcile enqueue failed`, `CRITICAL: PAYMENT_CONFIRM_RECONCILE_EXHAUSTED`
   - `Async DONE compensation needs operator reconciliation`, `Duplicate DONE payment for an already settled order`, `PayPal DONE webhook charge does not match`, warn `Async DONE compensation provider query failed`
   - `CRITICAL: provider transaction exists for an unrecorded payment handoff`
@@ -132,7 +132,7 @@ ORDER BY p.created_at;
 
 ### 1.4 CS·운영 안내
 
-- [ ] CS 문구를 준비한다: 결제 대기·예정 공연 예매가 있는 회원은 취소·환불 뒤에만 탈퇴된다(API 409). 같은 인증 휴대폰의 다른 계정 구매·결제 대기도 1인 매수 제한에 합산된다(409). 비밀번호 계정에 소셜을 연결했고 계정 이메일이 미인증인 회원은, provider가 같은 주소를 인증하지 않았다면(Naver는 항상 해당) 소셜 로그인 뒤 `/auth/verify-email`을 거친다. #44 #62 #100
+- [ ] CS 문구를 준비한다: 결제 대기·예정 공연 예매가 있는 회원은 취소·환불 뒤에만 탈퇴된다(API 409). 알리페이 결제가 실패한 뒤 24시간 동안도 늦은 결제 완료로 예매가 확정될 수 있어 '결제 진행 중 예매'로 막힌다. 24시간이 지나면 탈퇴할 수 있다. 같은 인증 휴대폰의 다른 계정 구매·결제 대기도 1인 매수 제한에 합산된다(409). 비밀번호 계정에 소셜을 연결했고 계정 이메일이 미인증인 회원은, provider가 같은 주소를 인증하지 않았다면(Naver는 항상 해당) 소셜 로그인 뒤 `/auth/verify-email`을 거친다. #44 #62 #100
 - [ ] 현장 책임자에게 결과 제목 `취소 처리 중 · 입장 불가`의 의미(환불 미확정, 입장 금지, 예매번호·좌석 기록 후 책임자 연결)를 공유한다. [좌석별 현장 검표](seat-level-field-operations.md). #115
 
 ## 2. 배포 직후
@@ -171,6 +171,7 @@ ORDER BY p.created_at;
 - [ ] 첫 worker 실행 로그에서 `Released held_cancelled seats whose release job did not run`과 `Recovered stale refunds`를 확인한다. 기존 `JOB_ENQUEUE_FAILED` 좌석과 고아 환불이 자동 처리된다. 이 처리는 Deploy의 `Smoke bounded background worker job` 단계(API 배포 전)에서 시작되므로, 1.2의 해당 세 쿼리를 배포 전에 승인해 둔다. #24 #53
 - [ ] 1.2에서 승인한 기록 없는 과거 보상 취소는 해당 orderId의 결과를 확인한다: worker 로그의 `Async DONE compensation recovery: ... cancelled=...` 요약과 그 orderId의 `Async DONE compensation cancel request failed`·`cancel ABORTED`·`needs operator reconciliation` 로그, 그리고 `payments.status`와 `provider_metadata->'asyncDoneCompensation'->>'state'`(`cancelled`면 완료). #76
 - [ ] background worker Job 실행 시간을 본다. 고아 handoff 검토 예산 65초와 처리 창 30초가 Job timeout 120초 안에 들어가도록 설계됐다. #9 #154
+- [ ] `Definite Toss confirm rejection returned to buyer` warn 로그를 `code`별로 센다. 구매자에게 400으로 돌려준 확정 거절은 Sentry 이벤트가 없으므로 이 로그가 급증 신호다. 한 코드(예: 한 카드사의 `REJECT_CARD_COMPANY`)가 몰리면 결제사 장애·연동 오류를 확인한다. #1 #18
 - [ ] 429 비율과 `Retry-After` 분포, 대기열 진입 400/404/403 `errorCode` 분포를 본다. 잘못된 ID가 더 이상 500을 내지 않아야 한다. `/api/v1/support-content`(추적 단위당 분당 120회)의 공유 NAT 사용자 429도 본다. #5 #158 #90 #132
 - [ ] `<provider> OAuth callback rejected: <reason>` warn 로그를 reason별로 본다. 모바일에서 `missing_nonce_cookie` 비중이 계속 높으면 인앱 브라우저 전환이 로그인을 깨는 것이다. #37
 - [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. API warn 로그 `Admin booking read hit statement_timeout`의 `aggregateKey`(필터 해시, 검색어 원문 없음)·`page`·경과 시간으로 같은 범위가 반복해서 5초를 넘는지 센다. 조건 없는 조회가 자주 503이면 운영자에게 공연·회차나 예매·결제 상태를 먼저 고르도록 안내한다. #127

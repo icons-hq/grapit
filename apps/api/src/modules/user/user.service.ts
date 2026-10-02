@@ -18,6 +18,7 @@ import {
 import type { UpdateProfileInput } from '@grabit/shared/schemas/user.schema.js';
 import { accountWithdrawalSchema, type AccountWithdrawalInput } from '@grabit/shared/schemas/user.schema.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import {
   refreshTokens,
   reservations,
@@ -174,6 +175,12 @@ export class UserService {
     return this.mapToUserProfile(updatedUser);
   }
 
+  /**
+   * Same predicate as admin withdrawal (AdminUserService): a payment in flight
+   * (PENDING_PAYMENT, or a recently FAILED Alipay-family payment a late
+   * provider DONE can still revive to CONFIRMED with QR tickets) or a
+   * confirmed ticket for a showtime that has not started yet.
+   */
   private async findActiveReservationBlockers(
     userId: string,
     db: Pick<DrizzleDB, 'select'>,
@@ -193,6 +200,7 @@ export class UserService {
           or(
             eq(reservations.status, 'PENDING_PAYMENT'),
             and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, new Date())),
+            lateDoneRevivableFailedReservationSql('reservations'),
           )!,
         ),
       )
@@ -201,7 +209,8 @@ export class UserService {
     return rows.map((row) => ({
       id: row.id,
       reservationNumber: row.reservationNumber,
-      status: row.status,
+      // A revivable FAILED row is reported as the payment in flight it is.
+      status: row.status === 'CONFIRMED' ? 'CONFIRMED' as const : 'PENDING_PAYMENT' as const,
       showtimeAt: row.showtimeAt?.toISOString() ?? null,
     }));
   }

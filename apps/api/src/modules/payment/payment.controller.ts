@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post, Request, UseGuards } from '@nestjs/co
 import { z } from 'zod';
 import { paymentMethodSchema } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { PaymentService } from './payment.service.js';
 
@@ -32,9 +33,22 @@ const asyncPaymentReturnSchema = z.object({
 
 type AsyncPaymentReturnDto = z.infer<typeof asyncPaymentReturnSchema>;
 
+/** The JWT claims the Sitewide Booking Gate and its Admin Booking Bypass read. */
+type AuthenticatedPaymentUser = {
+  id: string;
+  role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
+};
+
 @Controller('payments')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly featureFlags: FeatureFlagsService,
+  ) {}
 
   /**
    * Provider Handoff of a prepared order. It starts the provider checkout and
@@ -44,14 +58,31 @@ export class PaymentController {
    * admission cookie as a fallback. A resume from another browser is refused
    * here with a queue 403, before the buyer authenticates with the provider,
    * instead of at confirm after the authentication.
+   *
+   * The Sitewide Booking Gate is checked here too, like prepare and confirm
+   * (with the same Admin Booking Bypass): a confirm page left open across a
+   * BOOKING_ENABLED=false switch could otherwise resume without a new prepare,
+   * record `checkoutStartedAt`, let the buyer authenticate with the provider
+   * and only then be refused at confirm, leaving the order processing until
+   * the abandoned handoff sweep.
    */
   @UseGuards(AdmissionGuard)
   @Post('branch')
   getTossPaymentBranch(
     @Body(new ZodValidationPipe(paymentBranchRequestSchema))
     body: PaymentBranchRequestDto,
-    @Request() req: { user: { id: string } },
+    @Request() req: { user: AuthenticatedPaymentUser },
   ) {
+    // The same actor shape as payment confirm (reservation.controller.ts).
+    const actor: AuthenticatedPaymentUser = {
+      id: req.user.id,
+      role: req.user.role,
+      adminCapabilityBundle: req.user.adminCapabilityBundle,
+      adminCapabilities: req.user.adminCapabilities,
+      isEmailVerified: req.user.isEmailVerified,
+      isPhoneVerified: req.user.isPhoneVerified,
+    };
+    this.featureFlags.assertBookingEnabled(actor);
     return this.paymentService.prepareTossPaymentBranch({
       ...body,
       userId: req.user.id,

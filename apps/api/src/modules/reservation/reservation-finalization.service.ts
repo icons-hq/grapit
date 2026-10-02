@@ -293,9 +293,12 @@ const DOMESTIC_METHOD_LABELS = new Set([
  * Definite Toss confirm rejections (4xx) that still stay a TossPaymentError
  * (502 with a `toss.code` Sentry event, retried by the client): merchant key,
  * contract or integration errors an operator must see, and request collisions
- * whose outcome a later retry can change. Every other 4xx rejection (card
- * declined, stopped card, daily limit, expired payment session) is the buyer's
- * answer and is returned as a 400 with the provider message and code.
+ * whose outcome a later retry can change. NOT_FOUND_PAYMENT (404) belongs here
+ * because a confirm almost only gets it from a wrong secret key or MID scope
+ * routing; the buyer's expired session is NOT_FOUND_PAYMENT_SESSION. Every
+ * other 4xx rejection (card declined, stopped card, daily limit, expired
+ * payment session) is the buyer's answer and is returned as a 400 with the
+ * provider message and code.
  */
 const CONFIRM_REJECTION_PASSTHROUGH_CODES: ReadonlySet<string> = new Set([
   'UNAUTHORIZED_KEY',
@@ -305,6 +308,7 @@ const CONFIRM_REJECTION_PASSTHROUGH_CODES: ReadonlySet<string> = new Set([
   'API_KEY_ACCESS_DENIED',
   'NOT_FOUND_MERCHANT',
   'NOT_FOUND_MERCHANT_INTEGRATION',
+  'NOT_FOUND_PAYMENT',
   'NOT_FOUND_TERMINAL_ID',
   'NOT_REGISTERED_BUSINESS',
   'NOT_REGISTERED_SUBMALL',
@@ -870,7 +874,16 @@ export class ReservationFinalizationService {
     }
   }
 
-  /** Fallback when the claim row cannot be written: provider cancel plus reconcile. */
+  /**
+   * Fallback when the claim row cannot be written: provider cancel plus
+   * reconcile. Nothing local records this cancel, not even a completed one,
+   * so the reconcile job is always scheduled: it finds the provider payment
+   * CANCELED without a payment row and records it like a completed
+   * compensation (payment CANCELED/compensation_cancelled, reservation
+   * FAILED, CONFIRM_APPROVAL_COMPENSATED). Without the job a handed-off
+   * order would stay PENDING_PAYMENT: the expiry worker skips it and the
+   * abandoned handoff sweep flags it daily.
+   */
   private async cancelUnclaimedApproval(
     approvedPayment: ApprovedPaymentSnapshot,
     reason: string,
@@ -885,9 +898,16 @@ export class ReservationFinalizationService {
       }
       throw cancelError;
     }
-    if (!completed && reconcile) {
-      await this.scheduleConfirmReconcile(reconcile, 'compensation_cancel_pending');
+    if (!reconcile) {
+      this.logger.error(
+        `CRITICAL: unclaimed compensation cancel has no reconcile context; record it manually. cancelCompleted=${completed}, paymentKey=${approvedPayment.paymentKey}, orderId=${approvedPayment.orderId}`,
+      );
+      return;
     }
+    await this.scheduleConfirmReconcile(
+      reconcile,
+      completed ? 'compensation_cancelled_unrecorded' : 'compensation_cancel_pending',
+    );
   }
 
   private async confirmAndCreateReservationLocked(
@@ -1843,6 +1863,24 @@ export class ReservationFinalizationService {
   }
 
   /**
+   * toDefinitiveConfirmRejection plus a warn log whenever a Toss rejection is
+   * turned into the buyer's 400: that 400 carries no Sentry event, so the log
+   * is the only signal of a spike of definite confirm rejections.
+   */
+  private toDefinitiveConfirmRejectionLogged(
+    confirmError: unknown,
+    identity: ConfirmPaymentIdentity,
+  ): unknown {
+    const rejection = toDefinitiveConfirmRejection(confirmError);
+    if (rejection !== confirmError && confirmError instanceof TossPaymentError) {
+      this.logger.warn(
+        `Definite Toss confirm rejection returned to buyer. code=${confirmError.code}, orderId=${identity.orderId}, httpStatus=${confirmError.httpStatus}`,
+      );
+    }
+    return rejection;
+  }
+
+  /**
    * A failed confirm call is resolved against the provider's payment state.
    * Only a provider lookup of this order's paymentKey can prove approval or
    * non-approval; anything else keeps the outcome unknown (503, no cancel).
@@ -1897,7 +1935,7 @@ export class ReservationFinalizationService {
         await this.recordProviderNotApprovedPayment({ ...input, providerPayment: queried });
         throw outcomeUnknown
           ? new ConflictException(PAYMENT_NOT_APPROVED_MESSAGE)
-          : toDefinitiveConfirmRejection(confirmError);
+          : this.toDefinitiveConfirmRejectionLogged(confirmError, dto);
       }
     }
 
@@ -1905,7 +1943,7 @@ export class ReservationFinalizationService {
       // A definite provider rejection (card declined, stopped card, daily
       // limit) is the buyer's answer: a 400 with the provider message, which
       // the client does not retry. Merchant configuration errors stay a 502.
-      throw toDefinitiveConfirmRejection(confirmError);
+      throw this.toDefinitiveConfirmRejectionLogged(confirmError, dto);
     }
 
     return await this.throwOutcomeUnknown({

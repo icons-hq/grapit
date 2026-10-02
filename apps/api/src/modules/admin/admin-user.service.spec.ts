@@ -11,6 +11,10 @@ import {
   type AdminUserDetail,
 } from '@grabit/shared';
 
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { AdminUserService } from './admin-user.service.js';
 
@@ -101,7 +105,8 @@ function detailStub(id = 'target-user'): AdminUserDetail {
 interface ActiveReservationRow {
   id: string;
   reservationNumber: string;
-  status: 'PENDING_PAYMENT' | 'CONFIRMED';
+  /** FAILED only as a late DONE revivable Alipay-family payment. */
+  status: 'PENDING_PAYMENT' | 'CONFIRMED' | 'FAILED';
   showtimeAt: Date | null;
 }
 
@@ -125,7 +130,7 @@ function createMockDb(
   // Withdrawal blocker queries: reservations LEFT JOIN showtimes. Awaiting the
   // WHERE resolves the count aggregate; ORDER BY ... LIMIT n is the sample.
   const counts: BlockerCounts = blockerCounts ?? {
-    pendingPayment: activeReservationRows.filter((row) => row.status === 'PENDING_PAYMENT').length,
+    pendingPayment: activeReservationRows.filter((row) => row.status !== 'CONFIRMED').length,
     upcomingConfirmed: activeReservationRows.filter((row) => row.status === 'CONFIRMED').length,
   };
   const reservationLimit = vi.fn().mockResolvedValue(activeReservationRows);
@@ -151,6 +156,7 @@ function createMockDb(
     deleteWhere,
     select,
     leftJoin,
+    reservationWhere,
     reservationLimit,
   };
 }
@@ -1194,6 +1200,67 @@ describe('AdminUserService withdrawal blockers (audit #44)', () => {
     // Only the sample list is capped.
     expect(mockDb.reservationLimit).toHaveBeenCalledWith(10);
     expect(((error as ConflictException).getResponse() as { reservations: unknown[] }).reservations).toHaveLength(10);
+  });
+
+  it('refuses to withdraw a member whose recently failed Alipay payment a late DONE can still confirm (pay-server-5)', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [
+        {
+          id: 'reservation-alipay-failed',
+          reservationNumber: 'R-ALIPAY',
+          status: 'FAILED',
+          showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+        },
+      ],
+    });
+
+    const error = await service
+      .withdrawUser('actor-admin', 'buyer-user', { reason: 'CS deletion request', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      blockers: [{ key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: 1 }],
+      // A revivable FAILED row is a payment in flight, not a confirmed ticket.
+      reservations: [expect.objectContaining({ reservationNumber: 'R-ALIPAY', status: 'PENDING_PAYMENT' })],
+    });
+    expect((error as ConflictException).message).toContain('결제 진행 중 예매 1건');
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('blocks on the shared late DONE revivable predicate and counts it as a payment in flight', async () => {
+    const { mockDb, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [],
+    });
+
+    await service.withdrawUser('actor-admin', 'buyer-user', {
+      reason: 'CS deletion request',
+      confirmed: true,
+    });
+
+    const dialect = new PgDialect();
+    // Placeholder numbers depend on the position in the whole WHERE.
+    const render = (query: unknown) => dialect.sqlToQuery(query as SQL).sql
+      .replace(/\s+/g, ' ')
+      .replace(/\$\d+/g, '$n');
+    // Same definition as account merge: FAILED + changed within 24h + Alipay family.
+    const revivable = render(lateDoneRevivableFailedReservationSql('reservations'));
+    const where = (mockDb.reservationWhere.mock.calls[0] as unknown[])[0] as SQL;
+    expect(render(where)).toContain(`or ${revivable}`);
+    expect(dialect.sqlToQuery(where).params).toContain(24);
+    const countFields = mockDb.select.mock.calls
+      .map(([fields]) => fields as { pendingPayment?: SQL } | undefined)
+      .find((fields) => fields?.pendingPayment)!;
+    expect(render(countFields.pendingPayment))
+      .toContain(`"reservations"."status" in ('PENDING_PAYMENT', 'FAILED')`);
   });
 
   it('locks the target row before reading blockers and re-checks its status under the lock', async () => {
