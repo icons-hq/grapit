@@ -75,6 +75,10 @@ Expected evidence:
 - API health is HTTP 200.
 - `runtime-flags` does not show `bookingEnabled:true` unless final cutover is
   explicitly approved.
+- `runtime-flags` returns a current `serverNow` (epoch ms) with
+  `Cache-Control: no-store` and no `Age` header. Browsers use it to correct
+  device clock skew for the booking open instant and countdowns, so the
+  Cloudflare edge must not cache this path.
 
 ## Monitoring order
 

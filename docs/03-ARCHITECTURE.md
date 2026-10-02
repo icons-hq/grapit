@@ -79,7 +79,7 @@ Current App Router files:
 | My Page | `/mypage`, `/mypage/reservations/[id]` |
 | Field | `/field/check-in` |
 | Legal | `/legal/terms`, `/legal/privacy`, `/legal/marketing` |
-| Runtime flags | `/api/runtime-flags` |
+| Runtime flags | `/api/runtime-flags` (`bookingEnabled` plus the web server clock `serverNow`, `Cache-Control: no-store`) |
 | Admin | `/admin`, `/admin/performances`, `/admin/performances/new`, `/admin/performances/[id]/edit`, `/admin/bookings`, `/admin/operations`, `/admin/support-content`, `/admin/banners`, `/admin/translations`, `/admin/seat-operations`, `/admin/field-monitor`, `/admin/settlement`, `/admin/security`, `/admin/audit`, `/admin/consent-audit`, `/admin/users`, `/admin/cutover` |
 
 ### 3.2 State And Data Flow
@@ -91,6 +91,8 @@ Current App Router files:
 | Forms | React Hook Form + Zod | signup, profile, booking terms, admin event forms |
 | Realtime | Socket.IO client | seat status updates by showtime room |
 | Locale | next-intl routing + shared locale constants | `ko`, `en`, `th`, `zh-CN` |
+| Runtime flags | TanStack Query (`useRuntimeFlags`) | A failed `/api/runtime-flags` read is retried (full-jitter backoff, at least any `Retry-After`) and keeps the last good value; until a value loads, booking stays closed with a "checking" message, never "opens later", and the read is repeated on a jittered interval growing from 10s to 60s |
+| Server clock | `lib/server-clock.ts` | Offset measured from `serverNow` in `/api/runtime-flags`; booking open, seat-lock, queue-access and payment countdowns, and the My Page resume-payment and cancel deadlines compare server instants with `getServerNowMs()` instead of the device clock (device clock until a sample exists) |
 
 ### 3.3 Component Boundaries
 
@@ -286,6 +288,12 @@ The admission guard rejects a malformed `showtimeId` with `400` before it reache
 The waiting ETA is a range derived from the admission algorithm, not a per-position constant or a sample of recent movement (admission moves in waves, so short samples under-report). Reconcile keeps at most `min(remainingSeats, 1000)` sessions active. A slot returns when that session's authority window ends, at most active window + payment-recovery grace (780s) after admission, plus one reconcile interval (20s); a successful payment confirm returns it right away, so a slot has no guaranteed minimum hold (`QUEUE_SLOT_MIN_HOLD_SECONDS = 0`). Position `p` is admitted in cycle `ceil(p / min(remainingSeats, 1000))`, so a waiting snapshot reports `etaSeconds = cycles * 800` as the upper bound at the current remaining seats and `etaMinSeconds = (cycles - 1) * QUEUE_SLOT_MIN_HOLD_SECONDS`, which is `0`. Seats sold or locked while waiting shrink the cycle capacity, so later snapshots can report a longer range. With no remaining seat, no rank, or an upper bound above 3 hours it reports `etaUnavailable: true` and `etaSeconds = 10800`. No per-session ETA key is stored. The web shows `N분 이내` while the lower bound is 0 (and `약 N~M분` for a non-zero lower bound), `산정 불가` without remaining seats and `3시간 넘게 걸릴 수 있음` beyond the cap.
 
 The web booking route shows a countdown for `BOOKING_NOT_OPEN`, corrects it with the server time (`serverNow`, or the error body `timestamp`), and re-enters automatically at the open time plus up to 3 seconds of jitter. Pre-open waits are re-checked at least every 5 minutes, and an unknown open time every 15 seconds (plus jitter). If the 403 body lacks `bookingStartsAt`, it reads the open time from the public performance detail, reuses it for at most 60 seconds, and reads it again when that time has passed but entry is still refused (a postponed open). A refusal after the known open time backs off 2s, 4s, 8s … up to 60s. When the automatic re-entry hits `429`, `5xx` or a network error it keeps the not-open surface and retries after 2s, 4s and 8s before showing the manual retry surface. It shows a closed surface for the closed-sale codes (with separate "not found" copy and a home link for `PERFORMANCE_NOT_FOUND` and `400`), moves a waiting session whose status poll returns `404`/`403` to the re-entry surface, and closes the `/queue` Socket.IO connection once the booking screen is shown. While on the booking screen it confirms the end of the admission window with one status request at `activeUntilAt` (or `reentryGraceUntilAt` in payment recovery) instead of the socket event.
+
+Because seat lock and prepare need the active window (`activeUntilAt`) and payment recovery only extends payment confirm, the web seat screen counts down to whichever ends first, the seat lock or `activeUntilAt`, warns two minutes ahead, and switches to the queue-expired screen when the window closes. Rejoining from there issues a new queue position; when the rejoin request finds the old admission already expired by the server, the route enters once more on its own so one click is enough.
+
+The server keeps reusing an admission whose window has closed until it expires it: a reconcile does so after `max(activeUntilAt, paymentRecoveryUntilAt)`, and a seat lock or prepare does so at once. A `PAYMENT_RECOVERY` admission (prepare ran, then payment was abandoned) therefore comes back from `enter` for up to the 3-minute reentry grace. When the route receives an admission whose window had already closed on arrival, it does not count it down or trap it on the expired screen; it keeps the pre-existing seat screen, where the first seat lock is rejected and expires the session, and a pending rejoin then takes the new position automatically.
+
+The confirm step inherits the same earlier deadline and keeps `activeUntilAt` separately (`queueAccessExpiresAt` in the booking store). When that window ends before the seat lock, the pay button is blocked with an access-ended notice and a rejoin action (which cancels any pending order, releases the seats and returns to the booking route) instead of the seat-lock message; a seat-lock or payment deadline that passes while the page is open also blocks the pay button on time.
 
 ### 6.3 Reservation Prepare
 

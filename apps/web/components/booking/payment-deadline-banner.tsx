@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Clock3 } from 'lucide-react';
+import { getServerNowMs } from '@/lib/server-clock';
 
 const CRITICAL_REMAINING_MS = 2 * 60 * 1000;
 const CRITICAL_REMAINING_LABEL = '02:00';
@@ -28,11 +29,12 @@ export function PaymentDeadlineBanner({
   lockExpiresAt: string | null;
 }) {
   const t = useTranslations('booking');
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  // Server-issued deadlines are counted on the server-corrected clock.
+  const [nowMs, setNowMs] = useState(() => getServerNowMs());
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setNowMs(Date.now());
+      setNowMs(getServerNowMs());
     }, 1000);
 
     return () => {

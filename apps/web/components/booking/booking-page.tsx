@@ -31,6 +31,7 @@ import {
   getKstCalendarKey,
   isSameKstCalendarDate,
 } from '@/lib/booking-datetime';
+import { earliestDeadline } from '@/lib/booking/queue-access';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
@@ -209,7 +210,14 @@ function BookingSelectionBar({
   );
 }
 
-export function BookingPage({ performanceId }: { performanceId: string }) {
+export function BookingPage({
+  performanceId,
+  queueAccessExpiresAt = null,
+}: {
+  performanceId: string;
+  /** Server queue access window end (epoch ms); seat locks need it too. */
+  queueAccessExpiresAt?: number | null;
+}) {
   const router = useRouter();
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
@@ -245,6 +253,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
   });
   const bookingDisabledReason = bookingAvailable ? null : bookingDisabledMessage;
+  // Count down to whichever ends first: the seat lock or the queue access
+  // window (the server needs both for lock and prepare).
+  const bookingDeadlineAt = earliestDeadline(timerExpiresAt, queueAccessExpiresAt);
 
   const availableSeatMaps = useMemo(() => {
     if (!performance) {
@@ -692,7 +703,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       showDateTime: selectedPerformanceShowtime?.dateTime ?? null,
       venue: performance.venue?.name ?? null,
       posterUrl: performance.posterUrl ?? null,
-      expiresAt: timerExpiresAt,
+      expiresAt: bookingDeadlineAt,
+      queueAccessExpiresAt,
     });
 
     router.push(
@@ -701,14 +713,15 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   }, [
     activeLocale,
     allShowtimes,
+    bookingDeadlineAt,
     bookingDisabledMessage,
     bookingAvailable,
     performance,
     performanceId,
+    queueAccessExpiresAt,
     router,
     selectedSeats,
     selectedShowtimeId,
-    timerExpiresAt,
   ]);
 
   const handleBack = useCallback(() => {
@@ -718,8 +731,17 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   }, [activeLocale, performanceId, router]);
 
   const handleTimerExpire = useCallback(() => {
+    // Only a seat-lock expiry resets the selection. When the queue access
+    // window closes first, the booking route swaps to the queue-expired screen.
+    const lockExpiresAt = useBookingStore.getState().timerExpiresAt;
+    if (
+      lockExpiresAt === null ||
+      (queueAccessExpiresAt !== null && queueAccessExpiresAt < lockExpiresAt)
+    ) {
+      return;
+    }
     useBookingStore.getState().expireTimer();
-  }, []);
+  }, [queueAccessExpiresAt]);
 
   const handleTimerReset = useCallback(() => {
     const { selectedShowtimeId: showtimeId } = useBookingStore.getState();
@@ -813,7 +835,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     <div className="flex flex-1 flex-col">
       <BookingHeader
         performanceTitle={performance.title}
-        expiresAt={timerExpiresAt}
+        expiresAt={bookingDeadlineAt}
         onBack={handleBack}
         onExpire={handleTimerExpire}
       />

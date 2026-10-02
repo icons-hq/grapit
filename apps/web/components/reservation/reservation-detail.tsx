@@ -33,6 +33,7 @@ import {
   type VisibleCopy,
 } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getServerNowMs } from '@/lib/server-clock';
 import type {
   BenefitEntitlement,
   ReservationDetail as ReservationDetailType,
@@ -711,8 +712,9 @@ export function ReservationDetailView({
   const paymentDeadlineAt =
     reservation.paymentInfo?.paymentDeadlineAt ?? reservation.paymentDeadlineAt;
 
-  const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
-  const nowMs = new Date().getTime();
+  // Server-issued deadlines are compared on the server-corrected clock.
+  const nowMs = getServerNowMs();
+  const isDeadlinePassed = Date.parse(reservation.cancelDeadline) < nowMs;
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
   const canCancelSeat = canCancel && !hasCancellationInProgress(reservation);
   const refundPreviewQuery = useRefundPreview(

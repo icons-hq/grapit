@@ -3,7 +3,9 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
+import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
@@ -145,7 +147,7 @@ function assertCachedPerformanceBookable(
   isAdmin: boolean,
   upcomingMessage: string,
   endedMessage: string,
-  now = Date.now(),
+  now = getServerNowMs(),
 ): void {
   if (performance?.status === 'ended') {
     throw new BookingDisabledError(endedMessage);
@@ -177,7 +179,7 @@ function buildBookingPaymentSnapshot(
     ? new Date(serverPaymentDeadlineAtMs).toISOString()
     : lockExpiresAtMs
     ? new Date(
-      Math.min(lockExpiresAtMs, Date.now() + paymentWindowMinutes * 60 * 1000),
+      Math.min(lockExpiresAtMs, getServerNowMs() + paymentWindowMinutes * 60 * 1000),
     ).toISOString()
     : null;
 
@@ -195,7 +197,7 @@ function buildBookingPaymentSnapshot(
     },
     allowedPaymentMethods: performancePolicy?.allowedPaymentMethods ?? [...DEFAULT_ALLOWED_PAYMENT_METHODS],
     isPaymentDeadlineExpired: paymentDeadlineAt
-      ? new Date(paymentDeadlineAt).getTime() <= Date.now()
+      ? new Date(paymentDeadlineAt).getTime() <= getServerNowMs()
       : false,
   };
 }
@@ -229,7 +231,7 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
   const lockExpiresAtMs = useBookingStore((state) => state.expiresAt);
   const serverPaymentDeadlineAtMs = useBookingStore((state) => state.paymentDeadlineAt);
 
-  return useMemo(() => {
+  const snapshot = useMemo(() => {
     const cachedPerformance = getCachedPerformanceDetail(queryClient, performanceId);
     return buildBookingPaymentSnapshot(
       lockExpiresAtMs,
@@ -237,6 +239,18 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
       cachedPerformance?.bookingPolicy,
     );
   }, [lockExpiresAtMs, performanceId, queryClient, serverPaymentDeadlineAtMs]);
+  // The snapshot is built once per deadline; expiry must still flip on time.
+  const paymentDeadlineAtMs = snapshot.paymentDeadlineAt
+    ? Date.parse(snapshot.paymentDeadlineAt)
+    : Number.NaN;
+  const isPaymentDeadlineExpired = useServerTimeReached(
+    Number.isFinite(paymentDeadlineAtMs) ? paymentDeadlineAtMs : null,
+  );
+
+  return useMemo(
+    () => ({ ...snapshot, isPaymentDeadlineExpired }),
+    [isPaymentDeadlineExpired, snapshot],
+  );
 }
 
 export function useLockSeat() {
@@ -431,7 +445,10 @@ export function useBookingPaymentRecovery(
     if (!enabled || !orderId || reservationQuery.isPending) return 'idle';
     const reservation = reservationQuery.data;
     if (reservationQuery.isError || !reservation || reservation.tossOrderId !== orderId) return 'unavailable';
-    const state = getCheckoutState(reservation, reservationQuery.dataUpdatedAt);
+    const state = getCheckoutState(
+      reservation,
+      reservationQuery.dataUpdatedAt + getServerClockOffsetMs(),
+    );
     return state === 'ready' || state === 'processing' ? 'pending' : state;
   }, [enabled, orderId, reservationQuery.data, reservationQuery.dataUpdatedAt, reservationQuery.isError, reservationQuery.isPending]);
 
