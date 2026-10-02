@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AdminCutoverService } from './admin-cutover.service.js';
 
 const ORIGINAL_ENV = { ...process.env };
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe('AdminCutoverService', () => {
   let tmpRoot: string;
@@ -14,6 +15,7 @@ describe('AdminCutoverService', () => {
     tmpRoot = await mkdtemp(join(tmpdir(), 'grabit-cutover-ledger-'));
     process.env = { ...ORIGINAL_ENV, NODE_ENV: 'test' };
     delete process.env.CUTOVER_GATE_LEDGER_PATH;
+    delete process.env.CUTOVER_GATE_LEDGER_MAX_AGE_DAYS;
   });
 
   afterEach(async () => {
@@ -220,6 +222,80 @@ describe('AdminCutoverService', () => {
     expect(serialized).toContain('<toss-payment-key:redacted>');
   });
 
+  it('keeps an all-PASS ledger no-go once its evidence is older than the freshness limit', async () => {
+    const ledgerPath = await writeLedger({
+      generatedAt: '2026-05-21T03:27:30.198Z',
+      requiredGateIds: ['PASS_GATE'],
+      gates: [gate({ gateId: 'PASS_GATE', state: 'PASS', evidenceRefs: ['evidence/pass.json'] })],
+    });
+    process.env.CUTOVER_GATE_LEDGER_PATH = ledgerPath;
+
+    const summary = await new AdminCutoverService().getGateSummary();
+
+    expect(summary.finalEnableAllowed).toBe(false);
+    expect(summary.freshness).toMatchObject({ state: 'stale', maxAgeDays: 30 });
+    expect(summary.freshness.ageDays).toBeGreaterThan(30);
+    expect(summary.firstBlockingGate).toMatchObject({
+      gateId: 'CUTOVER_GATE_LEDGER_FRESHNESS',
+      state: 'BLOCKED',
+      blocking: true,
+      blockingReason: expect.stringContaining('days old'),
+    });
+    expect(summary.countsByState.BLOCKED).toBe(1);
+  });
+
+  it('honours CUTOVER_GATE_LEDGER_MAX_AGE_DAYS and rejects missing or future generatedAt', async () => {
+    process.env.CUTOVER_GATE_LEDGER_MAX_AGE_DAYS = '1';
+    process.env.CUTOVER_GATE_LEDGER_PATH = await writeLedger({
+      requiredGateIds: ['PASS_GATE'],
+      gates: [gate({ gateId: 'PASS_GATE', state: 'PASS', evidenceRefs: ['evidence/pass.json'] })],
+    });
+    const twoDaysOld = await new AdminCutoverService().getGateSummary();
+    expect(twoDaysOld.freshness).toMatchObject({ state: 'stale', maxAgeDays: 1, ageDays: 2 });
+    expect(twoDaysOld.finalEnableAllowed).toBe(false);
+
+    delete process.env.CUTOVER_GATE_LEDGER_MAX_AGE_DAYS;
+    for (const generatedAt of [undefined, 'not-a-date', new Date(Date.now() + 3 * DAY_MS).toISOString()]) {
+      process.env.CUTOVER_GATE_LEDGER_PATH = await writeLedger({
+        generatedAt,
+        requiredGateIds: ['PASS_GATE'],
+        gates: [gate({ gateId: 'PASS_GATE', state: 'PASS', evidenceRefs: ['evidence/pass.json'] })],
+      });
+      const summary = await new AdminCutoverService().getGateSummary();
+      expect(summary.freshness.state).toBe('unknown');
+      expect(summary.firstBlockingGate?.gateId).toBe('CUTOVER_GATE_LEDGER_FRESHNESS');
+      expect(summary.finalEnableAllowed).toBe(false);
+    }
+  });
+
+  it('requires the ledger to name the opening it approves', async () => {
+    process.env.CUTOVER_GATE_LEDGER_PATH = await writeLedger({
+      opening: undefined,
+      requiredGateIds: ['PASS_GATE'],
+      gates: [gate({ gateId: 'PASS_GATE', state: 'PASS', evidenceRefs: ['evidence/pass.json'] })],
+    });
+
+    const unscoped = await new AdminCutoverService().getGateSummary();
+
+    expect(unscoped.opening).toBeNull();
+    expect(unscoped.finalEnableAllowed).toBe(false);
+    expect(unscoped.firstBlockingGate?.gateId).toBe('CUTOVER_GATE_LEDGER_OPENING_SCOPE');
+
+    process.env.CUTOVER_GATE_LEDGER_PATH = await writeLedger({
+      requiredGateIds: ['PASS_GATE'],
+      gates: [gate({ gateId: 'PASS_GATE', state: 'PASS', evidenceRefs: ['evidence/pass.json'] })],
+    });
+    const scoped = await new AdminCutoverService().getGateSummary();
+    expect(scoped.opening).toEqual({
+      id: 'girl-rules-2026-10',
+      label: 'Girl Rules 2026 October opening',
+      performanceIds: ['performance-1'],
+      opensAt: '2026-10-20T11:00:00.000Z',
+    });
+    expect(scoped.freshness).toMatchObject({ state: 'fresh', ageDays: 2 });
+    expect(scoped.finalEnableAllowed).toBe(true);
+  });
+
   async function writeLedger(ledger: Record<string, unknown>): Promise<string> {
     const path = join(tmpRoot, `ledger-${Math.random().toString(36).slice(2)}.json`);
     await writeFile(
@@ -227,7 +303,13 @@ describe('AdminCutoverService', () => {
       JSON.stringify({
         schemaVersion: 'phase26.gate-ledger.v1',
         phase: '26',
-        generatedAt: '2026-05-20T00:00:00.000Z',
+        generatedAt: new Date(Date.now() - 2 * DAY_MS).toISOString(),
+        opening: {
+          id: 'girl-rules-2026-10',
+          label: 'Girl Rules 2026 October opening',
+          performanceIds: ['performance-1'],
+          opensAt: '2026-10-20T11:00:00.000Z',
+        },
         cutoverPolicy: {
           secretPolicy: 'Evidence must be redacted.',
         },

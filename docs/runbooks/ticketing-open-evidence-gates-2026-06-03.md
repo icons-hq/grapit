@@ -143,11 +143,16 @@ accepted evidence, then capture post-enable smoke for the buyer path.
 
 - [ ] Confirm every required evidence gate in this runbook is
       `EVIDENCE_ACCEPTED` or explicitly `WAIVED`.
-- [ ] Capture current `bookingEnabled:false` runtime flag state.
+- [ ] Capture current `bookingEnabled:false` runtime flag state and the
+      repository variable `BOOKING_ENABLED=false` (API, Web and worker read
+      the same variable at deploy time).
 - [ ] Capture `/admin/cutover/gates` state and confirm whether
-      `finalEnableAllowed:true` is present.
+      `finalEnableAllowed:true` is present for a ledger whose `opening` names
+      this opening and whose `freshness.state` is `fresh`. The packaged
+      phase26 ledger is a historical record and is always stale/unscoped.
 - [ ] Confirm owner approval for the exact enablement window.
-- [ ] Confirm close-booking command/path and rollback owner.
+- [ ] Confirm the close-booking path (the kill switch in
+      `managed-demo-cost-floor.md#sitewide-booking-kill-switch`) and rollback owner.
 
 ### Execution Checklist
 
@@ -161,8 +166,10 @@ accepted evidence, then capture post-enable smoke for the buyer path.
 ### Required Evidence
 
 - [ ] Pre-enable `bookingEnabled:false` runtime flag evidence.
-- [ ] `/admin/cutover/gates` evidence with `finalEnableAllowed:true`, or an
-      explicit waiver explaining why this was bypassed.
+- [ ] `/admin/cutover/gates` evidence with `finalEnableAllowed:true` for a
+      fresh ledger scoped to this opening, or an explicit waiver that records
+      the per-performance publication, sale-status and sale-time checks and
+      the owner approval used instead.
 - [ ] Owner approval and timestamp.
 - [ ] Post-enable `bookingEnabled:true` runtime flag evidence.
 - [ ] Post-enable smoke results.
@@ -374,6 +381,12 @@ locks, ranking/cache, throttling, and Socket.IO pub/sub health.
 ### Required Evidence
 
 - [ ] Valkey mode and endpoint class, redacted as needed.
+- [ ] `gcloud memorystore instances describe --format=json` output checked by
+      `node scripts/managed-demo/verify-valkey-sale-posture.mjs` with the
+      opening and venue-entry windows as `--protect` values: `replicaCount`
+      at least 1, `MULTI_ZONE`, `nodeType`, `mode`, `maxmemory-policy=noeviction`,
+      weekly `maintenancePolicy`, and no `maintenanceSchedule` inside a
+      protected window (reschedule it otherwise).
 - [ ] Queue admission success and failure behavior.
 - [ ] Seat lock conflict and expiry behavior.
 - [ ] Socket.IO cross-instance event evidence.
@@ -382,12 +395,15 @@ locks, ranking/cache, throttling, and Socket.IO pub/sub health.
 ### Pass Criteria
 
 - No in-memory fallback is involved.
+- The Valkey posture check passes for every protected window.
 - Queue, lock, throttle, cache, and Socket.IO behaviors match launch needs.
 - No duplicate booking or unsafe lock state appears.
 
 ### Fail / Stop Criteria
 
 - App silently falls back to local memory.
+- The instance has zero replicas, an evicting `maxmemory-policy`, no weekly
+  maintenance window, or maintenance scheduled inside an opening/entry window.
 - Lock conflict or expiry produces unsafe booking state.
 - Socket.IO pub/sub fails across instances.
 

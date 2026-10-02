@@ -74,6 +74,17 @@ const STATE_COPY: Record<
   },
 };
 
+// Rows the API synthesizes for ledger-level problems (not stored gate ids).
+const LEDGER_GATE_LABELS: Record<string, string> = {
+  CUTOVER_GATE_LEDGER_FRESHNESS: '점검 기록 기준 시각',
+  CUTOVER_GATE_LEDGER_OPENING_SCOPE: '점검 대상 오픈 지정',
+  CUTOVER_GATE_LEDGER_RUNTIME_ARTIFACT: '점검 기록 파일',
+};
+
+function gateLabel(id: string) {
+  return Object.hasOwn(LEDGER_GATE_LABELS, id) ? LEDGER_GATE_LABELS[id] : cutoverLabel(id);
+}
+
 const STATE_RANK: Record<CutoverGateState, number> = {
   BLOCKED: 0,
   FAIL: 1,
@@ -96,8 +107,16 @@ function formatDateTime(value: string | null): string {
   }).format(date);
 }
 
+function isLedgerGate(row: AdminCutoverGateRow) {
+  return Object.hasOwn(LEDGER_GATE_LABELS, row.gateId);
+}
+
 function sortGateRows(rows: AdminCutoverGateRow[]) {
   return [...rows].sort((left, right) => {
+    // Ledger-level blockers (stale/unscoped/unreadable record) invalidate every row.
+    if (isLedgerGate(left) !== isLedgerGate(right)) {
+      return Number(isLedgerGate(right)) - Number(isLedgerGate(left));
+    }
     if (left.blocking !== right.blocking) {
       return Number(right.blocking) - Number(left.blocking);
     }
@@ -126,6 +145,52 @@ function StateBadge({ state }: { state: CutoverGateState }) {
       <Icon className="h-3 w-3" />
       {copy.label}
     </Badge>
+  );
+}
+
+/**
+ * The server decides blocking (e.g. an unapproved CONFIG_READY_NOT_DRILLED row).
+ * Rows whose own state badge is not already "차단" get an explicit marker.
+ */
+function GateStatusBadges({ row }: { row: AdminCutoverGateRow }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <StateBadge state={row.state} />
+      {row.blocking && row.state !== 'BLOCKED' && (
+        <Badge className="border-transparent bg-[#FEF2F2] text-[#C62828]">
+          <ShieldAlert className="h-3 w-3" />
+          판매 차단
+        </Badge>
+      )}
+    </span>
+  );
+}
+
+function LedgerScopeNotice({ summary }: { summary: AdminCutoverGateSummary }) {
+  const freshness = summary.freshness;
+  const opening = summary.opening;
+  const unusable = freshness && freshness.state !== 'fresh';
+
+  return (
+    <div className="space-y-2">
+      {freshness && (
+        <p className="text-sm text-gray-700">
+          {opening
+            ? `대상 오픈: ${opening.label ?? opening.id}${opening.opensAt ? ` · 판매 시작 ${formatDateTime(opening.opensAt)}` : ''}`
+            : '대상 오픈이 지정되지 않은 점검 기록입니다. 과거 점검 기록으로만 참고하세요.'}
+        </p>
+      )}
+      {unusable && (
+        <div
+          role="alert"
+          className="rounded-lg border border-[#F3C7C7] bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#C62828]"
+        >
+          {freshness.state === 'stale'
+            ? `점검 기록이 ${freshness.ageDays ?? '-'}일 전 자료로 기준(${freshness.maxAgeDays}일)을 넘었습니다. 이번 오픈의 판매 시작 판단에 사용할 수 없습니다.`
+            : '점검 기록의 작성 시각을 확인할 수 없어 이번 오픈의 판매 시작 판단에 사용할 수 없습니다.'}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -192,7 +257,7 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-heading font-semibold leading-[1.2] text-gray-900">
-              {cutoverLabel(row.gateId)}
+              {gateLabel(row.gateId)}
             </h2>
             <p className="mt-2 text-sm text-gray-600">
               {row.requirementIds.length > 0
@@ -203,7 +268,7 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
               {row.environment ?? '환경 미기록'}
             </p>
           </div>
-          <StateBadge state={row.state} />
+          <GateStatusBadges row={row} />
         </div>
 
         {isNonPassState(row.state) && (
@@ -215,6 +280,14 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
         )}
 
         <dl className="grid gap-3 text-sm">
+          {row.blocking && row.blockingReason !== row.failureReason && (
+            <div>
+              <dt className="font-semibold text-[#C62828]">판매 차단 사유</dt>
+              <dd className="mt-1 text-gray-900">
+                {row.blockingReason ?? '판매를 막는 항목입니다'}
+              </dd>
+            </div>
+          )}
           <div>
             <dt className="font-semibold text-gray-600">실패/주의 사유</dt>
             <dd className="mt-1 text-gray-900">
@@ -299,8 +372,10 @@ export function CutoverGateLedger({
   }
   const selectedRow =
     sortedRows.find((row) => row.gateId === effectiveSelectedGateId) ?? null;
+  // Same rule as the server's finalEnableAllowed: every blocking row counts,
+  // including unapproved non-PASS rows whose state is not BLOCKED/FAIL.
   const blockedCount = summary
-    ? stateCount(summary, 'BLOCKED') + stateCount(summary, 'FAIL')
+    ? summary.rows.filter((row) => row.blocking).length
     : 0;
 
   if (isError) {
@@ -358,7 +433,7 @@ export function CutoverGateLedger({
             </h2>
             <p className="mt-2 text-sm text-gray-700">
               {summary?.firstBlockingGate
-                ? `먼저 확인할 항목: ${cutoverLabel(summary.firstBlockingGate.gateId)}`
+                ? `먼저 확인할 항목: ${gateLabel(summary.firstBlockingGate.gateId)}`
                 : '저장된 점검 결과를 기준으로 표시합니다. 실제 판매 상태는 공연에서 확인하세요.'}
             </p>
           </div>
@@ -384,6 +459,7 @@ export function CutoverGateLedger({
       </section>
 
       <p className="text-sm text-muted-foreground">점검 자료 기준: {summary?.ledgerGeneratedAt ? formatDateTime(summary.ledgerGeneratedAt) : '기준 시각 미기록'} · 현재 판매 상태와 자동으로 일치하지 않을 수 있습니다.</p>
+      {summary && <LedgerScopeNotice summary={summary} />}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="게이트 상태 요약">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, index) => (
@@ -410,7 +486,7 @@ export function CutoverGateLedger({
             />
             <SummaryCard
               label="우선 확인"
-              value={summary.firstBlockingGate ? cutoverLabel(summary.firstBlockingGate.gateId) : '-'}
+              value={summary.firstBlockingGate ? gateLabel(summary.firstBlockingGate.gateId) : '-'}
               tone={summary.firstBlockingGate ? 'blocked' : 'neutral'}
             />
           </>
@@ -444,11 +520,11 @@ export function CutoverGateLedger({
                   <TableBody>
                     {sortedRows.map((row) => (
                       <TableRow
-                        key={cutoverLabel(row.gateId)}
+                        key={row.gateId}
                         data-testid="cutover-gate-row"
                         role="button"
                         tabIndex={0}
-                        aria-label={`${cutoverLabel(row.gateId)} 점검 상세 보기`}
+                        aria-label={`${gateLabel(row.gateId)} 점검 상세 보기`}
                         className={cn(
                           'min-h-11 cursor-pointer hover:bg-gray-50',
                           effectiveSelectedGateId === row.gateId && 'bg-[#F3EFFF]',
@@ -465,7 +541,7 @@ export function CutoverGateLedger({
                         <TableCell className="max-w-[220px] whitespace-normal">
                           <div className="flex flex-col gap-1">
                             <span className="font-semibold text-gray-900">
-                              {cutoverLabel(row.gateId)}
+                              {gateLabel(row.gateId)}
                             </span>
                             <span className="text-sm text-gray-600">
                               {row.environment ?? '환경 미기록'}
@@ -473,7 +549,7 @@ export function CutoverGateLedger({
                           </div>
                         </TableCell>
                         <TableCell>
-                          <StateBadge state={row.state} />
+                          <GateStatusBadges row={row} />
                         </TableCell>
                         <TableCell className="whitespace-normal text-sm text-gray-700">
                           {row.requirementIds.join(', ') || '-'}
@@ -497,7 +573,7 @@ export function CutoverGateLedger({
                   ))
                 : sortedRows.map((row) => (
                     <button
-                      key={cutoverLabel(row.gateId)}
+                      key={row.gateId}
                       type="button"
                       className={cn(
                         'w-full rounded-lg border bg-white p-4 text-left',
@@ -508,9 +584,9 @@ export function CutoverGateLedger({
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <p className="min-w-0 break-all text-sm font-semibold text-gray-900">
-                          {cutoverLabel(row.gateId)}
+                          {gateLabel(row.gateId)}
                         </p>
-                        <StateBadge state={row.state} />
+                        <GateStatusBadges row={row} />
                       </div>
                       <p className="mt-2 text-sm text-gray-600">
                         {row.requirementIds.join(', ') || '요구사항 미연결'} · {row.environment ?? '환경 미기록'}

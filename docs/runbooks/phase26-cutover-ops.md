@@ -40,7 +40,12 @@ Phase 26은 Cloud Run traffic-split canary를 PASS evidence로 사용하지 않�
    buyers can pass.
 3. Suspicious WAF smoke is low-volume only. Stop immediately if real users are
    challenged or blocked.
-4. `BOOKING_ENABLED=true` remains no-go until the Gate Ledger allows it.
+4. `BOOKING_ENABLED=true` remains no-go until the Gate Ledger allows it. The
+   packaged phase26 ledger is now a historical record: `/admin/cutover` reports
+   it as stale and unscoped. A new opening needs a fresh ledger that names the
+   opening, or per-performance publication/sale-state/sale-time checks plus an
+   owner approval recorded as the Gate 1 waiver. Change the gate only through
+   the kill switch in `managed-demo-cost-floor.md#sitewide-booking-kill-switch`.
 5. Real Girl Rules users, reservations, payments, tickets, and seat state are
    not rehearsal or cleanup targets.
 

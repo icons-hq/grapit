@@ -4,6 +4,13 @@ import { join, resolve } from 'node:path';
 import { Injectable } from '@nestjs/common';
 
 const LEDGER_ENV = 'CUTOVER_GATE_LEDGER_PATH';
+const LEDGER_MAX_AGE_DAYS_ENV = 'CUTOVER_GATE_LEDGER_MAX_AGE_DAYS';
+const DEFAULT_LEDGER_MAX_AGE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Tolerates small clock skew between the ledger author and the API.
+const FUTURE_SKEW_MS = 60 * 60 * 1000;
+export const LEDGER_FRESHNESS_GATE_ID = 'CUTOVER_GATE_LEDGER_FRESHNESS';
+export const LEDGER_OPENING_SCOPE_GATE_ID = 'CUTOVER_GATE_LEDGER_OPENING_SCOPE';
 const LOCAL_LEDGER_RELATIVE_PATH =
   '.planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json';
 const SENSITIVE_TEXT_REPLACEMENTS: Array<[RegExp, string]> = [
@@ -65,9 +72,26 @@ export interface AdminCutoverGateRow {
   blockingReason: string | null;
 }
 
+export interface AdminCutoverLedgerFreshness {
+  state: 'fresh' | 'stale' | 'unknown';
+  ageDays: number | null;
+  maxAgeDays: number;
+  reason: string | null;
+}
+
+/** The ticket opening a ledger was prepared for. */
+export interface AdminCutoverOpeningScope {
+  id: string;
+  label: string | null;
+  performanceIds: string[];
+  opensAt: string | null;
+}
+
 export interface AdminCutoverGateSummary {
   generatedAt: string;
   ledgerGeneratedAt: string | null;
+  freshness: AdminCutoverLedgerFreshness;
+  opening: AdminCutoverOpeningScope | null;
   source: {
     state: 'loaded' | 'blocked';
     runtimeArtifactRequired: boolean;
@@ -83,6 +107,7 @@ export interface AdminCutoverGateSummary {
 
 type GateLedgerDocument = {
   generatedAt?: unknown;
+  opening?: unknown;
   cutoverPolicy?: {
     secretPolicy?: unknown;
   };
@@ -144,13 +169,25 @@ function normalizeLedger(ledger: GateLedgerDocument): AdminCutoverGateSummary {
     .filter((gateId) => !knownGateIds.has(gateId))
     .map((gateId) => missingRequiredGate(gateId));
 
-  const rows = [...rawRows, ...missingRows].sort(compareGateRows);
+  const ledgerGeneratedAt =
+    typeof ledger.generatedAt === 'string' ? ledger.generatedAt : null;
+  const freshness = evaluateFreshness(ledgerGeneratedAt);
+  const opening = normalizeOpening(ledger.opening);
+  // A ledger only authorises the opening it names, and only while its evidence
+  // is recent. Old or unscoped records stay visible but can never be green.
+  const ledgerRows = [
+    freshness.state === 'fresh' ? null : ledgerFreshnessGate(freshness),
+    opening ? null : ledgerOpeningScopeGate(),
+  ].filter((row): row is AdminCutoverGateRow => Boolean(row));
+
+  const rows = [...rawRows, ...missingRows, ...ledgerRows].sort(compareGateRows);
   const firstBlockingGate = rows.find((row) => row.blocking) ?? null;
 
   return {
     generatedAt: new Date().toISOString(),
-    ledgerGeneratedAt:
-      typeof ledger.generatedAt === 'string' ? ledger.generatedAt : null,
+    ledgerGeneratedAt,
+    freshness,
+    opening,
     source: {
       state: 'loaded',
       runtimeArtifactRequired: process.env.NODE_ENV === 'production',
@@ -160,12 +197,123 @@ function normalizeLedger(ledger: GateLedgerDocument): AdminCutoverGateSummary {
     countsByState: countStates(rows),
     missingEvidenceCount: rows.filter((row) => row.evidenceMissing).length,
     firstBlockingGate,
-    finalEnableAllowed: rows.length > 0 && !firstBlockingGate,
+    finalEnableAllowed: rawRows.length + missingRows.length > 0 && !firstBlockingGate,
     redactionNotes: [
       'Only Gate Ledger metadata and evidenceRefs are exposed by this API.',
       safeStringOrNull(ledger.cutoverPolicy?.secretPolicy) ??
         'Evidence must be redacted before it is linked from the Gate Ledger.',
     ],
+  };
+}
+
+function ledgerMaxAgeDays(): number {
+  const raw = process.env[LEDGER_MAX_AGE_DAYS_ENV]?.trim();
+  if (!raw || !/^\d+$/.test(raw) || Number(raw) <= 0) {
+    return DEFAULT_LEDGER_MAX_AGE_DAYS;
+  }
+  return Number(raw);
+}
+
+function evaluateFreshness(ledgerGeneratedAt: string | null): AdminCutoverLedgerFreshness {
+  const maxAgeDays = ledgerMaxAgeDays();
+  const generatedAtMs = ledgerGeneratedAt ? Date.parse(ledgerGeneratedAt) : Number.NaN;
+  if (!Number.isFinite(generatedAtMs)) {
+    return {
+      state: 'unknown',
+      ageDays: null,
+      maxAgeDays,
+      reason: 'Gate Ledger generatedAt is missing or invalid; evidence age cannot be verified.',
+    };
+  }
+
+  const ageMs = Date.now() - generatedAtMs;
+  if (ageMs < -FUTURE_SKEW_MS) {
+    return {
+      state: 'unknown',
+      ageDays: null,
+      maxAgeDays,
+      reason: 'Gate Ledger generatedAt is in the future; evidence age cannot be verified.',
+    };
+  }
+
+  const ageDays = Math.max(0, Math.floor(ageMs / DAY_MS));
+  if (ageMs > maxAgeDays * DAY_MS) {
+    return {
+      state: 'stale',
+      ageDays,
+      maxAgeDays,
+      reason: `Gate Ledger evidence is ${ageDays} days old (limit ${maxAgeDays} days); regenerate it for this opening.`,
+    };
+  }
+
+  return { state: 'fresh', ageDays, maxAgeDays, reason: null };
+}
+
+function normalizeOpening(value: unknown): AdminCutoverOpeningScope | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = safeStringOrNull(value.id);
+  if (!id) {
+    return null;
+  }
+  const opensAt = safeStringOrNull(value.opensAt);
+  return {
+    id,
+    label: safeStringOrNull(value.label),
+    performanceIds: safeStringArray(value.performanceIds),
+    opensAt: opensAt && Number.isFinite(Date.parse(opensAt)) ? opensAt : null,
+  };
+}
+
+function ledgerFreshnessGate(freshness: AdminCutoverLedgerFreshness): AdminCutoverGateRow {
+  const reason = freshness.reason ?? 'Gate Ledger evidence age cannot be verified.';
+  return synthesizedLedgerGate(LEDGER_FRESHNESS_GATE_ID, reason, {
+    compensatingMonitoring:
+      'Regenerate the Gate Ledger from evidence collected for this opening and redeploy or remount it.',
+    rollbackOrCloseTrigger:
+      'Keep BOOKING_ENABLED=false or record an explicit owner approval outside this ledger.',
+  });
+}
+
+function ledgerOpeningScopeGate(): AdminCutoverGateRow {
+  return synthesizedLedgerGate(
+    LEDGER_OPENING_SCOPE_GATE_ID,
+    'Gate Ledger does not name the opening (opening.id) it was prepared for.',
+    {
+      compensatingMonitoring:
+        'Add opening.id, label, performanceIds and opensAt to the Gate Ledger for this opening.',
+      rollbackOrCloseTrigger:
+        'Do not treat an unscoped ledger as go/no-go evidence for a new opening.',
+    },
+  );
+}
+
+function synthesizedLedgerGate(
+  gateId: string,
+  reason: string,
+  {
+    compensatingMonitoring,
+    rollbackOrCloseTrigger,
+  }: { compensatingMonitoring: string; rollbackOrCloseTrigger: string },
+): AdminCutoverGateRow {
+  return {
+    gateId,
+    requirementIds: ['M1-01', 'OPS-01'],
+    state: 'BLOCKED',
+    environment: process.env.NODE_ENV === 'production' ? 'production' : 'local',
+    evidenceRefs: [],
+    evidenceMissing: true,
+    failureReason: reason,
+    approvalState: 'not_requested',
+    approver: null,
+    approvalTimestamp: null,
+    compensatingMonitoring,
+    rollbackOrCloseTrigger,
+    sourceDecisions: [],
+    redactionNotes: 'Synthesized by AdminCutoverService; no raw artifact data exposed.',
+    blocking: true,
+    blockingReason: reason,
   };
 }
 
@@ -291,6 +439,13 @@ function noGoSummary(reason: string): AdminCutoverGateSummary {
   return {
     generatedAt: new Date().toISOString(),
     ledgerGeneratedAt: null,
+    freshness: {
+      state: 'unknown',
+      ageDays: null,
+      maxAgeDays: ledgerMaxAgeDays(),
+      reason: 'Gate Ledger runtime artifact is unavailable.',
+    },
+    opening: null,
     source: {
       state: 'blocked',
       runtimeArtifactRequired: process.env.NODE_ENV === 'production',
@@ -325,6 +480,9 @@ function compareGateRows(a: AdminCutoverGateRow, b: AdminCutoverGateRow): number
 }
 
 function blockerRank(row: AdminCutoverGateRow): number {
+  // Ledger-level problems invalidate every row, so they are reviewed first.
+  if (row.gateId === LEDGER_FRESHNESS_GATE_ID) return -2;
+  if (row.gateId === LEDGER_OPENING_SCOPE_GATE_ID) return -1;
   if (row.state === 'BLOCKED') return 0;
   if (row.state === 'FAIL') return 1;
   if (row.evidenceMissing) return 2;

@@ -28,6 +28,19 @@ function assertSlug(value, name) {
   }
 }
 
+// The sitewide booking gate must match API/Web (deploy.yml passes the same
+// repository variable to all three). Missing keeps the historical `true`.
+function bookingEnabledValue(env) {
+  const value = env.BOOKING_ENABLED?.trim();
+  if (value === undefined || value === '') {
+    return 'true';
+  }
+  if (value !== 'true' && value !== 'false') {
+    throw new Error('BOOKING_ENABLED must be exactly "true" or "false"');
+  }
+  return value;
+}
+
 function assertPositiveNumber(value, name) {
   if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
     throw new Error(`${name} must be a positive number`);
@@ -69,6 +82,7 @@ export function buildBackgroundWorkerJob(env) {
   const paypalKrwUsdRate = required(env, 'PAYPAL_KRW_USD_RATE');
   const dbPoolMax = required(env, 'DB_POOL_MAX');
   const cloudSqlConnectionName = required(env, 'CLOUD_SQL_CONNECTION_NAME');
+  const bookingEnabled = bookingEnabledValue(env);
 
   for (const [value, name] of [
     [projectId, 'GCP_PROJECT_ID'],
@@ -113,7 +127,7 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('NODE_ENV', 'production'),
               plainEnv('VALKEY_MODE', valkeyMode),
               plainEnv('FRONTEND_URL', frontendUrl),
-              plainEnv('BOOKING_ENABLED', 'true'),
+              plainEnv('BOOKING_ENABLED', bookingEnabled),
               plainEnv('PAYPAL_KRW_USD_RATE', paypalKrwUsdRate),
               plainEnv('DB_POOL_MAX', dbPoolMax),
               plainEnv('DB_POOL_IDLE_TIMEOUT_MS', '30000'),

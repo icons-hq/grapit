@@ -85,6 +85,16 @@ ROLLBACK;
 
 코드 rollback 시에도 소유권 보호 인덱스를 임의 제거하지 않는다. 0033 이전 앱과 혼재하는 롤링 구간에는 충돌 오류가 발생할 수 있으므로 한산한 시간에 수행하고 예약/웹훅 실패율을 관찰한다. 인덱스 사전검사 실패는 데이터 검토로 돌아가며, 자동 삭제로 우회하지 않는다.
 
+### main merge 시 자동 migration 보호
+
+Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `drizzle-kit migrate`를 실행한다. drizzle은 pending migration 전체를 한 transaction으로 적용하므로 hot table(`reservations`, `payments`, `ticket_items`, `showtimes`, `seat_inventories`) DDL은 진행 중 transaction이 끝날 때까지 ACCESS EXCLUSIVE를 기다린다. 그동안 뒤따르는 조회·결제 확정이 모두 그 뒤에 줄을 선다. 이를 막기 위해 다음을 적용한다.
+
+- migration job의 모든 DB 세션은 `PGOPTIONS`로 `lock_timeout`(기본 `5s`)과 `statement_timeout`(기본 `60s`)을 받는다. 잠금을 시간 안에 얻지 못하면 migration 전체가 rollback되고 API/Web 배포 job은 실행되지 않는다. 한산한 시간에 Deploy를 재실행한다. 값은 repository variable `MIGRATION_LOCK_TIMEOUT`/`MIGRATION_STATEMENT_TIMEOUT`으로 바꾸며, DB preflight가 실제 세션 값을 다시 읽어 미적용이면 migration을 거부한다.
+- 판매 오픈 전날부터 현장 입장 종료까지 repository variable `MIGRATION_FREEZE=true`를 둔다. 이 기간에는 pending migration이 하나라도 있으면 Deploy가 DB 변경 전에 실패한다. schema 변경이 없는 hotfix는 그대로 배포된다. freeze 해제는 hot table 잠금 영향을 검토한 뒤 명시적으로 한다.
+- 대형 테이블 인덱스는 단일 transaction migration 안에서 `CREATE INDEX CONCURRENTLY`를 쓸 수 없다. 별도 승인 runbook으로 `CONCURRENTLY` 생성 후 migration은 `IF NOT EXISTS`로 확인만 하도록 분리한다.
+- migration 자체에 더 긴 잠금 대기가 필요하면(예: 0033의 `SET LOCAL lock_timeout = '10s'`) 그 migration 안에서만 명시하고, 판매 시간대를 피한 배포 창을 따로 잡는다.
+- 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
+
 ## 기본 베네핏 누락 복구
 
 `included-benefit-repair.cli`는 설정 최신 버전의 included 권리만 다룬다. `CONFIRMED` 예약, `DONE` 결제, `active` 티켓에 한정한다. 추첨/수령/취소 이력을 바꾸지 않는다. 이미 active 또는 redeemed인 같은 권리는 제외한다.
@@ -134,7 +144,8 @@ AND NOT EXISTS (
 
 ## 새 공연 오픈의 남은 gate
 
-- [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다.
+- [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다. Valkey는 replica 1개 이상·multi-zone·오픈/입장일을 피한 maintenance window·`noeviction`을 `verify-valkey-sale-posture.mjs`로 확인하고, DB connection 예산과 WebSocket 동시 연결을 포함한 API 용량을 검증한다.
+- [사이트 전체 예매 kill switch](managed-demo-cost-floor.md#sitewide-booking-kill-switch): `BOOKING_ENABLED`는 API·Web·worker가 같은 repository variable을 쓴다. 닫을 때는 variable을 먼저 `false`로 바꾼 뒤 live API → Web → worker를 갱신한다. 다시 여는 배포는 수동 dispatch의 `allow_booking_reopen=true` 없이는 거부된다. API·Web 배포 job은 배포 직전에 live 값을 다시 읽으므로, 진행 중인 Deploy 도중에 닫은 상태도 유지된다. 진행 중 run이 있었다면 끝난 뒤 runtime flag를 다시 확인한다.
 - [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md): 명시 승인된 계정·결제 금액·수단으로 승인 → 발권 → 취소 → PG/DB 대조를 수행한다. 고객 연락, 임의 계정 병합, 실제 결제/환불은 포함 승인 없이는 실행하지 않는다.
 - [기존 오픈 evidence gates](ticketing-open-evidence-gates-2026-06-03.md): actual phone/browser, scanner 권한, 동시 스캔, 연결 단절/복구, 수동 검색 예외, 실물 원장 담당자 인수를 남긴다. 미실행 항목은 pass가 아니다.
 

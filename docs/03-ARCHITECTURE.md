@@ -359,7 +359,7 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 3. lint,
 4. typecheck,
 5. unit tests,
-6. Cloud Run v2 background-worker deployment payload tests,
+6. managed-demo deploy script tests (background-worker payload, deploy guards, Valkey posture),
 7. API integration tests with testcontainers,
 8. Drizzle migrations against a Postgres service container,
 9. seed test data,
@@ -374,16 +374,18 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 
 `.github/workflows/deploy.yml` runs on push to `main` and manual dispatch:
 
-1. validate production origins,
+1. validate production origins and repository-variable deploy inputs (exports migration `lock_timeout`/`statement_timeout` as `PGOPTIONS`),
 2. install dependencies,
 3. authenticate to GCP via Workload Identity Federation,
-4. start Cloud SQL Auth Proxy for migration,
-5. run Drizzle migrations,
-6. build and push API image,
-7. build and push web image,
-8. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
-9. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled, then deploy API,
-10. deploy web after API deploy.
+4. refuse to reopen a live closed `BOOKING_ENABLED` API/Web unless a manual dispatch sets `allow_booking_reopen=true`,
+5. start Cloud SQL Auth Proxy for migration,
+6. database preflight: read back the session timeouts, enforce `MIGRATION_FREEZE`, report or enforce the connection budget,
+7. run Drizzle migrations,
+8. build and push API image,
+9. build and push web image,
+10. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
+11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job), then deploy API,
+12. re-read the live Web `BOOKING_ENABLED` the same way, then deploy web after API deploy.
 
 API deploy injects runtime values through Cloud Run environment variables and Secret Manager bindings. Documentation must name required settings without printing raw values.
 
@@ -399,6 +401,9 @@ Important non-sensitive production invariants:
 - managed-demo API background processing is producer-only; the bounded Job always enables processing, and the warm ticket-opening default restores continuous API workers
 - worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window; a sweep failure does not skip the window, and both a sweep failure and a pg-boss that is not processing jobs end the execution with a non-zero exit code; if handles still hold the process 5 seconds after cleanup (for example timers of a pg-boss instance discarded after a failed start), the Job exits with that status instead of running until the task timeout
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
+- API, Web and worker `BOOKING_ENABLED` come from one repository variable (unset deploys `true`); a deploy never writes `true` over a live closed API/Web without `allow_booking_reopen=true`; see the kill switch in `docs/runbooks/managed-demo-cost-floor.md`
+- API request timeout is `3600s` for Socket.IO; startup and liveness probes use `/api/v1/health`, which checks only Valkey so database blips do not restart instances
+- prewarm changes the service-level minimum (no new revision; `PREWARM_SCALING_SCOPE=template` is the revision-template fallback), is capped by `API_MAX_INSTANCES`, and confirms completion by reading the service back (`run.services.get`), not the operation
 
 ### 8.4 Runtime Configuration
 
