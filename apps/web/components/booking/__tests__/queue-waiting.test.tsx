@@ -140,6 +140,83 @@ describe('QueueWaiting', () => {
     },
   );
 
+  it('gives the waiting surface a way back so a header-less in-app browser is not a dead end', () => {
+    const onBack = vi.fn();
+    const { container } = render(
+      <QueueWaiting
+        status="waiting"
+        position={120}
+        etaSeconds={600}
+        etaMinSeconds={300}
+        remainingSeats={300}
+        autoEnter={false}
+        onRetry={vi.fn()}
+        onBack={onBack}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: koQueue.backAction }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: koQueue.retryAction })).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="card-footer"]')).not.toBeNull();
+  });
+
+  it('keeps the waiting surface without a back button when the caller has no way back', () => {
+    const { container } = render(
+      <QueueWaiting
+        status="waiting"
+        position={120}
+        etaSeconds={600}
+        remainingSeats={300}
+        autoEnter={false}
+      />,
+    );
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="card-footer"]')).toBeNull();
+  });
+
+  it.each([
+    ['loading', {}],
+    ['admitted', { showEnterNow: false }],
+  ] as const)('renders no empty footer strip on the %s surface without actions', (status, extra) => {
+    const { container } = render(
+      <QueueWaiting
+        status={status}
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+        {...extra}
+      />,
+    );
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="card-footer"]')).toBeNull();
+  });
+
+  it('keeps the enter-now action on the admitted surface', () => {
+    const onEnterNow = vi.fn();
+    const { container } = render(
+      <QueueWaiting
+        status="admitted"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={10}
+        autoEnter
+        showEnterNow
+        onEnterNow={onEnterNow}
+        onBack={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: koQueue.enterNowAction }));
+    expect(onEnterNow).toHaveBeenCalledTimes(1);
+    // Admission moves on to seat selection; no way back competes with it.
+    expect(screen.queryByRole('button', { name: koQueue.backAction })).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="card-footer"]')).not.toBeNull();
+  });
+
   it('tells visitors of a missing performance that it was not found instead of "sales ended"', () => {
     const onBack = vi.fn();
     render(
