@@ -21,7 +21,7 @@ import {
   kstBoundaryToUtc,
   kstTodayBoundaryUtc,
   buildDailyBucketSkeleton,
-  buildWeeklyBucketSkeleton,
+  buildWeeklyBucketSkeletonForWindow,
 } from './kst-boundary.js';
 
 /**
@@ -208,14 +208,25 @@ export class AdminDashboardService {
         .orderBy(bucketExpr);
 
       // review MEDIUM 6: skeleton으로 빈 날짜/주 0으로 채움.
+      // 주별 skeleton은 WHERE 윈도우(kstBoundaryToUtc(days))와 같은 기간의 모든 ISO 주를
+      // 덮어야 한다. 가장 오래된 부분 주가 빠지면 그 주 매출이 차트·합계에서 사라진다.
       const skeleton =
         granularity === 'week'
-          ? buildWeeklyBucketSkeleton(Math.ceil(days / 7))
+          ? buildWeeklyBucketSkeletonForWindow(days)
           : buildDailyBucketSkeleton(days);
       const rowMap = new Map(rows.map((r) => [r.bucket, r]));
-      return skeleton.map(
+      const filled = skeleton.map(
         (b) => rowMap.get(b) ?? { bucket: b, revenue: 0, count: 0 },
       );
+      // 방어적 병합: skeleton에 없는 DB bucket도 버리지 않는다. 라벨(YYYY-MM-DD,
+      // IYYY-"W"IW)은 zero-padded라 문자열 정렬이 시간순과 같다.
+      const skeletonBuckets = new Set(skeleton);
+      const unmatched = rows.filter((r) => !skeletonBuckets.has(r.bucket));
+      return unmatched.length === 0
+        ? filled
+        : [...filled, ...unmatched].sort((left, right) =>
+            left.bucket.localeCompare(right.bucket),
+          );
     });
   }
 

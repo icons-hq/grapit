@@ -26,7 +26,10 @@ import {
 } from '@/components/ui/table';
 import { AdminStatCard } from '@/components/admin/admin-stat-card';
 import { AdminBookingTable } from '@/components/admin/admin-booking-table';
-import { AdminBookingDetailModal } from '@/components/admin/admin-booking-detail-modal';
+import {
+  AdminBookingDetailModal,
+  type AdminRefundRequestOptions,
+} from '@/components/admin/admin-booking-detail-modal';
 import { ReservationExportPanel } from '@/components/admin/reservation-export-panel';
 import { useAdminBookings, useAdminRefund } from '@/hooks/use-reservations';
 import { useAdminPerformanceDetail, useAdminPerformances } from '@/hooks/use-admin';
@@ -226,7 +229,7 @@ export function AdminBookingDashboard() {
     performanceId !== 'all' ? performanceId : '',
   );
 
-  const { data, isLoading, isError, refetch } = useAdminBookings({
+  const { data, isLoading, isError, error, refetch } = useAdminBookings({
     performanceId: performanceId !== 'all' ? performanceId : undefined,
     showtimeId: showtimeId !== 'all' ? showtimeId : undefined,
     funnelStatus,
@@ -251,21 +254,32 @@ export function AdminBookingDashboard() {
   function handleRefund(
     id: string,
     reason: string,
-    options: {
-      fullRefundOverride: boolean;
-      enteredTicketOverride: boolean;
-    },
+    options: AdminRefundRequestOptions,
   ) {
     refundMutation.mutate(
       { id, reason, ...options },
       {
-        onSuccess: () => {
-          toast.success('환불이 완료되었습니다');
-          setDetailOpen(false);
+        onSuccess: (result) => {
+          // The server reports what the PG actually did. Only a completed
+          // cancel is a refund completion; keep the modal open on failures.
+          switch (result.outcome) {
+            case 'completed':
+              toast.success(result.message);
+              setDetailOpen(false);
+              return;
+            case 'processing':
+              toast.warning(result.message);
+              setDetailOpen(false);
+              return;
+            default:
+              toast.error(result.message);
+          }
         },
-        onError: () => {
+        onError: (error) => {
           toast.error(
-            '환불 처리에 실패했습니다. 잠시 후 다시 시도해주세요.',
+            error instanceof Error && error.message
+              ? error.message
+              : '환불 처리에 실패했습니다. 잠시 후 다시 시도해주세요.',
           );
         },
       },
@@ -352,7 +366,13 @@ export function AdminBookingDashboard() {
       }
     : undefined;
 
-  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매·취소</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p><Button onClick={() => void refetch()}>다시 조회</Button></section>;
+  // A 503 means the server stopped a too-broad aggregate (statement timeout);
+  // its message tells the operator how to narrow the range.
+  const listErrorHint = error instanceof Error
+    && (error as Error & { statusCode?: number }).statusCode === 503
+    ? error.message
+    : null;
+  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매·취소</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p>{listErrorHint && <p className="text-sm text-muted-foreground">{listErrorHint}</p>}<Button onClick={() => void refetch()}>다시 조회</Button></section>;
 
   return (
     <div className="admin-booking-workspace">
@@ -509,7 +529,8 @@ export function AdminBookingDashboard() {
         </div>
       )}
 
-      <details className="admin-disclosure mt-6"><summary>좌석 등급별 통계와 결제 실패 분석</summary><div className="admin-disclosure-body">      {/* Stats cards */}
+      <details className="admin-disclosure mt-6"><summary>좌석 등급별 통계와 결제 실패 분석</summary><div className="admin-disclosure-body">      <p className="mb-3 text-xs text-muted-foreground">통계와 검색 결과 건수는 같은 조건에서 최대 30초 전 집계를 재사용합니다.</p>
+      {/* Stats cards */}
       {isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <AdminStatCard

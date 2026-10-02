@@ -398,6 +398,20 @@ describe('prepareReservationSchema booking consent contract', () => {
     });
   });
 
+  it('carries the admin-confirmed refund amounts so the server can reject stale quotes', () => {
+    expect(adminRefundSchema.parse({
+      reason: '고객 요청 환불',
+      expectedRefundableAmount: 50000,
+      expectedProviderRefundAmountMinor: 3536,
+    })).toMatchObject({
+      expectedRefundableAmount: 50000,
+      expectedProviderRefundAmountMinor: 3536,
+    });
+    expect(adminRefundSchema.parse({ reason: '금액 미확인' }).expectedRefundableAmount).toBeUndefined();
+    expect(() => adminRefundSchema.parse({ reason: '음수', expectedRefundableAmount: -1 })).toThrow();
+    expect(() => adminRefundSchema.parse({ reason: '소수', expectedProviderRefundAmountMinor: 1.5 })).toThrow();
+  });
+
   it('requires itemized booking consent rows before reservation prepare', () => {
     expect(() =>
       prepareReservationSchema.parse({

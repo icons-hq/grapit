@@ -351,6 +351,10 @@ export const adminRefundSchema = z.object({
     .max(200, '환불 사유는 200자 이내로 입력해주세요'),
   fullRefundOverride: z.boolean().default(false),
   enteredTicketOverride: z.boolean().default(false),
+  // Amounts the operator confirmed in the refund preview. The server rejects
+  // the refund with 409 when its current quote no longer matches them.
+  expectedRefundableAmount: z.number().int().nonnegative().optional(),
+  expectedProviderRefundAmountMinor: z.number().int().nonnegative().optional(),
 });
 
 export type AdminRefundInput = z.infer<typeof adminRefundSchema>;

@@ -338,7 +338,38 @@ export class RefundService {
     );
     const existingRefund = await this.findExistingRefund(reservationId);
 
-    return this.buildPreview(context, existingRefund, options);
+    const preview = this.buildPreview(context, existingRefund, options);
+    if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
+    // Same provider amount and PG balance check as the buyer preview, so the
+    // operator confirms the exact PG cancel amount (incl. USD minor units)
+    // that requestAdminRefund later compares against.
+    let command: ReturnType<typeof buildFullReservationPaymentCancelRequest>;
+    let providerRefund: ReturnType<typeof describePaymentCancellation>;
+    try {
+      const snapshot = withCompletedRefunds(context.payment, context.ticketItems);
+      command = buildFullReservationPaymentCancelRequest({ payment: snapshot,
+        cancellationQuote: preview.cancellationQuote, reason: 'Admin refund preview', cancelRequestIdSeed: context.payment.id });
+      providerRefund = describePaymentCancellation(snapshot, command);
+    } catch {
+      // requestAdminRefund would reject this quote too (no PG cancel command).
+      return { ...preview, providerRefund: null, canRequestRefund: false,
+        blockedReason: '이 결제는 자동 환불 금액을 만들 수 없습니다. 전액 환불 여부를 확인하거나 결제사에서 직접 처리해주세요.' };
+    }
+    const scale = providerRefund.currency === 'USD' ? 100 : 1;
+    let blockedReason: string | null = null;
+    try {
+      const provider = await this.tossPaymentsClient.queryPayment(context.payment.paymentKey,
+        { secretKeyScope: command.options.secretKeyScope });
+      if (command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) {
+        blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 전액 환불로 진행하거나 결제사에서 직접 처리해주세요.';
+      } else if (Math.round((provider.balanceAmount ?? -1) * scale) !== providerRefund.balanceBeforeMinor
+        || Math.round(provider.totalAmount * scale) !== providerRefund.originalAmountMinor) {
+        blockedReason = '결제사 환불 잔액이 예매 기록과 다릅니다. 결제사 취소 내역을 먼저 확인해주세요.';
+      }
+    } catch {
+      blockedReason = '결제사 환불 잔액을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.';
+    }
+    return { ...preview, providerRefund, blockedReason, canRequestRefund: !blockedReason };
   }
 
   protected async requestRefundWithContext(

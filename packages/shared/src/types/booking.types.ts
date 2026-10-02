@@ -201,6 +201,26 @@ export interface CancellationExpectation {
   expectedProviderRefundAmountMinor?: number;
 }
 
+/**
+ * Result of an admin refund request.
+ * - completed: the PG cancel finished and the reservation was cancelled.
+ * - processing: the PG has not confirmed yet (sent/processing, automatic retry).
+ * - rights_restored: the PG rejected the cancel; tickets and payment stay valid.
+ * - failed: the refund was recorded as failed and needs manual follow-up.
+ */
+export type AdminRefundOutcome = 'completed' | 'processing' | 'rights_restored' | 'failed';
+
+export interface AdminRefundResult {
+  outcome: AdminRefundOutcome;
+  message: string;
+  currentState: RefundTimelineState | null;
+  idempotent: boolean;
+  retryEnqueued: boolean;
+  refundableAmount: number;
+  refundTimeline: RefundTimeline | null;
+  providerRefund: RefundPreviewResponse['providerRefund'];
+}
+
 export type CancelledSeatHoldStatus = 'HELD' | 'RELEASED' | 'MANUAL_OPENED';
 
 export interface CancelledSeatHold {

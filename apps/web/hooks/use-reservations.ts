@@ -18,6 +18,7 @@ import type {
   AdminBookingFunnelStatus,
   AdminBookingListResponse,
   AdminReservationExportFilter,
+  AdminRefundResult,
   PaymentStatus,
   RefundPreviewResponse,
   TicketItemRefundPreviewResponse,
@@ -196,6 +197,10 @@ export function useAdminBookings(params: {
       );
     },
     placeholderData: keepPreviousData,
+    // 503 = the server cancelled a too-broad aggregate (statement timeout).
+    // Re-running the same scope would only spend the same primary CPU again.
+    retry: (failureCount, error) =>
+      (error as { statusCode?: number } | null)?.statusCode !== 503 && failureCount < 1,
   });
 }
 
@@ -238,19 +243,32 @@ export function useAdminRefund() {
       reason,
       fullRefundOverride,
       enteredTicketOverride,
+      expectedRefundableAmount,
+      expectedProviderRefundAmountMinor,
     }: {
       id: string;
       reason: string;
       fullRefundOverride?: boolean;
       enteredTicketOverride?: boolean;
+      expectedRefundableAmount?: number;
+      expectedProviderRefundAmountMinor?: number;
     }) =>
-      apiClient.post(`/api/v1/admin/bookings/${id}/refund`, {
-        reason,
-        fullRefundOverride,
-        enteredTicketOverride,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      apiClient.post<AdminRefundResult>(
+        `/api/v1/admin/bookings/${id}/refund`,
+        {
+          reason,
+          fullRefundOverride,
+          enteredTicketOverride,
+          expectedRefundableAmount,
+          expectedProviderRefundAmountMinor,
+        },
+        // The dashboard shows one outcome-specific message per attempt.
+        { showErrorToast: false },
+      ),
+    onSettled: () => {
+      // A rejected or conflicting refund can also change state (restored
+      // rights, stale quote), so refresh the list, detail and preview.
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
     },
   });
 }

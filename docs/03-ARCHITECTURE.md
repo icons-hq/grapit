@@ -285,6 +285,14 @@ Toss webhook processing records provider events, handles replay/idempotency, and
 
 Admin refund writes audit evidence and can hold seats before manual reopening.
 
+Admin refund contract (`POST /api/v1/admin/bookings/:id/refund`):
+
+- The admin refund preview runs the same provider amount and PG balance check as the buyer preview. It returns `providerRefund` (including USD minor units) and `blockedReason`. A blocked or already-requested preview is not requestable.
+- The request carries the amounts the operator confirmed (`expectedRefundableAmount`, `expectedProviderRefundAmountMinor`). If the server quote changed, for example after a KST fee-tier boundary, the request returns 409 before any PG call. The UI then shows the message and reloads the preview.
+- The response is `AdminRefundResult.outcome`. `completed` means the PG cancel finished. `processing` means the PG has not confirmed yet (sent/processing, automatic retry). `rights_restored` means the PG rejected the cancel and tickets/payment stay valid. `failed` means manual follow-up is needed. Only `completed` is shown as a finished refund. The admin audit status is `failed` for `rights_restored`/`failed` and `success` otherwise, with `after.refund.outcome` and `currentState`.
+
+Admin booking list (`GET /api/v1/admin/bookings`): list and aggregate reads run in a read-only transaction with `SET LOCAL statement_timeout = 5000`. A timed-out statement returns 503 with a message to narrow the scope by event, showtime or date. Filter-wide `stats`/`tierStats` (and `total`) are cached in Valkey for 30 seconds under a hashed key of all filters except the page, so paging and repeated clicks reuse one aggregation. Rows on the page are always read live.
+
 ## 7. QR And Field Operations
 
 ### 7.1 QR Ticket Model
