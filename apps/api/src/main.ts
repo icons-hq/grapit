@@ -94,13 +94,18 @@ async function bootstrap() {
 
   // SIGTERM (Cloud Run scale-in/revision replacement) runs Nest shutdown hooks
   // in this order, inside Cloud Run's 10 seconds before SIGKILL:
-  // 1. onModuleDestroy: worker intervals stop and in-flight recovery sweeps
-  //    get at most API_SHUTDOWN_DRAIN_BUDGET_MS (the run deadline set by the
-  //    listener installed first below); a cut-off row converges on its lease.
+  // 1. onModuleDestroy: worker intervals and the view counter's flush timer
+  //    stop, and in-flight recovery sweeps get at most
+  //    API_SHUTDOWN_DRAIN_BUDGET_MS (the run deadline set by the listener
+  //    installed first below); a cut-off row converges on its lease. No other
+  //    DB I/O runs here: every later step waits for this one.
   // 2. beforeApplicationShutdown: pg-boss stops gracefully (7s) and fails
   //    unfinished jobs back for retry, still accepting new jobs.
   // 3. the HTTP/WebSocket servers close; requests in flight can still enqueue.
-  // 4. onApplicationShutdown: pg-boss is marked unavailable and its pool closes.
+  // 4. onApplicationShutdown: pg-boss is marked unavailable and its pool
+  //    closes; the view counter's final flush waits at most
+  //    VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS within the run deadline (view counts
+  //    are approximate, so views it cannot write in time are dropped).
   // Only the termination signals are subscribed; Nest's default list also
   // includes SIGSEGV/SIGBUS/SIGFPE/SIGILL, where running JS listeners is unsafe.
   installShutdownRunDeadline(process, API_SHUTDOWN_DRAIN_BUDGET_MS);

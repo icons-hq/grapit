@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 
+import { setRunDeadline } from '../../../common/run-deadline.js';
 import {
   PERFORMANCE_VIEW_COUNT_FLUSH_INTERVAL_MS,
   PerformanceViewCounter,
+  VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS,
   buildViewCountFlushStatement,
 } from '../performance-view-counter.service.js';
 
@@ -34,6 +36,7 @@ function statements(query: SQL) {
 describe('PerformanceViewCounter', () => {
   afterEach(() => {
     vi.useRealTimers();
+    setRunDeadline(null);
   });
 
   it('folds many views into one batched UPDATE per flush instead of one per request', async () => {
@@ -187,5 +190,80 @@ describe('PerformanceViewCounter', () => {
     counter.record(PERFORMANCE_A);
     await vi.advanceTimersByTimeAsync(PERFORMANCE_VIEW_COUNT_FLUSH_INTERVAL_MS * 3);
     expect(db.execute).toHaveBeenCalledTimes(2);
+  });
+
+  describe('shutdown order (audit #153)', () => {
+    function hangingDb() {
+      const { db } = createDb();
+      let release!: () => void;
+      db.execute.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { rows: [] };
+      });
+      return { db, release: () => release() };
+    }
+
+    it('stops the flush timer in onModuleDestroy without any DB call', async () => {
+      vi.useFakeTimers();
+      const { db } = createDb();
+      const counter = new PerformanceViewCounter(db as never);
+      counter.onModuleInit();
+      counter.record(PERFORMANCE_A);
+
+      // Nest runs beforeApplicationShutdown (pg-boss stop, failWip) only
+      // after every onModuleDestroy, so this hook must not wait on the pool.
+      counter.onModuleDestroy();
+      expect(db.execute).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(PERFORMANCE_VIEW_COUNT_FLUSH_INTERVAL_MS * 3);
+      expect(db.execute).not.toHaveBeenCalled();
+      expect(counter.pendingCount(PERFORMANCE_A)).toBe(1);
+
+      // the final flush runs in onApplicationShutdown
+      await counter.onApplicationShutdown();
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      expect(counter.pendingCount(PERFORMANCE_A)).toBe(0);
+    });
+
+    it('returns from onApplicationShutdown at the cap instead of waiting for a slow final flush', async () => {
+      vi.useFakeTimers();
+      const { db, release } = hangingDb();
+      const counter = new PerformanceViewCounter(db as never);
+      const warn = vi.spyOn(counter['logger'], 'warn').mockImplementation(() => undefined);
+      counter.record(PERFORMANCE_A);
+
+      let returned = false;
+      const shutdown = counter.onApplicationShutdown().then(() => {
+        returned = true;
+      });
+      await vi.advanceTimersByTimeAsync(VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS - 1);
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      expect(returned).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+      expect(returned).toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+      release();
+    });
+
+    it('does not wait for the final flush once the run deadline has passed', async () => {
+      vi.useFakeTimers();
+      const { db, release } = hangingDb();
+      const counter = new PerformanceViewCounter(db as never);
+      vi.spyOn(counter['logger'], 'warn').mockImplementation(() => undefined);
+      counter.record(PERFORMANCE_A);
+      // SIGTERM set the 1-second run deadline; pg-boss's stop used it up
+      setRunDeadline(Date.now() - 1);
+
+      const shutdown = counter.onApplicationShutdown();
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(shutdown).resolves.toBeUndefined();
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      release();
+    });
   });
 });
