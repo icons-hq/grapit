@@ -152,6 +152,78 @@ for (const viewport of VIEWPORTS) {
       expect(calls.branch[0]).toMatchObject({ orderId: ORDER_ID, paymentMethod: CARD });
       expect(calls.enter).toBe(1);
     });
+
+    test('continue payment in another browser session is refused at the handoff before the provider checkout', async ({
+      page,
+    }) => {
+      const now = Date.now();
+      const calls = { prepare: 0, cancel: 0, branch: 0 };
+
+      await mockAuthenticatedSession(page);
+      await page.route('**/api/runtime-flags', (route) => fulfillJson(route, 200, { bookingEnabled: true }));
+      await page.route('https://js.tosspayments.com/**', (route) =>
+        route.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_TOSS_SDK }),
+      );
+      await page.route('**/api/v1/reservations?orderId=**', (route) =>
+        fulfillJson(route, 200, {
+          id: 'reservation-e2e-recovery',
+          tossOrderId: ORDER_ID,
+          performanceId: PERFORMANCE_ID,
+          showtimeId: SHOWTIME_ID,
+          status: 'PENDING_PAYMENT',
+          performanceTitle: 'E2E Recovery Show',
+          posterUrl: null,
+          showDateTime: new Date(now + 7 * 24 * 60 * 60_000).toISOString(),
+          venue: 'E2E Hall',
+          seats: [{
+            seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층',
+            tierName: 'VIP', row: 'A', number: '1', price: 50000,
+          }],
+          totalAmount: 52000,
+          paymentDeadlineAt: new Date(now + 5 * 60_000).toISOString(),
+          paymentInfo: null,
+          checkoutPaymentMethod: CARD,
+          checkoutStartedAt: null,
+        }),
+      );
+      await page.route('**/api/v1/reservations/prepare', async (route) => {
+        calls.prepare += 1;
+        await fulfillJson(route, 403, { statusCode: 403, message: '대기열 입장 시간이 만료되었습니다' });
+      });
+      await page.route('**/api/v1/reservations/*/cancel-pending', async (route) => {
+        calls.cancel += 1;
+        await fulfillJson(route, 200, {});
+      });
+      // The order is bound to the browser session that prepared it (AdmissionGuard).
+      await page.route('**/api/v1/payments/branch', async (route) => {
+        calls.branch += 1;
+        await fulfillJson(route, 403, { statusCode: 403, message: '대기열 입장 인증이 필요합니다' });
+      });
+
+      // The reservation list's "continue payment" link on another device.
+      await page.goto(`/booking/${PERFORMANCE_ID}/confirm?resumeOrderId=${ORDER_ID}`);
+      await expect(page.getByText('E2E Recovery Show').first()).toBeVisible();
+      await page.getByLabel('전체 동의').click();
+      await expect.poll(() => page.evaluate(() => (
+        window as unknown as { __tossAgreementHandlers?: unknown[] }
+      ).__tossAgreementHandlers?.length ?? 0)).toBeGreaterThan(0);
+      await page.evaluate(() => (window as unknown as { __tossAgree: () => void }).__tossAgree());
+
+      const pay = page.getByRole('button', { name: '결제하기' }).first();
+      await expect(pay).toBeEnabled();
+      await pay.click();
+
+      const notice = page.getByRole('alert').filter({ hasText: '이 화면에서는 결제를 이어갈 수 없습니다' });
+      await expect(notice).toBeVisible();
+      await expect(notice.getByRole('button', { name: '대기열 다시 입장하기' })).toBeEnabled();
+      await expect(page.getByRole('button', { name: '이 화면에서는 결제를 이어갈 수 없습니다' }).first()).toBeDisabled();
+      await notice.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: test.info().outputPath(`resume-refused-${viewport.name}.png`) });
+      expect(await page.evaluate(() => (
+        window as unknown as { __tossRequested?: unknown }
+      ).__tossRequested ?? null)).toBeNull();
+      expect(calls).toEqual({ prepare: 0, cancel: 0, branch: 1 });
+    });
   });
 }
 
