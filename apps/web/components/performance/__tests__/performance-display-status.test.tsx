@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CATALOG_BOOKING_START_REFETCH_GRACE_MS,
   CATALOG_BOOKING_START_REFETCH_SPREAD_MS,
+  formatBookingOpensAtKst,
   getCatalogBookingStartRefetchDelay,
   getCatalogListBookingStartRefetchInterval,
   resetCatalogRefetchJitterForTests,
@@ -12,6 +13,17 @@ import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-c
 const NOW = Date.parse('2026-10-01T10:59:00.000Z');
 const OPEN = '2026-10-01T11:00:00.000Z';
 const PAST = '2026-10-01T10:00:00.000Z';
+
+describe('formatBookingOpensAtKst', () => {
+  it('formats the booking start as a KST anchor shared by the list and the detail page', () => {
+    expect(formatBookingOpensAtKst(OPEN, 'ko')).toBe('2026.10.01 20:00 KST');
+    expect(formatBookingOpensAtKst(OPEN, 'en')).toBe('2026.10.01 20:00 KST');
+  });
+
+  it.each([null, undefined, '', 'not-a-date'])('returns null for booking start %s', (value) => {
+    expect(formatBookingOpensAtKst(value, 'ko')).toBeNull();
+  });
+});
 
 describe('resolveTimeAwarePerformanceStatus', () => {
   it.each([

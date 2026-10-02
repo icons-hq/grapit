@@ -6,11 +6,11 @@ import { CalendarDays, ChevronRight, MapPin, Ticket } from 'lucide-react';
 import type { PerformanceCardData, SupportedLocale } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
-import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
 import {
+  formatBookingOpensAtKst,
   parseBookingStartMs,
   resolveBookingStartPerformanceStatus,
 } from './performance-display-status';
@@ -30,8 +30,7 @@ export function PerformanceListRow({ performance, locale, bookingEnabled, flagsR
   const price = performance.minPrice == null ? copy.priceUnknown
     : copy.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(locale).format(performance.minPrice)}`);
   // Shown for every row still waiting for its booking start, including ones the operator already marked selling.
-  const opensAt = saleStatus === 'upcoming' && performance.bookingStartsAt && parseBookingStartMs(performance.bookingStartsAt) !== null
-    ? formatEventTimeWithKstAnchor(performance.bookingStartsAt, locale, { includeLocalTime: false }).kst : null;
+  const opensAt = saleStatus === 'upcoming' ? formatBookingOpensAtKst(performance.bookingStartsAt, locale) : null;
 
   return <li className="border-b border-border last:border-b-0">
     <Link href={getLocalizedPathname(`/performance/${performance.id}`, locale)}

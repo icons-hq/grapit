@@ -114,7 +114,9 @@ describe('PerformanceDetailPage sale status display', () => {
     renderDetail();
 
     expect(screen.getByLabelText('상태: 오픈예정')).toBeDefined();
-    expect(screen.queryByText(/KST/)).toBeNull();
+    expect(screen.getByTestId('performance-booking-opens-at').textContent).toBe(
+      '2026.09.20 20:00 KST 오픈 예정',
+    );
     expect(screen.queryByRole('link', { name: '예매하기' })).toBeNull();
 
     act(() => {
@@ -124,7 +126,34 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getAllByRole('link', { name: '예매하기' })).not.toHaveLength(0);
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
+    expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
     expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+  });
+
+  // Audit #170/#35: the list says when booking opens and the FAQ points buyers to
+  // the detail page, so the detail page must say it too, without hiding the period.
+  it.each([
+    ['ko', '2026.09.20 20:00 KST 오픈 예정', '2026. 10. 1.'],
+    ['en', 'Booking opens 2026.09.20 20:00 KST', 'Oct 1, 2026'],
+  ] as const)(
+    'shows the performance period and the booking open time before booking starts (%s)',
+    (locale, opensAtLine, periodStart) => {
+      localeMock.activeLocale = locale;
+      detailMock.performance = performance({ status: 'upcoming', bookingStartsAt: OPEN });
+      renderDetail();
+
+      const period = screen.getByText(/KST$/, { selector: 'time' });
+      expect(period.textContent).toContain(periodStart);
+      expect(screen.getByTestId('performance-booking-opens-at').textContent).toBe(opensAtLine);
+    },
+  );
+
+  it('shows only the period for an upcoming performance without a booking start', () => {
+    detailMock.performance = performance({ status: 'upcoming', bookingStartsAt: null });
+    renderDetail();
+
+    expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+    expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
   });
 
   it('keeps the badge, schedule and booking CTA on one verdict when the response lands after the start', () => {
@@ -146,7 +175,7 @@ describe('PerformanceDetailPage sale status display', () => {
     // Whatever it decides, badge and schedule must agree with it.
     const ctaOpen = screen.queryAllByRole('link', { name: '예매하기' }).length > 0;
     expect(screen.queryByLabelText('상태: 오픈예정') === null).toBe(ctaOpen);
-    expect(screen.queryByText(/KST$/) !== null).toBe(ctaOpen);
+    expect(screen.queryByTestId('performance-booking-opens-at') === null).toBe(ctaOpen);
   });
 
   it('follows the server-clock verdict of the booking CTA when the device clock is slow', () => {
@@ -162,6 +191,7 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getAllByRole('link', { name: '예매하기' })).not.toHaveLength(0);
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
+    expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
     expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
   });
 
@@ -172,6 +202,25 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getByLabelText('상태: 오픈예정')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈')).toBeNull();
     expect(screen.queryByRole('link', { name: '예매하기' })).toBeNull();
+    expect(screen.getByTestId('performance-booking-opens-at').textContent).toBe(
+      '2026.09.20 20:00 KST 오픈 예정',
+    );
+  });
+
+  it('shows a performance the API reads as ended (every showtime started) as ended with no booking CTA', () => {
+    // The API turns an operator-selling performance whose last showtime started into 'ended'.
+    detailMock.performance = performance({
+      status: 'ended',
+      bookingStartsAt: '2026-07-01T00:00:00.000Z',
+      showtimes: [{ id: 'st-1', performanceId: 'perf-1', dateTime: '2026-07-18T05:00:00.000Z' }],
+    });
+    renderDetail();
+
+    expect(screen.getByLabelText('상태: 판매종료')).toBeDefined();
+    expect(screen.queryByLabelText('상태: 오픈')).toBeNull();
+    expect(screen.queryByRole('link', { name: '예매하기' })).toBeNull();
+    expect(screen.getAllByText('판매가 종료된 공연입니다')).not.toHaveLength(0);
+    expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
   });
 
   it('shows the performance period as KST calendar dates without a converted local day', () => {

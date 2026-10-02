@@ -1,7 +1,12 @@
 'use client';
 
 import type { FetchStatus } from '@tanstack/react-query';
-import type { PerformanceCardData, PerformanceStatus } from '@grabit/shared';
+import type {
+  PerformanceCardData,
+  PerformanceStatus,
+  SupportedLocale,
+} from '@grabit/shared';
+import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 
 /** Browsers fire setTimeout immediately when the delay overflows a signed 32-bit int. */
@@ -18,6 +23,20 @@ export function parseBookingStartMs(
   if (!value) return null;
   const startsAtMs = Date.parse(value);
   return Number.isFinite(startsAtMs) ? startsAtMs : null;
+}
+
+/**
+ * Booking open time as a KST anchor ("2026.10.01 20:00 KST"), or null when the
+ * performance has no valid booking start. The home list and the detail page
+ * both show it while the sale status is upcoming, so the open time a buyer saw
+ * in the list is the one the detail page repeats.
+ */
+export function formatBookingOpensAtKst(
+  bookingStartsAt: string | null | undefined,
+  locale: SupportedLocale,
+): string | null {
+  if (!bookingStartsAt || parseBookingStartMs(bookingStartsAt) === null) return null;
+  return formatEventTimeWithKstAnchor(bookingStartsAt, locale, { includeLocalTime: false }).kst;
 }
 
 /**
