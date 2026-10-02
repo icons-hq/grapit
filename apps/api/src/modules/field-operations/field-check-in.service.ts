@@ -107,6 +107,7 @@ export class FieldCheckInService {
       outcome,
       processable,
       ticket: toTicketContext(contract, token, benefits.entitlements, benefits.available),
+      ...resultLabelForContract(outcome, contract),
       rejectionReason: processable ? null : rejectionReasonForContract(outcome, contract),
       verifiedAt,
       ...(outcome === 'already_used' ? { priorScan: await this.findPriorSuccessfulScan(this.db, contract) } : {}),
@@ -159,6 +160,8 @@ export class FieldCheckInService {
           outcome: receipt.result === 'success' ? 'entered' : receipt.result as FieldCheckInOutcome,
           ticket: toTicketContext(verified, input.token), scanEventId: receipt.id,
           consumedAt: receipt.result === 'success' ? receipt.scannedAt.toISOString() : null,
+          ...(receipt.rejectionReason === CANCELLATION_PENDING_REJECTION_REASON
+            ? { resultLabel: CANCELLATION_PENDING_RESULT_LABEL } : {}),
           rejectionReason: receipt.rejectionReason,
         };
       }
@@ -188,7 +191,8 @@ export class FieldCheckInService {
         after: { outcome: entered ? 'entered' : outcome, scanEventId, redactedTokenRef: redactedTokenRef(input.token),
           admissionUnit: 'ticket_item', consumedTicketItemCount: entered ? 1 : 0 } }, tx);
       return { outcome: entered ? 'entered' : outcome, ticket: toTicketContext(contract, input.token), scanEventId,
-        consumedAt: entered ? consumedAt.toISOString() : null, rejectionReason: entered ? null : rejectionReasonForContract(outcome, contract), priorScan };
+        consumedAt: entered ? consumedAt.toISOString() : null, ...resultLabelForContract(outcome, contract),
+        rejectionReason: entered ? null : rejectionReasonForContract(outcome, contract), priorScan };
     });
   }
 
@@ -387,6 +391,7 @@ function toTicketContext(
     maskedJti: contract.maskedJti,
     benefitEntitlements,
     benefitsAvailable,
+    cancellationPending: contract.cancellationPending,
   };
 }
 
@@ -480,6 +485,17 @@ function resolveScanSyncState(
 // refuse entry and escalate instead of telling the buyer it was refunded.
 const CANCELLATION_PENDING_REJECTION_REASON =
   '취소 처리 중인 티켓입니다. 환불이 확정되지 않았으니 입장시키지 말고 현장 책임자에게 확인해주세요';
+// Headline shown instead of the client's refunded label ('환불 또는 취소된 티켓입니다').
+const CANCELLATION_PENDING_RESULT_LABEL = '취소 처리 중 · 입장 불가';
+
+function resultLabelForContract(
+  outcome: FieldCheckInOutcome,
+  contract: Pick<QrTicketScannerContract, 'cancellationPending'>,
+): { resultLabel?: string } {
+  return outcome === 'refunded_cancelled' && contract.cancellationPending
+    ? { resultLabel: CANCELLATION_PENDING_RESULT_LABEL }
+    : {};
+}
 
 function rejectionReasonForContract(
   outcome: FieldCheckInOutcome,

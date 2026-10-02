@@ -363,6 +363,24 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       const [ticket] = await rotatedCorrectly.getOwnedTicketsForReservation(f.order.id, f.buyer.id);
       await expect(rotatedCorrectly.verifyTicketToken(ticket!.token)).resolves.toMatchObject({ secretVersion: SECRET_VERSION });
     });
+
+    it('answers a forged token naming an Object prototype key as tampered instead of hanging the scan', async () => {
+      const f = await fixture(1);
+      const qr = createService({ configService: config({ QR_TICKET_SECRET_KEYRING_JSON: JSON.stringify({ [SECRET_VERSION]: SECRET }) }) });
+      const [credential] = await qr.ensureIssuedTicketsForReservation(issueInput(f));
+      const genuine = new JwtService().decode<Record<string, unknown>>(credential!.token);
+      const field = new FieldCheckInService(db, qr, new AdminAuditService(db));
+
+      for (const secretVersion of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        const forged = await new JwtService().signAsync({ ...genuine, secretVersion },
+          { secret: 'attacker-chosen-secret', algorithm: 'HS256', noTimestamp: true });
+        const outcome = await Promise.race([
+          field.verify({ token: forged, showtimeId: f.show.id }, { scannerUserId: actorId }).then((result) => result.outcome),
+          new Promise((resolve) => setTimeout(() => resolve('pending'), 2000)),
+        ]);
+        expect(outcome).toBe('tampered');
+      }
+    });
   });
 
   describe('field scan of a cancelled seat (audit #115)', () => {
@@ -378,18 +396,27 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       prepare.release();
 
       const pending = await field.verify({ token: credential!.token, showtimeId: f.show.id }, context);
-      expect(pending).toMatchObject({ outcome: 'refunded_cancelled', processable: false });
+      expect(pending).toMatchObject({ outcome: 'refunded_cancelled', processable: false,
+        resultLabel: '취소 처리 중 · 입장 불가', ticket: { cancellationPending: true } });
       expect(pending.rejectionReason).toContain('취소 처리 중인 티켓입니다');
       expect(pending.rejectionReason).toContain('현장 책임자');
-      const consumed = await field.consume({ token: credential!.token, showtimeId: f.show.id, deviceAttemptId: randomUUID(), confirmed: true }, context);
+      const deviceAttemptId = randomUUID();
+      const consumeInput = { token: credential!.token, showtimeId: f.show.id, deviceAttemptId, confirmed: true as const };
+      const consumed = await field.consume(consumeInput, context);
+      expect(consumed).toMatchObject({ resultLabel: '취소 처리 중 · 입장 불가', ticket: { cancellationPending: true } });
       expect(consumed.rejectionReason).toContain('취소 처리 중인 티켓입니다');
+      // A retried request replays its stored receipt with the same headline.
+      await expect(field.consume(consumeInput, context)).resolves.toMatchObject({
+        scanEventId: consumed.scanEventId, resultLabel: '취소 처리 중 · 입장 불가' });
       const [scanEvent] = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.reservationId, f.order.id));
       expect(scanEvent).toMatchObject({ result: 'refunded_cancelled' });
       expect(scanEvent!.rejectionReason).toContain('취소 처리 중인 티켓입니다');
 
       await db.update(schema.ticketItems).set({ status: 'cancelled' }).where(eq(schema.ticketItems.id, f.items[0]!.id));
       const completed = await field.verify({ token: credential!.token, showtimeId: f.show.id }, context);
-      expect(completed).toMatchObject({ outcome: 'refunded_cancelled', rejectionReason: '취소 또는 환불된 티켓입니다' });
+      expect(completed).toMatchObject({ outcome: 'refunded_cancelled', rejectionReason: '취소 또는 환불된 티켓입니다',
+        ticket: { cancellationPending: false } });
+      expect(completed).not.toHaveProperty('resultLabel');
     });
   });
 });

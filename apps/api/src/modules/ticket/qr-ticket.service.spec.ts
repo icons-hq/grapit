@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InternalServerErrorException, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { QrTicketService } from './qr-ticket.service.js';
 
 function chainResult<T>(rows: T[]) {
@@ -749,6 +756,63 @@ describe('QrTicketService', () => {
       }),
     );
     expect(mockDb.update).toHaveBeenCalled();
+  });
+
+  it('keeps the owner filter on manual ticket email and refuses a send without a user id', async () => {
+    const rows = [{
+      ticket: createTicketWithSeatRecord(),
+      reservation: { id: 'reservation-1', reservationNumber: 'GRP-24001' },
+      user: { email: 'buyer@example.com', isEmailVerified: true, preferredLocale: 'ko' },
+      showtime: { dateTime: new Date('2026-07-18T11:00:00.000Z') },
+      performance: { title: 'Girl Rules Fanmeet' },
+      venue: { name: 'Donghae Arts Center' },
+    }];
+    const whereConditions: unknown[] = [];
+    const capturingChain = (): object => new Proxy({}, {
+      get(_target, prop) {
+        if (prop === 'then') {
+          return (resolve: (value: unknown) => void) => resolve(rows);
+        }
+        return (...args: unknown[]) => {
+          if (prop === 'where') whereConditions.push(args[0]);
+          return capturingChain();
+        };
+      },
+    });
+    const mockDb = {
+      select: vi.fn(() => capturingChain()),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      }),
+    };
+    const emailService = {
+      sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      emailService as never,
+      { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    await service.sendOwnedTicketsForReservationEmail('reservation-1', 'user-1');
+    const rendered = new PgDialect().sqlToQuery(whereConditions[0] as SQL);
+    expect(rendered.sql).toContain('"reservations"."user_id" = ');
+    expect(rendered.params).toContain('user-1');
+
+    mockDb.select.mockClear();
+    emailService.sendQrTicketReminderEmail.mockClear();
+    await expect(service.sendOwnedTicketsForReservationEmail('reservation-1', ''))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(mockDb.select).not.toHaveBeenCalled();
+    expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
   });
 
   it('emails every active seat of a multi-seat reservation with its own seat label and token', async () => {
@@ -1557,6 +1621,67 @@ describe('QrTicketService', () => {
       expect(harness.releaseSet).toHaveBeenCalledWith(expect.objectContaining({ emailSentAt: null }));
       expect(harness.releaseWhere).toHaveBeenCalledTimes(1);
     });
+
+    describe('claim trail logs (email_sent_at doubles as the send claim)', () => {
+      function captureLogs() {
+        const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        return {
+          lines: () => [...log.mock.calls, ...warn.mock.calls].map(([message]) => String(message)),
+          restore: () => {
+            log.mockRestore();
+            warn.mockRestore();
+          },
+        };
+      }
+
+      it('logs claimed then sent with the job id for a delivered reminder', async () => {
+        const logs = captureLogs();
+        const harness = createReminderService({ claimedIds: ['ticket-a1', 'ticket-a2'] });
+
+        await harness.handle('qr-email-job-1');
+        const lines = logs.lines();
+        logs.restore();
+
+        const claimed = lines.find((line) => line.startsWith('QR reminder claimed.'));
+        expect(claimed).toContain('reservationId=reservation-1, jobId=qr-email-job-1');
+        expect(claimed).toContain('ticketCount=2');
+        expect(lines).toContainEqual(expect.stringMatching(/^QR reminder sent\. reservationId=reservation-1, jobId=qr-email-job-1/));
+      });
+
+      it('logs a released claim and no sent line when delivery fails', async () => {
+        const logs = captureLogs();
+        const harness = createReminderService({
+          claimedIds: ['ticket-a1'],
+          emailResult: { success: false, error: 'resend 503' },
+        });
+
+        await expect(harness.handle('qr-email-job-1')).rejects.toThrow('resend 503');
+        const lines = logs.lines();
+        logs.restore();
+
+        expect(lines).toContainEqual(expect.stringMatching(/^QR reminder claimed\. .*jobId=qr-email-job-1/));
+        expect(lines).toContainEqual(expect.stringMatching(/^QR reminder claim released after send failure\. .*jobId=qr-email-job-1/));
+        expect(lines.some((line) => line.startsWith('QR reminder sent.'))).toBe(false);
+      });
+
+      it('logs the job id when a retry finds the claim already taken', async () => {
+        const logs = captureLogs();
+        const rows = reminderRows(2);
+        rows[0]!.ticket.emailSentAt = now;
+        rows[1]!.ticket.emailSentAt = now;
+        const harness = createReminderService({ rows });
+
+        await harness.handle('qr-email-job-1');
+        const lines = logs.lines();
+        logs.restore();
+
+        expect(harness.emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+        expect(lines).toContainEqual(
+          'QR reminder skipped: already sent or claimed. reservationId=reservation-1, jobId=qr-email-job-1',
+        );
+      });
+    });
   });
 
   it('keeps the first recorded reminder job when a concurrent read schedules another (audit #107)', async () => {
@@ -1674,6 +1799,202 @@ describe('QrTicketService', () => {
       );
 
       await expect(service.verifyTicketForScannerContract(token)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    describe.each([
+      ['with QR_TICKET_SECRET_KEYRING_JSON', keyringConfig],
+      ['without QR_TICKET_SECRET_KEYRING_JSON', {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      }],
+    ])('unsigned secret version lookup %s', (_label, config) => {
+      it.each([
+        'constructor',
+        'toString',
+        '__proto__',
+        'hasOwnProperty',
+        'valueOf',
+        'isPrototypeOf',
+      ])('rejects a token naming the Object prototype key %s as tampered without hanging the verifier', async (secretVersion) => {
+        // Real timers: the defect left verifyAsync pending forever, so a race is the assertion.
+        vi.useRealTimers();
+        const jwtService = new JwtService();
+        const token = await jwtService.signAsync(
+          createTokenPayload({ secretVersion }),
+          { secret: 'attacker-secret', algorithm: 'HS256', noTimestamp: true },
+        );
+        const select = vi.fn();
+        const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const service = new QrTicketService(
+          { select } as never,
+          config as never,
+          jwtService,
+          { sendQrTicketReminderEmail: vi.fn() } as never,
+          { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+        );
+
+        const settled = await Promise.race([
+          service.verifyTicketForScannerContract(token).then(
+            () => 'resolved',
+            (error: unknown) => error,
+          ),
+          new Promise((resolve) => setTimeout(() => resolve('pending'), 200)),
+        ]);
+        warnSpy.mockRestore();
+
+        expect(settled).toBeInstanceOf(UnauthorizedException);
+        expect(select).not.toHaveBeenCalled();
+      });
+    });
+
+    it('logs an unsigned secret version escaped so it cannot forge log lines', async () => {
+      const jwtService = new JwtService();
+      const token = await jwtService.signAsync(
+        createTokenPayload({ secretVersion: 'v9\nCRITICAL: forged line' }),
+        { secret: 'attacker-secret', algorithm: 'HS256', noTimestamp: true },
+      );
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const service = new QrTicketService(
+        { select: vi.fn() } as never,
+        keyringConfig as never,
+        jwtService,
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      await expect(service.verifyTicketForScannerContract(token)).rejects.toBeInstanceOf(UnauthorizedException);
+
+      const logged = warnSpy.mock.calls.map(([message]) => String(message)).join('');
+      warnSpy.mockRestore();
+      expect(logged).toContain('secretVersion="v9\\nCRITICAL: forged line"');
+      expect(logged).not.toContain('\n');
+    });
+
+    it('treats an issued ticket version that is an Object prototype key as missing, not as a signing secret', async () => {
+      const seatIdentity = createSeatIdentity();
+      const service = new QrTicketService(
+        {
+          select: vi
+            .fn()
+            .mockReturnValueOnce(chainResult([{
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              paymentStatus: 'DONE',
+              showtimeId: 'showtime-1',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              ticketItem: { id: 'ticket-item-1', ...seatIdentity },
+            }]))
+            .mockReturnValueOnce(chainResult([{
+              ...createTicketRecord({ secretVersion: 'constructor', emailJobId: 'qr-email-job-1' }),
+              ...seatIdentity,
+            }])),
+        } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      await expect(service.ensureIssuedTicketsForReservation({
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+      })).rejects.toBeInstanceOf(InternalServerErrorException);
+      errorSpy.mockRestore();
+    });
+
+    it('reports an issued version that is an Object prototype key as missing at boot', async () => {
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const service = new QrTicketService(
+        {
+          selectDistinct: vi.fn().mockReturnValue(chainResult([
+            { secretVersion: '2026-07' },
+            { secretVersion: 'toString' },
+          ])),
+        } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      await expect(service.reportSecretKeyringCoverage()).resolves.toEqual(['toString']);
+      errorSpy.mockRestore();
+    });
+
+    it('reports a keyring entry for the current version that differs from QR_TICKET_SECRET at boot', () => {
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      // A mismatched pair, e.g. an instance started between updating qr-ticket-secret
+      // and qr-ticket-secret-version during rotation.
+      const service = new QrTicketService(
+        {} as never,
+        {
+          get: vi.fn((key: string) => {
+            if (key === 'QR_TICKET_SECRET') return 'next-secret';
+            if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+            if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+              return JSON.stringify({ '2026-07': 'current-secret', '2026-10': 'next-secret' });
+            }
+            return undefined;
+          }),
+        } as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      expect(service.reportSecretKeyringConflict()).toBe(true);
+      const logged = errorSpy.mock.calls.map(([message]) => String(message)).join('\n');
+      errorSpy.mockRestore();
+      expect(logged).toContain('CRITICAL');
+      expect(logged).toContain('"2026-07"');
+      // Secret values never reach the log.
+      expect(logged).not.toContain('current-secret');
+      expect(logged).not.toContain('next-secret');
+    });
+
+    it('runs the keyring conflict and coverage checks when the module starts', async () => {
+      const service = new QrTicketService(
+        { selectDistinct: vi.fn().mockReturnValue(chainResult([{ secretVersion: '2026-07' }])) } as never,
+        keyringConfig as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+      const conflict = vi.spyOn(service, 'reportSecretKeyringConflict');
+      const coverage = vi.spyOn(service, 'reportSecretKeyringCoverage');
+
+      await service.onModuleInit();
+
+      expect(conflict).toHaveBeenCalledTimes(1);
+      expect(coverage).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays quiet when the keyring entry for the current version matches QR_TICKET_SECRET or is absent', () => {
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const build = (keyringJson: string | undefined) => new QrTicketService(
+        {} as never,
+        {
+          get: vi.fn((key: string) => {
+            if (key === 'QR_TICKET_SECRET') return 'current-secret';
+            if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+            if (key === 'QR_TICKET_SECRET_KEYRING_JSON') return keyringJson;
+            return undefined;
+          }),
+        } as never,
+        new JwtService(),
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn(), work: vi.fn(), stop: vi.fn() } as never,
+      );
+
+      expect(build(JSON.stringify({ '2026-07': 'current-secret', '2026-05': 'prior-secret' })).reportSecretKeyringConflict()).toBe(false);
+      expect(build(JSON.stringify({ '2026-05': 'prior-secret' })).reportSecretKeyringConflict()).toBe(false);
+      expect(build(undefined).reportSecretKeyringConflict()).toBe(false);
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
     });
 
     it('reports issued secret versions missing from the keyring at boot', async () => {

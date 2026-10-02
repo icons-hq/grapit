@@ -119,6 +119,10 @@ type TicketEmailContext = Omit<TicketEmailContextRow, 'ticket'> & {
   tickets: TicketWithSeatRecord[];
 };
 
+type TicketEmailContextScope =
+  | { scope: 'owner'; reservationId: string; userId: string }
+  | { scope: 'system-reminder'; reservationId: string };
+
 type TicketReadDb = Pick<DrizzleDB, 'select'>;
 
 type TicketItemStatus = 'active' | 'cancellation_pending' | 'cancelled' | 'expired';
@@ -174,6 +178,7 @@ export class QrTicketService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    this.reportSecretKeyringConflict();
     // Not awaited: a slow database must not delay readiness. The check only reports.
     void this.reportSecretKeyringCoverage();
 
@@ -215,7 +220,7 @@ export class QrTicketService implements OnModuleInit {
         .where(inArray(tickets.status, ['active', 'used']));
       const missingVersions = rows
         .map((row) => row.secretVersion)
-        .filter((version) => !keyring[version])
+        .filter((version) => !findKeyringSecret(keyring, version))
         .sort();
 
       if (missingVersions.length > 0) {
@@ -237,6 +242,46 @@ export class QrTicketService implements OnModuleInit {
         error instanceof Error ? error.stack : String(error),
       );
       return [];
+    }
+  }
+
+  /**
+   * QR_TICKET_SECRET overrides the keyring JSON entry for the current version.
+   * When they differ, this instance signs and verifies that version with a
+   * different secret than instances that read a consistent pair (for example an
+   * instance started between two Secret Manager updates during rotation), so
+   * credentials it serves fail elsewhere as tampered. Reported at boot only;
+   * secret values are never logged.
+   */
+  reportSecretKeyringConflict(): boolean {
+    try {
+      const configured = this.parseConfiguredKeyring();
+      if (configured.size === 0) {
+        return false;
+      }
+
+      const currentVersion = this.getCurrentSecretVersion();
+      const configuredSecret = configured.get(currentVersion);
+      if (configuredSecret === undefined || configuredSecret === this.getCurrentSecret()) {
+        return false;
+      }
+
+      const message = `CRITICAL: QR_TICKET_SECRET_KEYRING_JSON entry for the current QR secret version ${JSON.stringify(currentVersion)} differs from QR_TICKET_SECRET. This instance uses QR_TICKET_SECRET for that version, so credentials it signs or verifies disagree with instances that read a consistent secret/version pair. Redeploy API and worker with a matching pair (see the QR secret rotation runbook).`;
+      this.logger.error(message);
+      Sentry.withScope((scope) => {
+        scope.setTag('component', 'qr-ticket');
+        scope.setTag('check', 'secret-keyring-conflict');
+        scope.setLevel('fatal');
+        scope.setContext('qrSecretKeyring', { currentVersion });
+        Sentry.captureException(new Error(message));
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(
+        'QR secret keyring conflict check failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
     }
   }
 
@@ -450,7 +495,7 @@ export class QrTicketService implements OnModuleInit {
     reservationId: string,
     userId: string,
   ): Promise<{ ticketEmailDelivery: TicketEmailDelivery }> {
-    const context = await this.findTicketEmailContext({ reservationId, userId });
+    const context = await this.findTicketEmailContext({ scope: 'owner', reservationId, userId });
     if (!context) {
       throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
     }
@@ -912,8 +957,21 @@ export class QrTicketService implements OnModuleInit {
       return;
     }
 
-    const context = await this.findTicketEmailContext({ reservationId: anchor.reservationId });
-    if (!context || context.tickets.some((ticket) => ticket.emailSentAt)) {
+    const context = await this.findTicketEmailContext({
+      scope: 'system-reminder',
+      reservationId: anchor.reservationId,
+    });
+    if (!context) {
+      return;
+    }
+
+    if (context.tickets.some((ticket) => ticket.emailSentAt)) {
+      // email_sent_at is also the send claim. After a crash between claim and
+      // send, the pg-boss retry lands here: a "claimed" log for this job id with
+      // no matching "sent" log is the signal that the reminder was lost.
+      this.logger.log(
+        `QR reminder skipped: already sent or claimed. reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}`,
+      );
       return;
     }
 
@@ -942,20 +1000,30 @@ export class QrTicketService implements OnModuleInit {
       .returning({ id: tickets.id });
 
     if (claimed.length === 0) {
+      this.logger.log(
+        `QR reminder skipped: claimed by another worker. reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}`,
+      );
       return;
     }
+
+    const logRef = `reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}, claimedAt=${claimedAt.toISOString()}`;
+    this.logger.log(`QR reminder claimed. ${logRef}, ticketCount=${claimed.length}`);
 
     try {
       await this.sendTicketEmail(context);
     } catch (error) {
       // Release the claim so the pg-boss retry can send. A crash before this
       // point leaves the claim in place (at-most-once reminder, never duplicate).
-      await this.releaseReminderClaim(claimed.map((row) => row.id), claimedAt);
+      if (await this.releaseReminderClaim(claimed.map((row) => row.id), claimedAt)) {
+        this.logger.warn(`QR reminder claim released after send failure. ${logRef}`);
+      }
       throw error;
     }
+
+    this.logger.log(`QR reminder sent. ${logRef}`);
   }
 
-  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<void> {
+  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<boolean> {
     try {
       await this.db
         .update(tickets)
@@ -969,18 +1037,28 @@ export class QrTicketService implements OnModuleInit {
             eq(tickets.emailSentAt, claimedAt),
           ),
         );
+      return true;
     } catch (error) {
       this.logger.error(
-        `QR reminder claim release failed. ticketIds=${ticketIds.join(',')}`,
+        `QR reminder claim release failed; email_sent_at keeps an unsent claim. ticketIds=${ticketIds.join(',')}`,
         error instanceof Error ? error.stack : String(error),
       );
+      return false;
     }
   }
 
-  private async findTicketEmailContext(input: {
-    reservationId: string;
-    userId?: string;
-  }): Promise<TicketEmailContext | undefined> {
+  /**
+   * Buyer paths must pass `owner`; only the system reminder (whose job payload
+   * came from this server) reads without an owner filter. Keeping the two
+   * shapes distinct means a missing user id can never silently drop the filter.
+   */
+  private async findTicketEmailContext(
+    input: TicketEmailContextScope,
+  ): Promise<TicketEmailContext | undefined> {
+    if (input.scope === 'owner' && !input.userId) {
+      return undefined;
+    }
+
     const rows = await this.db
       .select({
         ticket: this.ticketWithSeatRecordFields(),
@@ -1014,7 +1092,7 @@ export class QrTicketService implements OnModuleInit {
       .where(
         and(
           eq(tickets.reservationId, input.reservationId),
-          input.userId ? eq(reservations.userId, input.userId) : undefined,
+          input.scope === 'owner' ? eq(reservations.userId, input.userId) : undefined,
           eq(reservations.status, 'CONFIRMED'),
           eq(payments.status, 'DONE'),
           eq(tickets.status, 'active'),
@@ -1173,15 +1251,16 @@ export class QrTicketService implements OnModuleInit {
   }
 
   /**
-   * Scanner-side lookup for a presented token. An unknown version is an invalid
-   * credential from the scanner's point of view, so it stays a 401 (tampered).
+   * Scanner-side lookup for a presented token. The version comes from the token
+   * before its signature is checked, so it is attacker-controlled. An unknown
+   * version is an invalid credential from the scanner's point of view, so it
+   * stays a 401 (tampered).
    */
   private getVerificationSecret(secretVersion: string): string {
-    const keyring = this.loadSecretKeyring();
-    const secret = keyring[secretVersion];
+    const secret = findKeyringSecret(this.loadSecretKeyring(), secretVersion);
     if (!secret) {
       this.logger.warn(
-        `QR token presented with a secret version missing from the keyring. secretVersion=${secretVersion.slice(0, 40)}`,
+        `QR token presented with a secret version missing from the keyring. secretVersion=${JSON.stringify(secretVersion.slice(0, 40))}`,
       );
       throw new UnauthorizedException('알 수 없는 QR secret version 입니다');
     }
@@ -1197,10 +1276,10 @@ export class QrTicketService implements OnModuleInit {
   private getSigningSecretForIssuedTicket(
     ticketRecord: Pick<TicketRecord, 'id' | 'secretVersion'>,
   ): string {
-    const secret = this.loadSecretKeyring()[ticketRecord.secretVersion];
+    const secret = findKeyringSecret(this.loadSecretKeyring(), ticketRecord.secretVersion);
     if (!secret) {
       this.logger.error(
-        `CRITICAL: QR secret version ${ticketRecord.secretVersion} of issued ticketId=${ticketRecord.id} is missing from QR_TICKET_SECRET_KEYRING_JSON.`,
+        `CRITICAL: QR secret version ${JSON.stringify(ticketRecord.secretVersion)} of issued ticketId=${ticketRecord.id} is missing from QR_TICKET_SECRET_KEYRING_JSON.`,
       );
       throw new InternalServerErrorException(
         'QR 티켓을 일시적으로 표시할 수 없습니다. 잠시 후 다시 시도해주세요.',
@@ -1210,15 +1289,26 @@ export class QrTicketService implements OnModuleInit {
     return secret;
   }
 
-  private loadSecretKeyring(): Record<string, string> {
-    const currentVersion = this.getCurrentSecretVersion();
-    const currentSecret = this.getCurrentSecret();
+  /**
+   * Version → secret map used for signing and verification. QR_TICKET_SECRET
+   * overrides the keyring JSON entry for the current version (startup reports a
+   * conflict through reportSecretKeyringConflict). A Map, not a plain object, so
+   * a token-supplied version such as `constructor` never resolves to an Object
+   * prototype member.
+   */
+  private loadSecretKeyring(): Map<string, string> {
+    const keyring = this.parseConfiguredKeyring();
+    keyring.set(this.getCurrentSecretVersion(), this.getCurrentSecret());
+    return keyring;
+  }
+
+  /** Entries of QR_TICKET_SECRET_KEYRING_JSON only, without the current-secret override. */
+  private parseConfiguredKeyring(): Map<string, string> {
+    const keyring = new Map<string, string>();
     const rawKeyring = this.configService.get<string>('QR_TICKET_SECRET_KEYRING_JSON')?.trim();
 
     if (!rawKeyring) {
-      return {
-        [currentVersion]: currentSecret,
-      };
+      return keyring;
     }
 
     let parsed: unknown;
@@ -1236,14 +1326,12 @@ export class QrTicketService implements OnModuleInit {
       throw new Error('QR_TICKET_SECRET_KEYRING_JSON must be a JSON object');
     }
 
-    const keyring = Object.entries(parsed).reduce<Record<string, string>>((acc, [version, secret]) => {
+    for (const [version, secret] of Object.entries(parsed)) {
       if (typeof secret === 'string' && secret.trim().length > 0) {
-        acc[version] = secret;
+        keyring.set(version, secret);
       }
-      return acc;
-    }, {});
+    }
 
-    keyring[currentVersion] = currentSecret;
     return keyring;
   }
 
@@ -1361,4 +1449,14 @@ export class QrTicketService implements OnModuleInit {
       },
     };
   }
+}
+
+/**
+ * Own-entry, non-empty string lookup. jsonwebtoken treats a function secret as
+ * an async key getter and never settles when it is not called back, so a
+ * non-string value must never be returned as a secret.
+ */
+function findKeyringSecret(keyring: Map<string, string>, secretVersion: string): string | undefined {
+  const secret = keyring.get(secretVersion);
+  return typeof secret === 'string' && secret.length > 0 ? secret : undefined;
 }
