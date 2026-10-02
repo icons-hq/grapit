@@ -157,8 +157,16 @@ After the new endpoint is active:
 1. confirm zero active seat-lock and admission-queue keys on the original instance;
 2. add a new `redis-url` secret version without printing the URL;
 3. set GitHub Actions repository variable `VALKEY_MODE=standalone`;
-4. deploy and verify API health reports the standalone managed Valkey connection;
-5. keep the original `grabit-valkey` unchanged for at least 24 hours.
+4. deploy and verify API health reports the standalone managed Valkey connection, then run the Valkey smoke against the new instance by name (the script has no default instance and checks that the Cloud Run-bound `redis-url` secret version points to a writable endpoint of that instance):
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=grabit-valkey-managed-demo GRABIT_VALKEY_EXPECTED_MODE=standalone \
+   GRABIT_VALKEY_MIN_REPLICAS=0 GRABIT_SALES_OPEN_AT=none \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check health
+   ```
+
+   The managed-demo posture deliberately overrides the replica minimum. The smoke still requires `maxmemory-policy=noeviction` unless `GRABIT_VALKEY_MAXMEMORY_POLICY` is set; a failure there is a real eviction risk for seat-lock and queue keys, not a smoke bug;
+5. keep the original `grapit-valkey` unchanged for at least 24 hours.
 
 ## Phase 3 — Cloud Run services and bounded worker
 
@@ -284,7 +292,15 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 
 1. Set `BOOKING_ENABLED=false` while capacity changes and verification are in progress.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
-3. Create a new Cluster Mode Enabled Valkey instance sized from load evidence, with replicas where availability requires them. Set `VALKEY_MODE=cluster`.
+3. Create a new Cluster Mode Enabled Valkey instance sized from load evidence, with replicas where availability requires them, `--engine-configs=maxmemory-policy=noeviction` (seat locks and admission keys must fail loudly instead of being evicted) and a weekly maintenance window pinned outside the opening. Set `VALKEY_MODE=cluster`, deploy, then run the smoke with the new instance named explicitly. Its defaults are the opening posture: at least one replica, `noeviction`, and no maintenance window or scheduled maintenance from one hour before `GRABIT_SALES_OPEN_AT` until `GRABIT_SALES_PROTECTED_HOURS` (default 6) after it:
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=<new-instance-id> GRABIT_VALKEY_EXPECTED_MODE=cluster \
+   GRABIT_SALES_OPEN_AT=<opening ISO-8601 with offset, e.g. 2026-11-01T20:00:00+09:00> \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check all
+   ```
+
+   Do not reuse the retained `grapit-valkey` or `grabit-valkey-managed-demo` names in the smoke after a cutover; the smoke fails when `redis-url` does not point at the named instance.
 4. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings).
 5. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
 6. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.

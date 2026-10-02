@@ -291,7 +291,8 @@ Admin refund writes audit evidence and can hold seats before manual reopening.
 
 `TicketModule` owns QR issue/read/verify.
 
-- QR tickets are reservation-level in the current implementation.
+- QR credentials are seat-level: each Ticket Item has at most one active `tickets` row (`tickets.ticket_item_id`, unique partial index `idx_tickets_ticket_item_active`), per ADR 0001/0003. A reservation with several seats therefore has several independent QR credentials.
+- Legacy reservation-level rows (`ticket_item_id IS NULL`, guarded by `idx_tickets_legacy_*`) are compatibility-only. Issue, read and venue-entry paths join through `ticket_items` and reject them; do not reissue, scan or repair QR at reservation level.
 - `tickets` stores QR JTI, signing version, status, issue/email timestamps, use/revoke/expiry state.
 - QR reminder email is scheduled through pg-boss when eligible.
 - Reservation detail read path can self-heal missing QR for confirmed completed payments.
@@ -301,6 +302,8 @@ Credential validity and venue entry state are separate:
 
 - credential status answers whether the QR credential is valid,
 - `entryStatus` and `enteredAt` answer whether entry was processed.
+
+The API `entryStatus`/`enteredAt` fields on a QR ticket are derived values (from the credential row's `used_at`, written in the same transaction as the consume). The admission source of truth is the Ticket Item: `ticket_items.admission_state` and `ticket_items.entered_at`. Manual recovery and CS investigation read admission per Ticket Item.
 
 ### 7.2 Field Check-In
 

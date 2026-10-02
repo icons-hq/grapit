@@ -1,7 +1,7 @@
 ---
 phase: 26-m1-canary-cutover-gates
 status: active_runbook
-last_updated: 2026-05-20
+last_updated: 2026-10-02
 scope: OPS-01 one-person cutover operations, monitoring evidence, WAF smoke, and incident handling
 ---
 
@@ -476,6 +476,65 @@ Required evidence fields:
 - result classification
 - redacted summary
 - rollback or close-booking trigger if non-PASS
+
+## Dedicated test-event load gate
+
+`LOAD_10K_BASELINE` and `LOAD_20K_STRESS` mean 10,000 / 20,000 concurrent
+synthetic buyers. `scripts/k6/phase26-baseline.js` and `phase26-stress.js`
+ramp `ramping-vus` to that target (`PHASE26_<BASELINE|STRESS>_RAMP_UP`,
+default `60s`, then `_HOLD` `10m`, `_RAMP_DOWN` `30s`) so the opening spike
+is modelled. Each VU is one buyer browser walking the real purchase path:
+performance detail + seat map, queue enter with status polling while
+`WAITING`, then (by weight) seat lock, prepare and, in `pg-stub` mode, confirm.
+Abandoned checkouts call `cancel-pending` and release their locks.
+
+Inputs (all required unless a default is shown; files are mounted privately and
+never committed):
+
+| Variable | Meaning |
+| --- | --- |
+| `GRABIT_API_URL` | Explicit API base ending in `/api/v1`; there is no production default |
+| `PHASE26_TEST_PERFORMANCE_ID`, `PHASE26_TEST_SHOWTIME_ID` | Dedicated test event and showtime UUIDs |
+| `PHASE26_TEST_MARKER` | Token matching `^PHASE26[_-][A-Za-z0-9_-]{6,}$`; the performance title must start with it |
+| `PHASE26_TEST_ORDER_PREFIX` | Order ID prefix for prepare/confirm, e.g. `PHASE26_ORD-`, so cleanup can scope the orders |
+| `PHASE26_LOAD_APPROVED` | `PHASE26_DEDICATED_TEST_EVENT_APPROVED` |
+| `PHASE26_USER_POOL_FILE` | JSON array of `{ "accessToken", "refreshToken" }`, one distinct non-admin buyer per VU (at least the target VU count), access tokens valid until the run ends. The refresh token is sent as the `refreshToken` cookie and must belong to a persisted refresh family; the queue admission cookie is taken from the enter response, never from a header |
+| `PHASE26_SEAT_POOL_FILE` | JSON array of floor-aware seat selections (`seatId`, `seatKey`, `floorKey`, `floorLabel`, `tierName`, `price`, `row`, `number`) of the test showtime; each booking iteration locks a different seat |
+| `PHASE26_CONFIRM_MODE` | `off` (default) or `pg-stub`. Use `pg-stub` only against an isolated deployment whose API process preloads `scripts/revamp/pg-stub-preload.mjs` (`GRABIT_PG_STUB=isolated-load-test-only`); it sends synthetic payment keys |
+| `PHASE26_READ_WEIGHT` / `PHASE26_QUEUE_WEIGHT` / `PHASE26_MUTATION_WEIGHT` | Journey depth weights (baseline 75/20/5, stress 80/18/2) |
+
+Run with the scripts directory mounted, because the entries import `./lib`:
+
+```bash
+docker run --rm -v "$PWD/scripts/k6:/scripts:ro" -v "$PRIVATE_DIR:/private:ro" -v "$OUT_DIR:/out" \
+  grafana/k6 run -e GRABIT_API_URL=... -e PHASE26_USER_POOL_FILE=/private/users.json \
+  -e PHASE26_SEAT_POOL_FILE=/private/seats.json ... \
+  --summary-export /out/phase26-baseline-summary.json /scripts/phase26-baseline.js
+node scripts/phase26/record-k6-evidence.mjs --baseline "$OUT_DIR/phase26-baseline-summary.json" \
+  --stress "$OUT_DIR/phase26-stress-summary.json" ...
+```
+
+`record-k6-evidence.mjs` never records PASS when the summary's peak `vus` is
+below the gate target, when any of `read/queue/lock/prepare/confirm` has no
+tagged requests, when queue or lock traffic is below 5% / 0.5% of requests, or
+when any flow breaks p95 < 2s / error rate < 1%. Without a PG-stubbed target the
+confirm flow is unmeasured, so the gate stays `BLOCKED` unless the owner records
+`--accepted-risk`.
+
+Provisioning the synthetic buyers, refresh families and seat pool in the
+dedicated environment is an operator task; never mint them against real buyer
+accounts.
+
+## Dedicated test-event cleanup
+
+`scripts/phase26/cleanup-dry-run.sql` and `cleanup-test-event.sql` delete only a
+positively identified test event: the marker must match
+`^PHASE26[_-][A-Za-z0-9_-]{6,}$`, the performance title must start with it, the
+performance must not be `published`, and it must have no future
+`booking_starts_at`. Unpublish the test event in admin before cleanup. Order IDs
+are matched literally with `starts_with()`, so `_` in a prefix is not a
+wildcard. Run the dry-run first and pass its exact counts to the execution
+script; `rehearsal-smoke.mjs` applies the same marker and title rule.
 
 ## No-go states
 

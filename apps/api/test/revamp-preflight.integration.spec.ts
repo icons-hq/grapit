@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -9,11 +9,38 @@ import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 
+const INSTANCE = 'grapit-491806:asia-northeast3:grabit-db-managed-demo';
+const SCRIPT = resolve('../../scripts/revamp/production-preflight.mjs');
+
+// Stand-in for `cloud-sql-proxy`: it records its arguments and environment,
+// then forwards loopback connections to the disposable container only.
+const FAKE_PROXY = `#!/usr/bin/env node
+import { connect, createServer } from 'node:net';
+import { writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+writeFileSync(process.env.FAKE_PROXY_RECORD, JSON.stringify({ args, receivedSecret: 'REVAMP_PROD_DATABASE_URL' in process.env }));
+const port = Number(args.find((arg) => arg.startsWith('--port='))?.slice(7));
+if (args[0] !== process.env.FAKE_PROXY_EXPECTED_INSTANCE || !args.includes('--address=127.0.0.1')) {
+  console.error('unexpected instance');
+  process.exit(1);
+}
+const server = createServer((socket) => {
+  const upstream = connect(Number(process.env.FAKE_PROXY_UPSTREAM_PORT), process.env.FAKE_PROXY_UPSTREAM_HOST);
+  socket.pipe(upstream).pipe(socket);
+  upstream.on('error', () => socket.destroy());
+  socket.on('error', () => upstream.destroy());
+});
+server.listen(port, '127.0.0.1', () => console.log('The proxy has started successfully and is ready for new connections!'));
+process.on('SIGTERM', () => process.exit(0));
+`;
+
 describe('Revamp read-only release evidence', () => {
   let container: StartedTestContainer;
   let pool: Pool;
   let work: string;
   let connection: string;
+  let fakeProxy: string;
+  let serverId: string;
   beforeAll(async () => {
     container = await new GenericContainer('postgres:16-alpine')
       .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'grapit' }).withExposedPorts(5432).start();
@@ -21,24 +48,45 @@ describe('Revamp read-only release evidence', () => {
     pool = new Pool({ connectionString: connection });
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     work = await mkdtemp(join(tmpdir(), 'grabit-preflight-test-'));
+    fakeProxy = join(work, 'fake-cloud-sql-proxy.mjs');
+    await writeFile(fakeProxy, FAKE_PROXY);
+    await chmod(fakeProxy, 0o755);
+    const { rows } = await pool.query<{ id: string }>('SELECT system_identifier::text AS id FROM pg_control_system()');
+    serverId = createHash('sha256').update(rows[0]!.id).digest('hex');
   }, 120000);
   afterAll(async () => { await pool?.end(); await container?.stop(); if (work) await rm(work, { recursive: true, force: true }); });
 
+  function run(databaseUrl: string, args: string[], env: Record<string, string> = {}) {
+    // The script's production identity guard is exercised against only this
+    // disposable container. No Cloud SQL proxy, secret or network is used.
+    const result = spawnSync(process.execPath, [SCRIPT, '--read-only', ...args], {
+      env: { ...process.env, REVAMP_PROD_DATABASE_URL: databaseUrl, ...env }, encoding: 'utf8', timeout: 60000,
+    });
+    return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  function tcpUrl() {
+    const original = new URL(connection);
+    original.searchParams.set('host', `/cloudsql/${INSTANCE}`);
+    return original.toString();
+  }
+
+  function managedProxyEnv(record: string) {
+    return {
+      CLOUD_SQL_PROXY_BIN: fakeProxy,
+      FAKE_PROXY_RECORD: record,
+      FAKE_PROXY_EXPECTED_INSTANCE: INSTANCE,
+      FAKE_PROXY_UPSTREAM_HOST: container.getHost(),
+      FAKE_PROXY_UPSTREAM_PORT: String(container.getMappedPort(5432)),
+    };
+  }
+
   async function capture(name: string, baseline?: string) {
     const output = join(work, `${name}.json`);
-    // The script's explicit production identity guard is exercised against only
-    // this disposable container. No Cloud SQL proxy, secret or network is used.
-    const original = new URL(connection);
-    original.searchParams.set('host', '/cloudsql/grapit-491806:asia-northeast3:grabit-db-managed-demo');
-    let exitCode = 0;
-    try {
-      execFileSync(process.execPath, [resolve('../../scripts/revamp/production-preflight.mjs'), '--read-only',
-        `--proxy-port=${container.getMappedPort(5432)}`, `--output=${output}`, ...(baseline ? [`--baseline=${baseline}`] : [])], {
-        env: { ...process.env, REVAMP_PROD_DATABASE_URL: original.toString() }, stdio: 'pipe',
-      });
-    } catch (error) { exitCode = (error as { status: number }).status; }
+    const result = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`, `--expected-server-id=${serverId}`,
+      `--output=${output}`, ...(baseline ? [`--baseline=${baseline}`] : [])]);
     const raw = await readFile(output, 'utf8');
-    return { output, raw, data: JSON.parse(raw), exitCode };
+    return { output, raw, data: JSON.parse(raw), exitCode: result.exitCode };
   }
 
   it('keeps evidence private, allows new records, and fails on removed identities or changed original amounts', async () => {
@@ -63,6 +111,8 @@ describe('Revamp read-only release evidence', () => {
     const before = await capture('before');
     expect(before.exitCode).toBe(0);
     expect(before.data.readOnly).toBe(true);
+    expect(before.data.connection).toEqual({ proxy: 'external', instance: INSTANCE });
+    expect(before.data.server.identity).toBe(serverId);
     for (const privateValue of [buyer, reservation, payment, 'preflight-private@example.test', 'Private buyer', 'private-provider-key']) {
       expect(before.raw).not.toContain(privateValue);
     }
@@ -93,5 +143,82 @@ describe('Revamp read-only release evidence', () => {
     expect(broken.data.comparison.consent_items.missing).toBe(1);
     expect(broken.data.comparison.refunds.missing).toBe(1);
     expect(broken.data.comparison.admin_audit_logs.missing).toBe(1);
+  }, 30000);
+
+  it('accepts the Cloud Run unix-socket secret through a script-managed proxy without printing the password', async () => {
+    const password = 'Pw-preflight-socket-7c1d';
+    await pool.query(`ALTER ROLE postgres PASSWORD '${password}'`);
+    try {
+      const record = join(work, 'managed-proxy.json');
+      const output = join(work, 'managed.json');
+      const socketUrl = `postgresql://postgres:${password}@/grapit?host=/cloudsql/${INSTANCE}`;
+      const result = run(socketUrl, [`--output=${output}`], managedProxyEnv(record));
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(password);
+      const evidence = JSON.parse(await readFile(output, 'utf8'));
+      expect(evidence.connection).toEqual({ proxy: 'script-managed', instance: INSTANCE });
+      expect(evidence.server.identity).toBe(serverId);
+      expect(JSON.stringify(evidence)).not.toContain(password);
+      const proxy = JSON.parse(await readFile(record, 'utf8'));
+      expect(proxy.args[0]).toBe(INSTANCE);
+      expect(proxy.receivedSecret).toBe(false);
+      expect((await stat(output)).mode & 0o777).toBe(0o600);
+    } finally {
+      await pool.query(`ALTER ROLE postgres PASSWORD 'test'`);
+    }
+  }, 30000);
+
+  it('fails with a fixed message and never echoes an unparseable secret', async () => {
+    const password = 'Pw-unparseable-9e4f';
+    const output = join(work, 'unparseable.json');
+    for (const databaseUrl of [
+      `postgresql://postgres:${password}@[bad/grapit?host=/cloudsql/${INSTANCE}`,
+      `postgresql://postgres:${password}@/grapit?host=/cloudsql/other-project:region:other-instance`,
+      `postgresql://postgres:${password}%ZZ@/grapit?host=/cloudsql/${INSTANCE}`,
+    ]) {
+      const result = run(databaseUrl, [`--output=${output}`], managedProxyEnv(join(work, 'unused.json')));
+      expect(result.exitCode).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(password);
+      expect(result.stderr).toMatch(/code=(invalid_database_url|unexpected_instance)/);
+    }
+    await expect(stat(output)).rejects.toThrow();
+  });
+
+  it('refuses an external proxy or baseline that points to a different server', async () => {
+    const otherServer = createHash('sha256').update('another-cluster').digest('hex');
+    const mismatched = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`,
+      `--expected-server-id=${otherServer}`, `--output=${join(work, 'external-mismatch.json')}`]);
+    expect(mismatched.exitCode).toBe(1);
+    expect(mismatched.stderr).toContain('code=server_identity_mismatch');
+    expect(await readFile(join(work, 'external-mismatch.json'), 'utf8')).toBe('');
+
+    const unbound = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`, `--output=${join(work, 'external-unbound.json')}`]);
+    expect(unbound.exitCode).toBe(1);
+    expect(unbound.stderr).toContain('code=invalid_arguments');
+
+    const baseline = await capture('identity-baseline');
+    const foreign = join(work, 'foreign-baseline.json');
+    await writeFile(foreign, JSON.stringify({ ...baseline.data, server: { ...baseline.data.server, identity: otherServer } }));
+    const crossed = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`, `--expected-server-id=${serverId}`,
+      `--output=${join(work, 'crossed.json')}`, `--baseline=${foreign}`]);
+    expect(crossed.exitCode).toBe(1);
+    expect(crossed.stderr).toContain('code=baseline_server_mismatch');
+    expect(await readFile(join(work, 'crossed.json'), 'utf8')).toBe('');
+
+    const legacy = join(work, 'legacy-baseline.json');
+    const { server: _server, ...legacyBaseline } = baseline.data;
+    await writeFile(legacy, JSON.stringify(legacyBaseline));
+    const old = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`, `--expected-server-id=${serverId}`,
+      `--output=${join(work, 'legacy.json')}`, `--baseline=${legacy}`]);
+    expect(old.exitCode).toBe(1);
+    expect(old.stderr).toContain('code=baseline_server_identity_missing');
+
+    const { rows } = await pool.query<{ count: number }>('SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations');
+    const migrationGap = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`, `--expected-server-id=${serverId}`,
+      `--output=${join(work, 'migration-gap.json')}`, `--expected-migrations=${rows[0]!.count + 1}`]);
+    expect(migrationGap.exitCode).toBe(3);
+    expect(JSON.parse(await readFile(join(work, 'migration-gap.json'), 'utf8')).migrationExpectation)
+      .toEqual({ expected: rows[0]!.count + 1, actual: rows[0]!.count, met: false });
   }, 30000);
 });

@@ -1,22 +1,36 @@
 #!/usr/bin/env node
 
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const webRequire = createRequire(new URL('../apps/web/package.json', import.meta.url));
-const { io } = webRequire('socket.io-client');
+let socketIoClient;
+function io(...args) {
+  socketIoClient ??= webRequire('socket.io-client');
+  return socketIoClient.io(...args);
+}
 
 const defaultArtifactUrl = new URL('../.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md', import.meta.url);
 const artifactPath = process.env.GRABIT_SMOKE_ARTIFACT ?? fileURLToPath(defaultArtifactUrl);
 
 const SERVICE_NAME = 'grabit-api';
-const VALKEY_INSTANCE = 'grapit-valkey';
 const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
-const EXPECTED_LIVE_MODE = 'CLUSTER';
-const EXPECTED_VALKEY_MODE = 'cluster';
+// Operator-declared Valkey topology. The instance name is never defaulted: a
+// replaced instance must be named explicitly so the old one cannot pass smoke.
+export const VALKEY_MODE_CONTRACTS = {
+  cluster: { liveModes: ['CLUSTER'], healthClient: 'ioredis-cluster' },
+  standalone: { liveModes: ['CLUSTER_DISABLED', 'STANDALONE'], healthClient: 'ioredis-standalone' },
+};
+const DEFAULT_MIN_REPLICAS = '1';
+const DEFAULT_MAXMEMORY_POLICY = 'noeviction';
+const DEFAULT_SALES_PROTECTED_HOURS = '6';
+const SALES_PRE_GUARD_MS = 60 * 60 * 1000;
+const DEFAULT_MAINTENANCE_DURATION_MS = 60 * 60 * 1000;
+const WEEKDAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 const GCLOUD_TIMEOUT_MS = 60_000;
 const HTTP_TIMEOUT_MS = 30_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
@@ -51,6 +65,9 @@ Usage:
 
 Required environment for every --check mode:
   GRABIT_API_URL                         Expected https://api.heygrabit.com
+  GRABIT_VALKEY_INSTANCE                 Memorystore instance that REDIS_URL must point to (no default)
+  GRABIT_VALKEY_EXPECTED_MODE            cluster or standalone; must match Cloud Run VALKEY_MODE and the live instance
+  GRABIT_SALES_OPEN_AT                   Sales opening as ISO-8601 with offset, or "none" when no opening is scheduled
   GRABIT_SMOKE_AUTH_HEADER_FILE          Local uncommitted file with exactly one Authorization or Cookie header line
   GRABIT_SMOKE_PERFORMANCE_ID            Operator-approved safe fixture performance UUID
   GRABIT_SMOKE_SHOWTIME_ID               Operator-approved safe fixture showtime UUID
@@ -63,10 +80,14 @@ Optional environment:
   GRABIT_SMOKE_SENTRY_OBSERVATION        Required for --check logs and --check all; record zero-count or redacted event id
   GRABIT_GCP_PROJECT                     Default grapit-491806
   GRABIT_GCP_REGION                      Default asia-northeast3
+  GRABIT_VALKEY_MIN_REPLICAS             Minimum replicas per shard, default ${DEFAULT_MIN_REPLICAS} (opening posture)
+  GRABIT_VALKEY_MAXMEMORY_POLICY         Required engine maxmemory-policy, default ${DEFAULT_MAXMEMORY_POLICY}
+  GRABIT_SALES_PROTECTED_HOURS           Hours after GRABIT_SALES_OPEN_AT that maintenance must avoid, default ${DEFAULT_SALES_PROTECTED_HOURS}
 
   Security:
   The script records command shape, revision, mode, PASS/FAIL, and sanitized summaries only.
   It redacts redis:// and rediss:// values, Authorization, Cookie, JWT, phone, paymentKey, orderId, and private customer data markers.
+  The REDIS_URL secret version bound to Cloud Run is read only to compare its host with the instance endpoints; it is never recorded.
 `;
 }
 
@@ -144,6 +165,50 @@ function parsePositiveInteger(name, value) {
   return Number(trimmed);
 }
 
+function parseNonNegativeInteger(name, value) {
+  const trimmed = String(value).trim();
+  if (!/^(0|[1-9]\d*)$/.test(trimmed)) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+  return Number(trimmed);
+}
+
+export function parseValkeyExpectations(env = process.env) {
+  const read = (name, fallback) => {
+    const value = env[name]?.trim();
+    if (value) return value;
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Missing required environment variable: ${name}`);
+  };
+  const instance = read('GRABIT_VALKEY_INSTANCE');
+  if (!/^[a-z]([-a-z0-9]*[a-z0-9])?$/.test(instance)) {
+    throw new Error('GRABIT_VALKEY_INSTANCE must be a Memorystore instance ID');
+  }
+  const mode = read('GRABIT_VALKEY_EXPECTED_MODE');
+  if (!Object.hasOwn(VALKEY_MODE_CONTRACTS, mode)) {
+    throw new Error('GRABIT_VALKEY_EXPECTED_MODE must be cluster or standalone');
+  }
+  const rawOpenAt = read('GRABIT_SALES_OPEN_AT');
+  let salesOpenAt = null;
+  if (rawOpenAt !== 'none') {
+    // Require an explicit offset so a KST opening is never read as local or UTC by accident.
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(rawOpenAt) || Number.isNaN(Date.parse(rawOpenAt))) {
+      throw new Error('GRABIT_SALES_OPEN_AT must be ISO-8601 with an offset (for example 2026-10-20T20:00:00+09:00) or "none"');
+    }
+    salesOpenAt = new Date(rawOpenAt);
+  }
+  return {
+    instance,
+    mode,
+    liveModes: VALKEY_MODE_CONTRACTS[mode].liveModes,
+    healthClient: VALKEY_MODE_CONTRACTS[mode].healthClient,
+    minReplicas: parseNonNegativeInteger('GRABIT_VALKEY_MIN_REPLICAS', read('GRABIT_VALKEY_MIN_REPLICAS', DEFAULT_MIN_REPLICAS)),
+    maxmemoryPolicy: read('GRABIT_VALKEY_MAXMEMORY_POLICY', DEFAULT_MAXMEMORY_POLICY),
+    salesOpenAt,
+    protectedHours: parsePositiveInteger('GRABIT_SALES_PROTECTED_HOURS', read('GRABIT_SALES_PROTECTED_HOURS', DEFAULT_SALES_PROTECTED_HOURS)),
+  };
+}
+
 function commandShape(check) {
   return `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check ${check}`;
 }
@@ -168,10 +233,12 @@ async function loadConfig(check) {
   const project = getEnv('GRABIT_GCP_PROJECT', 'grapit-491806');
   const region = getEnv('GRABIT_GCP_REGION', 'asia-northeast3');
   const idleSeconds = parsePositiveInteger('GRABIT_SMOKE_IDLE_SECONDS', getEnv('GRABIT_SMOKE_IDLE_SECONDS', '1800'));
+  const valkey = parseValkeyExpectations();
 
   return {
     check,
     apiUrl,
+    valkey,
     authHeaderPath,
     authHeaderName: header.name,
     authHeaders: header.headers,
@@ -253,6 +320,7 @@ function getCloudRunEvidence(config) {
   const container = service?.spec?.template?.spec?.containers?.[0] ?? {};
   const env = Array.isArray(container.env) ? container.env : [];
   const envMap = Object.fromEntries(env.map((entry) => [entry.name, entry.value ?? (entry.valueFrom ? '<secret>' : '')]));
+  const redisSecretRef = env.find((entry) => entry.name === 'REDIS_URL')?.valueFrom?.secretKeyRef;
 
   return {
     ok: true,
@@ -261,6 +329,9 @@ function getCloudRunEvidence(config) {
     traffic: service?.status?.traffic ?? [],
     declaredValkeyMode: envMap.VALKEY_MODE ?? 'missing',
     redisUrlBinding: envMap.REDIS_URL === '<secret>' ? 'secret-bound' : envMap.REDIS_URL ? 'plain-value-present' : 'missing',
+    redisUrlSecret: redisSecretRef?.name
+      ? { name: redisSecretRef.name, version: redisSecretRef.key || 'latest' }
+      : null,
     minInstances: templateAnnotations['autoscaling.knative.dev/minScale']
       ?? serviceAnnotations['autoscaling.knative.dev/minScale']
       ?? '0',
@@ -278,19 +349,118 @@ function getMemorystoreEvidence(config) {
     'memorystore',
     'instances',
     'describe',
-    VALKEY_INSTANCE,
+    config.valkey.instance,
     `--location=${config.region}`,
     `--project=${config.project}`,
   ]);
 
+  return summarizeMemorystoreInstance(config.valkey.instance, instance);
+}
+
+export function summarizeMemorystoreInstance(name, instance) {
+  // proto3 omits zero values: an absent replicaCount means zero replicas.
+  const replicaCount = Number(instance?.replicaCount ?? 0);
   return {
     ok: true,
-    instance: VALKEY_INSTANCE,
+    instance: name,
     state: instance?.state ?? 'unknown',
     mode: instance?.mode ?? 'unknown',
     shardCount: String(instance?.shardCount ?? 'unknown'),
     engineVersion: instance?.engineVersion ?? 'unknown',
+    replicaCount: Number.isInteger(replicaCount) ? replicaCount : null,
+    // Absent means the engine default, which is not an explicit no-eviction policy.
+    maxmemoryPolicy: instance?.engineConfigs?.['maxmemory-policy'] ?? null,
+    endpoints: instanceEndpoints(instance),
+    maintenancePolicy: instance?.maintenancePolicy ?? null,
+    maintenanceSchedule: instance?.maintenanceSchedule ?? null,
   };
+}
+
+export function instanceEndpoints(instance) {
+  const endpoints = [];
+  const add = (address, connectionType, port) => {
+    if (typeof address === 'string' && address) {
+      endpoints.push({ address, connectionType: connectionType ?? 'CONNECTION_TYPE_DISCOVERY', port: port ?? null });
+    }
+  };
+  for (const endpoint of instance?.discoveryEndpoints ?? []) add(endpoint?.address, 'CONNECTION_TYPE_DISCOVERY', endpoint?.port);
+  for (const connection of instance?.pscAutoConnections ?? []) add(connection?.ipAddress, connection?.connectionType, connection?.port);
+  for (const endpoint of instance?.endpoints ?? []) {
+    for (const connection of endpoint?.connections ?? []) {
+      const psc = connection?.pscAutoConnection ?? connection?.pscConnection;
+      add(psc?.ipAddress, psc?.connectionType, psc?.port);
+    }
+  }
+  return endpoints;
+}
+
+export function redisUrlHost(rawValue) {
+  try {
+    const url = new URL(String(rawValue).trim());
+    if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') return null;
+    return url.hostname.replace(/^\[|\]$/g, '') || null;
+  } catch {
+    return null;
+  }
+}
+
+function readRedisUrlHost(config, cloudRun) {
+  if (cloudRun.redisUrlBinding !== 'secret-bound' || !cloudRun.redisUrlSecret) {
+    return { host: null, error: 'REDIS_URL is not bound to a Secret Manager secret' };
+  }
+  const { name, version } = cloudRun.redisUrlSecret;
+  const result = runCli('gcloud', [
+    'secrets', 'versions', 'access', version, `--secret=${name}`, `--project=${config.project}`,
+  ]);
+  if (!result.ok) {
+    return { host: null, error: `secret ${name}:${version} unreadable (${redact(result.stderr).slice(0, 200)})` };
+  }
+  const host = redisUrlHost(result.stdout);
+  return host ? { host, error: null } : { host: null, error: `secret ${name}:${version} is not a redis:// or rediss:// URL` };
+}
+
+// Maintenance must not start inside [openAt - 1h, openAt + protectedHours).
+export function maintenanceOverlap(memorystore, salesOpenAt, protectedHours) {
+  if (!salesOpenAt) return { evaluated: false, overlaps: [], failures: [] };
+  const start = salesOpenAt.getTime() - SALES_PRE_GUARD_MS;
+  const end = salesOpenAt.getTime() + protectedHours * 60 * 60 * 1000;
+  const overlaps = [];
+  const failures = [];
+  const scheduled = memorystore.maintenanceSchedule;
+  if (scheduled?.startTime) {
+    const scheduledStart = Date.parse(scheduled.startTime);
+    const scheduledEnd = Date.parse(scheduled.endTime ?? '') || scheduledStart + DEFAULT_MAINTENANCE_DURATION_MS;
+    if (scheduledStart < end && scheduledEnd > start) overlaps.push(`scheduled ${scheduled.startTime}`);
+  }
+  const windows = memorystore.maintenancePolicy?.weeklyMaintenanceWindow ?? [];
+  if (windows.length === 0) {
+    failures.push('maintenance window is not pinned (no weeklyMaintenanceWindow)');
+  }
+  for (const window of windows) {
+    const weekday = WEEKDAYS.indexOf(window?.day);
+    if (weekday < 0) {
+      failures.push(`maintenance window day=${window?.day ?? 'missing'} is not recognised`);
+      continue;
+    }
+    const hours = Number(window?.startTime?.hours ?? 0);
+    const minutes = Number(window?.startTime?.minutes ?? 0);
+    const durationSeconds = Number.parseFloat(String(window?.duration ?? '').replace(/s$/, ''));
+    const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds * 1000 : DEFAULT_MAINTENANCE_DURATION_MS;
+    // Check every occurrence whose start can fall within a week of the protected interval.
+    const firstDay = new Date(start - 8 * 24 * 60 * 60 * 1000);
+    firstDay.setUTCHours(0, 0, 0, 0);
+    for (let day = firstDay.getTime(); day <= end; day += 24 * 60 * 60 * 1000) {
+      if (new Date(day).getUTCDay() !== weekday) continue;
+      const windowStart = day + (hours * 60 + minutes) * 60 * 1000;
+      if (windowStart < end && windowStart + durationMs > start) {
+        overlaps.push(`weekly ${window.day} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} UTC`);
+      }
+    }
+  }
+  for (const overlap of new Set(overlaps)) {
+    failures.push(`maintenance (${overlap}) overlaps the sales protection window`);
+  }
+  return { evaluated: true, overlaps: [...new Set(overlaps)], failures };
 }
 
 function servingTrafficEntries(cloudRun) {
@@ -324,13 +494,19 @@ function formatTraffic(traffic) {
     .join(', ');
 }
 
-function runtimeContractFailures(cloudRun, memorystore) {
+export function runtimeContractFailures(cloudRun, memorystore, expectations, redisTarget = { host: null, error: 'not read' }) {
   const failures = [];
-  if (cloudRun.declaredValkeyMode !== EXPECTED_VALKEY_MODE) {
-    failures.push(`VALKEY_MODE=${cloudRun.declaredValkeyMode}`);
+  if (cloudRun.declaredValkeyMode !== expectations.mode) {
+    failures.push(`VALKEY_MODE=${cloudRun.declaredValkeyMode} (expected ${expectations.mode})`);
   }
   if (cloudRun.redisUrlBinding !== 'secret-bound') {
     failures.push(`REDIS_URL binding=${cloudRun.redisUrlBinding}`);
+  }
+  if (redisTarget.error) {
+    failures.push(`REDIS_URL target=${redisTarget.error}`);
+  } else if (!memorystore.endpoints?.some((endpoint) => endpoint.address === redisTarget.host
+    && endpoint.connectionType !== 'CONNECTION_TYPE_READER')) {
+    failures.push(`REDIS_URL host is not a writable endpoint of ${memorystore.instance}`);
   }
   if (cloudRun.vpcEgress !== 'private-ranges-only') {
     failures.push(`VPC egress=${cloudRun.vpcEgress}`);
@@ -338,9 +514,19 @@ function runtimeContractFailures(cloudRun, memorystore) {
   if (cloudRun.networkInterfaces === 'unknown') {
     failures.push('network interfaces=unknown');
   }
-  if (memorystore.mode !== EXPECTED_LIVE_MODE) {
-    failures.push(`Memorystore mode=${memorystore.mode}`);
+  if (memorystore.state !== 'ACTIVE') {
+    failures.push(`Memorystore state=${memorystore.state}`);
   }
+  if (!expectations.liveModes.includes(memorystore.mode)) {
+    failures.push(`Memorystore mode=${memorystore.mode} (expected ${expectations.liveModes.join('|')})`);
+  }
+  if (memorystore.replicaCount === null || memorystore.replicaCount < expectations.minReplicas) {
+    failures.push(`Memorystore replicaCount=${memorystore.replicaCount} (minimum ${expectations.minReplicas})`);
+  }
+  if (memorystore.maxmemoryPolicy !== expectations.maxmemoryPolicy) {
+    failures.push(`maxmemory-policy=${memorystore.maxmemoryPolicy ?? 'engine-default'} (expected ${expectations.maxmemoryPolicy})`);
+  }
+  failures.push(...maintenanceOverlap(memorystore, expectations.salesOpenAt, expectations.protectedHours).failures);
   if (!isLatestReadyServingAllTraffic(cloudRun)) {
     failures.push(`traffic is not 100% on latestReadyRevisionName=${cloudRun.latestReadyRevisionName}`);
   }
@@ -465,8 +651,8 @@ async function checkHealth(config) {
     name: 'Health Ping Smoke',
     ok: response.body?.status === 'ok'
       && redis?.status === 'up'
-      && mode === EXPECTED_VALKEY_MODE
-      && client === 'ioredis-cluster'
+      && mode === config.valkey.mode
+      && client === config.valkey.healthClient
       && configured === true,
     summary: `health=${response.body?.status ?? 'unknown'}, redis=${redis?.status ?? 'unknown'}, mode=${mode ?? 'unknown'}, client=${client ?? 'unknown'}, configured=${configured ?? 'unknown'}`,
   };
@@ -850,14 +1036,19 @@ function fallbackCloudRun(error) {
   };
 }
 
-function fallbackMemorystore(error) {
+function fallbackMemorystore(config, error) {
   return {
     ok: false,
-    instance: VALKEY_INSTANCE,
+    instance: config.valkey.instance,
     state: 'unknown',
     mode: 'unknown',
     shardCount: 'unknown',
     engineVersion: 'unknown',
+    replicaCount: null,
+    maxmemoryPolicy: null,
+    endpoints: [],
+    maintenancePolicy: null,
+    maintenanceSchedule: null,
     evidenceError: redact(error?.message ?? error),
   };
 }
@@ -893,8 +1084,11 @@ async function runChecks(config) {
   }
   await validateFixture(config);
   const cloudRun = captureEvidence(() => getCloudRunEvidence(config), fallbackCloudRun);
-  const memorystore = captureEvidence(() => getMemorystoreEvidence(config), fallbackMemorystore);
-  const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);
+  const memorystore = captureEvidence(() => getMemorystoreEvidence(config), (error) => fallbackMemorystore(config, error));
+  const redisTarget = captureEvidence(() => readRedisUrlHost(config, cloudRun),
+    (error) => ({ host: null, error: redact(error?.message ?? error) }));
+  const maintenance = maintenanceOverlap(memorystore, config.valkey.salesOpenAt, config.valkey.protectedHours);
+  const runtimeFailures = runtimeContractFailures(cloudRun, memorystore, config.valkey, redisTarget);
   if (cloudRun.evidenceError) {
     runtimeFailures.push(`Cloud Run evidence=${cloudRun.evidenceError}`);
   }
@@ -930,6 +1124,9 @@ async function runChecks(config) {
     artifactPath: config.artifactPath,
     cloudRun,
     memorystore,
+    valkey: config.valkey,
+    redisTargetMatched: !redisTarget.error && !runtimeFailures.some((failure) => failure.startsWith('REDIS_URL host')),
+    maintenance,
     modeContractOk,
     runtimeContractFailures: runtimeFailures,
     checks,
@@ -957,8 +1154,13 @@ async function writeArtifact(evidence) {
     `- Target URL host: ${evidence.targetHost}`,
     `- Valkey instance: ${evidence.memorystore.instance}`,
     `- Live Memorystore mode: ${evidence.memorystore.mode}`,
-    `- Expected live mode: ${EXPECTED_LIVE_MODE}`,
-    `- VALKEY_MODE=cluster observed: ${evidence.cloudRun.declaredValkeyMode === EXPECTED_VALKEY_MODE ? 'PASS' : `FAIL (${evidence.cloudRun.declaredValkeyMode})`}`,
+    `- Expected live mode: ${evidence.valkey.liveModes.join(' | ')}`,
+    `- VALKEY_MODE=${evidence.valkey.mode} observed: ${evidence.cloudRun.declaredValkeyMode === evidence.valkey.mode ? 'PASS' : `FAIL (${evidence.cloudRun.declaredValkeyMode})`}`,
+    `- REDIS_URL secret host is a writable endpoint of ${evidence.memorystore.instance}: ${evidence.redisTargetMatched ? 'PASS' : 'FAIL'} (host value not recorded)`,
+    `- Replicas per shard: ${evidence.memorystore.replicaCount ?? 'unknown'} (minimum ${evidence.valkey.minReplicas})`,
+    `- maxmemory-policy: ${evidence.memorystore.maxmemoryPolicy ?? 'engine-default'} (expected ${evidence.valkey.maxmemoryPolicy})`,
+    `- Sales opening: ${evidence.valkey.salesOpenAt ? `${evidence.valkey.salesOpenAt.toISOString()} (protected ${evidence.valkey.protectedHours}h)` : 'none declared'}`,
+    `- Maintenance overlap: ${evidence.maintenance.evaluated ? (evidence.maintenance.failures.length ? `FAIL (${evidence.maintenance.failures.join('; ')})` : 'PASS') : 'not evaluated (GRABIT_SALES_OPEN_AT=none)'}`,
     `- REDIS_URL binding: ${evidence.cloudRun.redisUrlBinding}`,
     `- VPC egress: ${evidence.cloudRun.vpcEgress}`,
     `- Network interfaces: ${evidence.cloudRun.networkInterfaces}`,
@@ -969,7 +1171,7 @@ async function writeArtifact(evidence) {
     '',
     '| Check | Result | Summary |',
     '|-------|--------|---------|',
-    `| Production Runtime Contract | ${evidence.modeContractOk ? 'PASS' : 'FAIL'} | ${evidence.runtimeContractFailures.length > 0 ? `failures=${evidence.runtimeContractFailures.join('; ')}` : `live=${evidence.memorystore.mode}, declared=${evidence.cloudRun.declaredValkeyMode}, REDIS_URL=${evidence.cloudRun.redisUrlBinding}, VPC=${evidence.cloudRun.vpcEgress}`} |`,
+    `| Production Runtime Contract | ${evidence.modeContractOk ? 'PASS' : 'FAIL'} | ${evidence.runtimeContractFailures.length > 0 ? `failures=${evidence.runtimeContractFailures.join('; ')}` : `instance=${evidence.memorystore.instance}, live=${evidence.memorystore.mode}, declared=${evidence.cloudRun.declaredValkeyMode}, replicas=${evidence.memorystore.replicaCount}, maxmemory-policy=${evidence.memorystore.maxmemoryPolicy}, REDIS_URL=${evidence.cloudRun.redisUrlBinding} (endpoint match), VPC=${evidence.cloudRun.vpcEgress}`} |`,
     ...evidence.checks.map((check) => `| ${check.name} | ${check.ok ? 'PASS' : 'FAIL'} | ${redact(check.summary)} |`),
     `| Final automated smoke result | ${evidence.overallOk ? 'PASS' : 'FAIL'} | Sentry dashboard/API observation must still be recorded by the operator before final phase approval. |`,
     '',
@@ -979,7 +1181,15 @@ async function writeArtifact(evidence) {
   await appendFile(evidence.artifactPath, redact(lines.join('\n')), 'utf8');
 }
 
-try {
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     const resolved = webRequire.resolve('socket.io-client');
@@ -995,13 +1205,24 @@ try {
     artifactPath: evidence.artifactPath,
     targetHost: evidence.targetHost,
     latestReadyRevisionName: evidence.cloudRun.latestReadyRevisionName,
+    valkeyInstance: evidence.memorystore.instance,
     valkeyMode: evidence.memorystore.mode,
     declaredValkeyMode: evidence.cloudRun.declaredValkeyMode,
+    replicaCount: evidence.memorystore.replicaCount,
+    maxmemoryPolicy: evidence.memorystore.maxmemoryPolicy,
+    redisTargetMatched: evidence.redisTargetMatched,
+    runtimeContractFailures: evidence.runtimeContractFailures,
     checks: evidence.checks.map((check) => ({ name: check.name, ok: check.ok })),
     overallOk: evidence.overallOk,
   }, null, 2)));
   process.exit(evidence.overallOk ? 0 : 1);
-} catch (error) {
-  console.error(redact((error).stack ?? (error).message ?? error));
-  process.exit(1);
+}
+
+if (isEntrypoint()) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(redact((error).stack ?? (error).message ?? error));
+    process.exit(1);
+  }
 }
