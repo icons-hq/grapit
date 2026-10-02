@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  IDENTITY_SOURCES,
   INSTANCE,
   PreflightError,
   assertServerIdentity,
   failureMessage,
   parseArgs,
   parseDatabaseUrl,
+  postmasterServerIdentity,
+  readServerIdentity,
   serverIdentity,
 } from './production-preflight.mjs';
 
@@ -52,12 +55,54 @@ test('an external proxy port requires the server identity recorded by a script-m
 });
 
 test('refuses a connected server that differs from the expected or baseline server', () => {
-  const current = serverIdentity('1');
+  const current = { identity: serverIdentity('1'), source: IDENTITY_SOURCES.control };
   const other = serverIdentity('2');
-  assert.doesNotThrow(() => assertServerIdentity({ current, expected: current, baseline: { server: { identity: current } } }));
+  const baselineOf = (identity, source) => ({ server: { identity, ...(source ? { source } : {}) } });
+  assert.doesNotThrow(() => assertServerIdentity({ current, expected: current.identity, baseline: baselineOf(current.identity, current.source) }));
+  // Baselines recorded before the source field existed came from pg_control_system().
+  assert.doesNotThrow(() => assertServerIdentity({ current, expected: null, baseline: baselineOf(current.identity) }));
   assert.throws(() => assertServerIdentity({ current, expected: other, baseline: null }), { code: 'server_identity_mismatch' });
-  assert.throws(() => assertServerIdentity({ current: null, expected: current, baseline: null }), { code: 'server_identity_unavailable' });
-  assert.throws(() => assertServerIdentity({ current, expected: null, baseline: { server: { identity: other } } }), { code: 'baseline_server_mismatch' });
+  assert.throws(() => assertServerIdentity({ current, expected: null, baseline: baselineOf(other) }), { code: 'baseline_server_mismatch' });
   assert.throws(() => assertServerIdentity({ current, expected: null, baseline: {} }), { code: 'baseline_server_identity_missing' });
-  assert.doesNotThrow(() => assertServerIdentity({ current: null, expected: null, baseline: null }));
+  const fallback = { identity: postmasterServerIdentity({ postmasterStartMicros: '1790000000000000', databaseOid: '16384' }),
+    source: IDENTITY_SOURCES.postmaster };
+  assert.throws(() => assertServerIdentity({ current: fallback, expected: null, baseline: baselineOf(current.identity, current.source) }),
+    { code: 'baseline_server_identity_source_mismatch' });
+});
+
+test('an unidentified server is refused on every run, including the first baseline capture', () => {
+  for (const current of [null, { identity: null, source: IDENTITY_SOURCES.control }]) {
+    assert.throws(() => assertServerIdentity({ current, expected: null, baseline: null }), { code: 'server_identity_unavailable' });
+    assert.throws(() => assertServerIdentity({ current, expected: serverIdentity('1'), baseline: null }), { code: 'server_identity_unavailable' });
+  }
+});
+
+function fakeClient(answers) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql) {
+      queries.push(sql);
+      const answer = answers.find(([pattern]) => pattern.test(sql))?.[1];
+      if (answer instanceof Error) throw answer;
+      return { rows: answer ?? [] };
+    },
+  };
+}
+
+test('falls back to the postmaster identity when pg_control_system() is not granted', async () => {
+  const denied = new Error('permission denied for function pg_control_system');
+  const control = await readServerIdentity(fakeClient([[/pg_control_system/, [{ id: '7691968773436092450' }]]]));
+  assert.deepEqual(control, { identity: serverIdentity('7691968773436092450'), source: IDENTITY_SOURCES.control });
+
+  const fallback = await readServerIdentity(fakeClient([[/pg_control_system/, denied],
+    [/pg_postmaster_start_time/, [{ started: '1790000000123456', database_oid: '16384' }]]]));
+  assert.deepEqual(fallback, {
+    identity: postmasterServerIdentity({ postmasterStartMicros: '1790000000123456', databaseOid: '16384' }),
+    source: IDENTITY_SOURCES.postmaster,
+  });
+  assert.notEqual(fallback.identity,
+    postmasterServerIdentity({ postmasterStartMicros: '1790000000123457', databaseOid: '16384' }), 'a restarted or other server differs');
+
+  assert.equal(await readServerIdentity(fakeClient([[/pg_control_system/, denied], [/pg_postmaster_start_time/, denied]])), null);
 });

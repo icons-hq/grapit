@@ -16,6 +16,7 @@ import {
   parseConfig,
   parseSeatPool,
   parseUserPool,
+  requiredSeatCount,
   runValidUntilMs,
 } from './lib/phase26-load.js';
 
@@ -25,7 +26,8 @@ const validUntilMs = runValidUntilMs(config, Date.now());
 const users = new SharedArray('phase26-users', () =>
   parseUserPool(open(config.userPoolFile), { minUsers: config.targetVus, validUntilMs }));
 const seats = config.seatPoolFile
-  ? new SharedArray('phase26-seats', () => parseSeatPool(open(config.seatPoolFile)))
+  ? new SharedArray('phase26-seats', () =>
+    parseSeatPool(open(config.seatPoolFile), { minSeats: requiredSeatCount(config) }))
   : [];
 const metrics = {
   queueAdmitted: new Counter('phase26_queue_admitted'),

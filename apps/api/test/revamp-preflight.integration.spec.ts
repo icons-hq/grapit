@@ -185,6 +185,63 @@ describe('Revamp read-only release evidence', () => {
     await expect(stat(output)).rejects.toThrow();
   });
 
+  it('identifies the server without pg_control_system() and refuses a server it cannot identify', async () => {
+    // Managed PostgreSQL may not grant pg_control_system() to the application role.
+    const role = 'preflight_reader';
+    const password = 'Pw-preflight-reader-2d8a';
+    await pool.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+    await pool.query(`GRANT USAGE ON SCHEMA public, drizzle TO ${role}`);
+    await pool.query(`GRANT SELECT ON ALL TABLES IN SCHEMA public, drizzle TO ${role}`);
+    await pool.query('REVOKE EXECUTE ON FUNCTION pg_control_system() FROM PUBLIC');
+    try {
+      const readerUrl = `postgresql://${role}:${password}@/grapit?host=/cloudsql/${INSTANCE}`;
+      const { rows } = await pool.query<{ started: string; oid: string }>(`SELECT
+        (extract(epoch FROM pg_postmaster_start_time()) * 1000000)::bigint::text AS started,
+        (SELECT oid::text FROM pg_database WHERE datname = current_database()) AS oid`);
+      const fallbackId = createHash('sha256').update(`postmaster:${rows[0]!.started}:database:${rows[0]!.oid}`).digest('hex');
+      const proxyEnv = managedProxyEnv(join(work, 'reader-proxy.json'));
+
+      const beforePath = join(work, 'reader-before.json');
+      const before = run(readerUrl, [`--output=${beforePath}`], proxyEnv);
+      expect(before.stderr).toBe('');
+      expect(before.exitCode).toBe(0);
+      const evidence = JSON.parse(await readFile(beforePath, 'utf8'));
+      expect(evidence.server).toEqual({
+        identity: fallbackId,
+        source: 'sha256(pg_postmaster_start_time() microseconds + database oid)',
+      });
+      expect(evidence.server.identity).not.toBe(serverId);
+
+      const afterPath = join(work, 'reader-after.json');
+      const after = run(readerUrl, [`--output=${afterPath}`, `--baseline=${beforePath}`], proxyEnv);
+      expect(after.exitCode).toBe(0);
+      expect(JSON.parse(await readFile(afterPath, 'utf8')).preservationPassed).toBe(true);
+
+      // A baseline identified through pg_control_system() is never compared with a fallback identity.
+      const controlBaseline = await capture('control-source-baseline');
+      expect(controlBaseline.data.server.source).toBe('sha256(pg_control_system().system_identifier)');
+      const crossedPath = join(work, 'reader-crossed.json');
+      const crossed = run(readerUrl, [`--output=${crossedPath}`, `--baseline=${controlBaseline.output}`], proxyEnv);
+      expect(crossed.exitCode).toBe(1);
+      expect(crossed.stderr).toContain('code=baseline_server_identity_source_mismatch');
+      expect(await readFile(crossedPath, 'utf8')).toBe('');
+
+      // With no identity source left, even the first capture is refused before any table is read.
+      await pool.query('REVOKE EXECUTE ON FUNCTION pg_postmaster_start_time() FROM PUBLIC');
+      const unknownPath = join(work, 'reader-unidentified.json');
+      const unknown = run(readerUrl, [`--output=${unknownPath}`], proxyEnv);
+      expect(unknown.exitCode).toBe(1);
+      expect(unknown.stderr).toContain('code=server_identity_unavailable');
+      expect(`${unknown.stdout}${unknown.stderr}`).not.toContain(password);
+      expect(await readFile(unknownPath, 'utf8')).toBe('');
+    } finally {
+      await pool.query('GRANT EXECUTE ON FUNCTION pg_postmaster_start_time() TO PUBLIC');
+      await pool.query('GRANT EXECUTE ON FUNCTION pg_control_system() TO PUBLIC');
+      await pool.query(`DROP OWNED BY ${role}`);
+      await pool.query(`DROP ROLE ${role}`);
+    }
+  }, 60000);
+
   it('refuses an external proxy or baseline that points to a different server', async () => {
     const otherServer = createHash('sha256').update('another-cluster').digest('hex');
     const mismatched = run(tcpUrl(), [`--proxy-port=${container.getMappedPort(5432)}`,

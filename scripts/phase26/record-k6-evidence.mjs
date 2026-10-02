@@ -11,12 +11,26 @@ const P95_THRESHOLD_MS = 2000;
 const ERROR_RATE_THRESHOLD = 0.01;
 const STATUSES = new Set(['PASS', 'FAIL', 'BLOCKED', 'ACCEPTED_RISK']);
 // A gate name is a promise about load: PASS requires the measured peak of
-// concurrent VUs (k6 `vus` max) to reach it.
+// concurrent VUs (k6 `vus` max) to reach it. Mirrors GATES in
+// scripts/k6/lib/phase26-load.js (asserted by the unit test).
 export const GATE_TARGET_VUS = { LOAD_10K_BASELINE: 10000, LOAD_20K_STRESS: 20000 };
 // Every purchase step must be exercised (tagged by scripts/k6/lib/phase26-load.js).
 export const REQUIRED_FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
-// Minimum share of all HTTP requests, so a read-only run cannot pass as a purchase load.
-export const MIN_FLOW_SHARE = { queue: 0.05, lock: 0.005 };
+// Minimum share of all HTTP requests, so a read-only run cannot pass as a queue load.
+export const MIN_FLOW_SHARE = { queue: 0.05 };
+// Mirrors QUEUE_MAX_ACTIVE_ADMISSIONS in apps/api/src/modules/queue/queue.service.ts
+// (asserted by the unit test). Only admitted buyers can lock, so purchase traffic
+// is bounded by this cap, not by the VU count: buyers left WAITING poll the
+// queue and make lock a fraction of a percent of all requests in a healthy run.
+export const QUEUE_ACTIVE_ADMISSION_LIMIT = 1000;
+// Purchase steps are judged by absolute volume instead: at least half of one
+// full admission wave must reach each step.
+const MIN_PURCHASE_FLOW_REQUESTS = QUEUE_ACTIVE_ADMISSION_LIMIT / 2;
+export const MIN_FLOW_REQUESTS = {
+  lock: MIN_PURCHASE_FLOW_REQUESTS,
+  prepare: MIN_PURCHASE_FLOW_REQUESTS,
+  confirm: MIN_PURCHASE_FLOW_REQUESTS,
+};
 
 function usage() {
   return `Usage:
@@ -41,8 +55,10 @@ Options:
 The recorder preserves non-PASS states. Missing summaries, missing approval, or
 threshold failures never become PASS. A check is BLOCKED (never PASS) when the
 measured peak VUs are below the gate target (${GATE_TARGET_VUS.LOAD_10K_BASELINE}/${GATE_TARGET_VUS.LOAD_20K_STRESS}), when any of
-${REQUIRED_FLOWS.join('/')} has no tagged requests, or when queue/lock traffic is
-below ${MIN_FLOW_SHARE.queue * 100}%/${MIN_FLOW_SHARE.lock * 100}% of requests. Evidence is metadata-only and redacted.`;
+${REQUIRED_FLOWS.join('/')} has no tagged requests, when queue traffic is below
+${MIN_FLOW_SHARE.queue * 100}% of requests, or when lock/prepare/confirm each have fewer than
+${MIN_PURCHASE_FLOW_REQUESTS} requests (half of the API's ${QUEUE_ACTIVE_ADMISSION_LIMIT} active queue admissions).
+Evidence is metadata-only and redacted.`;
 }
 
 function parseArgs(argv) {
@@ -162,7 +178,7 @@ async function buildSummaryEvidence(args) {
     acceptance: {
       p95ThresholdMs: P95_THRESHOLD_MS,
       errorRateThreshold: ERROR_RATE_THRESHOLD,
-      classification: 'PASS requires both baseline and stress p95/error-rate thresholds (overall and per flow), peak VUs at the gate target, every purchase flow measured, plus approval token.',
+      classification: 'PASS requires both baseline and stress p95/error-rate thresholds (overall and per flow), peak VUs at the gate target, every purchase flow measured (queue share and lock/prepare/confirm volume floors), plus approval token.',
     },
   });
 }
@@ -258,6 +274,9 @@ export function classifySummary(gateId, parsed, { p95, errorRate, samples, sourc
     if (MIN_FLOW_SHARE[flow] !== undefined && (share === null || share < MIN_FLOW_SHARE[flow])) {
       coverageGaps.push(`${flow} share ${share === null ? 'unknown' : roundMetric(share)} below ${MIN_FLOW_SHARE[flow]}`);
     }
+    if (MIN_FLOW_REQUESTS[flow] !== undefined && requests < MIN_FLOW_REQUESTS[flow]) {
+      coverageGaps.push(`${flow} requests ${Math.round(requests)} below ${MIN_FLOW_REQUESTS[flow]}`);
+    }
     if (flowErrorRate === null || flowP95 === null) {
       coverageGaps.push(`${flow} per-flow error rate or p95 missing`);
     } else {
@@ -282,6 +301,7 @@ export function classifySummary(gateId, parsed, { p95, errorRate, samples, sourc
       peakVus: `>=${targetVus}`,
       requiredFlows: REQUIRED_FLOWS,
       minFlowShare: MIN_FLOW_SHARE,
+      minFlowRequests: MIN_FLOW_REQUESTS,
     },
     source,
   });

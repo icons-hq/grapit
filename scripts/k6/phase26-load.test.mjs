@@ -11,6 +11,7 @@ import {
   parseConfig,
   parseSeatPool,
   parseUserPool,
+  requiredSeatCount,
 } from './lib/phase26-load.js';
 
 // The real request contracts, so the load script cannot drift from the API.
@@ -60,9 +61,13 @@ function env(overrides = {}) {
 
 // Minimal API model with the production guards: Bearer JWT + refreshToken cookie
 // for the queue, plus the cookie-only grabit_queue_admission for lock/prepare/confirm.
-function fakeApi({ users, waitingPolls = 0 }) {
+// A confirmed seat is sold and can never be locked again.
+function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200 }) {
   const calls = [];
   const locks = new Map();
+  const sold = new Set();
+  const reservations = new Map();
+  let confirms = 0;
   let polls = waitingPolls;
   const byToken = new Map(users.map((user) => [user.accessToken, user]));
 
@@ -70,9 +75,7 @@ function fakeApi({ users, waitingPolls = 0 }) {
     return { status, body: body === undefined ? '' : JSON.stringify(body) };
   }
 
-  function handle(jar, method, url, body, params) {
-    const path = url.slice(API.length);
-    calls.push({ method, path, headers: params?.headers ?? {}, tags: params?.tags ?? {}, body });
+  function route(jar, method, path, body, params) {
     if (method === 'GET' && path === '/health') return respond(200, { status: 'ok' });
     if (method === 'GET' && path === `/performances/${PERFORMANCE_ID}`) {
       return respond(200, { title: `${MARKER} load rehearsal`, showtimes: [{ id: SHOWTIME_ID }],
@@ -83,6 +86,7 @@ function fakeApi({ users, waitingPolls = 0 }) {
     const bearer = /^Bearer (.+)$/.exec(params?.headers?.Authorization ?? '')?.[1];
     const user = bearer ? byToken.get(bearer) : undefined;
     if (!user) return respond(401);
+    // QueueService.resolveBrowserIdentity / AdmissionGuard need the refresh cookie on every request.
     if (jar.cookies.get(REFRESH_COOKIE) !== user.refreshToken) return respond(401, { message: '브라우저 세션이 필요합니다' });
 
     if (method === 'POST' && path === `/queue/performances/${PERFORMANCE_ID}/enter`) {
@@ -97,6 +101,7 @@ function fakeApi({ users, waitingPolls = 0 }) {
     if (method === 'POST' && path === '/booking/seats/lock') {
       if (!admitted) return respond(403, { message: '대기열 입장 인증이 필요합니다' });
       const { seatId } = JSON.parse(body);
+      if (sold.has(seatId)) return respond(409, { message: '이미 판매된 좌석입니다' });
       if (locks.has(seatId) && locks.get(seatId) !== user.refreshToken) return respond(409);
       locks.set(seatId, user.refreshToken);
       return respond(201, { success: true });
@@ -108,11 +113,22 @@ function fakeApi({ users, waitingPolls = 0 }) {
       const seat = parsed.data.seats[0];
       if (locks.get(seat.seatKey) !== user.refreshToken) return respond(409);
       if (parsed.data.amount !== seat.price + shared.TICKET_SERVICE_FEE_KRW) return respond(400);
+      reservations.set(parsed.data.orderId, seat.seatKey);
       return respond(201, { reservationId: `reservation-${parsed.data.orderId}` });
     }
     if (method === 'POST' && path === '/payments/confirm') {
       if (!admitted) return respond(403);
-      return shared.confirmPaymentSchema.safeParse(JSON.parse(body)).success ? respond(200, { status: 'CONFIRMED' }) : respond(400);
+      const parsed = shared.confirmPaymentSchema.safeParse(JSON.parse(body));
+      if (!parsed.success) return respond(400);
+      confirms += 1;
+      const outcome = confirmOutcome(confirms);
+      // status 0 models a timeout after the server already sold the seat.
+      if (outcome === 200 || outcome === 0) {
+        const seatKey = reservations.get(parsed.data.orderId);
+        sold.add(seatKey);
+        locks.delete(seatKey);
+      }
+      return outcome === 200 ? respond(200, { status: 'CONFIRMED' }) : respond(outcome);
     }
     if (method === 'PUT' && path.endsWith('/cancel-pending')) return respond(204);
     if (method === 'DELETE' && path === `/booking/seats/lock-all/${SHOWTIME_ID}`) {
@@ -122,13 +138,23 @@ function fakeApi({ users, waitingPolls = 0 }) {
     return respond(404);
   }
 
-  // One k6-like http module per VU, each with its own cookie jar.
-  function httpForVu() {
-    const jar = { cookies: new Map(), set(url, name, value, options) {
-      assert.equal(url, API); assert.equal(options.path, '/'); this.cookies.set(name, value);
+  function handle(jar, method, url, body, params) {
+    const path = url.slice(API.length);
+    const response = route(jar, method, path, body, params);
+    calls.push({ method, path, headers: params?.headers ?? {}, tags: params?.tags ?? {}, body, status: response.status,
+      vu: jar.vu });
+    return response;
+  }
+
+  // One k6-like http module per VU. Like k6 (noCookiesReset=false), the VU gets
+  // an empty cookie jar at the start of every iteration.
+  function httpForVu(vu) {
+    const jar = { vu, cookies: new Map(), seeded: 0, set(url, name, value, options) {
+      assert.equal(url, API); assert.equal(options.path, '/'); this.cookies.set(name, value); this.seeded += 1;
     } };
     return {
       jar,
+      resetCookies: () => { jar.cookies = new Map(); },
       cookieJar: () => jar,
       get: (url, params) => handle(jar, 'GET', url, null, params),
       post: (url, body, params) => handle(jar, 'POST', url, body, params),
@@ -138,7 +164,7 @@ function fakeApi({ users, waitingPolls = 0 }) {
     };
   }
 
-  return { calls, locks, httpForVu };
+  return { calls, locks, sold, httpForVu };
 }
 
 function counter() {
@@ -146,8 +172,8 @@ function counter() {
   return { values, add: (value, tags) => values.push({ value, tags }) };
 }
 
-function harness({ config, users, seats, waitingPolls = 0, random = 0 }) {
-  const api = fakeApi({ users, waitingPolls });
+function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOutcome }) {
+  const api = fakeApi({ users, waitingPolls, confirmOutcome });
   const metrics = { queueAdmitted: counter(), queueNotAdmitted: counter() };
   const sleeps = [];
   let clock = NOW_S * 1000;
@@ -155,21 +181,25 @@ function harness({ config, users, seats, waitingPolls = 0, random = 0 }) {
   const vus = new Map();
   function vu(id) {
     if (!vus.has(id)) {
+      const http = api.httpForVu(id);
       const exec = { vu: { idInTest: id }, scenario: { get iterationInTest() { return iterationInTest; } } };
-      const load = createPhase26Load({ http: api.httpForVu(), check: () => true, exec, metrics, config, users, seats,
+      const load = createPhase26Load({ http, check: () => true, exec, metrics, config, users, seats,
         sleep: (seconds) => { sleeps.push(seconds); clock += seconds * 1000; }, now: () => new Date(clock) });
-      vus.set(id, load);
+      vus.set(id, { http, load });
     }
     return vus.get(id);
   }
   const originalRandom = Math.random;
   return {
     api, metrics, sleeps,
+    jar: (id) => vu(id).http.jar,
     run(id, setupData) {
+      const { http, load } = vu(id);
+      http.resetCookies();
       Math.random = () => random;
-      try { vu(id).iteration(setupData); } finally { Math.random = originalRandom; iterationInTest += 1; }
+      try { load.iteration(setupData); } finally { Math.random = originalRandom; iterationInTest += 1; }
     },
-    setup: () => vu(1).setup(),
+    setup: () => vu(0).load.setup(),
   };
 }
 
@@ -198,6 +228,9 @@ test('models the gate names as concurrent buyers ramped like an opening spike, w
   assert.deepEqual(stress.thresholds['http_reqs{flow:confirm}'], ['count>0']);
 });
 
+const POLICY = { maxTicketsPerOrder: 1, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false };
+const lockCalls = (h) => h.api.calls.filter((call) => call.path === '/booking/seats/lock');
+
 test('validates one distinct, non-admin buyer per VU whose token outlives the run', () => {
   const validUntilMs = (NOW_S + 600) * 1000;
   assert.equal(parseUserPool(JSON.stringify(buyers(3)), { minUsers: 3, validUntilMs }).length, 3);
@@ -210,9 +243,28 @@ test('validates one distinct, non-admin buyer per VU whose token outlives the ru
   assert.throws(() => parseSeatPool([{ seatId: 'A-1' }]), /needs seatKey/);
 });
 
+test('sizes the seat pool so every VU owns its seats', () => {
+  assert.equal(requiredSeatCount(parseConfig(env(), 'LOAD_10K_BASELINE')), 10000);
+  assert.equal(requiredSeatCount(parseConfig(env({ PHASE26_CONFIRM_MODE: 'pg-stub', PHASE26_MAX_PURCHASES_PER_VU: '2' }),
+    'LOAD_20K_STRESS')), 40000);
+  assert.equal(requiredSeatCount(parseConfig(env({ PHASE26_MUTATION_WEIGHT: '0' }), 'LOAD_10K_BASELINE')), 0);
+  assert.throws(() => parseSeatPool(seatPool(5), { minSeats: 6 }), /at least 6 are required/);
+  assert.equal(parseSeatPool(seatPool(6), { minSeats: 6 }).length, 6);
+});
+
+test('setup refuses tokens that would expire during the run once VU initialisation is over', () => {
+  const config = parseConfig(env(), 'LOAD_10K_BASELINE');
+  // Valid when the pool was parsed, but the 11.5 minute run + 2 minute margin outlasts a 13 minute token.
+  const users = parseUserPool(buyers(1, { exp: NOW_S + 13 * 60 }), { minUsers: 1, validUntilMs: NOW_S * 1000 });
+  const h = harness({ config, users, seats: parseSeatPool(seatPool(1)) });
+  assert.throws(() => h.setup(), /expires before the run ends/);
+  const fresh = harness({ config, users: parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 }), seats: parseSeatPool(seatPool(1)) });
+  assert.doesNotThrow(() => fresh.setup());
+});
+
 test('a buyer journey authenticates the queue, carries the admission cookie and sends a contract-valid prepare', () => {
   const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0' }), 'LOAD_10K_BASELINE');
-  const users = buyers(2);
+  const users = parseUserPool(buyers(2), { minUsers: 2, validUntilMs: 0 });
   const seats = parseSeatPool(seatPool(4));
   const h = harness({ config, users, seats, random: 0 });
   const setupData = h.setup();
@@ -222,13 +274,12 @@ test('a buyer journey authenticates the queue, carries the admission cookie and 
   h.run(1, setupData);
   h.run(2, setupData);
   h.run(1, setupData);
-  const statusOf = (path) => h.api.calls.filter((call) => call.path === path).map((call) => call.tags.flow);
-  assert.deepEqual(statusOf('/booking/seats/lock'), ['lock', 'lock', 'lock']);
-  const lockedSeats = h.api.calls.filter((call) => call.path === '/booking/seats/lock').map((call) => JSON.parse(call.body).seatId);
-  assert.deepEqual(lockedSeats, ['1F:A-1', '1F:A-2', '1F:A-3'], 'each iteration locks a distinct seat');
+  assert.deepEqual(lockCalls(h).map((call) => [call.vu, JSON.parse(call.body).seatId, call.status]),
+    [[1, '1F:A-1', 201], [2, '1F:A-2', 201], [1, '1F:A-1', 201]], 'each VU locks its own seat; released seats are reused');
   const prepares = h.api.calls.filter((call) => call.path === '/reservations/prepare');
   assert.equal(prepares.length, 3);
   for (const call of prepares) {
+    assert.equal(call.status, 201);
     const body = JSON.parse(call.body);
     assert.ok(prepareTransportSchema.safeParse(body).success, 'prepare body satisfies the shared contract');
     assert.ok(body.orderId.startsWith('PHASE26_ORD-'));
@@ -243,24 +294,37 @@ test('a buyer journey authenticates the queue, carries the admission cookie and 
   assert.deepEqual(h.metrics.queueAdmitted.values.length, 3);
 });
 
+test('a VU keeps its browser identity across k6 iterations although k6 empties the cookie jar', () => {
+  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0' }), 'LOAD_10K_BASELINE');
+  const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
+  const h = harness({ config, users, seats: parseSeatPool(seatPool(1)), random: 0 });
+  const setupData = h.setup();
+  for (let iteration = 0; iteration < 4; iteration += 1) h.run(1, setupData);
+  const enters = h.api.calls.filter((call) => call.path.endsWith('/enter'));
+  assert.deepEqual(enters.map((call) => call.status), [201, 201, 201, 201], 'every iteration re-enters with the refresh cookie');
+  assert.deepEqual(lockCalls(h).map((call) => call.status), [201, 201, 201, 201]);
+  assert.equal(h.api.calls.some((call) => call.status === 401 || call.status === 403), false);
+  assert.equal(h.jar(1).seeded, 4, 'the refresh cookie is seeded into every fresh jar');
+});
+
 test('waits in the queue with status polling and books only after ADMITTED', () => {
   const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_QUEUE_POLL_SECONDS: '2', PHASE26_QUEUE_MAX_WAIT_SECONDS: '4' }), 'LOAD_10K_BASELINE');
   const users = buyers(1);
   const seats = parseSeatPool(seatPool(2));
   const waiting = harness({ config, users, seats, waitingPolls: 10, random: 0 });
-  waiting.run(1, { bookingPolicy: { maxTicketsPerOrder: 1, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false } });
+  waiting.run(1, { bookingPolicy: POLICY });
   assert.equal(waiting.api.calls.filter((call) => call.path.startsWith('/queue/sessions/')).length, 2);
   assert.equal(waiting.api.calls.some((call) => call.path === '/booking/seats/lock'), false);
   assert.equal(waiting.metrics.queueNotAdmitted.values[0].tags.state, 'WAITING');
 
   const admitted = harness({ config, users, seats, waitingPolls: 2, random: 0 });
-  admitted.run(1, { bookingPolicy: { maxTicketsPerOrder: 1, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false } });
-  assert.equal(admitted.api.calls.filter((call) => call.path === '/booking/seats/lock').length, 1);
+  admitted.run(1, { bookingPolicy: POLICY });
+  assert.equal(lockCalls(admitted).length, 1);
 });
 
 test('pg-stub confirm sends a contract-valid confirm once per buyer and keeps the purchase', () => {
   const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub' }), 'LOAD_20K_STRESS');
-  const users = buyers(1);
+  const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
   const h = harness({ config, users, seats: parseSeatPool(seatPool(3)), random: 0 });
   const setupData = h.setup();
   h.run(1, setupData);
@@ -271,7 +335,41 @@ test('pg-stub confirm sends a contract-valid confirm once per buyer and keeps th
   assert.ok(body.paymentKey.startsWith('phase26_stub_PHASE26_ORD-'));
   assert.equal(body.amount, 52000);
   assert.equal(h.api.calls.filter((call) => call.path.endsWith('/cancel-pending')).length, 0);
-  assert.equal(h.api.calls.filter((call) => call.path === '/booking/seats/lock').length, 1);
+  assert.equal(lockCalls(h).length, 1);
+});
+
+test('pg-stub purchases across VUs and iterations never lock a sold or foreign seat', () => {
+  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub',
+    PHASE26_MAX_PURCHASES_PER_VU: '2', PHASE26_STRESS_TARGET_VUS: '3' }), 'LOAD_20K_STRESS');
+  const users = parseUserPool(buyers(3), { minUsers: 3, validUntilMs: 0 });
+  const seats = parseSeatPool(seatPool(requiredSeatCount(config)), { minSeats: requiredSeatCount(config) });
+  const h = harness({ config, users, seats, random: 0 });
+  const setupData = h.setup();
+  // Interleave VUs like concurrent buyers; each tries to buy on every iteration.
+  for (let round = 0; round < 4; round += 1) for (const vu of [1, 2, 3]) h.run(vu, setupData);
+  assert.equal(lockCalls(h).filter((call) => call.status === 409).length, 0, 'no lock conflicts on sold or foreign seats');
+  assert.equal(h.api.sold.size, 6, 'every buyer bought its two own seats');
+  const seatsByVu = (vu) => lockCalls(h).filter((call) => call.vu === vu).map((call) => JSON.parse(call.body).seatId);
+  assert.deepEqual(seatsByVu(1), ['1F:A-1', '1F:A-2']);
+  assert.deepEqual(seatsByVu(2), ['1F:A-3', '1F:A-4']);
+  assert.deepEqual(seatsByVu(3), ['1F:A-5', '1F:A-6']);
+  assert.equal(h.api.calls.filter((call) => call.path === '/payments/confirm').length, 6);
+});
+
+test('pg-stub reuses a seat after a clean confirm rejection but never after an unanswered confirm', () => {
+  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub',
+    PHASE26_MAX_PURCHASES_PER_VU: '2' }), 'LOAD_20K_STRESS');
+  const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
+  // 1st confirm: clean 409 (released, same seat retried); 2nd: timeout after the
+  // server sold the seat; 3rd: success.
+  const outcomes = [409, 0, 200];
+  const h = harness({ config, users, seats: parseSeatPool(seatPool(2)), random: 0, confirmOutcome: (n) => outcomes[n - 1] });
+  const setupData = h.setup();
+  for (let iteration = 0; iteration < 4; iteration += 1) h.run(1, setupData);
+  assert.deepEqual(lockCalls(h).map((call) => [JSON.parse(call.body).seatId, call.status]),
+    [['1F:A-1', 201], ['1F:A-1', 201], ['1F:A-2', 201]]);
+  assert.equal(h.api.calls.filter((call) => call.path === '/payments/confirm').length, 3);
+  assert.deepEqual([...h.api.sold].sort(), ['1F:A-1', '1F:A-2']);
 });
 
 test('keeps the k6 service fee and cookie names aligned with the API', () => {

@@ -19,6 +19,14 @@ const DATABASE = 'grapit';
 const PROXY_READY_PATTERN = /ready for new connections/i;
 const PROXY_START_TIMEOUT_MS = 30_000;
 const SERVER_ID_PATTERN = /^[0-9a-f]{64}$/;
+// Where `server.identity` came from. The cluster's system identifier is
+// preferred. If the application role cannot execute pg_control_system(), the
+// postmaster start time plus the database OID still tell instances apart; it
+// changes when the server restarts, which fails closed (baseline mismatch).
+export const IDENTITY_SOURCES = {
+  control: 'sha256(pg_control_system().system_identifier)',
+  postmaster: 'sha256(pg_postmaster_start_time() microseconds + database oid)',
+};
 
 const USAGE = [
   'Usage: REVAMP_PROD_DATABASE_URL=<secret in process memory> node scripts/revamp/production-preflight.mjs --read-only',
@@ -38,9 +46,10 @@ const FAILURES = {
   output_exists: 'The output path already exists or is not writable. Use a new private path.',
   invalid_baseline: 'The baseline file is not read-only evidence for the expected target.',
   baseline_server_identity_missing: 'The baseline has no server identity. Capture a new baseline with this script version.',
+  baseline_server_identity_source_mismatch: 'The baseline server identity came from a different source. Capture baseline and comparison with the same database role.',
   proxy_unavailable: 'Cloud SQL Auth Proxy could not be started. Check CLOUD_SQL_PROXY_BIN/PATH and ADC privately.',
   proxy_failed: 'Cloud SQL Auth Proxy exited or did not become ready for the expected instance.',
-  server_identity_unavailable: 'The connected server identity could not be read, so the target cannot be proven.',
+  server_identity_unavailable: 'The connected server identity could not be read, so the target cannot be proven. No evidence was written.',
   server_identity_mismatch: 'The connected server is not the expected server. No comparison was written.',
   baseline_server_mismatch: 'The connected server differs from the baseline server. No comparison was written.',
   read_failed: 'Read-only preflight failed. Check the expected proxy, target and schema privately; no SQL write was attempted.',
@@ -117,16 +126,42 @@ export function serverIdentity(systemIdentifier) {
   return createHash('sha256').update(String(systemIdentifier)).digest('hex');
 }
 
+export function postmasterServerIdentity({ postmasterStartMicros, databaseOid }) {
+  return createHash('sha256').update(`postmaster:${postmasterStartMicros}:database:${databaseOid}`).digest('hex');
+}
+
+// Runs before any table is read, outside the snapshot transaction, so a
+// permission error cannot abort it. Returns null only when neither source works.
+export async function readServerIdentity(client) {
+  try {
+    const row = (await client.query('SELECT system_identifier::text AS id FROM pg_control_system()')).rows[0];
+    if (row?.id) return { identity: serverIdentity(row.id), source: IDENTITY_SOURCES.control };
+  } catch { /* Managed PostgreSQL may not grant pg_control_system() to application roles. */ }
+  try {
+    const row = (await client.query(`SELECT (extract(epoch FROM pg_postmaster_start_time()) * 1000000)::bigint::text AS started,
+      (SELECT oid::text FROM pg_database WHERE datname = current_database()) AS database_oid`)).rows[0];
+    if (row?.started && row?.database_oid) {
+      return {
+        identity: postmasterServerIdentity({ postmasterStartMicros: row.started, databaseOid: row.database_oid }),
+        source: IDENTITY_SOURCES.postmaster,
+      };
+    }
+  } catch { /* fall through: an unidentified server is refused below */ }
+  return null;
+}
+
+// Every run must identify its server: evidence from an unidentified server could
+// never be pinned by a later --baseline comparison, so it is refused up front.
 export function assertServerIdentity({ current, expected, baseline }) {
-  if (expected) {
-    if (!current) throw new PreflightError('server_identity_unavailable');
-    if (current !== expected) throw new PreflightError('server_identity_mismatch');
-  }
+  if (!current?.identity) throw new PreflightError('server_identity_unavailable');
+  if (expected && current.identity !== expected) throw new PreflightError('server_identity_mismatch');
   if (baseline) {
     const recorded = baseline.server?.identity;
     if (!recorded) throw new PreflightError('baseline_server_identity_missing');
-    if (!current) throw new PreflightError('server_identity_unavailable');
-    if (recorded !== current) throw new PreflightError('baseline_server_mismatch');
+    if ((baseline.server.source ?? IDENTITY_SOURCES.control) !== current.source) {
+      throw new PreflightError('baseline_server_identity_source_mismatch');
+    }
+    if (recorded !== current.identity) throw new PreflightError('baseline_server_mismatch');
   }
 }
 
@@ -203,14 +238,6 @@ function identifier(name) {
 function ensure(condition) { if (!condition) throw new PreflightError('read_failed'); }
 
 async function collect(client, baseline) {
-  // Read identity before the snapshot transaction: a permission error must not
-  // abort the READ ONLY transaction, and an unknown identity is decided by policy.
-  let identity = null;
-  try {
-    const row = (await client.query('SELECT system_identifier::text AS id FROM pg_control_system()')).rows[0];
-    if (row?.id) identity = serverIdentity(row.id);
-  } catch { identity = null; }
-
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   ensure((await client.query('SHOW transaction_read_only')).rows[0].transaction_read_only === 'on');
   ensure((await client.query('SELECT current_database() AS name')).rows[0].name === DATABASE);
@@ -240,7 +267,7 @@ async function collect(client, baseline) {
   const expandedCheckoutColumns = Object.fromEntries(['checkout_payment_method', 'checkout_started_at'].map((name) => [name,
     columns.some((column) => column.table_name === 'reservations' && column.column_name === name)]));
   await client.query('COMMIT');
-  return { identity, records, inFlight, providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, expandedCheckoutColumns };
+  return { records, inFlight, providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, expandedCheckoutColumns };
 }
 
 function compare(baseline, records) {
@@ -278,8 +305,10 @@ export async function main(argv = process.argv.slice(2)) {
     client.on('error', () => undefined);
     try { await client.connect(); } catch { throw new PreflightError(proxy?.child.exitedEarly ? 'proxy_failed' : 'read_failed'); }
 
+    // Prove the server before reading a single table from it.
+    const server = await readServerIdentity(client);
+    assertServerIdentity({ current: server, expected: args.expectedServerId, baseline });
     const snapshot = await collect(client, baseline);
-    assertServerIdentity({ current: snapshot.identity, expected: args.expectedServerId, baseline });
     if (proxy?.child.exitedEarly) throw new PreflightError('proxy_failed');
 
     const comparison = compare(baseline, snapshot.records);
@@ -287,7 +316,6 @@ export async function main(argv = process.argv.slice(2)) {
     const migrationExpectation = args.expectedMigrations === null ? null
       : { expected: args.expectedMigrations, actual: snapshot.migrations.count, met: snapshot.migrations.count === args.expectedMigrations };
     const connection = { proxy: args.proxyPort === null ? 'script-managed' : 'external', instance: INSTANCE };
-    const server = { identity: snapshot.identity, source: 'sha256(pg_control_system().system_identifier)' };
     const { records, inFlight, providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, expandedCheckoutColumns } = snapshot;
     const result = { checkedAt: new Date().toISOString(), target: TARGET, readOnly: true, connection, server, records, inFlight,
       providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, migrationExpectation, expandedCheckoutColumns,

@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { classifySummary, readK6Summary } from './record-k6-evidence.mjs';
+import { FLOWS, GATES } from '../k6/lib/phase26-load.js';
+import {
+  GATE_TARGET_VUS,
+  MIN_FLOW_REQUESTS,
+  QUEUE_ACTIVE_ADMISSION_LIMIT,
+  REQUIRED_FLOWS,
+  classifySummary,
+  readK6Summary,
+} from './record-k6-evidence.mjs';
 
 const RECORDER = fileURLToPath(new URL('./record-k6-evidence.mjs', import.meta.url));
 
@@ -57,6 +66,12 @@ test('PASS requires every purchase flow, the gate peak and per-flow thresholds',
   assert.equal(thinQueue.status, 'BLOCKED');
   assert.match(thinQueue.reason, /queue share/);
 
+  const thinPurchases = classify('LOAD_20K_STRESS', summary({ peakVus: 20000,
+    flows: { read: 60000, queue: 25000, lock: 120, prepare: 110, confirm: 100 } }));
+  assert.equal(thinPurchases.status, 'BLOCKED');
+  assert.match(thinPurchases.reason, /lock requests 120 below 500/);
+  assert.match(thinPurchases.reason, /confirm requests 100 below 500/);
+
   const failingLocks = classify('LOAD_10K_BASELINE', summary({ flowErrors: { lock: 0.2 } }));
   assert.equal(failingLocks.status, 'FAIL');
   assert.match(failingLocks.reason, /lock error rate 0.2/);
@@ -83,4 +98,26 @@ test('the CLI records BLOCKED for a read-only summary even with operator approva
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+});
+
+test('a healthy run bounded by the queue admission cap passes although lock is a tiny share of requests', () => {
+  // 10K VUs for 10 minutes: ~1,000 admitted buyers book, ~9,000 WAITING buyers
+  // poll the queue every 2s. Lock is ~0.03% of requests, yet every purchase step
+  // ran for a full admission wave.
+  const queueModel = summary({ flows: { read: 684000, queue: 2515000, lock: 1000, prepare: 1000, confirm: 990 } });
+  const result = classify('LOAD_10K_BASELINE', queueModel);
+  assert.equal(result.status, 'PASS', result.reason);
+  assert.ok(result.flows.lock.share < 0.001);
+  assert.deepEqual(result.thresholds.minFlowRequests, { lock: 500, prepare: 500, confirm: 500 });
+});
+
+test('keeps gate targets, flows and the admission cap aligned with the k6 script and the API', () => {
+  for (const [gateId, gate] of Object.entries(GATES)) assert.equal(GATE_TARGET_VUS[gateId], gate.targetVus, gateId);
+  assert.deepEqual(Object.keys(GATE_TARGET_VUS).sort(), Object.keys(GATES).sort());
+  assert.deepEqual(REQUIRED_FLOWS, FLOWS);
+  const source = readFileSync(fileURLToPath(new URL('../../apps/api/src/modules/queue/queue.service.ts', import.meta.url)), 'utf8');
+  const declared = /\bQUEUE_MAX_ACTIVE_ADMISSIONS\s*=\s*([\d_]+)\s*;/.exec(source);
+  assert.ok(declared, 'QUEUE_MAX_ACTIVE_ADMISSIONS declaration not found in queue.service.ts');
+  assert.equal(QUEUE_ACTIVE_ADMISSION_LIMIT, Number(declared[1].replaceAll('_', '')));
+  assert.equal(MIN_FLOW_REQUESTS.lock, QUEUE_ACTIVE_ADMISSION_LIMIT / 2);
 });

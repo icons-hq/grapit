@@ -6,6 +6,10 @@
 // refresh-token cookie, and the queue admission cookie the API sets on enter.
 // The admission credential is cookie-only (AdmissionGuard); it is never sent
 // as a header.
+//
+// k6 empties each VU's cookie jar after every iteration (noCookiesReset=false
+// by default), so the refresh cookie is seeded at the start of every iteration
+// and each journey re-enters the queue, which reuses the buyer's queue session.
 
 export const APPROVAL_TOKEN = 'PHASE26_DEDICATED_TEST_EVENT_APPROVED';
 export const PHASE26_TEST = 'PHASE26_TEST';
@@ -193,6 +197,23 @@ export function buildOptions(config) {
   };
 }
 
+// Seats are partitioned per VU so concurrent buyers never contend for one seat
+// and a sold seat is never locked again: VU n owns the seat-pool slice
+// [(n - 1) * slots, n * slots). Without confirm every checkout is abandoned and
+// its seat released, so one seat per VU is enough; with pg-stub confirm every
+// purchase consumes the buyer's next seat.
+export function seatSlotsPerVu(config) {
+  return config.confirmMode === 'off' ? 1 : config.maxPurchasesPerVu;
+}
+
+export function requiredSeatCount(config) {
+  return config.weights.book > 0 ? config.targetVus * seatSlotsPerVu(config) : 0;
+}
+
+export function seatIndex(config, vuId, seatsUsed) {
+  return (vuId - 1) * seatSlotsPerVu(config) + seatsUsed;
+}
+
 function base64UrlDecode(value) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
   let bits = 0;
@@ -248,7 +269,7 @@ export function parseUserPool(raw, { minUsers, validUntilMs }) {
     if (refreshTokens[user.refreshToken]) throw new Error(`user pool entry ${index} repeats a refresh token`);
     subjects[claims.sub] = true;
     refreshTokens[user.refreshToken] = true;
-    return { accessToken: user.accessToken, refreshToken: user.refreshToken };
+    return { accessToken: user.accessToken, refreshToken: user.refreshToken, expMs: claims.exp * 1000 };
   });
 }
 
@@ -256,11 +277,28 @@ export function runValidUntilMs(config, nowMs) {
   return nowMs + config.runDurationMs + RUN_END_MARGIN_MS;
 }
 
+// Initialising 10K/20K VUs takes time after the pool was parsed, and API-issued
+// access tokens live only 15 minutes, so setup() re-checks expiry right before
+// the load starts instead of trusting the init-time check alone.
+export function assertUsersOutliveRun(users, config, nowMs) {
+  const validUntilMs = runValidUntilMs(config, nowMs);
+  for (let index = 0; index < users.length; index += 1) {
+    if (!(users[index].expMs >= validUntilMs)) {
+      throw new Error(`Phase 26 setup failed: user pool entry ${index} accessToken expires before the run ends `
+        + '(VU initialisation included); mint fresh tokens just before the run or shorten the stages');
+    }
+  }
+}
+
 const SEAT_FIELDS = ['seatId', 'seatKey', 'floorKey', 'floorLabel', 'tierName', 'row', 'number'];
 
-export function parseSeatPool(raw) {
+export function parseSeatPool(raw, { minSeats = 1 } = {}) {
   const seats = typeof raw === 'string' ? JSON.parse(raw) : raw;
   if (!Array.isArray(seats) || seats.length === 0) throw new Error('PHASE26_SEAT_POOL_FILE must contain a non-empty JSON array');
+  if (seats.length < minSeats) {
+    throw new Error(`PHASE26_SEAT_POOL_FILE has ${seats.length} seats; each VU needs its own seats `
+      + `(target VUs, times PHASE26_MAX_PURCHASES_PER_VU in pg-stub mode), so at least ${minSeats} are required`);
+  }
   const seen = {};
   return seats.map((seat, index) => {
     for (const field of SEAT_FIELDS) {
@@ -364,14 +402,16 @@ export function createPhase26Load({ http, check, sleep, exec, metrics, config, u
     return result;
   }
 
-  function currentBuyer() {
-    if (buyer) return buyer;
-    const vuId = exec.vu.idInTest;
-    const user = users[(vuId - 1) % users.length];
-    // One browser per VU: the refresh cookie identifies the device slot, and the
-    // jar keeps the admission cookie set by POST /queue/.../enter.
-    http.cookieJar().set(base, REFRESH_COOKIE, user.refreshToken, { path: '/' });
-    buyer = { accessToken: user.accessToken, purchases: 0 };
+  // One browser per VU: the refresh cookie identifies the device slot, and the
+  // jar keeps the admission cookie set by POST /queue/.../enter for the rest of
+  // the iteration. k6 replaces the jar before every iteration, so the persisted
+  // refresh cookie is seeded again each time, like a browser that kept it.
+  function startBrowser() {
+    if (!buyer) {
+      const user = users[(exec.vu.idInTest - 1) % users.length];
+      buyer = { accessToken: user.accessToken, refreshToken: user.refreshToken, seatsUsed: 0 };
+    }
+    http.cookieJar().set(base, REFRESH_COOKIE, buyer.refreshToken, { path: '/' });
     return buyer;
   }
 
@@ -408,7 +448,8 @@ export function createPhase26Load({ http, check, sleep, exec, metrics, config, u
   }
 
   function book(setupData) {
-    const seat = seats[exec.scenario.iterationInTest % seats.length];
+    const seat = seats[seatIndex(config, exec.vu.idInTest, buyer.seatsUsed)];
+    if (!seat) throw new Error('Phase 26 seat pool is smaller than the per-VU seat partition');
     const lock = http.post(`${base}/booking/seats/lock`, JSON.stringify({ showtimeId: config.showtimeId, seatId: seat.seatKey }),
       params('lock', 'lock:seat'));
     check(lock, { 'seat lock returns 2xx': isSuccess });
@@ -431,7 +472,10 @@ export function createPhase26Load({ http, check, sleep, exec, metrics, config, u
           params('confirm', 'confirm:payment'));
         check(confirm, { 'confirm returns 2xx': isSuccess });
         confirmed = isSuccess(confirm);
-        if (confirmed) buyer.purchases += 1;
+        // A confirm the server may have applied (2xx, timeout, 5xx) may have sold
+        // the seat, so the buyer moves to its next own seat. A clean 4xx
+        // rejection is released below and the same seat is reused.
+        if (confirmed || !(confirm.status >= 400 && confirm.status < 500)) buyer.seatsUsed += 1;
       }
     } finally {
       // Abandoned checkouts release their hold like a buyer leaving the page.
@@ -453,14 +497,16 @@ export function createPhase26Load({ http, check, sleep, exec, metrics, config, u
     }
     const performance = parseJson(responses[1]);
     assertTestEvent(performance, config);
+    assertUsersOutliveRun(users, config, now().getTime());
     return { bookingPolicy: toBookingPolicy(performance?.bookingPolicy) };
   }
 
   function iteration(setupData) {
-    currentBuyer();
+    startBrowser();
     let depth = chooseDepth(config.weights, Math.random());
-    // A buyer who already purchased keeps browsing/queueing but does not buy again.
-    if (depth === 'book' && buyer.purchases >= config.maxPurchasesPerVu) depth = 'queue';
+    // A buyer whose own seats are used up (purchased, or possibly sold by an
+    // unanswered confirm) keeps browsing/queueing but does not buy again.
+    if (depth === 'book' && buyer.seatsUsed >= seatSlotsPerVu(config)) depth = 'queue';
     browse();
     if (depth !== 'browse' && enterQueue() && depth === 'book') book(setupData);
     if (config.thinkTimeSeconds > 0) sleep(config.thinkTimeSeconds);

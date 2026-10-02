@@ -20,6 +20,8 @@ if (!args.includes('--run')) {
 }
 // Waves above the 1,000 active-admission cap are allowed so WAITING is measured.
 const MAX_SESSIONS = 2000;
+// Mirrors QUEUE_MAX_ACTIVE_ADMISSIONS in apps/api/src/modules/queue/queue.service.ts
+// (asserted by scripts/revamp/isolated-capacity.test.mjs).
 const QUEUE_ACTIVE_ADMISSION_LIMIT = 1000;
 const option = (name, fallback) => args.find((x) => x.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
 const waves = option('sessions', '100,500,1000').split(',').map(Number);

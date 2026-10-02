@@ -486,7 +486,10 @@ default `60s`, then `_HOLD` `10m`, `_RAMP_DOWN` `30s`) so the opening spike
 is modelled. Each VU is one buyer browser walking the real purchase path:
 performance detail + seat map, queue enter with status polling while
 `WAITING`, then (by weight) seat lock, prepare and, in `pg-stub` mode, confirm.
-Abandoned checkouts call `cancel-pending` and release their locks.
+Abandoned checkouts call `cancel-pending` and release their locks. k6 empties
+each VU's cookie jar after every iteration, so the script seeds the buyer's
+refresh cookie at the start of every iteration and each journey re-enters the
+queue, which reuses that buyer's queue session.
 
 Inputs (all required unless a default is shown; files are mounted privately and
 never committed):
@@ -498,9 +501,10 @@ never committed):
 | `PHASE26_TEST_MARKER` | Token matching `^PHASE26[_-][A-Za-z0-9_-]{6,}$`; the performance title must start with it |
 | `PHASE26_TEST_ORDER_PREFIX` | Order ID prefix for prepare/confirm, e.g. `PHASE26_ORD-`, so cleanup can scope the orders |
 | `PHASE26_LOAD_APPROVED` | `PHASE26_DEDICATED_TEST_EVENT_APPROVED` |
-| `PHASE26_USER_POOL_FILE` | JSON array of `{ "accessToken", "refreshToken" }`, one distinct non-admin buyer per VU (at least the target VU count), access tokens valid until the run ends. The refresh token is sent as the `refreshToken` cookie and must belong to a persisted refresh family; the queue admission cookie is taken from the enter response, never from a header |
-| `PHASE26_SEAT_POOL_FILE` | JSON array of floor-aware seat selections (`seatId`, `seatKey`, `floorKey`, `floorLabel`, `tierName`, `price`, `row`, `number`) of the test showtime; each booking iteration locks a different seat |
+| `PHASE26_USER_POOL_FILE` | JSON array of `{ "accessToken", "refreshToken" }`, one distinct buyer per VU (at least the target VU count). The refresh token is sent as the `refreshToken` cookie and must belong to a persisted refresh family; the queue admission cookie is taken from the enter response, never from a header. Every buyer must be a `user` (not `admin`) **in the database**, because the API reads role and verification from the user row, and must have completed email and phone verification (`is_email_verified` and `is_phone_verified`), otherwise lock/prepare/confirm return 403. Access tokens must outlive VU initialisation plus the whole run plus 2 minutes; `setup()` re-checks this after all VUs are initialised and aborts before any load. API-issued access tokens live 15 minutes (`jwtExpiresIn` is fixed in `apps/api/src/config/auth.config.ts`), so the default 60s + 10m + 30s stages leave about 1.5 minutes for minting and initialisation: log the buyers in immediately before `k6 run`, or shorten `PHASE26_<BASELINE|STRESS>_HOLD` (for example `8m`) when initialising 10K/20K VUs takes longer |
+| `PHASE26_SEAT_POOL_FILE` | JSON array of floor-aware seat selections (`seatId`, `seatKey`, `floorKey`, `floorLabel`, `tierName`, `price`, `row`, `number`) of the test showtime. Seats are partitioned per VU (VU n owns its own slice), so buyers never contend for a seat and a sold seat is never locked again. It needs at least the target VU count of seats, and in `pg-stub` mode the target VU count × `PHASE26_MAX_PURCHASES_PER_VU` (20,000 × 1 for stress); the scripts refuse a smaller pool. The test performance must also keep at least 1,000 remaining seats, because the queue admits at most `min(remaining seats, 1,000)` buyers at a time |
 | `PHASE26_CONFIRM_MODE` | `off` (default) or `pg-stub`. Use `pg-stub` only against an isolated deployment whose API process preloads `scripts/revamp/pg-stub-preload.mjs` (`GRABIT_PG_STUB=isolated-load-test-only`); it sends synthetic payment keys |
+| `PHASE26_MAX_PURCHASES_PER_VU` | Default `1`. Purchases per buyer in `pg-stub` mode; keep it at or below the test event's per-user ticket limit. A confirm that times out or returns 5xx counts as a used seat, because the server may have sold it |
 | `PHASE26_READ_WEIGHT` / `PHASE26_QUEUE_WEIGHT` / `PHASE26_MUTATION_WEIGHT` | Journey depth weights (baseline 75/20/5, stress 80/18/2) |
 
 Run with the scripts directory mounted, because the entries import `./lib`:
@@ -516,10 +520,21 @@ node scripts/phase26/record-k6-evidence.mjs --baseline "$OUT_DIR/phase26-baselin
 
 `record-k6-evidence.mjs` never records PASS when the summary's peak `vus` is
 below the gate target, when any of `read/queue/lock/prepare/confirm` has no
-tagged requests, when queue or lock traffic is below 5% / 0.5% of requests, or
-when any flow breaks p95 < 2s / error rate < 1%. Without a PG-stubbed target the
-confirm flow is unmeasured, so the gate stays `BLOCKED` unless the owner records
-`--accepted-risk`.
+tagged requests, when queue traffic is below 5% of requests, when
+lock/prepare/confirm each have fewer than 500 requests, or when any flow breaks
+p95 < 2s / error rate < 1%. Purchase traffic is judged by volume, not share:
+only admitted buyers can lock, and the API admits at most 1,000 at a time
+(`QUEUE_MAX_ACTIVE_ADMISSIONS`, held for the 600 s active window). With the
+default weights roughly 1,000 admitted buyers each reach lock/prepare/confirm
+at least once, while about 9,000 (baseline) or 19,000 (stress) buyers wait and
+poll the queue every 2 seconds, so lock stays a fraction of a percent of all
+requests in a healthy run (roughly 0.3% without confirm and 0.03% with one
+`pg-stub` purchase per buyer). 500 is half of one full admission wave. If a
+run lands below it, check that the queue actually admitted ~1,000 buyers, then
+raise `PHASE26_MUTATION_WEIGHT` (or, in `pg-stub` mode,
+`PHASE26_MAX_PURCHASES_PER_VU` with a larger seat pool) rather than lowering
+the queue weight. Without a PG-stubbed target the confirm flow is unmeasured, so
+the gate stays `BLOCKED` unless the owner records `--accepted-risk`.
 
 Provisioning the synthetic buyers, refresh families and seat pool in the
 dedicated environment is an operator task; never mint them against real buyer
