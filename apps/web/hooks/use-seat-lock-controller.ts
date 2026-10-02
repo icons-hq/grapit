@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FloorAwareSeatSelection, LockSeatResponse } from '@grabit/shared';
 import { useLockSeat, useUnlockAllSeats, useUnlockSeat } from '@/hooks/use-booking';
+import { ApiClientError } from '@/lib/api-client';
 import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
+import { BookingDisabledError } from '@/lib/runtime-flags';
 import { useBookingStore } from '@/stores/use-booking-store';
 
 export interface SeatLockRejection {
@@ -42,11 +44,13 @@ export interface SeatLockController {
   isUnlockPending: (showtimeId: string, seatKey: string) => boolean;
   hasPendingLocksFor: (showtimeId: string) => boolean;
   /**
-   * True when no seat operation is in flight and a my-locks snapshot with
-   * this request sequence was sent after the server answered every
-   * operation, so it reflects all of them.
+   * True when no seat operation of the showtime is in flight and a my-locks
+   * snapshot of that showtime with this request sequence was sent after the
+   * server answered every operation of the showtime, so it reflects all of
+   * them. Operations of another showtime (releasing a showtime the user just
+   * left) do not change this showtime's locks and are not waited for.
    */
-  isSnapshotCurrent: (requestSeq: number) => boolean;
+  isSnapshotCurrent: (requestSeq: number, showtimeId: string) => boolean;
   /**
    * True for a snapshot requested before this page mounted (a cached
    * my-locks from an earlier visit). It is never trusted; the page asks again.
@@ -73,6 +77,19 @@ function isSeatSelected(showtimeId: string, seatKey: string): boolean {
     && state.selectedSeats.some((seat) => seat.seatKey === seatKey);
 }
 
+/**
+ * A lock request that failed without a definite answer: no HTTP response
+ * (network/timeout) or a 5xx. The server may still have created the lock.
+ * Errors thrown before the request (booking disabled) and 4xx answers mean
+ * nothing was locked.
+ */
+function mayHaveLocked(error: unknown): boolean {
+  if (error instanceof ApiClientError) {
+    return error.statusCode >= 500;
+  }
+  return !(error instanceof BookingDisabledError);
+}
+
 async function settleQuietly(promises: Iterable<Promise<unknown>>): Promise<void> {
   await Promise.allSettled(Array.from(promises));
 }
@@ -95,11 +112,12 @@ export function useSeatLockController(options: {
 } = {}): SeatLockController {
   // Snapshots requested before this mount (cached from an earlier visit)
   // predate whatever happened in between (checkout, another tab), so the
-  // baseline starts at mount instead of 0.
+  // baseline starts at mount instead of 0. Responses are tracked per showtime:
+  // user locks are per showtime on the server.
   const [mountSeq] = useState(nextSeatSyncSequence);
-  const lastServerResponseSeqRef = useRef(mountSeq);
-  const markServerResponse = useCallback(() => {
-    lastServerResponseSeqRef.current = nextSeatSyncSequence();
+  const lastServerResponseSeqRef = useRef(new Map<string, number>());
+  const markServerResponse = useCallback((showtimeId: string) => {
+    lastServerResponseSeqRef.current.set(showtimeId, nextSeatSyncSequence());
   }, []);
   const mutationOptions = { onServerResponse: markServerResponse };
   const lockMutation = useLockSeat(mutationOptions);
@@ -230,7 +248,16 @@ export function useSeatLockController(options: {
             useBookingStore.getState().removeSeat(seat.seatKey);
           }
           onLockRejectedRef.current?.({ error, showtimeId, seat, stillWanted });
-          return;
+          if (stillWanted || !mayHaveLocked(error)) {
+            return;
+          }
+          // Already dropped by the user, and the server may hold the lock
+          // anyway (no answer, or a 5xx). Release it like a lock that landed
+          // after the seat was dropped; otherwise the my-locks read-back would
+          // put the seat back into the selection. The release is a no-op when
+          // no lock exists.
+          await startUnlock(showtimeId, seat.seatKey);
+          continue;
         }
 
         const raceWithReleaseAll = (releaseGenerationRef.current.get(showtimeId) ?? 0) !== releaseGeneration;
@@ -312,9 +339,21 @@ export function useSeatLockController(options: {
     [],
   );
 
+  const hasPendingOperationsFor = useCallback((showtimeId: string) => {
+    if (pendingReleaseAllRef.current.has(showtimeId)) return true;
+    for (const lock of pendingLocksRef.current.values()) {
+      if (lock.showtimeId === showtimeId) return true;
+    }
+    for (const unlock of pendingUnlocksRef.current.values()) {
+      if (unlock.showtimeId === showtimeId) return true;
+    }
+    return false;
+  }, []);
+
   const isSnapshotCurrent = useCallback(
-    (requestSeq: number) => !hasPendingOperations() && requestSeq >= lastServerResponseSeqRef.current,
-    [hasPendingOperations],
+    (requestSeq: number, showtimeId: string) => !hasPendingOperationsFor(showtimeId)
+      && requestSeq >= (lastServerResponseSeqRef.current.get(showtimeId) ?? mountSeq),
+    [hasPendingOperationsFor, mountSeq],
   );
   const predatesMount = useCallback((requestSeq: number) => requestSeq < mountSeq, [mountSeq]);
 

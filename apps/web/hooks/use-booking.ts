@@ -8,6 +8,7 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
 import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
+import { refetchAfterInFlight } from '@/lib/booking/seat-resync';
 import {
   normalizeSeatIdentity,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
@@ -127,8 +128,9 @@ function removeMyLocks(
 
 /**
  * Patches cached my-locks. An in-flight refetch would overwrite the patch, so
- * it is cancelled first; a first load without data is left running because
- * cancelling it would leave the query empty. Returns whether a patch applied.
+ * it is cancelled first. Without cached data (first load still in flight, or
+ * failed) nothing is patched and false is returned; the first load cannot be
+ * cancelled and restarted (TanStack shares it with every new fetch).
  */
 async function patchMyLocks(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -441,20 +443,22 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
 
 export interface SeatLockMutationOptions {
   /**
-   * Called once the server answered (success or HTTP error). The seat page
-   * uses it to know which my-locks snapshots already include this change.
+   * Called with the request's showtime once the server answered (success or
+   * HTTP error). The seat page uses it to know which my-locks snapshots of
+   * that showtime already include this change.
    */
-  onServerResponse?: () => void;
+  onServerResponse?: (showtimeId: string) => void;
 }
 
 async function withServerResponse<T>(
   request: Promise<T>,
-  onServerResponse: (() => void) | undefined,
+  showtimeId: string,
+  onServerResponse: ((showtimeId: string) => void) | undefined,
 ): Promise<T> {
   try {
     return await request;
   } finally {
-    onServerResponse?.();
+    onServerResponse?.(showtimeId);
   }
 }
 
@@ -489,6 +493,7 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
         }, {
           showErrorToast: false,
         }),
+        data.showtimeId,
         onServerResponse,
       );
     },
@@ -511,8 +516,11 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
         return { ...old, seatIds, expiresAt: response.expiresAt ?? old.expiresAt };
       });
       if (!patched) {
-        // A first load still in flight may predate this lock: restart it.
-        void queryClient.invalidateQueries({ queryKey: myLocksQueryKey(variables.showtimeId) });
+        // The first load is still in flight and may predate this lock (the
+        // page then rejects it as older than this response). Read my-locks
+        // once more after it lands, so holds from before a reload are still
+        // restored.
+        void refetchAfterInFlight(queryClient, myLocksQueryKey(variables.showtimeId));
       }
     },
     onError: (error, variables) => {
@@ -525,7 +533,7 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
       const conflictState = getSeatConflictState(error);
       if (conflictState) {
         // Only this seat was stale on our map; the rejected lock changed
-        // nothing we hold, so my-locks stays as is.
+        // nothing we hold.
         const runtimeSeatId = toRuntimeSeatId(variables);
         queryClient.setQueryData<SeatStatusResponse>(
           seatStatusQueryKey(variables.showtimeId),
@@ -533,6 +541,13 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
             ? { ...old, seats: { ...old.seats, [runtimeSeatId]: conflictState } }
             : old),
         );
+        if (conflictState === 'locked') {
+          // The server answers the same way when the seat is already ours
+          // (another tab, or a lock whose response was lost). Read my-locks
+          // back (rate-limited) so such a hold is restored as ours instead of
+          // staying "taken by someone else".
+          resyncAfterLockFailure(myLocksQueryKey(variables.showtimeId), { cancelRefetch: true });
+        }
         return;
       }
       if (error instanceof ApiClientError && error.statusCode < 500) {
@@ -568,6 +583,7 @@ export function useUnlockSeat(options: SeatLockMutationOptions = {}) {
         apiClient.delete<void>(
           `/api/v1/booking/seats/lock/${encodeURIComponent(showtimeId)}/${encodeURIComponent(seatId)}`,
         ),
+        showtimeId,
         onServerResponse,
       ),
     onMutate: async (variables) => {
@@ -602,6 +618,7 @@ export function useUnlockAllSeats(options: SeatLockMutationOptions = {}) {
         apiClient.delete<UnlockAllResponse>(
           `/api/v1/booking/seats/lock-all/${showtimeId}`,
         ),
+        showtimeId,
         onServerResponse,
       ),
     onMutate: async (variables) => {

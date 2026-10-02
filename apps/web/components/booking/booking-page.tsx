@@ -620,8 +620,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
    * server no longer holds for the user (lost lock responses, TTL expiry) and
    * restores held seats missing from the selection (reload, return from
    * checkout, a lock whose response was lost). Snapshots requested before the
-   * last seat operation was answered are ignored, so a just-released seat is
-   * never restored from an old snapshot.
+   * last seat operation of that showtime was answered are ignored, so a
+   * just-released seat is never restored from an old snapshot.
    */
   const lastReconciledRef = useRef<{ snapshot: MyLocksSnapshot; changed: boolean } | null>(null);
   const isCheckingExpiryRef = useRef(false);
@@ -630,7 +630,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       if (lastReconciledRef.current?.snapshot === snapshot) {
         return { applied: true, changed: lastReconciledRef.current.changed };
       }
-      if (!seatLocks.isSnapshotCurrent(snapshot.requestSeq ?? 0)) {
+      if (!seatLocks.isSnapshotCurrent(snapshot.requestSeq ?? 0, showtimeId)) {
         return { applied: false, changed: false };
       }
       const state = useBookingStore.getState();

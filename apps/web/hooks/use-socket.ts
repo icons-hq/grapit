@@ -5,27 +5,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import type { SeatUpdateEvent, SeatStatusResponse } from '@grabit/shared';
-import { normalizeSeatIdentity } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
+import { refetchAfterInFlight, SEAT_STATUS_RECONNECT_JITTER_MS } from '@/lib/booking/seat-resync';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
-import { useAuthStore } from '@/stores/use-auth-store';
-
-/**
- * Upper bound of the random delay before resyncing seat-status after a
- * reconnect. A restarted WS instance reconnects every viewer at once; the
- * jitter keeps them from reloading the whole seat map in the same instant.
- */
-export const SEAT_STATUS_RECONNECT_JITTER_MS = 3_000;
-
-function toSeatKey(event: SeatUpdateEvent): string {
-  return normalizeSeatIdentity({
-    seatId: event.seatId,
-    seatKey: event.seatKey,
-    floorKey: event.floorKey,
-  }).seatKey;
-}
 
 export function useBookingSocket(showtimeId: string | null): void {
   const socketRef = useRef<Socket | null>(null);
@@ -39,27 +23,34 @@ export function useBookingSocket(showtimeId: string | null): void {
 
     const socket = createBookingSocket();
     socketRef.current = socket;
+    const seatStatusKey = ['seat-status', showtimeId] as const;
+    let disposed = false;
+    let resyncGeneration = 0;
     let resyncTimer: ReturnType<typeof setTimeout> | null = null;
 
     const resyncSeatStatus = (afterReconnect: boolean) => {
+      resyncGeneration += 1;
+      const generation = resyncGeneration;
       if (resyncTimer !== null) {
         clearTimeout(resyncTimer);
         resyncTimer = null;
       }
       if (!afterReconnect) {
-        // Events between the HTTP snapshot and the room join are not
-        // delivered. Reload once after joining, unless the first load is still
-        // running (that response is already newer than the join request).
-        void queryClient.invalidateQueries(
-          { queryKey: ['seat-status', showtimeId] },
-          { cancelRefetch: false },
+        // Events between the HTTP snapshot and the room join are never
+        // delivered, so the map needs one read sent after the join. A load
+        // still in flight was sent before the join: wait for it, then read
+        // once more.
+        void refetchAfterInFlight(
+          queryClient,
+          seatStatusKey,
+          () => disposed || generation !== resyncGeneration,
         );
         return;
       }
       resyncTimer = setTimeout(() => {
         resyncTimer = null;
         void queryClient.invalidateQueries({
-          queryKey: ['seat-status', showtimeId],
+          queryKey: seatStatusKey,
         });
       }, Math.floor(Math.random() * SEAT_STATUS_RECONNECT_JITTER_MS));
     };
@@ -124,32 +115,16 @@ export function useBookingSocket(showtimeId: string | null): void {
         },
       );
 
-      // Race condition check: if ANOTHER user locked a seat we selected
-      // Ignore our own broadcasts (userId matches)
-      const myUserId = useAuthStore.getState().user?.id;
-      if (data.status === 'locked' && data.userId !== myUserId) {
-        const store = useBookingStore.getState();
-        if (store.selectedShowtimeId !== showtimeId) {
-          return;
-        }
-        // Broadcasts carry the runtime seat id (floor-aware seat key), so
-        // compare seat keys, not the per-floor seat id.
-        const eventSeatKey = toSeatKey(data);
-        const takenSeat = store.selectedSeats.find(
-          (s) => s.seatKey === eventSeatKey,
-        );
-        if (takenSeat) {
-          store.removeSeat(takenSeat.seatKey);
-          toast.info(copy.seatTaken, {
-            style: { backgroundColor: '#F3EFFF', color: '#6C3CE0' },
-          });
-        }
-      }
+      // The broadcast never says who locked a seat (audit #92), so a 'locked'
+      // event cannot tell our own lock from someone else's. Selected seats are
+      // reconciled by the lock API response instead: a lost race returns 409
+      // and the caller removes the seat there.
     });
 
     socket.connect();
 
     return () => {
+      disposed = true;
       if (resyncTimer !== null) {
         clearTimeout(resyncTimer);
       }

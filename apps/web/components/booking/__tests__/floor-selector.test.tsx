@@ -74,12 +74,12 @@ vi.mock('@/hooks/use-socket', () => ({
   useBookingSocket: vi.fn(),
 }));
 
-type ServerResponseOptions = { onServerResponse?: () => void };
+type ServerResponseOptions = { onServerResponse?: (showtimeId: string) => void };
 
 function withServerResponse(mock: (...args: never[]) => unknown, options?: ServerResponseOptions) {
   return (...args: never[]) => Promise.resolve()
     .then(() => mock(...args))
-    .finally(() => options?.onServerResponse?.());
+    .finally(() => options?.onServerResponse?.((args[0] as unknown as { showtimeId: string }).showtimeId));
 }
 
 vi.mock('@/hooks/use-booking', () => ({

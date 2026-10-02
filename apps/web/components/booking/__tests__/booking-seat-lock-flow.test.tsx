@@ -195,6 +195,8 @@ const server = {
   takenByOthers: new Set<string>(),
   lockGates: new Map<string, Deferred>(),
   unlockGates: new Map<string, Deferred>(),
+  /** lock-all requests of a showtime wait for its gate (if any) before answering. */
+  lockAllGates: new Map<string, Deferred>(),
   /** Each my-locks GET takes the next gate (if any) before answering. */
   myLocksGates: [] as Deferred[],
   /** my-locks GETs that fail with a 503 before answering normally. */
@@ -287,7 +289,13 @@ function installServer() {
   hoisted.deleteMock.mockImplementation(async (path: string) => {
     const lockAll = path.match(/^\/api\/v1\/booking\/seats\/lock-all\/([^/]+)$/);
     if (lockAll) {
-      const held = heldFor(decodeURIComponent(lockAll[1]));
+      const showtimeId = decodeURIComponent(lockAll[1]);
+      const gate = server.lockAllGates.get(showtimeId);
+      if (gate) {
+        server.lockAllGates.delete(showtimeId);
+        await gate.promise;
+      }
+      const held = heldFor(showtimeId);
       const unlockedSeats = [...held.keys()];
       held.clear();
       return { unlockedSeats };
@@ -433,6 +441,7 @@ describe('BookingPage seat lock flow', () => {
     server.takenByOthers.clear();
     server.lockGates.clear();
     server.unlockGates.clear();
+    server.lockAllGates.clear();
     server.myLocksGates = [];
     server.myLocksFailures = 0;
     server.holdMs = 10 * 60 * 1000;
@@ -818,7 +827,7 @@ describe('BookingPage seat lock flow', () => {
     expect(lockAllCalls(SHOWTIME_A)).toBe(1);
   });
 
-  it('#27 #8 marks contended seats locked without reloading seat-status or my-locks per conflict', async () => {
+  it('#27 #8 marks contended seats locked without reloading seat-status, reading my-locks once per cooldown', async () => {
     const user = userEvent.setup();
     selectShowtimeInStore(SHOWTIME_A);
     renderBookingPage();
@@ -839,9 +848,10 @@ describe('BookingPage seat lock flow', () => {
     }
     await settle();
 
-    // No full seat map reload (audit #8) and no my-locks read per conflict.
+    // No full seat map reload (audit #8). my-locks is read back once (the
+    // other conflicts fall inside the cooldown) in case a seat was ours.
     expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
-    expect(countGets(/my-locks\/showtime-a/)).toBe(1);
+    expect(countGets(/my-locks\/showtime-a/)).toBe(2);
     expect(hoisted.toastInfoMock).toHaveBeenCalledTimes(3);
     expect(useBookingStore.getState().selectedSeats).toEqual([]);
 
@@ -877,6 +887,97 @@ describe('BookingPage seat lock flow', () => {
     expect(countGets(/my-locks\/showtime-a/)).toBe(2);
     expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
     expect(screen.getByRole('button', { name: '좌석 A-2' })).toHaveAttribute('data-state', 'available');
+  });
+
+  it('#27 restores a seat the server already holds for this user when its lock answers 409', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+
+    const seatButton = await screen.findByRole('button', { name: '좌석 A-1' });
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+    await settle();
+    // Locked by this user in another tab; this page has not seen it.
+    heldFor(SHOWTIME_A).set('1F:A-1', Date.now() + 5 * 60 * 1000);
+
+    await user.click(seatButton);
+
+    // The 409 reads "held by someone else", but my-locks says it is ours.
+    await waitFor(() => expect(selectedTag('A-1')).toBeInTheDocument());
+    expect(seatButton).toHaveAttribute('data-my-lock', 'true');
+    expect(countGets(/my-locks\/showtime-a/)).toBe(2);
+    expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
+    expect(useBookingStore.getState().timerExpiresAt).not.toBeNull();
+  });
+
+  it('#28 releases a dropped seat whose lock failed without an answer', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    const gate = deferred();
+    hoisted.postMock.mockImplementationOnce(async (_path: string, body: { showtimeId: string; seatId: string }) => {
+      await gate.promise;
+      // The server created the lock, but its response never arrived.
+      heldFor(body.showtimeId).set(toSeatKey(body.seatId), Date.now() + server.holdMs);
+      throw new TypeError('Failed to fetch');
+    });
+    renderBookingPage();
+
+    const seatButton = await screen.findByRole('button', { name: '좌석 A-1' });
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+    await user.click(seatButton);
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(1));
+    // Tapped off while the lock is in flight.
+    await user.click(seatButton);
+    expect(selectedTag('A-1')).not.toBeInTheDocument();
+
+    await act(async () => {
+      gate.resolve();
+    });
+
+    // The lock may exist, so it is released instead of being restored by
+    // the my-locks read-back that follows a transport failure.
+    await waitFor(() => expect(singleUnlockCalls(SHOWTIME_A, '1F:A-1')).toBe(1));
+    await waitFor(() => expect(heldFor(SHOWTIME_A).size).toBe(0));
+    await settle();
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    expect(selectedTag('A-1')).not.toBeInTheDocument();
+    expect(hoisted.toastInfoMock).not.toHaveBeenCalled();
+    expect(hoisted.toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('#30 restores holds of a newly picked showtime while the previous showtime is still being released', async () => {
+    const user = userEvent.setup();
+    const performance = hoisted.performanceRef.current as ReturnType<typeof createPerformance>;
+    const showtimeB = performance.showtimes[1]!;
+    // Held in showtime B before a reload.
+    heldFor(SHOWTIME_B).set('1F:A-2', Date.now() + 5 * 60 * 1000);
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+
+    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    const releaseA = deferred();
+    server.lockAllGates.set(SHOWTIME_A, releaseA);
+
+    const date = getKstCalendarDate(showtimeB.dateTime);
+    await user.click(screen.getByRole('button', { name: `날짜 ${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}` }));
+    await waitFor(() => expect(lockAllCalls(SHOWTIME_A)).toBe(1));
+    await user.click(screen.getByRole('button', { name: `${formatKstTimeLabel(showtimeB.dateTime)} KST` }));
+    await waitFor(() => expect(countGets(/my-locks\/showtime-b/)).toBe(1));
+
+    // Releasing showtime A cannot change B's locks, so B's snapshot is used
+    // right away.
+    await waitFor(() => expect(selectedTag('A-2')).toBeInTheDocument());
+    expect(useBookingStore.getState().selectedShowtimeId).toBe(SHOWTIME_B);
+    expect(useBookingStore.getState().timerExpiresAt).not.toBeNull();
+
+    await act(async () => {
+      releaseA.resolve();
+    });
+    await waitFor(() => expect(heldFor(SHOWTIME_A).size).toBe(0));
+    await settle();
+    expect(selectedTag('A-2')).toBeInTheDocument();
+    expect(heldFor(SHOWTIME_B).has('1F:A-2')).toBe(true);
   });
 
   it('#8 updates the seat map locally after a successful lock instead of reloading it', async () => {

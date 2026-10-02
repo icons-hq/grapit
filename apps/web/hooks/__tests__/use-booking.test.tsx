@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import {
   LOCK_FAILURE_RESYNC_COOLDOWN_MS,
@@ -744,41 +744,119 @@ describe('use-booking payment mutations', () => {
     });
   });
 
-  it('useLockSeat() marks only the contended seat on a seat 409, without reloading seat-status or my-locks', async () => {
+  it('useLockSeat() marks only the contended seat on a seat 409 and never reloads seat-status for it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      postMock
+        .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409))
+        .mockRejectedValueOnce(new ApiClientError('이미 판매된 좌석입니다', 409))
+        .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다.', 409));
+
+      const { Wrapper, queryClient } = createWrapper();
+      queryClient.setQueryData(['seat-status', 'showtime-conflict'], {
+        showtimeId: 'showtime-conflict',
+        seats: {},
+      });
+      queryClient.setQueryData(['my-locks', 'showtime-conflict'], {
+        seatIds: [],
+        expiresAt: null,
+        requestSeq: 1,
+      });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const reloadsOf = (queryKey: unknown[]) => invalidateSpy.mock.calls.filter(
+        ([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKey),
+      );
+      const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+      for (const seatId of ['A-1', 'A-2', 'A-3']) {
+        await expect(result.current.mutateAsync({
+          showtimeId: 'showtime-conflict',
+          seatId,
+          floorKey: '1F',
+          seatKey: `1F:${seatId}`,
+        })).rejects.toMatchObject({ statusCode: 409 });
+      }
+      await vi.advanceTimersByTimeAsync(LOCK_FAILURE_RESYNC_COOLDOWN_MS * 3);
+
+      // audit #8: a conflict per click must not turn into a full O(N) reload
+      // per click; audit #27: the stale seat no longer looks available.
+      expect(reloadsOf(['seat-status', 'showtime-conflict'])).toHaveLength(0);
+      expect(queryClient.getQueryData(['seat-status', 'showtime-conflict'])).toEqual({
+        showtimeId: 'showtime-conflict',
+        seats: { '1F:A-1': 'locked', '1F:A-2': 'sold', '1F:A-3': 'locked' },
+      });
+      // "Held by someone else" is also the answer when the seat is already
+      // ours (another tab), so my-locks is read back: once right away and one
+      // trailing read for the conflicts inside the cooldown.
+      expect(reloadsOf(['my-locks', 'showtime-conflict'])).toEqual([
+        [{ queryKey: ['my-locks', 'showtime-conflict'] }, { cancelRefetch: true }],
+        [{ queryKey: ['my-locks', 'showtime-conflict'] }, { cancelRefetch: true }],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('useLockSeat() does not read my-locks back for sold, refunding or disabled seats', async () => {
     postMock
-      .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409))
       .mockRejectedValueOnce(new ApiClientError('이미 판매된 좌석입니다', 409))
-      .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다.', 409));
+      .mockRejectedValueOnce(new ApiClientError('환불 처리 중인 좌석입니다', 409))
+      .mockRejectedValueOnce(new ApiClientError('운영자가 판매를 중지한 좌석입니다', 409));
 
     const { Wrapper, queryClient } = createWrapper();
-    queryClient.setQueryData(['seat-status', 'showtime-conflict'], {
-      showtimeId: 'showtime-conflict',
-      seats: {},
-    });
-    queryClient.setQueryData(['my-locks', 'showtime-conflict'], {
-      seatIds: [],
-      expiresAt: null,
-      requestSeq: 1,
-    });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
 
     for (const seatId of ['A-1', 'A-2', 'A-3']) {
       await expect(result.current.mutateAsync({
-        showtimeId: 'showtime-conflict',
+        showtimeId: 'showtime-closed-seats',
         seatId,
         floorKey: '1F',
-        seatKey: `1F:${seatId}`,
       })).rejects.toMatchObject({ statusCode: 409 });
     }
 
-    // audit #8: a conflict per click must not turn into a full O(N) reload
-    // per click; audit #27: the stale seat no longer looks available.
     expect(invalidateSpy).not.toHaveBeenCalled();
-    expect(queryClient.getQueryData(['seat-status', 'showtime-conflict'])).toEqual({
-      showtimeId: 'showtime-conflict',
-      seats: { '1F:A-1': 'locked', '1F:A-2': 'sold', '1F:A-3': 'locked' },
+  });
+
+  it('useLockSeat() reads my-locks once more after a first load that was in flight when the lock landed', async () => {
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'lock-1F-A-1',
+      seatId: '1F:A-1',
+      seatKey: '1F:A-1',
+      floorKey: '1F',
+      expiresAt,
     });
+    let finishFirstLoad!: (snapshot: { seatIds: string[]; expiresAt: number | null; requestSeq: number }) => void;
+    const myLocksFn = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirstLoad = resolve;
+      }))
+      .mockResolvedValue({ seatIds: ['1F:A-1'], expiresAt, requestSeq: 3 });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => {
+      useQuery({ queryKey: ['my-locks', 'showtime-first-load'], queryFn: myLocksFn });
+      return useLockSeat();
+    }, { wrapper: Wrapper });
+    await waitFor(() => expect(myLocksFn).toHaveBeenCalledTimes(1));
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-first-load',
+      seatId: 'A-1',
+      floorKey: '1F',
+      seatKey: '1F:A-1',
+    });
+    // The first load (sent before the lock) cannot be restarted: TanStack
+    // shares it with every fetch until it settles.
+    expect(myLocksFn).toHaveBeenCalledTimes(1);
+
+    finishFirstLoad({ seatIds: [], expiresAt: null, requestSeq: 1 });
+
+    // One read sent after the lock follows, so the page gets a snapshot it
+    // can trust (holds from before a reload are restored).
+    await waitFor(() => expect(myLocksFn).toHaveBeenCalledTimes(2));
   });
 
   it('useLockSeat() reloads my-locks at most once per cooldown on per-user limit 409s and keeps the seat map', async () => {
