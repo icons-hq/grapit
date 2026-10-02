@@ -6,6 +6,7 @@ import {
   maskMergeIdentity,
   normalizeMergeName,
   normalizeMergePhone,
+  NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS,
   type MergeCandidateUser,
 } from './account-merge-policy.js';
 
@@ -66,7 +67,7 @@ describe('account merge policy', () => {
     });
   });
 
-  it('requires manual review when a source account has an in-flight payment reservation', () => {
+  it('requires manual review when a source account has a payment in flight', () => {
     const result = classifyDuplicateGroup({
       groupKey: 'group-pending-source',
       users: [
@@ -74,16 +75,76 @@ describe('account merge policy', () => {
         { ...baseUser, id: 'pending-source' },
       ],
       reservationCounts: {
-        'confirmed-target': { total: 1, confirmed: 1, pendingPayment: 0 },
-        'pending-source': { total: 1, confirmed: 0, pendingPayment: 1 },
+        'confirmed-target': { total: 1, confirmed: 1, paymentInFlight: 0 },
+        'pending-source': { total: 1, confirmed: 0, paymentInFlight: 1 },
       },
     });
 
     expect(result).toEqual({
       kind: 'manual_review',
       groupKey: 'group-pending-source',
-      reason: 'source_pending_payment_reservation',
+      reason: 'payment_in_flight',
       userIds: ['confirmed-target', 'pending-source'],
+    });
+  });
+
+  it('keeps a group out of the safe batch when the target, not a source, is mid-payment', () => {
+    // Before: dry-run listed this as safe and apply rolled the whole batch
+    // back on the in-transaction pending check (review r0 major).
+    const result = classifyDuplicateGroup({
+      groupKey: 'group-pending-target',
+      users: [
+        { ...baseUser, id: 'source-1' },
+        { ...baseUser, id: 'checkout-target' },
+      ],
+      reservationCounts: {
+        'source-1': { total: 0, confirmed: 0, paymentInFlight: 0 },
+        'checkout-target': { total: 2, confirmed: 1, paymentInFlight: 1 },
+      },
+    });
+
+    expect(result).toMatchObject({ kind: 'manual_review', reason: 'payment_in_flight' });
+  });
+
+  it('reports a payment in flight ahead of allowlistable reasons, so an allowlist cannot hide it', () => {
+    const result = classifyDuplicateGroup({
+      groupKey: 'group-two-owners-pending',
+      users: [
+        { ...baseUser, id: 'owner-a' },
+        { ...baseUser, id: 'owner-b' },
+      ],
+      reservationCounts: {
+        'owner-a': { total: 1, confirmed: 1 },
+        'owner-b': { total: 2, confirmed: 1, paymentInFlight: 1 },
+      },
+    });
+
+    expect(result).toMatchObject({ kind: 'manual_review', reason: 'payment_in_flight' });
+    expect(NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS.has('payment_in_flight')).toBe(true);
+    expect(NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS.has('identity_evidence_incomplete')).toBe(true);
+    expect(NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS.has('multiple_confirmed_owners')).toBe(false);
+  });
+
+  it('treats stale pending rows (no payment in flight) like any other unconfirmed reservation', () => {
+    const result = classifyDuplicateGroup({
+      groupKey: 'group-stale-pending',
+      users: [
+        { ...baseUser, id: 'stale-source' },
+        { ...baseUser, id: 'confirmed-target' },
+      ],
+      reservationCounts: {
+        // e.g. an expired checkout the sweeper never failed: counted in total,
+        // not in paymentInFlight.
+        'stale-source': { total: 1, confirmed: 0, paymentInFlight: 0 },
+        'confirmed-target': { total: 1, confirmed: 1, paymentInFlight: 0 },
+      },
+    });
+
+    expect(result).toEqual({
+      kind: 'safe',
+      groupKey: 'group-stale-pending',
+      targetUserId: 'confirmed-target',
+      sourceUserIds: ['stale-source'],
     });
   });
 

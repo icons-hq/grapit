@@ -147,18 +147,53 @@ describe('Historical account merge safety (PostgreSQL)', () => {
     return reservation!.id;
   }
 
-  async function pendingReservation(userId: string, showtimeId: string) {
+  const HOUR_MS = 3_600_000;
+
+  async function pendingReservation(
+    userId: string,
+    showtimeId: string,
+    options: {
+      status?: 'PENDING_PAYMENT' | 'FAILED';
+      deadlineInMs?: number | null;
+      lastChangedHoursAgo?: number;
+      provider?: 'CARD' | 'ALIPAY_PLUS';
+      paymentStatus?: 'READY' | 'IN_PROGRESS' | 'DONE' | 'ABORTED' | 'EXPIRED';
+    } = {},
+  ) {
     const id = randomUUID();
+    const changedAt = new Date(Date.now() - (options.lastChangedHoursAgo ?? 0) * HOUR_MS);
+    const provider = options.provider ?? 'CARD';
     const [reservation] = await db.insert(schema.reservations).values({
       userId,
       showtimeId,
       reservationNumber: id.slice(0, 28),
       tossOrderId: id,
-      status: 'PENDING_PAYMENT',
+      status: options.status ?? 'PENDING_PAYMENT',
       totalAmount: 50_000,
-      paymentDeadlineAt: new Date(Date.now() + 7 * 60_000),
+      paymentDeadlineAt: options.deadlineInMs === null
+        ? null
+        : new Date(Date.now() + (options.deadlineInMs ?? 7 * 60_000)),
+      checkoutPaymentMethod: {
+        method: provider === 'CARD' ? 'CARD' : 'FOREIGN_EASY_PAY',
+        provider,
+      },
+      checkoutStartedAt: changedAt,
       cancelDeadline: new Date('2098-12-31'),
+      createdAt: changedAt,
+      updatedAt: changedAt,
     }).returning();
+    if (options.paymentStatus) {
+      await db.insert(schema.payments).values({
+        reservationId: reservation!.id,
+        paymentKey: id,
+        tossOrderId: id,
+        method: provider === 'CARD' ? 'CARD' : 'FOREIGN_EASY_PAY',
+        provider,
+        amount: 50_000,
+        status: options.paymentStatus,
+        createdAt: changedAt,
+      });
+    }
     return reservation!.id;
   }
 
@@ -177,27 +212,127 @@ describe('Historical account merge safety (PostgreSQL)', () => {
     };
   }
 
-  it('rolls back a safe merge whose target is mid-checkout and leaves every row in place', async () => {
+  it('keeps a group whose target is mid-checkout out of the batch and merges the other safe groups', async () => {
     const { showtimeId } = await showtime();
-    const source = await buyer('Hong', '+821012345678');
-    const target = await buyer('Hong', '+821012345678');
-    await confirmedTicket(target, showtimeId, 'A-1');
-    const pendingId = await pendingReservation(target, showtimeId);
+    const checkoutSource = await buyer('Hong', '+821012345678');
+    const checkoutTarget = await buyer('Hong', '+821012345678');
+    await confirmedTicket(checkoutTarget, showtimeId, 'A-1');
+    const pendingId = await pendingReservation(checkoutTarget, showtimeId);
+    const safeSource = await buyer('Seo', '+821033334444');
+    const safeTarget = await buyer('Seo', '+821033334444');
+    await confirmedTicket(safeTarget, showtimeId, 'A-2');
 
     const dryRun = await service.dryRun();
+    expect(dryRun.safeGroups).toEqual([
+      expect.objectContaining({ targetUserId: safeTarget, sourceUserIds: [safeSource] }),
+    ]);
+    expect(dryRun.manualReviewGroups).toEqual([
+      expect.objectContaining({
+        reason: 'payment_in_flight',
+        userIds: [checkoutSource, checkoutTarget].sort(),
+      }),
+    ]);
+
+    const result = await service.apply(applyOptions(hashAccountMergeDryRun(dryRun)));
+
+    expect(result).toMatchObject({ mergedGroups: 1, mergedSourceUsers: 1 });
+    const [mergedSource] = await db.select().from(schema.users)
+      .where(eq(schema.users.id, safeSource));
+    const [untouchedSource] = await db.select().from(schema.users)
+      .where(eq(schema.users.id, checkoutSource));
+    const [pendingRow] = await db.select().from(schema.reservations)
+      .where(eq(schema.reservations.id, pendingId));
+    expect(mergedSource!.accountStatus).toBe('merged');
+    expect(untouchedSource!.accountStatus).toBe('active');
+    expect(pendingRow!.userId).toBe(checkoutTarget);
+    await expect(service.verify(result.batchId, { persist: true })).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('does not let a stale pending checkout the sweeper never expires block its group', async () => {
+    const { showtimeId } = await showtime();
+    const source = await buyer('Han', '+821066667777');
+    const target = await buyer('Han', '+821066667777');
+    await confirmedTicket(target, showtimeId, 'D-1');
+    // Checkout started two days ago, deadline long past, no terminal payment:
+    // pending-payment-expiration.worker leaves this PENDING_PAYMENT forever.
+    const staleTargetPending = await pendingReservation(target, showtimeId, {
+      deadlineInMs: -48 * HOUR_MS,
+      lastChangedHoursAgo: 48,
+    });
+    // Legacy pre-0012 row without a deadline, also never expired.
+    const staleSourcePending = await pendingReservation(source, showtimeId, {
+      deadlineInMs: null,
+      lastChangedHoursAgo: 72,
+    });
+
+    const dryRun = await service.dryRun();
+    expect(dryRun.manualReviewGroups).toEqual([]);
     expect(dryRun.safeGroups).toEqual([
       expect.objectContaining({ targetUserId: target, sourceUserIds: [source] }),
     ]);
 
-    await expect(service.apply(applyOptions(hashAccountMergeDryRun(dryRun)))).rejects.toThrow(
-      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment',
-    );
+    const result = await service.apply(applyOptions(hashAccountMergeDryRun(dryRun)));
 
+    expect(result.mergedSourceUsers).toBe(1);
+    const moved = await db.select().from(schema.reservations)
+      .where(eq(schema.reservations.id, staleSourcePending));
+    const kept = await db.select().from(schema.reservations)
+      .where(eq(schema.reservations.id, staleTargetPending));
+    expect(moved[0]!.userId).toBe(target);
+    expect(kept[0]!.userId).toBe(target);
+  });
+
+  it('treats provider payments still progressing and recent Alipay failures as in flight, at the documented ages', async () => {
+    const { showtimeId } = await showtime();
+    const cases = [
+      // [label, reservation options, expected in flight]
+      ['paid but unconfirmed, any age', { deadlineInMs: -72 * HOUR_MS, lastChangedHoursAgo: 72, paymentStatus: 'DONE' }, true],
+      ['async payment in progress', { deadlineInMs: -30 * HOUR_MS, lastChangedHoursAgo: 30, paymentStatus: 'IN_PROGRESS' }, true],
+      ['checkout changed within the settle window', { deadlineInMs: -2 * HOUR_MS, lastChangedHoursAgo: 2 }, true],
+      ['aborted payment, stale', { deadlineInMs: -30 * HOUR_MS, lastChangedHoursAgo: 30, paymentStatus: 'ABORTED' }, false],
+      ['recent Alipay failure (late DONE can revive it)', { status: 'FAILED', provider: 'ALIPAY_PLUS', deadlineInMs: -3 * HOUR_MS, lastChangedHoursAgo: 3 }, true],
+      ['old Alipay failure', { status: 'FAILED', provider: 'ALIPAY_PLUS', deadlineInMs: -30 * HOUR_MS, lastChangedHoursAgo: 30 }, false],
+      ['recent card failure', { status: 'FAILED', provider: 'CARD', deadlineInMs: -1 * HOUR_MS, lastChangedHoursAgo: 1 }, false],
+    ] as const;
+
+    const expectations: Array<{ label: string; userIds: string[]; inFlight: boolean }> = [];
+    for (const [index, [label, options, inFlight]] of cases.entries()) {
+      const phone = `+8210700000${String(index).padStart(2, '0')}`;
+      const owner = await buyer(`Case${index}`, phone);
+      const other = await buyer(`Case${index}`, phone);
+      await confirmedTicket(owner, showtimeId, `E-${index}`);
+      await pendingReservation(owner, showtimeId, options);
+      expectations.push({ label, userIds: [owner, other].sort(), inFlight });
+    }
+
+    const dryRun = await service.dryRun();
+    for (const { label, userIds, inFlight } of expectations) {
+      const manual = dryRun.manualReviewGroups.find((group) =>
+        group.userIds.join() === userIds.join());
+      expect({ label, inFlight: manual?.reason === 'payment_in_flight' }).toEqual({
+        label,
+        inFlight,
+      });
+    }
+  });
+
+  it('stops apply before any write when a checkout starts for a safe group after its dry-run', async () => {
+    const { showtimeId } = await showtime();
+    const source = await buyer('Hong', '+821012345678');
+    const target = await buyer('Hong', '+821012345678');
+    await confirmedTicket(target, showtimeId, 'A-1');
+
+    const dryRun = await service.dryRun();
+    expect(dryRun.safeGroups).toHaveLength(1);
+    await pendingReservation(target, showtimeId);
+
+    await expect(service.apply(applyOptions(hashAccountMergeDryRun(dryRun)))).rejects.toThrow(
+      'ACCOUNT_MERGE_DRY_RUN_HASH_MISMATCH',
+    );
     const [sourceRow] = await db.select().from(schema.users).where(eq(schema.users.id, source));
-    const [pendingRow] = await db.select().from(schema.reservations)
-      .where(eq(schema.reservations.id, pendingId));
     expect(sourceRow!.accountStatus).toBe('active');
-    expect(pendingRow!.userId).toBe(target);
     expect(await db.select().from(schema.accountMergeBatches)).toEqual([]);
   });
 
@@ -297,27 +432,53 @@ describe('Historical account merge safety (PostgreSQL)', () => {
     }
   });
 
-  it('counts live checkouts and open or soon-opening sales for the CLI gate', async () => {
+  it('counts live checkouts and only openings near now for the CLI gate', async () => {
     await expect(service.salesActivity()).resolves.toEqual({
       activeCheckoutReservations: 0,
-      openOrOpeningShowtimes: 0,
+      openingShowtimes: 0,
+      recentOpeningHours: 2,
       lookaheadHours: 24,
     });
 
-    const open = await showtime({ status: 'selling' });
+    // Steady on-sale performances without an opening near now do not trip
+    // the gate by themselves (they used to, making the flag habitual).
+    const onSale = await showtime({ status: 'selling' });
+    await showtime({ status: 'selling', bookingStartsInHours: -5 });
+    await showtime({ status: 'selling', bookingStartsInHours: -1 });
     await showtime({ status: 'upcoming', bookingStartsInHours: 2 });
     await showtime({ status: 'upcoming', bookingStartsInHours: 48 });
     await showtime({ status: 'upcoming', bookingStartsInHours: null });
-    await showtime({ status: 'selling', publishState: 'draft' });
-    await showtime({ status: 'ended' });
-    await showtime({ status: 'selling', startsInHours: -1 });
+    await showtime({ status: 'selling', publishState: 'draft', bookingStartsInHours: 1 });
+    await showtime({ status: 'ended', bookingStartsInHours: 1 });
+    await showtime({ status: 'selling', startsInHours: -1, bookingStartsInHours: -1 });
     const holder = await buyer('Jung', '+821022223333');
-    await pendingReservation(holder, open.showtimeId);
+    await pendingReservation(holder, onSale.showtimeId);
+    await pendingReservation(holder, onSale.showtimeId, { deadlineInMs: -10 * 60_000 });
+    await pendingReservation(holder, onSale.showtimeId, {
+      status: 'FAILED',
+      provider: 'ALIPAY_PLUS',
+      deadlineInMs: -5 * 60_000,
+    });
+    await pendingReservation(holder, onSale.showtimeId, {
+      status: 'FAILED',
+      provider: 'ALIPAY_PLUS',
+      deadlineInMs: -3 * HOUR_MS,
+      lastChangedHoursAgo: 3,
+    });
 
     await expect(service.salesActivity()).resolves.toEqual({
-      activeCheckoutReservations: 1,
-      openOrOpeningShowtimes: 2,
+      activeCheckoutReservations: 2,
+      openingShowtimes: 2,
+      recentOpeningHours: 2,
       lookaheadHours: 24,
     });
+  });
+
+  it('identifies the connected server from the server side for --expected-server', async () => {
+    const identity = await service.databaseIdentity();
+
+    expect(identity.database).toBe('account_merge_test');
+    expect(identity.systemIdentifier).toMatch(/^\d+$/);
+    expect(identity.fingerprint).toBe(`sysid:${identity.systemIdentifier}/account_merge_test`);
   });
 });

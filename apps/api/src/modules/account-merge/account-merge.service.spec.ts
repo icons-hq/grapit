@@ -1,4 +1,5 @@
-import { getTableName } from 'drizzle-orm';
+import { getTableName, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -29,6 +30,12 @@ interface RecordingDbOptions {
 
 function tableName(table: unknown): string {
   return getTableName(table as never);
+}
+
+const pgDialect = new PgDialect();
+
+function sqlText(query: unknown): string {
+  return pgDialect.sqlToQuery(query as SQL).sql.replace(/\s+/g, ' ');
 }
 
 function createRecordingDb(options: RecordingDbOptions = {}) {
@@ -120,7 +127,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 0,
       confirmedReservations: 0,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       groupKey: '821012345678|1995-05-15|hong',
@@ -132,7 +139,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 2,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       groupKey: '821055556666|1991-02-03|kim',
@@ -144,7 +151,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 1,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       groupKey: '821055556666|1991-02-03|kim',
@@ -156,7 +163,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 1,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
   ];
 }
@@ -173,7 +180,7 @@ function incompleteIdentityRows() {
       accountStatus: 'merged',
       totalReservations: 1,
       confirmedReservations: 0,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       groupKey: '821099998888|1993-04-05|lee',
@@ -185,7 +192,7 @@ function incompleteIdentityRows() {
       accountStatus: 'active',
       totalReservations: 0,
       confirmedReservations: 0,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
   ];
 }
@@ -217,13 +224,13 @@ function safeReservationCountRows() {
       userId: 'source-safe',
       totalReservations: 0,
       confirmedReservations: 0,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       userId: 'target-safe',
       totalReservations: 2,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
   ];
 }
@@ -259,13 +266,13 @@ function manualReservationCountRows() {
       userId: 'manual-b',
       totalReservations: 1,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
     {
       userId: 'manual-a',
       totalReservations: 1,
       confirmedReservations: 1,
-      pendingPaymentReservations: 0,
+      paymentInFlightReservations: 0,
     },
   ];
 }
@@ -761,13 +768,13 @@ describe('AccountMergeService', () => {
             userId: 'source-safe',
             totalReservations: 1,
             confirmedReservations: 0,
-            pendingPaymentReservations: 1,
+            paymentInFlightReservations: 1,
           },
           {
             userId: 'target-safe',
             totalReservations: 2,
             confirmedReservations: 1,
-            pendingPaymentReservations: 0,
+            paymentInFlightReservations: 0,
           },
         ],
       ],
@@ -776,7 +783,7 @@ describe('AccountMergeService', () => {
     const service = new AccountMergeService(db as never);
 
     await expect(service.apply(applyOptions())).rejects.toThrow(
-      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment',
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:payment_in_flight',
     );
     expect(tx.updateCalls).toEqual([]);
     expect(tx.insertedRowChanges).toEqual([]);
@@ -793,13 +800,13 @@ describe('AccountMergeService', () => {
             userId: 'source-safe',
             totalReservations: 0,
             confirmedReservations: 0,
-            pendingPaymentReservations: 0,
+            paymentInFlightReservations: 0,
           },
           {
             userId: 'target-safe',
             totalReservations: 3,
             confirmedReservations: 1,
-            pendingPaymentReservations: 1,
+            paymentInFlightReservations: 1,
           },
         ],
       ],
@@ -808,7 +815,7 @@ describe('AccountMergeService', () => {
     const service = new AccountMergeService(db as never);
 
     await expect(service.apply(applyOptions())).rejects.toThrow(
-      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment',
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:payment_in_flight',
     );
     expect(tx.updateCalls).toEqual([]);
     expect(tx.insertedRowChanges).toEqual([]);
@@ -833,13 +840,13 @@ describe('AccountMergeService', () => {
             userId: 'manual-b',
             totalReservations: 2,
             confirmedReservations: 1,
-            pendingPaymentReservations: 1,
+            paymentInFlightReservations: 1,
           },
           {
             userId: 'manual-a',
             totalReservations: 1,
             confirmedReservations: 1,
-            pendingPaymentReservations: 0,
+            paymentInFlightReservations: 0,
           },
         ],
       ],
@@ -855,7 +862,7 @@ describe('AccountMergeService', () => {
           manualAllowlist,
         }),
       ),
-    ).rejects.toThrow('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment');
+    ).rejects.toThrow('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:payment_in_flight');
     expect(tx.updateCalls).toEqual([]);
   });
 
@@ -871,7 +878,7 @@ describe('AccountMergeService', () => {
         accountStatus: 'active',
         totalReservations: 1,
         confirmedReservations: 1,
-        pendingPaymentReservations: 0,
+        paymentInFlightReservations: 0,
       },
       {
         groupKey: '821077778888|1990-01-01|park',
@@ -883,7 +890,7 @@ describe('AccountMergeService', () => {
         accountStatus: 'active',
         totalReservations: 0,
         confirmedReservations: 0,
-        pendingPaymentReservations: 0,
+        paymentInFlightReservations: 0,
       },
     ];
     const rows = [...candidateRows().filter((row) => row.name === 'Hong'), ...incompleteRows];
@@ -918,7 +925,7 @@ describe('AccountMergeService', () => {
     expect(tx.insertedBatches).toEqual([]);
   });
 
-  it('rejects an allowlisted source-pending-payment group before the transaction', async () => {
+  it('rejects an allowlisted payment-in-flight group before the transaction', async () => {
     const pendingRows = [
       {
         groupKey: '821033334444|1988-08-08|choi',
@@ -930,7 +937,7 @@ describe('AccountMergeService', () => {
         accountStatus: 'active',
         totalReservations: 1,
         confirmedReservations: 1,
-        pendingPaymentReservations: 0,
+        paymentInFlightReservations: 0,
       },
       {
         groupKey: '821033334444|1988-08-08|choi',
@@ -942,7 +949,7 @@ describe('AccountMergeService', () => {
         accountStatus: 'active',
         totalReservations: 1,
         confirmedReservations: 0,
-        pendingPaymentReservations: 1,
+        paymentInFlightReservations: 1,
       },
     ];
     const manualAllowlist: ManualMergeAllowlistEntry[] = [
@@ -958,7 +965,7 @@ describe('AccountMergeService', () => {
     const dryRun = await service.dryRun({});
 
     expect(dryRun.manualReviewGroups).toEqual([
-      expect.objectContaining({ reason: 'source_pending_payment_reservation' }),
+      expect.objectContaining({ reason: 'payment_in_flight' }),
     ]);
     await expect(
       service.apply(
@@ -968,8 +975,155 @@ describe('AccountMergeService', () => {
           manualAllowlist,
         }),
       ),
-    ).rejects.toThrow('ACCOUNT_MERGE_ALLOWLIST_PENDING_PAYMENT');
+    ).rejects.toThrow('ACCOUNT_MERGE_ALLOWLIST_PAYMENT_IN_FLIGHT:target=choi-target');
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a group whose target is mid-payment out of the batch so the other safe groups still merge', async () => {
+    // Review r0 major: dry-run used to list this group as safe (only sources
+    // were checked) and apply then rolled back every group in the batch.
+    const checkoutTargetRows = [
+      {
+        groupKey: '821044445555|1992-02-02|yoon',
+        id: 'yoon-source',
+        name: 'Yoon',
+        phone: '+82 10-4444-5555',
+        birthDate: '1992-02-02',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+        totalReservations: 0,
+        confirmedReservations: 0,
+        paymentInFlightReservations: 0,
+      },
+      {
+        groupKey: '821044445555|1992-02-02|yoon',
+        id: 'yoon-target',
+        name: 'Yoon',
+        phone: '+82 10-4444-5555',
+        birthDate: '1992-02-02',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+        totalReservations: 2,
+        confirmedReservations: 1,
+        paymentInFlightReservations: 1,
+      },
+    ];
+    const rows = [...candidateRows().filter((row) => row.name === 'Hong'), ...checkoutTargetRows];
+    const { db, tx } = createRecordingDb({
+      executeRows: [
+        rows,
+        rows,
+        safeRevalidationRows(),
+        [],
+        safeReservationCountRows(),
+        [],
+      ],
+      tableRows: rowsForSource(),
+    });
+    const service = new AccountMergeService(db as never);
+
+    const dryRun = await service.dryRun();
+    expect(dryRun.safeGroups).toEqual([
+      expect.objectContaining({ targetUserId: 'target-safe', sourceUserIds: ['source-safe'] }),
+    ]);
+    expect(dryRun.manualReviewGroups).toEqual([
+      expect.objectContaining({ reason: 'payment_in_flight', userIds: ['yoon-source', 'yoon-target'] }),
+    ]);
+
+    const result = await service.apply(
+      applyOptions({ dryRunHash: hashAccountMergeDryRun(dryRun) }),
+    );
+
+    expect(result).toMatchObject({ mergedGroups: 1, mergedSourceUsers: 1 });
+    expect(tx.updateCalls.length).toBeGreaterThan(0);
+  });
+
+  it('names the group by its target account when the in-transaction race guard fires', async () => {
+    const { db } = createRecordingDb({
+      executeRows: [
+        candidateRows(),
+        safeRevalidationRows(),
+        [],
+        [
+          {
+            userId: 'source-safe',
+            totalReservations: 1,
+            confirmedReservations: 0,
+            paymentInFlightReservations: 1,
+          },
+          {
+            userId: 'target-safe',
+            totalReservations: 2,
+            confirmedReservations: 1,
+            paymentInFlightReservations: 0,
+          },
+        ],
+      ],
+      tableRows: rowsForSource(),
+    });
+    const service = new AccountMergeService(db as never);
+
+    const error = (await service.apply(applyOptions()).catch((err: unknown) => err)) as Error;
+
+    expect(error.message).toBe(
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:payment_in_flight:target=target-safe',
+    );
+    // groupKey carries phone, birth date and name; keep it out of the error.
+    expect(error.message).not.toContain('821012345678');
+  });
+
+  it('counts payments in flight with one SQL definition in dry-run and in-transaction revalidation', async () => {
+    const { db, tx } = createRecordingDb({
+      executeRows: [candidateRows(), safeRevalidationRows(), [], safeReservationCountRows()],
+      tableRows: rowsForSource(),
+    });
+    const service = new AccountMergeService(db as never);
+
+    await service.apply(applyOptions());
+
+    const dryRunSql = sqlText(db.execute.mock.calls[0]![0]);
+    const revalidationSql = sqlText(tx.execute.mock.calls[2]![0]);
+    for (const text of [dryRunSql, revalidationSql]) {
+      expect(text).toContain("r.payment_deadline_at > now()");
+      expect(text).toContain("pay.status in ('READY', 'IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED')");
+      expect(text).toContain("r.status = 'FAILED'");
+      expect(text).toContain("in ('ALIPAY', 'ALIPAY_PLUS')");
+    }
+  });
+
+  it('identifies the server by system identifier, falling back to the server address', async () => {
+    const { db } = createRecordingDb({
+      executeRows: [
+        [{ database: 'grapit', serverAddress: '10.20.0.3', serverPort: 5432 }],
+        [{ systemIdentifier: '7400000000000000001' }],
+      ],
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(service.databaseIdentity()).resolves.toEqual({
+      database: 'grapit',
+      serverAddress: '10.20.0.3',
+      serverPort: 5432,
+      systemIdentifier: '7400000000000000001',
+      fingerprint: 'sysid:7400000000000000001/grapit',
+    });
+
+    const restricted = createRecordingDb({
+      executeRows: [[{ database: 'grapit', serverAddress: '10.20.0.3', serverPort: '5432' }]],
+    });
+    restricted.db.execute
+      .mockImplementationOnce(async () => ({
+        rows: [{ database: 'grapit', serverAddress: '10.20.0.3', serverPort: '5432' }],
+      }))
+      .mockImplementationOnce(async () => {
+        throw new Error('permission denied for function pg_control_system');
+      });
+    await expect(
+      new AccountMergeService(restricted.db as never).databaseIdentity(),
+    ).resolves.toMatchObject({
+      systemIdentifier: null,
+      fingerprint: 'addr:10.20.0.3:5432/grapit',
+    });
   });
 
   it('reports merge targets that now exceed the per-buyer ticket limit', async () => {
@@ -1013,15 +1167,16 @@ describe('AccountMergeService', () => {
     expect(tx.execute).toHaveBeenCalledTimes(4);
   });
 
-  it('reads active checkout and open-sale counts for the CLI sales gate', async () => {
+  it('reads active checkout and opening counts for the CLI sales gate', async () => {
     const { db } = createRecordingDb({
-      executeRows: [[{ activeCheckoutReservations: 2, openOrOpeningShowtimes: 1 }]],
+      executeRows: [[{ activeCheckoutReservations: 2, openingShowtimes: 1 }]],
     });
     const service = new AccountMergeService(db as never);
 
     await expect(service.salesActivity()).resolves.toEqual({
       activeCheckoutReservations: 2,
-      openOrOpeningShowtimes: 1,
+      openingShowtimes: 1,
+      recentOpeningHours: 2,
       lookaheadHours: 24,
     });
   });

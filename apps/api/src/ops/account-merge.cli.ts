@@ -24,6 +24,7 @@ import {
 import {
   AccountMergeService,
   type AccountMergeApplyResult,
+  type AccountMergeDatabaseIdentity,
   type AccountMergeDryRunResult,
   type AccountMergeSalesActivity,
   type AccountMergeVerifyResult,
@@ -41,6 +42,7 @@ export interface AccountMergeCliArgs {
   batchId: string | null;
   dryRunHash: string | null;
   expectedDb: string | null;
+  expectedServer: string | null;
   operatorUserId: string | null;
   reason: string | null;
   allowActiveSales: boolean;
@@ -58,7 +60,12 @@ export interface AccountMergeDatabaseTarget {
 
 export type AccountMergeCliService = Pick<
   AccountMergeService,
-  'dryRun' | 'apply' | 'verify' | 'validateManualAllowlist' | 'salesActivity'
+  | 'dryRun'
+  | 'apply'
+  | 'verify'
+  | 'validateManualAllowlist'
+  | 'salesActivity'
+  | 'databaseIdentity'
 >;
 
 export interface AccountMergeCliDeps {
@@ -76,6 +83,7 @@ const VALUE_FLAGS: Record<string, keyof AccountMergeCliArgs> = {
   '--batch-id': 'batchId',
   '--dry-run-hash': 'dryRunHash',
   '--expected-db': 'expectedDb',
+  '--expected-server': 'expectedServer',
   '--operator-user-id': 'operatorUserId',
   '--reason': 'reason',
 };
@@ -99,6 +107,7 @@ export function parseAccountMergeArgs(argv: string[]): AccountMergeCliArgs {
     batchId: null,
     dryRunHash: null,
     expectedDb: null,
+    expectedServer: null,
     operatorUserId: null,
     reason: null,
     allowActiveSales: false,
@@ -155,6 +164,9 @@ export function requireApplySafetyInputs(args: AccountMergeCliArgs): void {
   }
   if (!args.expectedDb) {
     throw new Error('ACCOUNT_MERGE_EXPECTED_DB_REQUIRED');
+  }
+  if (!args.expectedServer) {
+    throw new Error('ACCOUNT_MERGE_EXPECTED_SERVER_REQUIRED');
   }
 }
 
@@ -216,6 +228,20 @@ export function assertExpectedDatabase(
   }
 }
 
+/**
+ * Compares the server-side identity with the value recorded from the
+ * reviewed dry-run. The client-side descriptor cannot tell instances apart
+ * behind a local cloud-sql-proxy (always 127.0.0.1:<port>).
+ */
+export function assertExpectedServer(
+  identity: AccountMergeDatabaseIdentity,
+  expectedServer: string,
+): void {
+  if (expectedServer.trim() !== identity.fingerprint) {
+    throw new Error(`ACCOUNT_MERGE_DATABASE_SERVER_MISMATCH:${identity.fingerprint}`);
+  }
+}
+
 /** Compares the allowlist on disk with the hash recorded at review time. */
 export function assertReviewedAllowlistHash(
   manualAllowlist: ManualMergeAllowlistEntry[],
@@ -262,7 +288,7 @@ export function assertSalesQuietOrAcknowledged(
   allowActiveSales: boolean,
 ): void {
   const salesActive =
-    activity.activeCheckoutReservations > 0 || activity.openOrOpeningShowtimes > 0;
+    activity.activeCheckoutReservations > 0 || activity.openingShowtimes > 0;
   if (salesActive && !allowActiveSales) {
     throw new Error('ACCOUNT_MERGE_ACTIVE_SALES_CONFIRMATION_REQUIRED');
   }
@@ -280,18 +306,24 @@ export function buildApplyReport({
   allowlistHash,
   result,
   verification,
+  verifyError,
   databaseTarget,
+  databaseServer,
   salesActivity,
 }: {
   dryRun: AccountMergeDryRunResult;
   allowlistHash: string;
   result: AccountMergeApplyResult;
-  verification: AccountMergeVerifyResult;
+  /** null when verify itself failed after the commit; see verifyError. */
+  verification: AccountMergeVerifyResult | null;
+  verifyError?: string;
   databaseTarget?: string;
+  databaseServer?: string;
   salesActivity?: AccountMergeSalesActivity;
 }) {
   return {
     ...(databaseTarget ? { databaseTarget } : {}),
+    ...(databaseServer ? { databaseServer } : {}),
     ...(salesActivity ? { salesActivity } : {}),
     dryRun,
     allowlistHash,
@@ -303,6 +335,7 @@ export function buildApplyReport({
     rowChanges: result.rowChanges,
     ticketLimitWarnings: result.ticketLimitWarnings,
     verification,
+    ...(verifyError ? { verifyError } : {}),
   };
 }
 
@@ -342,6 +375,13 @@ export async function runAccountMergeCli(
   const { service } = deps;
   const target = describeDatabaseTarget(deps.databaseUrl);
   deps.stderr(JSON.stringify({ mode: args.mode, databaseTarget: target }));
+  if (args.mode === 'apply') {
+    // Fail on the cheap client-side checks before touching the database.
+    requireApplySafetyInputs(args);
+    assertExpectedDatabase(target, args.expectedDb!);
+  }
+  const server = await service.databaseIdentity();
+  deps.stderr(JSON.stringify({ mode: args.mode, databaseServer: server }));
 
   if (args.mode === 'dry-run') {
     if (!args.reportPath) {
@@ -362,6 +402,7 @@ export async function runAccountMergeCli(
       JSON.stringify({
         mode: 'dry-run',
         databaseTarget: target.descriptor,
+        databaseServer: server.fingerprint,
         reportPath: args.reportPath,
         dryRunHash: hashAccountMergeDryRun(dryRun),
         ...(args.allowlistPath ? { allowlistHash: hashJson(manualAllowlist) } : {}),
@@ -371,8 +412,7 @@ export async function runAccountMergeCli(
   }
 
   if (args.mode === 'apply') {
-    requireApplySafetyInputs(args);
-    assertExpectedDatabase(target, args.expectedDb!);
+    assertExpectedServer(server, args.expectedServer!);
     assertReportPathWritable(args.reportPath!);
 
     const manualAllowlist = readManualAllowlist(args.allowlistPath!);
@@ -401,28 +441,47 @@ export async function runAccountMergeCli(
     // the report write fails next.
     deps.stderr(JSON.stringify({ mode: 'apply', stage: 'committed', batchId: result.batchId }));
 
-    const verification = await service.verify(result.batchId, { persist: true });
+    let verification: AccountMergeVerifyResult | null = null;
+    let verifyError: string | undefined;
+    try {
+      verification = await service.verify(result.batchId, { persist: true });
+    } catch (error) {
+      // The merge is committed. Still write the evidence report (with the
+      // committed result) and exit non-zero; the batch stays 'applied' until
+      // `verify --batch-id` succeeds.
+      verifyError = error instanceof Error ? error.message : String(error);
+      deps.stderr(JSON.stringify({
+        mode: 'apply',
+        stage: 'verify_failed',
+        batchId: result.batchId,
+        error: verifyError,
+      }));
+    }
     writeProtectedReport(args.reportPath!, buildApplyReport({
       dryRun,
       allowlistHash,
       result,
       verification,
+      verifyError,
       databaseTarget: target.descriptor,
+      databaseServer: server.fingerprint,
       salesActivity,
     }));
     deps.stdout(
       JSON.stringify({
         mode: 'apply',
         databaseTarget: target.descriptor,
+        databaseServer: server.fingerprint,
         batchId: result.batchId,
         mergedGroups: result.mergedGroups,
         mergedSourceUsers: result.mergedSourceUsers,
         ticketLimitWarnings: result.ticketLimitWarnings.length,
-        verificationOk: verification.ok,
-        failedChecks: verification.failedChecks,
+        verificationOk: verification?.ok ?? false,
+        failedChecks: verification?.failedChecks ?? [],
+        ...(verifyError ? { verifyError } : {}),
       }),
     );
-    return hasVerificationFailures(verification) ? 1 : 0;
+    return verification && !hasVerificationFailures(verification) ? 0 : 1;
   }
 
   if (!args.batchId) {
@@ -433,7 +492,12 @@ export async function runAccountMergeCli(
   if (args.reportPath) {
     writeProtectedReport(args.reportPath, verification);
   }
-  deps.stdout(JSON.stringify({ mode: 'verify', databaseTarget: target.descriptor, verification }));
+  deps.stdout(JSON.stringify({
+    mode: 'verify',
+    databaseTarget: target.descriptor,
+    databaseServer: server.fingerprint,
+    verification,
+  }));
   return hasVerificationFailures(verification) ? 1 : 0;
 }
 

@@ -20,6 +20,7 @@ import type {
 } from '../modules/account-merge/account-merge.service.js';
 import {
   assertExpectedDatabase,
+  assertExpectedServer,
   assertReportPathWritable,
   assertReviewedAllowlistHash,
   assertSalesQuietOrAcknowledged,
@@ -35,6 +36,20 @@ import {
 
 const DATABASE_URL = 'postgresql://grapit_app:s3cr3t-pass@127.0.0.1:5433/grapit';
 const DATABASE_DESCRIPTOR = '127.0.0.1:5433/grapit';
+const SERVER_FINGERPRINT = 'sysid:7400000000000000001/grapit';
+const DATABASE_IDENTITY = {
+  database: 'grapit',
+  serverAddress: '10.20.0.3',
+  serverPort: 5432,
+  systemIdentifier: '7400000000000000001',
+  fingerprint: SERVER_FINGERPRINT,
+};
+const QUIET_SALES = {
+  activeCheckoutReservations: 0,
+  openingShowtimes: 0,
+  recentOpeningHours: 2,
+  lookaheadHours: 24,
+};
 
 function applyArgs(overrides: Partial<AccountMergeCliArgs> = {}): AccountMergeCliArgs {
   return {
@@ -46,6 +61,7 @@ function applyArgs(overrides: Partial<AccountMergeCliArgs> = {}): AccountMergeCl
     batchId: null,
     dryRunHash: 'dry-run-hash',
     expectedDb: DATABASE_DESCRIPTOR,
+    expectedServer: SERVER_FINGERPRINT,
     operatorUserId: 'operator-1',
     reason: 'merge approved groups',
     allowActiveSales: false,
@@ -110,11 +126,8 @@ function cliFixture() {
   const service = {
     dryRun: vi.fn().mockResolvedValue(dryRun),
     validateManualAllowlist: vi.fn(),
-    salesActivity: vi.fn().mockResolvedValue({
-      activeCheckoutReservations: 0,
-      openOrOpeningShowtimes: 0,
-      lookaheadHours: 24,
-    }),
+    databaseIdentity: vi.fn().mockResolvedValue(DATABASE_IDENTITY),
+    salesActivity: vi.fn().mockResolvedValue(QUIET_SALES),
     apply: vi.fn().mockResolvedValue({
       batchId: 'batch-1',
       mergedGroups: 2,
@@ -174,6 +187,7 @@ describe('account merge CLI helpers', () => {
       batchId: null,
       dryRunHash: null,
       expectedDb: null,
+      expectedServer: null,
       operatorUserId: null,
       reason: null,
       allowActiveSales: false,
@@ -192,13 +206,16 @@ describe('account merge CLI helpers', () => {
     ).toThrow('ACCOUNT_MERGE_DRY_RUN_HASH_REQUIRED');
   });
 
-  it('requires the reviewed allowlist hash and the expected database for apply', () => {
+  it('requires the reviewed allowlist hash, the expected database and the expected server for apply', () => {
     expect(() =>
       requireApplySafetyInputs(applyArgs({ allowlistHash: null })),
     ).toThrow('ACCOUNT_MERGE_ALLOWLIST_HASH_REQUIRED');
     expect(() =>
       requireApplySafetyInputs(applyArgs({ expectedDb: null })),
     ).toThrow('ACCOUNT_MERGE_EXPECTED_DB_REQUIRED');
+    expect(() =>
+      requireApplySafetyInputs(applyArgs({ expectedServer: null })),
+    ).toThrow('ACCOUNT_MERGE_EXPECTED_SERVER_REQUIRED');
     expect(() => requireApplySafetyInputs(applyArgs())).not.toThrow();
   });
 
@@ -221,6 +238,8 @@ describe('account merge CLI helpers', () => {
         'merge approved groups',
         '--expected-db',
         DATABASE_DESCRIPTOR,
+        '--expected-server',
+        SERVER_FINGERPRINT,
         '--dry-run-hash',
         'dry-run-hash',
       ]),
@@ -233,6 +252,7 @@ describe('account merge CLI helpers', () => {
       batchId: null,
       dryRunHash: 'dry-run-hash',
       expectedDb: DATABASE_DESCRIPTOR,
+      expectedServer: SERVER_FINGERPRINT,
       operatorUserId: 'operator-1',
       reason: 'merge approved groups',
       allowActiveSales: true,
@@ -290,6 +310,16 @@ describe('account merge CLI helpers', () => {
     ).not.toThrow();
   });
 
+  it('rejects apply when the server behind the same proxy address is a different instance', () => {
+    expect(() => assertExpectedServer(DATABASE_IDENTITY, ` ${SERVER_FINGERPRINT} `)).not.toThrow();
+    expect(() =>
+      assertExpectedServer(
+        { ...DATABASE_IDENTITY, systemIdentifier: '7400000000000000999', fingerprint: 'sysid:7400000000000000999/grapit' },
+        SERVER_FINGERPRINT,
+      ),
+    ).toThrow('ACCOUNT_MERGE_DATABASE_SERVER_MISMATCH:sysid:7400000000000000999/grapit');
+  });
+
   it('rejects an allowlist file whose target changed after its hash was reviewed', () => {
     const reviewedHash = hashJson(ALLOWLIST);
     const edited = [{ ...ALLOWLIST[0]!, targetUserId: 'manual-b', sourceUserIds: ['manual-a'] }];
@@ -310,10 +340,10 @@ describe('account merge CLI helpers', () => {
     );
   });
 
-  it('requires an explicit acknowledgement while checkout or sales are active', () => {
-    const quiet = { activeCheckoutReservations: 0, openOrOpeningShowtimes: 0, lookaheadHours: 24 };
+  it('requires an explicit acknowledgement while checkout or an opening is active', () => {
+    const quiet = QUIET_SALES;
     const checkout = { ...quiet, activeCheckoutReservations: 2 };
-    const opening = { ...quiet, openOrOpeningShowtimes: 1 };
+    const opening = { ...quiet, openingShowtimes: 1 };
 
     expect(() => assertSalesQuietOrAcknowledged(quiet, false)).not.toThrow();
     expect(() => assertSalesQuietOrAcknowledged(checkout, false)).toThrow(
@@ -370,10 +400,12 @@ describe('account merge CLI helpers', () => {
       },
       verification: verification(),
       databaseTarget: DATABASE_DESCRIPTOR,
+      databaseServer: SERVER_FINGERPRINT,
     });
 
     expect(report).toEqual({
       databaseTarget: DATABASE_DESCRIPTOR,
+      databaseServer: SERVER_FINGERPRINT,
       dryRun: expect.objectContaining({ safeGroups: [] }),
       allowlistHash: 'allowlist-hash',
       result: {
@@ -423,17 +455,59 @@ describe('runAccountMergeCli apply safety', () => {
       }),
     );
     expect(fixture.service.verify).toHaveBeenCalledWith('batch-1', { persist: true });
+    expect(fixture.stderr.join('\n')).toContain(SERVER_FINGERPRINT);
     expect(JSON.parse(fixture.stdout.at(-1)!)).toMatchObject({
       mode: 'apply',
       databaseTarget: DATABASE_DESCRIPTOR,
+      databaseServer: SERVER_FINGERPRINT,
       batchId: 'batch-1',
       verificationOk: true,
     });
     expect(JSON.parse(readFileSync(fixture.reportPath, 'utf8'))).toMatchObject({
       databaseTarget: DATABASE_DESCRIPTOR,
+      databaseServer: SERVER_FINGERPRINT,
       allowlistHash: fixture.allowlistHash,
       verification: { ok: true },
     });
+  });
+
+  it('still writes the report and exits non-zero when verify itself throws after the commit', async () => {
+    const fixture = cliFixture();
+    fixture.service.verify.mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
+
+    const exitCode = await runAccountMergeCli(fixtureApplyArgs(fixture), fixture.deps);
+
+    expect(exitCode).toBe(1);
+    expect(fixture.service.apply).toHaveBeenCalledTimes(1);
+    expect(fixture.stderr.join('\n')).toContain('"stage":"committed","batchId":"batch-1"');
+    expect(fixture.stderr.join('\n')).toContain('"stage":"verify_failed"');
+    expect(JSON.parse(fixture.stdout.at(-1)!)).toMatchObject({
+      batchId: 'batch-1',
+      verificationOk: false,
+      verifyError: 'Connection terminated unexpectedly',
+    });
+    const report = JSON.parse(readFileSync(fixture.reportPath, 'utf8'));
+    expect(report).toMatchObject({
+      result: { batchId: 'batch-1', mergedGroups: 2 },
+      verification: null,
+      verifyError: 'Connection terminated unexpectedly',
+    });
+    expect((statSync(fixture.reportPath).mode & 0o777).toString(8)).toBe('600');
+  });
+
+  it('refuses to apply when the proxy now forwards to a different database server', async () => {
+    const fixture = cliFixture();
+    fixture.service.databaseIdentity.mockResolvedValueOnce({
+      ...DATABASE_IDENTITY,
+      systemIdentifier: '7400000000000000999',
+      fingerprint: 'sysid:7400000000000000999/grapit',
+    });
+
+    await expect(
+      runAccountMergeCli(fixtureApplyArgs(fixture), fixture.deps),
+    ).rejects.toThrow('ACCOUNT_MERGE_DATABASE_SERVER_MISMATCH:sysid:7400000000000000999/grapit');
+    expect(fixture.service.dryRun).not.toHaveBeenCalled();
+    expect(fixture.service.apply).not.toHaveBeenCalled();
   });
 
   it('exits non-zero and records the failed verification when post-apply verify fails', async () => {
@@ -464,6 +538,7 @@ describe('runAccountMergeCli apply safety', () => {
         fixture.deps,
       ),
     ).rejects.toThrow(`ACCOUNT_MERGE_DATABASE_TARGET_MISMATCH:${DATABASE_DESCRIPTOR}`);
+    expect(fixture.service.databaseIdentity).not.toHaveBeenCalled();
     expect(fixture.service.dryRun).not.toHaveBeenCalled();
     expect(fixture.service.apply).not.toHaveBeenCalled();
   });
@@ -505,12 +580,12 @@ describe('runAccountMergeCli apply safety', () => {
     expect(fixture.service.apply).not.toHaveBeenCalled();
   });
 
-  it('requires --allow-active-sales while checkouts are in flight or a sale is open', async () => {
+  it('requires --allow-active-sales while checkouts are in flight or an opening is near', async () => {
     const fixture = cliFixture();
     fixture.service.salesActivity.mockResolvedValue({
+      ...QUIET_SALES,
       activeCheckoutReservations: 3,
-      openOrOpeningShowtimes: 1,
-      lookaheadHours: 24,
+      openingShowtimes: 1,
     });
 
     await expect(
@@ -534,6 +609,7 @@ describe('runAccountMergeCli apply safety', () => {
         allowlistHash: null,
         dryRunHash: null,
         expectedDb: null,
+        expectedServer: null,
       },
       fixture.deps,
     );
@@ -546,6 +622,7 @@ describe('runAccountMergeCli apply safety', () => {
     expect(JSON.parse(fixture.stdout.at(-1)!)).toEqual({
       mode: 'dry-run',
       databaseTarget: DATABASE_DESCRIPTOR,
+      databaseServer: SERVER_FINGERPRINT,
       reportPath,
       dryRunHash: fixture.dryRunHash,
       allowlistHash: fixture.allowlistHash,
