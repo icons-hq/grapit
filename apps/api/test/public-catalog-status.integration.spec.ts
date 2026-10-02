@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -11,6 +11,7 @@ import { PerformanceService } from '../src/modules/performance/performance.servi
 import type { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { PerformanceController } from '../src/modules/performance/performance.controller.js';
 import { SearchService } from '../src/modules/search/search.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 // Never reads DATABASE_URL. The disposable container below is the only database.
@@ -21,10 +22,9 @@ describe('Public catalog sale status — PostgreSQL', () => {
   let db: DrizzleDB;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'catalog_status_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'catalog_status_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'catalog_status_test', max: 4 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

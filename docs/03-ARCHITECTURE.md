@@ -612,12 +612,12 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 3. authenticate to GCP via Workload Identity Federation,
 4. refuse to reopen a live closed `BOOKING_ENABLED` API/Web unless a manual dispatch sets `allow_booking_reopen=true` (an approved reopen is annotated), and record each service's start-of-run gate value and latest revision as job outputs for the deploy jobs,
 5. start Cloud SQL Auth Proxy for migration,
-6. database preflight: read back the session timeouts, enforce `MIGRATION_FREEZE`, report or enforce the connection budget,
+6. database preflight: read back the session timeouts, enforce `MIGRATION_FREEZE`, report or enforce the connection budget (with `PGBOSS_POOL_MAX` unset it also counts a value an earlier deploy left on the live API service, read from step 4's describe output, and warns to remove it),
 7. run Drizzle migrations,
 8. build and push API image,
 9. build and push web image,
 10. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
-11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job; in an `allow_booking_reopen=true` run a closed service is reopened only when it was already closed at the start of the run and its revision is unchanged), then deploy API,
+11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job; in an `allow_booking_reopen=true` run a closed service is reopened only when it was already closed at the start of the run and its revision is unchanged, an unreadable value is reopened with a warning only for a service that was not open at the start, and a service open at the start that is unreadable now fails the job), then deploy API,
 12. re-read the live Web `BOOKING_ENABLED` the same way, then deploy web after API deploy (deploy-web also needs migrate-production for its start-of-run snapshot).
 
 API deploy injects runtime values through Cloud Run environment variables and Secret Manager bindings. Documentation must name required settings without printing raw values.
@@ -781,6 +781,8 @@ A phone verification token from `/sms/verify-code` backs exactly one write. Sign
 | Shared focused tests | `pnpm --dir packages/shared exec vitest run <files>` |
 | API focused tests | `pnpm --filter @grabit/api exec vitest run <files>` |
 | Web focused tests | `pnpm --filter @grabit/web exec vitest run <files>` |
+
+API integration specs start PostgreSQL only through `apps/api/test/helpers/postgres-container.ts` (`startPostgresContainer`). It waits for both "ready to accept connections" log lines of the image entrypoint (the initdb server and the final one) and then retries a fresh-connection `SELECT 1` through startup errors (`57P03`, connection refused or reset) before a spec creates its pool or runs migrations, so a spec never races PostgreSQL startup. `apps/api/test/postgres-container-usage.integration.spec.ts` fails if a spec starts a `postgres` container inline.
 
 Docs-only updates normally require:
 

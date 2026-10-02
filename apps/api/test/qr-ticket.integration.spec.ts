@@ -5,12 +5,13 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InternalServerErrorException } from '@nestjs/common';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, eq, sql } from 'drizzle-orm';
 import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
 import type { EmailService } from '../src/modules/auth/email/email.service.js';
@@ -99,9 +100,9 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
   }
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'qr_ticket_test' }).withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432), user: 'postgres', password: 'test', database: 'qr_ticket_test', max: 8 });
+    const postgres = await startPostgresContainer({ database: 'qr_ticket_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port, user: 'postgres', password: 'test', database: 'qr_ticket_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });

@@ -2,10 +2,11 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, eq, or, sql } from 'drizzle-orm';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { drizzleProvider } from '../src/database/drizzle.provider.js';
 import { seatInventories } from '../src/database/schema/seat-inventories.js';
@@ -37,11 +38,9 @@ describe('database runtime hardening (pool errors, pg-boss budget/startup/shutdo
   }
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'runtime_hardening_test' })
-      .withExposedPorts(5432)
-      .start();
-    databaseUrl = `postgresql://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/runtime_hardening_test`;
+    const postgres = await startPostgresContainer({ database: 'runtime_hardening_test' });
+    container = postgres.container;
+    databaseUrl = postgres.connectionString;
     admin = new Pool({ connectionString: databaseUrl, max: 2 });
     closeAdmin = createPostgresPoolCleanup(admin);
     await migrate(drizzle(admin), { migrationsFolder: 'src/database/migrations' });

@@ -12,6 +12,7 @@ import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '@grabit/shared';
 import type { PaymentMethod, PrepareReservationRequest } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import {
   BookingService,
@@ -73,14 +74,14 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
   };
 
   beforeAll(async () => {
-    [container, valkey] = await Promise.all([
-      new GenericContainer('postgres:16-alpine')
-        .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'handoff_test' })
-        .withExposedPorts(5432).start(),
+    const [postgres, startedValkey] = await Promise.all([
+      startPostgresContainer({ database: 'handoff_test' }),
       new GenericContainer('valkey/valkey:8-alpine').withExposedPorts(6379).start(),
     ]);
+    container = postgres.container;
+    valkey = startedValkey;
     redis = new IORedis({ host: valkey.getHost(), port: valkey.getMappedPort(6379), maxRetriesPerRequest: 3 });
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'handoff_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

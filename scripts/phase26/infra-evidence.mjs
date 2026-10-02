@@ -302,17 +302,19 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
   } else if (!live && typeof workflowDefaults.BACKGROUND_PROCESSING_ENABLED === 'string') {
     backgroundProcessing = { value: processes(workflowDefaults.BACKGROUND_PROCESSING_ENABLED), source: 'workflow-default' };
   }
-  const runtimePgBoss = live
-    ? input(integerOrNull(liveEnv.PGBOSS_POOL_MAX), 'live')
-    : input(integerOrNull(workflowDefaults.PGBOSS_POOL_MAX), 'workflow-default');
+  // The live API value is the API's real cap, but it can be a leftover of an earlier
+  // deploy (the API service merges env vars). The worker Job is rebuilt from the
+  // workflow on every deploy, so its cap is the workflow value or the code default.
+  const workflowPgBoss = input(integerOrNull(workflowDefaults.PGBOSS_POOL_MAX), 'workflow-default');
+  const runtimePgBoss = live ? input(integerOrNull(liveEnv.PGBOSS_POOL_MAX), 'live') : workflowPgBoss;
   const apiPgBossPoolMax = runtimePgBoss.value !== null
     ? runtimePgBoss
     : {
       value: backgroundProcessing.value ? DEFAULT_PGBOSS_POOL_MAX_PROCESSING : DEFAULT_PGBOSS_POOL_MAX_PRODUCER,
       source: 'code-default',
     };
-  const workerPgBossPoolMax = runtimePgBoss.value !== null
-    ? runtimePgBoss
+  const workerPgBossPoolMax = workflowPgBoss.value !== null
+    ? workflowPgBoss
     : { value: DEFAULT_PGBOSS_POOL_MAX_PROCESSING, source: 'code-default' };
 
   const inputs = {

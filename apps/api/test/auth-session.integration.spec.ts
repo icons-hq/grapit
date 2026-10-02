@@ -6,12 +6,13 @@ import type { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../src/modules/auth/auth.service.js';
 import { UserRepository } from '../src/modules/user/user.repository.js';
@@ -38,10 +39,9 @@ describe('Auth session and email identity — PostgreSQL', () => {
   };
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'auth_session_test' })
-      .withExposedPorts(5432).start();
-    const pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'auth_session_test' });
+    container = postgres.container;
+    const pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'auth_session_test', max: 10 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

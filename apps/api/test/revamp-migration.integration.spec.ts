@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 const protectedTables = ['users', 'social_accounts', 'consent_items', 'consent_audit_logs', 'performances', 'showtimes',
@@ -21,9 +22,9 @@ describe('Full revamp migration — existing account, payment and entitlement pr
   let previousMigrations: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'revamp_preservation_test' }).withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432), user: 'postgres', password: 'test', database: 'revamp_preservation_test' });
+    const postgres = await startPostgresContainer({ database: 'revamp_preservation_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port, user: 'postgres', password: 'test', database: 'revamp_preservation_test' });
     closePool = createPostgresPoolCleanup(pool);
     previousMigrations = await mkdtemp(join(tmpdir(), 'grabit-before-revamp-'));
     const journal = JSON.parse(await readFile('src/database/migrations/meta/_journal.json', 'utf8')) as {

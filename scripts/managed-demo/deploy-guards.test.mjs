@@ -18,6 +18,7 @@ import {
   postgresSettingToMs,
   readServiceEnvValue,
   readServiceRevision,
+  resolveApiPgBossPoolCap,
   resolveDeployBookingValue,
   resolveOptionalRuntimeEnv,
   runtimeBookingEnabled,
@@ -246,6 +247,31 @@ test('an unchanged approved reopen opens the gate with a warning', () => {
   assert.deepEqual([alreadyOpen.value, alreadyOpen.warning], [true, null]);
 });
 
+test('an approved reopen never covers a service that was open at the start and is unreadable now', () => {
+  // allow_booking_reopen=true run: the API was open when the run started, the on-call
+  // closed it mid-run, then the describe right before deploy failed. Before: the run's
+  // approval reopened it as "unverified". It needed no reopen, so the approval does not apply.
+  const unreadableNow = { name: 'grabit-api', readable: false, rawValue: undefined, revision: null };
+  const openAtStart = resolveDeployBookingValue({
+    target: true,
+    service: unreadableNow,
+    allowReopen: true,
+    atGuard: parseGuardSnapshot('true', REV_START),
+  });
+  assert.deepEqual([openAtStart.ok, openAtStart.value, openAtStart.warning], [false, null, null]);
+  assert.match(
+    openAtStart.message,
+    /^grabit-api: live BOOKING_ENABLED unreadable right before deploy; it was open when this run started, so this run's reopen approval does not cover it\. Refusing to guess\./,
+  );
+
+  // Closed at the start, or no readable snapshot: the approved reopen still applies, loudly.
+  for (const atGuard of [parseGuardSnapshot('false', REV_START), parseGuardSnapshot('unreadable', ''), undefined]) {
+    const closedAtStart = resolveDeployBookingValue({ target: true, service: unreadableNow, allowReopen: true, atGuard });
+    assert.deepEqual([closedAtStart.ok, closedAtStart.value], [true, true]);
+    assert.match(closedAtStart.warning, /could not verify .*live value unreadable right before deploy/);
+  }
+});
+
 test('guard snapshots round-trip through job outputs without trusting arbitrary text', () => {
   assert.deepEqual(parseGuardSnapshot('true', REV_START), { readable: true, liveEnabled: true, revision: REV_START });
   assert.deepEqual(parseGuardSnapshot('false', ''), { readable: true, liveEnabled: false, revision: null });
@@ -449,6 +475,86 @@ test('the deploy budget uses each process pg-boss cap, not one workflow value (x
   // Same parsing as the API: anything but "false" processes jobs.
   assert.equal(validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: ' FALSE ' }).apiPgBossPoolMax, 1);
   assert.equal(validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: undefined }).apiPgBossPoolMax, 3);
+});
+
+test('the budget counts a PGBOSS_POOL_MAX an earlier deploy left on the API service', () => {
+  // Managed demo with the repository variable removed: the code default is 1, but the API
+  // service still carries PGBOSS_POOL_MAX=3 because deploys merge env vars. Before: the
+  // budget counted 4 x (2 + 1) and missed 8 connections on an instance with no headroom.
+  const demo = validateDeployConfig({
+    ...workflowDefaults,
+    API_MIN_INSTANCES: '0',
+    API_MAX_INSTANCES: '4',
+    DB_POOL_MAX: '2',
+    BACKGROUND_PROCESSING_ENABLED: 'false',
+  });
+  const demoSettings = { max_connections: 25, superuser_reserved: 3, reserved: 0, lock_timeout: '5s', statement_timeout: '1min' };
+  const preflight = (apiPgBossPoolCap) => evaluateDbPreflight({
+    config: demo,
+    settings: demoSettings,
+    journal: { entries: [{ tag: '0001_a', when: 100 }] },
+    lastAppliedMillis: 100,
+    apiPgBossPoolCap,
+  });
+
+  const leftover = resolveApiPgBossPoolCap({
+    config: demo,
+    apiService: describeService([{ name: 'PGBOSS_POOL_MAX', value: '3' }]),
+    region: 'asia-northeast3',
+  });
+  assert.equal(leftover.apiPgBossPoolMax, 3);
+  assert.equal(leftover.source, 'live');
+  assert.match(leftover.annotation, /^::warning::grabit-api still has PGBOSS_POOL_MAX=3 from an earlier deploy\./);
+  assert.match(
+    leftover.annotation,
+    /gcloud run services update grabit-api --region=asia-northeast3 --remove-env-vars=PGBOSS_POOL_MAX$/,
+  );
+  const leftoverPreflight = preflight(leftover);
+  assert.match(leftoverPreflight.lines.join('\n'), /API 4 x \(2 app \+ 3 pg-boss\) = 20, worker 1 x \(2 app \+ 3 pg-boss\) = 5, reserve 5/);
+  assert.equal(leftoverPreflight.annotations[0], leftover.annotation);
+  // 20 + 5 + 5 = 30 > 22: the real posture is over budget and is reported as such.
+  assert.match(leftoverPreflight.annotations[1], /^::warning::DB connection budget: .*required 30 \/ available 22/);
+
+  // No live value: the code default, quietly.
+  const clean = resolveApiPgBossPoolCap({ config: demo, apiService: describeService([]) });
+  assert.deepEqual([clean.apiPgBossPoolMax, clean.source, clean.annotation], [1, 'code-default', null]);
+  assert.deepEqual(preflight(clean).annotations, []);
+
+  // A live value below the code default still counts the default once it is removed.
+  const processing = validateDeployConfig(workflowDefaults);
+  const lowLeftover = resolveApiPgBossPoolCap({
+    config: processing,
+    apiService: describeService([{ name: 'PGBOSS_POOL_MAX', value: '1' }]),
+  });
+  assert.equal(lowLeftover.apiPgBossPoolMax, 3);
+  assert.match(lowLeftover.annotation, /gcloud run services update grabit-api --remove-env-vars=PGBOSS_POOL_MAX$/);
+
+  // Unreadable service (empty describe file), secret-bound or invalid value: code default + notice.
+  for (const apiService of [
+    null,
+    describeService([{ name: 'PGBOSS_POOL_MAX', valueFrom: { secretKeyRef: { name: 's' } } }]),
+    describeService([{ name: 'PGBOSS_POOL_MAX', value: 'three' }]),
+  ]) {
+    const unchecked = resolveApiPgBossPoolCap({ config: demo, apiService });
+    assert.deepEqual([unchecked.apiPgBossPoolMax, unchecked.source], [1, 'code-default']);
+    assert.match(unchecked.annotation, /^::notice::.*counts the API pg-boss code default 1\./);
+    assert.equal(preflight(unchecked).ok, true);
+  }
+
+  // A set variable is what the deploy writes, whatever the service has now.
+  const pinned = validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: 'false', RUNTIME_PGBOSS_POOL_MAX: '2' });
+  const fromVariable = resolveApiPgBossPoolCap({
+    config: pinned,
+    apiService: describeService([{ name: 'PGBOSS_POOL_MAX', value: '5' }]),
+  });
+  assert.deepEqual([fromVariable.apiPgBossPoolMax, fromVariable.source, fromVariable.annotation], [2, 'workflow', null]);
+
+  // The worker Job is rebuilt on every deploy: its cap never follows the live API value.
+  const bigLeftover = resolveApiPgBossPoolCap({
+    config: demo,
+    apiService: describeService([{ name: 'PGBOSS_POOL_MAX', value: '6' }]),
+  });
+  assert.match(preflight(bigLeftover).lines.join('\n'), /API 4 x \(2 app \+ 6 pg-boss\) = 32, worker 1 x \(2 app \+ 3 pg-boss\) = 5/);
 });
 
 test('pg-boss budget defaults mirror the API code defaults', async () => {
@@ -680,6 +786,28 @@ test('CLI booking-gate-value writes the deploy value to GITHUB_OUTPUT', async ()
   });
   assert.equal(twoServices.status, 1);
   assert.match(twoServices.stderr, /exactly one --service/);
+
+  // Approved reopen run, open at the start, unreadable right before deploy: fail, write nothing.
+  const openAtStartUnreadable = await runGuards(
+    [...args, '--live-at-guard', 'true', '--revision-at-guard', REV_START],
+    { files: { api: '' }, env: reopenEnv },
+  );
+  assert.equal(openAtStartUnreadable.status, 1);
+  assert.equal(openAtStartUnreadable.githubOutput, '');
+  assert.match(openAtStartUnreadable.stderr, /reopen approval does not cover it/);
+});
+
+test('CLI db-preflight accepts only the live API description option', async () => {
+  const bad = await runGuards(['db-preflight', '--api-service-json']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /db-preflight accepts only --api-service-json DESCRIBE_JSON_PATH/);
+  const unknown = await runGuards(['db-preflight', '--other', 'x']);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /db-preflight accepts only --api-service-json/);
+  // A valid option gets as far as the database connection settings.
+  const accepted = await runGuards(['db-preflight', '--api-service-json', 'missing.json']);
+  assert.equal(accepted.status, 1);
+  assert.match(accepted.stderr, /DATABASE_URL is required/);
 });
 
 test('CLI runtime-env writes only the set API settings as a multiline output', async () => {
@@ -761,6 +889,14 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   const preflightIndex = workflow.indexOf('deploy-guards.mjs db-preflight');
   const migrateIndex = workflow.indexOf('exec drizzle-kit migrate');
   assert.ok(validateIndex > 0 && validateIndex < preflightIndex && preflightIndex < migrateIndex);
+
+  // ops-infra-3: the preflight reads the API description the booking guard saved in the same
+  // job, so a PGBOSS_POOL_MAX left on the API service is counted.
+  const describeIndex = migrate.indexOf('--format=json > "${RUNNER_TEMP}/${service}.json"');
+  const preflightCall = migrate.indexOf(
+    'deploy-guards.mjs db-preflight --api-service-json "${RUNNER_TEMP}/${API_SERVICE}.json"',
+  );
+  assert.ok(describeIndex > 0 && describeIndex < preflightCall, 'db-preflight reads the guard describe output');
 
   // #7/#61: liveness on the Redis-only health route and an explicit WebSocket timeout.
   assert.match(workflow, /--liveness-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,/);

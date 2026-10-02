@@ -1,6 +1,7 @@
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
@@ -55,18 +56,12 @@ describe('support content and operations inbox (integration)', () => {
   let operatorId: string;
 
   beforeAll(async () => {
-    pgContainer = await new GenericContainer('postgres:16')
-      .withExposedPorts(5432)
-      .withEnvironment({
-        POSTGRES_PASSWORD: 'test',
-        POSTGRES_USER: 'postgres',
-        POSTGRES_DB: 'grabit_test',
-      })
-      .start();
+    const postgres = await startPostgresContainer({ image: 'postgres:16', database: 'grabit_test' });
+    pgContainer = postgres.container;
 
     pool = new Pool({
-      host: pgContainer.getHost(),
-      port: pgContainer.getMappedPort(5432),
+      host: postgres.host,
+      port: postgres.port,
       user: 'postgres',
       password: 'test',
       database: 'grabit_test',

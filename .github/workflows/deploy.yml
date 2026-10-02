@@ -56,8 +56,8 @@ env:
   # variable is set (deploy-guards.mjs runtime-env); unset keeps each process's code
   # default. RUNTIME_PGBOSS_POOL_MAX has no default on purpose: the producer-only API
   # uses 1 pg-boss connection and the worker 3. Removing a variable later does not
-  # remove a value already set on the API service (env vars are merged); see the
-  # cost-floor runbook.
+  # remove a value already set on the API service (env vars are merged); the database
+  # preflight counts such a leftover PGBOSS_POOL_MAX and warns. See the cost-floor runbook.
   RUNTIME_PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX }}
   RUNTIME_PGBOSS_START_MAX_ATTEMPTS: ${{ vars.PGBOSS_START_MAX_ATTEMPTS }}
   RUNTIME_DB_STATEMENT_TIMEOUT_MS: ${{ vars.DB_STATEMENT_TIMEOUT_MS }}
@@ -170,7 +170,9 @@ jobs:
       - name: Database preflight (migration timeouts, freeze, connection budget)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: node scripts/managed-demo/deploy-guards.mjs db-preflight
+        # The booking guard step saved the live API description. With PGBOSS_POOL_MAX unset,
+        # the budget still counts a value an earlier deploy left on the API service.
+        run: node scripts/managed-demo/deploy-guards.mjs db-preflight --api-service-json "${RUNNER_TEMP}/${API_SERVICE}.json"
       - name: Pre-apply event category enum migration
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

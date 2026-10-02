@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 
@@ -21,14 +22,15 @@ describe('Phase 26 test-event cleanup guard', () => {
   let buyer: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'grapit' })
-      .withCopyFilesToContainer([
+    const postgres = await startPostgresContainer({
+      database: 'grapit',
+      copyFilesToContainer: [
         { source: `${SQL_DIR}/cleanup-dry-run.sql`, target: '/sql/cleanup-dry-run.sql' },
         { source: `${SQL_DIR}/cleanup-test-event.sql`, target: '/sql/cleanup-test-event.sql' },
-      ])
-      .withExposedPorts(5432).start();
-    pool = new Pool({ connectionString: `postgresql://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/grapit` });
+      ],
+    });
+    container = postgres.container;
+    pool = new Pool({ connectionString: postgres.connectionString });
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     buyer = randomUUID();
     await pool.query(`INSERT INTO users (id,email,name,phone,gender,birth_date)

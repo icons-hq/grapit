@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -17,6 +17,7 @@ import { HeldCancelledSeatRecoveryWorker } from '../src/modules/cancellation/hel
 import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 const { users, venues, performances, showtimes, reservations, reservationSeats, payments, refunds,
@@ -58,10 +59,9 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
   let adminId: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'refund_recovery_test' })
-      .withExposedPorts(5432).start();
-    const pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'refund_recovery_test' });
+    container = postgres.container;
+    const pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'refund_recovery_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

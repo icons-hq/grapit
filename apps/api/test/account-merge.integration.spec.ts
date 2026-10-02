@@ -2,12 +2,13 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq, sql } from 'drizzle-orm';
 import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import {
   AccountMergeService,
@@ -31,13 +32,11 @@ describe('Historical account merge safety (PostgreSQL)', () => {
   let operatorId: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'account_merge_test' })
-      .withExposedPorts(5432)
-      .start();
+    const postgres = await startPostgresContainer({ database: 'account_merge_test' });
+    container = postgres.container;
     pool = new Pool({
-      host: container.getHost(),
-      port: container.getMappedPort(5432),
+      host: postgres.host,
+      port: postgres.port,
       user: 'postgres',
       password: 'test',
       database: 'account_merge_test',

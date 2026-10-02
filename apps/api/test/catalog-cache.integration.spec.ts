@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Client, Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
@@ -13,6 +13,7 @@ import { CatalogFreshnessService } from '../src/modules/performance/catalog-fres
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
 import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { TranslationService } from '../src/modules/translation/translation.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 /** Map-backed Redis double with the commands CacheService uses (GET/SET EX/DEL/KEYS). */
@@ -41,10 +42,9 @@ describe('Catalog cache and view counts — PostgreSQL', () => {
   let db: DrizzleDB;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'catalog_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'catalog_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'catalog_test', max: 4 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

@@ -7,7 +7,7 @@
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate --service NAME=FILE [...] [--snapshot KEY=NAME ...]
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate-value --service NAME=FILE
 //        [--live-at-guard true|false|unreadable --revision-at-guard REVISION]
-//   node scripts/managed-demo/deploy-guards.mjs db-preflight
+//   node scripts/managed-demo/deploy-guards.mjs db-preflight [--api-service-json FILE]
 //   node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
 //
 // Inputs come from the workflow environment (repository variables with
@@ -197,11 +197,14 @@ export function validateDeployConfig(env) {
   };
   // The pg-boss pool cap each process really uses: the runtime value when the
   // repository variable is set, otherwise the code default. The managed-demo API
-  // is producer-only (1); the worker Job always processes jobs (3).
+  // is producer-only (1); the worker Job always processes jobs (3). With the
+  // variable unset, db-preflight also reads the live API service, which can still
+  // carry a value from an earlier deploy (resolveApiPgBossPoolCap).
   const runtimePgBossPoolMax = (target) => {
     const pair = runtimeEnv[target].find(([name]) => name === 'PGBOSS_POOL_MAX');
     return pair ? Number(pair[1]) : null;
   };
+  const apiPgBossPoolMaxFromVariable = runtimePgBossPoolMax('api') !== null;
   const apiPgBossPoolMax =
     runtimePgBossPoolMax('api') ??
     (backgroundProcessingEnabled(env.BACKGROUND_PROCESSING_ENABLED)
@@ -221,6 +224,7 @@ export function validateDeployConfig(env) {
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),
     apiPgBossPoolMax,
+    apiPgBossPoolMaxFromVariable,
     workerPgBossPoolMax,
     dbConnectionReserve: parseInteger(env.DB_CONNECTION_RESERVE, 'DB_CONNECTION_RESERVE', {
       min: 0,
@@ -457,8 +461,12 @@ export function resolveDeployBookingValue({ target, service, allowReopen, atGuar
  *   keep false.
  * - live closed now and at the start, same revision: the intended reopen,
  *   write true with a warning.
- * - snapshot, revision or live value unreadable: write true as approved, with a
- *   warning that a close during the run could not be ruled out.
+ * - live value unreadable now but open at the start: the approval covers only
+ *   services that were closed when the run started, so this one has nothing to
+ *   reopen and may have been closed during the run. Fail without deploying.
+ * - snapshot or revision unreadable, or live value unreadable for a service
+ *   closed at the start (or without a readable snapshot): write true as
+ *   approved, with a warning that a close during the run could not be ruled out.
  */
 function resolveApprovedReopen({ service, atGuard }) {
   const approvedMessage = `${service.name}: deploying BOOKING_ENABLED=true (reopen explicitly approved).`;
@@ -472,7 +480,20 @@ function resolveApprovedReopen({ service, atGuard }) {
     message: approvedMessage,
   });
 
-  if (!service.readable) return unverified('live value unreadable right before deploy');
+  if (!service.readable) {
+    if (atGuard?.readable && atGuard.liveEnabled) {
+      return {
+        ok: false,
+        value: null,
+        warning: null,
+        message:
+          `${service.name}: live BOOKING_ENABLED unreadable right before deploy; it was open when ` +
+          "this run started, so this run's reopen approval does not cover it. Refusing to guess. " +
+          'Re-run the deploy once the service can be read.',
+      };
+    }
+    return unverified('live value unreadable right before deploy');
+  }
   if (runtimeBookingEnabled(service.rawValue)) {
     return {
       ok: true,
@@ -616,10 +637,89 @@ export function evaluateConnectionBudget({
 }
 
 /**
+ * The API pg-boss cap the connection budget counts, given the live API service
+ * (`gcloud run services describe --format=json`, or null when it could not be
+ * read).
+ *
+ * deploy-cloudrun merges env vars into the API service, so a PGBOSS_POOL_MAX
+ * written by an earlier deploy stays after the repository variable is removed,
+ * and the API keeps that pool. The worker Job is rebuilt on every deploy, so its
+ * cap is the variable or the code default and never this live value.
+ *
+ * - variable set: the deploy writes it, so it is the cap.
+ * - variable unset, live value present: count max(live, code default) and warn.
+ *   The warning asks for the live value to be removed, so the budget must hold
+ *   both before and after that removal.
+ * - variable unset, no live value: the code default.
+ * - variable unset, service unreadable (or a secret-bound or invalid live
+ *   value): the code default, with a notice that a live value was not ruled out.
+ */
+export function resolveApiPgBossPoolCap({ config, apiService, serviceName = 'grabit-api', region }) {
+  const codeDefault = config.apiPgBossPoolMax;
+  if (config.apiPgBossPoolMaxFromVariable) {
+    return {
+      apiPgBossPoolMax: config.apiPgBossPoolMax,
+      source: 'workflow',
+      annotation: null,
+      line: `API pg-boss cap ${config.apiPgBossPoolMax} (repository variable PGBOSS_POOL_MAX)`,
+    };
+  }
+
+  const unchecked = (why) => ({
+    apiPgBossPoolMax: codeDefault,
+    source: 'code-default',
+    annotation:
+      `::notice::${why}; the connection budget counts the API pg-boss code default ${codeDefault}. ` +
+      `A PGBOSS_POOL_MAX left on ${serviceName} by an earlier deploy would raise the real cap ` +
+      `(check with gcloud run services describe ${serviceName}).`,
+    line: `API pg-boss cap ${codeDefault} (code default; live ${serviceName} value not checked)`,
+  });
+  if (!apiService) return unchecked(`Could not read the live ${serviceName} service`);
+
+  const live = readServiceEnvValue(apiService, 'PGBOSS_POOL_MAX');
+  if (!live.found) {
+    return {
+      apiPgBossPoolMax: codeDefault,
+      source: 'code-default',
+      annotation: null,
+      line: `API pg-boss cap ${codeDefault} (code default; ${serviceName} has no PGBOSS_POOL_MAX)`,
+    };
+  }
+  const liveText = typeof live.value === 'string' ? live.value.trim() : '';
+  if (!/^[1-9][0-9]*$/.test(liveText)) {
+    return unchecked(
+      live.fromSecret
+        ? `Live ${serviceName} PGBOSS_POOL_MAX is secret-bound`
+        : `Live ${serviceName} PGBOSS_POOL_MAX is not a positive integer`,
+    );
+  }
+
+  const liveValue = Number(liveText);
+  const counted = Math.max(liveValue, codeDefault);
+  const regionFlag = region ? ` --region=${region}` : '';
+  return {
+    apiPgBossPoolMax: counted,
+    source: 'live',
+    annotation:
+      `::warning::${serviceName} still has PGBOSS_POOL_MAX=${liveValue} from an earlier deploy. ` +
+      'Repository variable PGBOSS_POOL_MAX is unset, and deploys merge env vars into the API ' +
+      `service, so the API keeps that pool. The connection budget counts the API pg-boss cap as ` +
+      `${counted} (the larger of the live value and the code default ${codeDefault}). If the code ` +
+      `default is intended, remove it: gcloud run services update ${serviceName}${regionFlag} ` +
+      '--remove-env-vars=PGBOSS_POOL_MAX',
+    line:
+      `API pg-boss cap ${counted} (live ${serviceName} PGBOSS_POOL_MAX=${liveValue} left by an ` +
+      `earlier deploy, code default ${codeDefault})`,
+  };
+}
+
+/**
  * Turns the migration-session readback into the preflight verdict. Every
  * failing check is collected, so one run reports all blockers at once.
+ * `apiPgBossPoolCap` is resolveApiPgBossPoolCap()'s result; without it the
+ * budget counts `config.apiPgBossPoolMax` as is.
  */
-export function evaluateDbPreflight({ config, settings, journal, lastAppliedMillis }) {
+export function evaluateDbPreflight({ config, settings, journal, lastAppliedMillis, apiPgBossPoolCap }) {
   const failures = [];
   const annotations = [];
   const lines = ['### Database preflight'];
@@ -653,12 +753,16 @@ export function evaluateDbPreflight({ config, settings, journal, lastAppliedMill
     annotations.push(`::warning::${freeze.warning}`);
   }
 
+  if (apiPgBossPoolCap) {
+    lines.push(`- ${apiPgBossPoolCap.line}`);
+    if (apiPgBossPoolCap.annotation) annotations.push(apiPgBossPoolCap.annotation);
+  }
   const budget = evaluateConnectionBudget({
     maxConnections: Number(settings.max_connections),
     reservedConnections: Number(settings.superuser_reserved) + Number(settings.reserved),
     apiMaxInstances: config.apiMaxInstances,
     dbPoolMax: config.dbPoolMax,
-    apiPgBossPoolMax: config.apiPgBossPoolMax,
+    apiPgBossPoolMax: apiPgBossPoolCap?.apiPgBossPoolMax ?? config.apiPgBossPoolMax,
     workerPgBossPoolMax: config.workerPgBossPoolMax,
     reserve: config.dbConnectionReserve,
     enforce: config.dbConnectionBudgetEnforce,
@@ -765,7 +869,9 @@ async function commandValidateConfig() {
     `- Migration lock_timeout ${config.migrationLockTimeout.text}, statement_timeout ${config.migrationStatementTimeout.text}, freeze ${config.migrationFreeze}`,
     `- API instances ${config.apiMinInstances}-${config.apiMaxInstances}, concurrency ${config.apiConcurrency}`,
     `- Prewarm scaling scope ${config.prewarmScalingScope}`,
-    `- pg-boss pool cap counted by the connection budget: API ${config.apiPgBossPoolMax}, worker ${config.workerPgBossPoolMax}`,
+    `- pg-boss pool cap counted by the connection budget: API ${config.apiPgBossPoolMax}` +
+      `${config.apiPgBossPoolMaxFromVariable ? '' : ' (db-preflight also counts a value left on the live API service)'}` +
+      `, worker ${config.workerPgBossPoolMax}`,
     `- Optional runtime settings: API ${describeRuntimeEnv(config.runtimeEnv.api)}; worker ${describeRuntimeEnv(config.runtimeEnv.worker)}`,
   ];
   console.log(lines.slice(1).join('\n'));
@@ -892,8 +998,25 @@ function loadPg() {
   return requireFromApi('pg');
 }
 
-async function commandDbPreflight() {
+function parseDbPreflightArgs(args) {
+  if (args.length === 0) return { apiServicePath: null };
+  if (args.length === 2 && args[0] === '--api-service-json' && args[1] && !args[1].startsWith('--')) {
+    return { apiServicePath: args[1] };
+  }
+  throw new Error('db-preflight accepts only --api-service-json DESCRIBE_JSON_PATH');
+}
+
+async function commandDbPreflight(args) {
   const config = validateDeployConfig(process.env);
+  const { apiServicePath } = parseDbPreflightArgs(args);
+  // Missing or empty (the booking guard could not describe the service) is unreadable.
+  const apiService = apiServicePath ? await readServiceDescription(apiServicePath) : null;
+  const apiPgBossPoolCap = resolveApiPgBossPoolCap({
+    config,
+    apiService,
+    serviceName: process.env.API_SERVICE || 'grabit-api',
+    region: process.env.GCP_REGION,
+  });
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is required');
@@ -926,7 +1049,7 @@ async function commandDbPreflight() {
     await client.end();
   }
 
-  const result = evaluateDbPreflight({ config, settings, journal, lastAppliedMillis });
+  const result = evaluateDbPreflight({ config, settings, journal, lastAppliedMillis, apiPgBossPoolCap });
   for (const annotation of result.annotations) {
     console.log(annotation);
   }
@@ -948,8 +1071,7 @@ async function main() {
     case 'booking-gate-value':
       return commandBookingGateValue(args);
     case 'db-preflight':
-      if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(', ')}`);
-      return commandDbPreflight();
+      return commandDbPreflight(args);
     case 'runtime-env':
       return commandRuntimeEnv(args);
     default:
