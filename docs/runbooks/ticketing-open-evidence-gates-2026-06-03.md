@@ -753,10 +753,45 @@ for launch, not merely that fallback code exists.
       API environment.
 - [ ] Confirm fallback static copy is acceptable only as degraded behavior, not
       as final content approval.
+- [ ] Confirm no notice is left with `status = 'published'` but
+      `review_state <> 'published'` (rows hidden by the pre-fix edit/review
+      behavior). Re-publish the ones that should be live:
+      `SELECT id, locale, category, title FROM support_notices WHERE status = 'published' AND review_state <> 'published';`
+- [ ] Review FAQ/notice rows shown as `게시 가능` in admin that were live
+      before an edit; edits made before the fix silently unpublished them.
+
+### Operating Rules After The Support Content Fix
+
+- Editing a published ko/en or manual translation keeps it live and the
+  public page updates on save. Editing an assisted th/zh-CN translation takes
+  it off the public page until `검수 완료` and `게시` are done again; admin asks
+  for confirmation before saving.
+- `검수 완료` is only for draft/review rows; it is rejected for published and
+  archived rows.
+- Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`).
+  The public API caches each locale for 30 seconds and every admin mutation
+  clears it, so a scheduled start or end can appear up to 30 seconds late.
+- `urgent`, `maintenance`, and `payment` notices fall back by locale: a viewer
+  whose locale has no published version in the same translation group sees
+  the en version, then the ko version, labeled as untranslated. Register
+  translations with `번역본 등록` on the source notice so the fallback stops
+  when the translation is published; a notice created separately is not
+  linked and both versions would show. Notices created before this change are
+  not linked and do not fall back until a translation is registered.
+- For an urgent/payment/maintenance notice during open, publish the ko source
+  first, then register and publish en, th, and zh-CN through `번역본 등록`.
+- Every create/update/review/publish/archive writes `support.content.*` admin
+  audit rows with the previous and new title/body; check them in
+  `/admin/audit`.
+- If another operator saved the same row first, save returns 409. Reload the
+  latest content from the form and reapply the change.
 
 ### Execution Checklist
 
 - [ ] Publish or verify approved FAQ/notice records through admin.
+- [ ] For each launch urgent/payment/maintenance notice, confirm ko/en/th/zh-CN
+      versions are linked in `언어별 공지` and published, or record the
+      accepted fallback.
 - [ ] Smoke `/support`, `/en/support`, `/th/support`, and `/zh-CN/support`.
 - [ ] Confirm API returns only public fields and published rows.
 - [ ] Confirm footer support link reaches localized support page.

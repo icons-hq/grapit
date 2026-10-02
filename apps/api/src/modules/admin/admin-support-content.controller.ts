@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
 
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
@@ -7,9 +18,11 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import {
   AdminSupportContentService,
   SUPPORT_CONTENT_LOCALES,
+  type SupportContentActorInput,
   type SupportContentListFilters,
 } from './admin-support-content.service.js';
 
@@ -63,6 +76,7 @@ const createFaqSchema = z.object({
 
 const updateFaqSchema = createFaqSchema.partial().extend({
   actorUserId: z.never().optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
 });
 
 const createNoticeSchema = z.object({
@@ -72,17 +86,28 @@ const createNoticeSchema = z.object({
   body: z.string().min(1),
   priority: prioritySchema.optional(),
   scheduledAt: z.string().datetime().nullable().optional(),
+  endsAt: z.string().datetime().nullable().optional(),
   translationUse: translationUseSchema.optional(),
+  translationOfNoticeId: z.string().uuid().optional(),
 });
 
-const updateNoticeSchema = createNoticeSchema.partial().extend({
-  actorUserId: z.never().optional(),
-});
+const updateNoticeSchema = createNoticeSchema
+  .omit({ translationOfNoticeId: true })
+  .partial()
+  .extend({
+    actorUserId: z.never().optional(),
+    expectedUpdatedAt: z.string().datetime().optional(),
+  });
 
 type CreateFaqInput = z.infer<typeof createFaqSchema>;
 type UpdateFaqInput = z.infer<typeof updateFaqSchema>;
 type CreateNoticeInput = z.infer<typeof createNoticeSchema>;
 type UpdateNoticeInput = z.infer<typeof updateNoticeSchema>;
+type AdminRequest = Request & {
+  user?: {
+    id?: string;
+  };
+};
 
 @Controller('admin/support-content')
 @UseGuards(RolesGuard, AdminCapabilitiesGuard)
@@ -107,8 +132,12 @@ export class AdminSupportContentController {
   createFaq(
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(createFaqSchema)) body: CreateFaqInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.createFaq({ ...body, actorUserId });
+    return this.service.createFaq({
+      ...body,
+      ...mutationContext(actorUserId, req),
+    });
   }
 
   @Patch('faqs/:id')
@@ -116,32 +145,39 @@ export class AdminSupportContentController {
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(updateFaqSchema)) body: UpdateFaqInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.updateFaq(id, { ...body, actorUserId });
+    return this.service.updateFaq(id, {
+      ...body,
+      ...mutationContext(actorUserId, req),
+    });
   }
 
   @Post('faqs/:id/review')
   reviewFaq(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.reviewFaq(id, { actorUserId });
+    return this.service.reviewFaq(id, mutationContext(actorUserId, req));
   }
 
   @Post('faqs/:id/publish')
   publishFaq(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.publishFaq(id, { actorUserId });
+    return this.service.publishFaq(id, mutationContext(actorUserId, req));
   }
 
   @Post('faqs/:id/archive')
   archiveFaq(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.archiveFaq(id, { actorUserId });
+    return this.service.archiveFaq(id, mutationContext(actorUserId, req));
   }
 
   @Get('notices/:id')
@@ -153,8 +189,12 @@ export class AdminSupportContentController {
   createNotice(
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(createNoticeSchema)) body: CreateNoticeInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.createNotice({ ...body, actorUserId });
+    return this.service.createNotice({
+      ...body,
+      ...mutationContext(actorUserId, req),
+    });
   }
 
   @Patch('notices/:id')
@@ -162,31 +202,50 @@ export class AdminSupportContentController {
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(updateNoticeSchema)) body: UpdateNoticeInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.updateNotice(id, { ...body, actorUserId });
+    return this.service.updateNotice(id, {
+      ...body,
+      ...mutationContext(actorUserId, req),
+    });
   }
 
   @Post('notices/:id/review')
   reviewNotice(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.reviewNotice(id, { actorUserId });
+    return this.service.reviewNotice(id, mutationContext(actorUserId, req));
   }
 
   @Post('notices/:id/publish')
   publishNotice(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.publishNotice(id, { actorUserId });
+    return this.service.publishNotice(id, mutationContext(actorUserId, req));
   }
 
   @Post('notices/:id/archive')
   archiveNotice(
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
+    @Req() req: AdminRequest,
   ) {
-    return this.service.archiveNotice(id, { actorUserId });
+    return this.service.archiveNotice(id, mutationContext(actorUserId, req));
   }
+}
+
+function mutationContext(
+  actorUserId: string,
+  req: AdminRequest,
+): SupportContentActorInput {
+  return {
+    actorUserId,
+    ipAddress: resolveTrustedRequestIp(req),
+    userAgent: req.get('user-agent') ?? null,
+    requestId: req.get('x-request-id') ?? null,
+  };
 }

@@ -290,6 +290,13 @@
       "breakpoints": true
     },
     {
+      "idx": 42,
+      "version": "7",
+      "when": 1790049600000,
+      "tag": "0041_support_content_audit_and_translation_groups",
+      "breakpoints": true
+    },
+    {
       "idx": 45,
       "version": "7",
       "when": 1790060400000,

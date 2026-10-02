@@ -164,6 +164,7 @@ The following table summarizes actual controller groups. It is intentionally gro
 | Consent | `GET /api/v1/consent/items`, `POST /api/v1/consent/capture`, `GET /api/v1/admin/consent-audit` |
 | Performance | `GET /api/v1/performances`, `GET /api/v1/performances/:id`, `GET /api/v1/home/banners`, `GET /api/v1/home/hot`, `GET /api/v1/home/new` |
 | Search | `GET /api/v1/search` |
+| Support content | `GET /api/v1/support-content?locale=` (public; Valkey cache 30s per locale cleared by admin mutations, 120 req/min per client, scheduled/ended notices filtered, urgent/maintenance/payment notices fall back en → ko by translation group) |
 | Queue | `POST /api/v1/queue/performances/:performanceId/enter`, `GET /api/v1/queue/sessions/:queueSessionId` |
 | Booking | `POST /api/v1/booking/seats/lock`, `DELETE /api/v1/booking/seats/lock/:showtimeId/:seatId`, `GET /api/v1/booking/my-locks/:showtimeId`, `DELETE /api/v1/booking/seats/lock-all/:showtimeId`, `GET /api/v1/booking/schedules/:showtimeId/seats` |
 | Reservation/payment confirm | `POST /api/v1/reservations/prepare`, `POST /api/v1/payments/confirm`, `GET /api/v1/users/me/reservations`, `GET /api/v1/reservations`, `GET /api/v1/reservations/:id`, `PUT /api/v1/reservations/:id/cancel`, `PUT /api/v1/reservations/:id/cancel-pending` |
