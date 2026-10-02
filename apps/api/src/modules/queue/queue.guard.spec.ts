@@ -147,6 +147,64 @@ describe('AdmissionGuard', () => {
     });
   });
 
+  it('lets payment confirm rely on the order binding after the admission cookie expired', async () => {
+    const context = createExecutionContext({
+      cookies: {
+        refreshToken: 'refresh-cookie',
+      },
+      body: {
+        orderId: 'ORDER-1',
+      },
+      originalUrl: '/api/v1/payments/confirm',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith({
+      orderId: 'ORDER-1',
+      userId: 'user-1',
+      identity: {
+        userId: 'user-1',
+        refreshTokenFamilyId: 'family-1',
+        deviceSlotId: 'family-1',
+      },
+      admissionToken: undefined,
+    });
+    const request = context.switchToHttp().getRequest() as {
+      queueAdmission?: Record<string, string>;
+    };
+    expect(request.queueAdmission).toMatchObject({
+      queueSessionId: 'queue-session-1',
+      admissionToken: 'order-bound',
+    });
+  });
+
+  it('still requires the browser session for payment confirm', async () => {
+    const context = createExecutionContext({
+      cookies: {},
+      body: {
+        orderId: 'ORDER-1',
+      },
+      originalUrl: '/api/v1/payments/confirm',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps requiring the admission cookie for seat lock and prepare', async () => {
+    for (const originalUrl of ['/api/v1/booking/seats/lock', '/api/v1/reservations/prepare']) {
+      const context = createExecutionContext({
+        cookies: {
+          refreshToken: 'refresh-cookie',
+        },
+        originalUrl,
+      });
+
+      await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    }
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
   it('locks the guard source and controller wiring to cookie-only admission enforcement', async () => {
     const guardSource = await readFile(
       resolve(__dirname, 'guards/admission.guard.ts'),

@@ -248,6 +248,16 @@ Local development can use an in-memory Redis-compatible mock when Redis URL is a
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
 
+Queue time and slot contract:
+
+- A WAITING session expires after 30 minutes without a heartbeat. Each status poll or re-entry slides the expiry forward (at most one write per minute) while the waiting-line score stays the first `enteredAt`, so a buyer who keeps the queue page open never loses the position.
+- Admission grants a 10-minute active window plus a 3-minute re-entry grace. Seat lock and prepare need the active window; prepare enables payment recovery until the re-entry grace ends.
+- Payment confirm is authorised by the pending order binding first: the reservation's queue session, refresh token family and device slot must match the current browser session, and the server payment deadline (including the provider handoff grace, at most 15 minutes after prepare) must not have passed. A confirmed order stays allowed for idempotent retries. The admission cookie is not required for confirm; the Redis session window is only the fallback for orders whose binding does not match.
+- A successful `POST /payments/confirm` returns the active slot right away (best effort, never fails the confirm). Payments finalised outside that endpoint keep the slot until the admission window ends.
+- Remaining seats are the performance capacity minus `sold`, `held_cancelled` and `disabled` inventory and the live seat locks. Members of `{showtimeId}:locked-seats` whose lock key already expired are removed during the count.
+- Queue entry and status requests drive reconcile (at most one run per performance per second, exclusive by lock); seat lock, prepare and confirm never run it inline. Admission follows queue order; an entry is admitted directly only when every session ahead of it also fits into the free slots.
+- Session state changes (create, admit, token rotation, heartbeat, payment recovery, expiry, slot return) are Lua scripts on the `{queue:<performanceId>}` slot that rewrite only their own fields of the stored record, so concurrent re-entry and reconcile cannot overwrite each other. One browser identity owns at most one session per performance.
+
 ### 6.3 Reservation Prepare
 
 `ReservationService.prepareReservation` validates before writing a pending reservation:

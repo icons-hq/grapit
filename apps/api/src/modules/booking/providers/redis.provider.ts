@@ -1,6 +1,10 @@
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import IORedis, { Cluster, type RedisOptions } from 'ioredis';
+import {
+  evalQueueScriptInMemory,
+  isQueueScript,
+} from '../../queue/queue-redis-scripts.js';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
@@ -295,6 +299,9 @@ class InMemoryRedis {
     const keys = keysAndArgs.slice(0, numKeys).map(String);
     const args = keysAndArgs.slice(numKeys).map(String);
 
+    if (isQueueScript(script)) {
+      return evalQueueScriptInMemory(this, script, keys, args);
+    }
     if (script.includes('ASSERT_OWNED_SEAT_LOCKS_LUA')) {
       return this.evalAssertOwnedSeatLocks(keys, args);
     }

@@ -1,8 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -20,19 +22,32 @@ import { showtimes } from '../../database/schema/showtimes.js';
 import { performances } from '../../database/schema/performances.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
 import { QueueGateway } from './queue.gateway.js';
+import {
+  COUNT_VALID_LOCKED_SEATS_LUA,
+  CREATE_QUEUE_SESSION_LUA,
+  PURGE_QUEUE_SESSION_LUA,
+  QUEUE_SESSION_TRANSITION_LUA,
+} from './queue-redis-scripts.js';
 
 export const QUEUE_ADMISSION_COOKIE_NAME = 'grabit_queue_admission';
 export const QUEUE_ADMISSION_COOKIE_MAX_AGE_MS = 780_000;
 export const QUEUE_ACTIVE_WINDOW_SECONDS = 600;
 export const QUEUE_REENTRY_GRACE_SECONDS = 180;
 
-const QUEUE_WAIT_SESSION_SECONDS = 1_800;
+// WAITING sessions are idle-timed: every status poll or re-entry slides the
+// expiry forward, so only sessions whose heartbeat stopped are dropped.
+export const QUEUE_WAIT_SESSION_SECONDS = 1_800;
+const QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS = 60;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
 const QUEUE_POSITION_STEP_SECONDS = 5;
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
+// Queue requests run at most one reconcile per performance per interval.
+const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
+const QUEUE_RECONCILE_MAX_FILL_ROUNDS = 5;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
+const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
 const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
 
 export const WAITING = 'WAITING';
@@ -124,8 +139,39 @@ export type ValidatedAdmission = QueueIdentity & {
   reentryGraceUntilAt: string;
 };
 
+type QueueTransitionOp = 'admit' | 'touch' | 'recovery' | 'expire' | 'release';
+
+type QueueTransitionResult = {
+  applied: boolean;
+  status: string;
+  record: QueueSessionRecord | null;
+  previousTokenHash: string;
+  ttlMs: number;
+};
+
+type QueueSnapshotContext = {
+  waitingCount: number;
+  rank: number | null;
+  remainingSeats: number;
+};
+
+type OrderAdmissionBinding = {
+  performanceId: string;
+  status: string;
+  queueSessionId: string | null;
+  refreshFamilyId: string | null;
+  deviceSlotKey: string | null;
+  admittedAt: Date | null;
+  admissionActiveUntilAt: Date | null;
+  reentryGraceUntilAt: Date | null;
+  paymentDeadlineAt: Date | null;
+};
+
 @Injectable()
 export class QueueService {
+  private readonly logger = new Logger(QueueService.name);
+  private readonly reconcileInFlight = new Set<string>();
+
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -169,41 +215,91 @@ export class QueueService {
   async ensureQueueSession(params: {
     performanceId: string;
     identity: QueueIdentity;
+    presentedAdmissionToken?: string;
   }): Promise<QueueSessionLease> {
     const { performanceId, identity } = params;
     const identityKey = this.identityKey(performanceId, identity);
-    const existingSessionId = await this.redis.get(identityKey);
-    const now = new Date();
 
-    let record: QueueSessionRecord | null = null;
-    if (existingSessionId) {
-      record = await this.readQueueSessionRecord(performanceId, existingSessionId);
-      if (record && this.isReusable(record, now)) {
-        const rotated = this.rotateAdmissionToken(record);
-        await this.persistQueueSessionRecord(rotated.record);
-        return {
-          queueSessionId: rotated.record.queueSessionId,
-          admissionToken: rotated.admissionToken,
-          userId: rotated.record.userId,
-          refreshTokenFamilyId: rotated.record.refreshTokenFamilyId,
-          deviceSlotId: rotated.record.deviceSlotId,
-        };
+    // Every write below is a conditional Redis script, so a lost race (another tab
+    // creating the session, or reconcile admitting it) re-reads instead of
+    // overwriting the newer state.
+    for (let attempt = 0; attempt < QUEUE_SESSION_SETUP_MAX_ATTEMPTS; attempt += 1) {
+      const now = new Date();
+      const existingSessionId = await this.redis.get(identityKey);
+
+      if (existingSessionId) {
+        const record = await this.readQueueSessionRecord(performanceId, existingSessionId);
+        if (record && this.isReusable(record, now)) {
+          const reused = await this.reuseQueueSession(
+            record,
+            params.presentedAdmissionToken,
+            now,
+          );
+          if (reused) {
+            return reused;
+          }
+          continue;
+        }
+
+        await this.purgeQueueSession({
+          performanceId,
+          queueSessionId: existingSessionId,
+          identityKey,
+          admissionTokenHash: record?.admissionTokenHash ?? null,
+          now,
+        });
       }
 
-      if (record) {
-        await this.purgeQueueSessionRecord(record);
-      } else {
-        await this.redis.del(identityKey);
+      const created = await this.createQueueSession(performanceId, identity, identityKey, now);
+      if (created) {
+        return created;
       }
     }
 
-    const created = this.rotateAdmissionToken({
+    throw new ConflictException('대기열 세션을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.');
+  }
+
+  private async reuseQueueSession(
+    record: QueueSessionRecord,
+    presentedAdmissionToken: string | undefined,
+    now: Date,
+  ): Promise<QueueSessionLease | null> {
+    // Re-entry from the browser that already holds the current token keeps it,
+    // so several tabs sharing one cookie jar do not invalidate each other.
+    const keepPresentedToken =
+      typeof presentedAdmissionToken === 'string'
+      && presentedAdmissionToken.length > 0
+      && this.hashAdmissionToken(presentedAdmissionToken) === record.admissionTokenHash;
+    const admissionToken = keepPresentedToken
+      ? presentedAdmissionToken
+      : this.generateAdmissionToken();
+
+    const result = await this.transitionQueueSession(record, 'touch', [
+      keepPresentedToken ? '' : this.hashAdmissionToken(admissionToken),
+      ...this.buildWaitingRenewalArgs(record, now),
+    ]);
+    if (!result.applied || !result.record) {
+      return null;
+    }
+
+    await this.syncQueueSessionIndexes(result);
+    return this.toLease(result.record, admissionToken);
+  }
+
+  private async createQueueSession(
+    performanceId: string,
+    identity: QueueIdentity,
+    identityKey: string,
+    now: Date,
+  ): Promise<QueueSessionLease | null> {
+    const admissionToken = this.generateAdmissionToken();
+    const record: QueueSessionRecord = {
       queueSessionId: randomUUID(),
       performanceId,
       userId: identity.userId,
       refreshTokenFamilyId: identity.refreshTokenFamilyId,
       deviceSlotId: identity.deviceSlotId,
-      admissionTokenHash: '',
+      admissionTokenHash: this.hashAdmissionToken(admissionToken),
       state: WAITING,
       enteredAt: now.toISOString(),
       admittedAt: null,
@@ -211,22 +307,37 @@ export class QueueService {
       reentryGraceUntilAt: null,
       paymentRecoveryUntilAt: null,
       expiresAt: new Date(now.getTime() + QUEUE_WAIT_SESSION_SECONDS * 1000).toISOString(),
-    });
-
-    await this.persistQueueSessionRecord(created.record);
-    await this.redis.zadd(
-      this.waitingQueueKey(performanceId),
-      now.getTime(),
-      created.record.queueSessionId,
-    );
-
-    return {
-      queueSessionId: created.record.queueSessionId,
-      admissionToken: created.admissionToken,
-      userId: created.record.userId,
-      refreshTokenFamilyId: created.record.refreshTokenFamilyId,
-      deviceSlotId: created.record.deviceSlotId,
     };
+    const ttlMs = QUEUE_WAIT_SESSION_SECONDS * 1000;
+    const sessionRefKey = this.sessionRefKey(record.queueSessionId);
+    const admissionTokenKey = this.admissionTokenKey(record.admissionTokenHash);
+
+    // Index keys live in other cluster slots; write them first so the session is
+    // never visible without them, and drop them if another request won the race.
+    await Promise.all([
+      this.redis.set(sessionRefKey, performanceId, 'PX', ttlMs),
+      this.redis.set(admissionTokenKey, record.queueSessionId, 'PX', ttlMs),
+    ]);
+
+    const reply = (await this.redis.eval(
+      CREATE_QUEUE_SESSION_LUA,
+      3,
+      identityKey,
+      this.sessionKey(performanceId, record.queueSessionId),
+      this.waitingQueueKey(performanceId),
+      record.queueSessionId,
+      JSON.stringify(record),
+      String(ttlMs),
+      String(now.getTime()),
+    )) as [number | string, string] | null;
+
+    if (Number(reply?.[0]) !== 1) {
+      await this.redis.del(sessionRefKey);
+      await this.redis.del(admissionTokenKey);
+      return null;
+    }
+
+    return this.toLease(record, admissionToken);
   }
 
   async enterPerformanceQueue(params: {
@@ -234,6 +345,7 @@ export class QueueService {
     identity: QueueIdentity;
     bypassQueue?: boolean;
     actorRole?: string;
+    presentedAdmissionToken?: string;
   }): Promise<QueueEnterResult> {
     await this.assertPerformanceBookingOpen(params.performanceId, params.actorRole);
     const lease = await this.ensureQueueSession(params);
@@ -241,6 +353,9 @@ export class QueueService {
       await this.admitQueueSession(params.performanceId, lease.queueSessionId);
     } else {
       await this.reconcilePerformanceQueueIfDue(params.performanceId);
+      // The reconcile above is throttled; admit this session directly when every
+      // session ahead of it also fits into the free slots.
+      await this.admitQueueSessionWithinCapacity(params.performanceId, lease.queueSessionId);
     }
 
     const snapshot = await this.getQueueSessionStatus({
@@ -285,15 +400,46 @@ export class QueueService {
     queueSessionId: string,
   ): Promise<void> {
     const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
-    if (!record || record.state === EXPIRED || record.state === ADMITTED) {
+    if (!record || record.state !== WAITING) {
       return;
     }
 
-    const admittedRecord = this.toAdmittedRecord(record);
-    await this.persistQueueSessionRecord(admittedRecord);
-    await this.redis.zrem(this.waitingQueueKey(performanceId), queueSessionId);
-    await this.redis.sadd(this.activeAdmissionsKey(performanceId), queueSessionId);
-    this.gateway.emitAdmitted(queueSessionId, await this.buildSnapshot(admittedRecord));
+    const result = await this.transitionQueueSession(record, 'admit', [
+      ...this.buildAdmissionArgs(new Date()),
+      '',
+    ]);
+    if (!result.applied || !result.record) {
+      return;
+    }
+
+    await this.syncQueueSessionIndexes(result);
+    this.gateway.emitAdmitted(queueSessionId, await this.buildSnapshot(result.record));
+  }
+
+  private async admitQueueSessionWithinCapacity(
+    performanceId: string,
+    queueSessionId: string,
+  ): Promise<void> {
+    const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
+    if (!record || record.state !== WAITING) {
+      return;
+    }
+
+    const capacity = Math.min(
+      await this.calculateRemainingSeats(performanceId),
+      QUEUE_MAX_ACTIVE_ADMISSIONS,
+    );
+    if (capacity <= 0) {
+      return;
+    }
+
+    const result = await this.transitionQueueSession(record, 'admit', [
+      ...this.buildAdmissionArgs(new Date()),
+      String(capacity),
+    ]);
+    if (result.applied) {
+      await this.syncQueueSessionIndexes(result);
+    }
   }
 
   async getQueueSessionStatus(params: QueueStatusParams): Promise<QueueSessionSnapshot> {
@@ -312,7 +458,36 @@ export class QueueService {
     this.assertRecordMatchesIdentity(record, params.identity);
     this.assertAdmissionTokenMatches(record, params.admissionToken);
 
-    return this.buildSnapshot(record);
+    return this.buildSnapshot(await this.renewWaitingSession(record));
+  }
+
+  /**
+   * Status polls are the WAITING heartbeat: slide the idle expiry forward while
+   * keeping the original enteredAt score (queue order). Renewal is skipped when
+   * it already happened within the last renew interval.
+   */
+  private async renewWaitingSession(record: QueueSessionRecord): Promise<QueueSessionRecord> {
+    if (record.state !== WAITING) {
+      return record;
+    }
+
+    const now = new Date();
+    const remainingMs = Date.parse(record.expiresAt) - now.getTime();
+    const renewBelowMs =
+      (QUEUE_WAIT_SESSION_SECONDS - QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS) * 1000;
+    if (Number.isFinite(remainingMs) && remainingMs > renewBelowMs) {
+      return record;
+    }
+
+    const result = await this.transitionQueueSession(record, 'touch', [
+      '',
+      ...this.buildWaitingRenewalArgs(record, now),
+    ]);
+    if (result.applied) {
+      await this.syncQueueSessionIndexes(result);
+    }
+
+    return result.record ?? record;
   }
 
   async assertAdmissionForShowtime(params: {
@@ -340,15 +515,30 @@ export class QueueService {
     });
   }
 
+  /**
+   * Payment confirm is authorised by the order binding first: the pending order
+   * was prepared by an admitted queue session, and its server-side payment
+   * deadline (extended by the provider handoff grace) outlives the Redis queue
+   * session and the 13-minute admission cookie. The Redis session is only the
+   * fallback for orders whose binding does not match the current browser.
+   */
   async assertAdmissionForOrder(params: {
     orderId: string;
     userId: string;
     identity: QueueIdentity;
-    admissionToken: string;
+    admissionToken?: string;
   }): Promise<ValidatedAdmission> {
     const [reservation] = await this.db
       .select({
         performanceId: showtimes.performanceId,
+        status: reservations.status,
+        queueSessionId: reservations.queueSessionId,
+        refreshFamilyId: reservations.refreshFamilyId,
+        deviceSlotKey: reservations.deviceSlotKey,
+        admittedAt: reservations.admittedAt,
+        admissionActiveUntilAt: reservations.admissionActiveUntilAt,
+        reentryGraceUntilAt: reservations.reentryGraceUntilAt,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
@@ -363,6 +553,20 @@ export class QueueService {
       throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
     }
 
+    const orderBoundAdmission = this.resolveOrderBoundAdmission(
+      reservation,
+      params.identity,
+      params.userId,
+      Date.now(),
+    );
+    if (orderBoundAdmission) {
+      return orderBoundAdmission;
+    }
+
+    if (!params.admissionToken) {
+      throw new ForbiddenException('대기열 입장 인증이 필요합니다');
+    }
+
     return this.assertAdmissionForPerformance({
       performanceId: reservation.performanceId,
       identity: params.identity,
@@ -371,11 +575,100 @@ export class QueueService {
     });
   }
 
+  private resolveOrderBoundAdmission(
+    binding: OrderAdmissionBinding,
+    identity: QueueIdentity,
+    userId: string,
+    now: number,
+  ): ValidatedAdmission | null {
+    if (
+      !binding.queueSessionId
+      || identity.userId !== userId
+      || binding.refreshFamilyId !== identity.refreshTokenFamilyId
+      || binding.deviceSlotKey !== identity.deviceSlotId
+    ) {
+      return null;
+    }
+
+    const authorityEndsAt = [binding.paymentDeadlineAt, binding.admissionActiveUntilAt]
+      .filter((value): value is Date => this.isValidDate(value))
+      .map((value) => value.getTime());
+
+    if (binding.status === 'PENDING_PAYMENT') {
+      if (authorityEndsAt.length === 0 || now > Math.max(...authorityEndsAt)) {
+        return null;
+      }
+    } else if (binding.status !== 'CONFIRMED') {
+      // CONFIRMED stays allowed so an idempotent confirm retry still reaches
+      // the finalization service and returns the confirmed reservation.
+      return null;
+    }
+
+    const fallback = new Date(authorityEndsAt.length > 0 ? Math.max(...authorityEndsAt) : now);
+    const activeUntilAt = this.isValidDate(binding.admissionActiveUntilAt)
+      ? binding.admissionActiveUntilAt
+      : fallback;
+
+    return {
+      queueSessionId: binding.queueSessionId,
+      userId,
+      refreshTokenFamilyId: identity.refreshTokenFamilyId,
+      deviceSlotId: identity.deviceSlotId,
+      admittedAt: (this.isValidDate(binding.admittedAt) ? binding.admittedAt : activeUntilAt)
+        .toISOString(),
+      activeUntilAt: activeUntilAt.toISOString(),
+      reentryGraceUntilAt: (
+        this.isValidDate(binding.reentryGraceUntilAt) ? binding.reentryGraceUntilAt : activeUntilAt
+      ).toISOString(),
+    };
+  }
+
+  /**
+   * Returns the queue slot of a completed purchase to the waiting line right
+   * away instead of holding it until the active/recovery window ends. Never
+   * throws: a confirmed purchase must not fail because the slot release did.
+   */
+  async releaseAdmissionAfterPurchase(queueSessionId: string | null | undefined): Promise<boolean> {
+    if (!queueSessionId) {
+      return false;
+    }
+
+    try {
+      const performanceId = await this.redis.get(this.sessionRefKey(queueSessionId));
+      if (!performanceId) {
+        return false;
+      }
+
+      const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
+      if (!record) {
+        await this.redis.srem(this.activeAdmissionsKey(performanceId), queueSessionId);
+        return false;
+      }
+
+      const expiresAt = new Date(Date.now() + QUEUE_EXPIRED_RETENTION_SECONDS * 1000);
+      const result = await this.transitionQueueSession(record, 'release', [
+        '',
+        expiresAt.toISOString(),
+        String(QUEUE_EXPIRED_RETENTION_SECONDS * 1000),
+      ]);
+      if (result.applied) {
+        await this.syncQueueSessionIndexes(result);
+      }
+      return result.applied;
+    } catch (error) {
+      this.logger.warn(
+        `Queue admission release after purchase failed. queueSessionId=${queueSessionId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    }
+  }
+
   private async assertAdmissionForPerformance(
     params: QueueActionParams,
   ): Promise<ValidatedAdmission> {
-    await this.reconcilePerformanceQueueIfDue(params.performanceId);
-
+    // Booking mutations never run the queue reconcile inline; queue status
+    // polls and entries drive it so seat locks and payment confirms stay fast.
     const record = await this.findQueueSessionByAdmissionToken(params.admissionToken);
     if (!record) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
@@ -421,6 +714,9 @@ export class QueueService {
     let currentRecord = record;
     if (params.action === 'prepare-reservation') {
       currentRecord = await this.enablePaymentRecovery(record);
+      if (currentRecord.state === EXPIRED) {
+        throw new ForbiddenException('대기열 입장 시간이 만료되었습니다');
+      }
     }
 
     if (!currentRecord.admittedAt || !currentRecord.activeUntilAt || !currentRecord.reentryGraceUntilAt) {
@@ -446,8 +742,7 @@ export class QueueService {
       return;
     }
 
-    const activeSessionIds = await this.redis.smembers(this.activeAdmissionsKey(performanceId));
-    const activeCount = activeSessionIds.length;
+    const activeCount = await this.redis.scard(this.activeAdmissionsKey(performanceId));
     const slotsToFill = Math.max(
       0,
       Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) - activeCount,
@@ -457,96 +752,190 @@ export class QueueService {
       return;
     }
 
-    const waitingIds = await this.redis.zrange(
-      this.waitingQueueKey(performanceId),
-      0,
-      slotsToFill - 1,
-    );
-
-    if (waitingIds.length === 0) {
+    const admittedRecords = await this.admitWaitingSessions(performanceId, slotsToFill);
+    if (admittedRecords.length === 0) {
       return;
     }
 
-    for (const queueSessionId of waitingIds) {
-      const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
-      if (!record) {
-        await this.redis.zrem(this.waitingQueueKey(performanceId), queueSessionId);
-        continue;
-      }
-
-      const admittedRecord = this.toAdmittedRecord(record);
-      await this.persistQueueSessionRecord(admittedRecord);
-      await this.redis.zrem(this.waitingQueueKey(performanceId), queueSessionId);
-      await this.redis.sadd(this.activeAdmissionsKey(performanceId), queueSessionId);
-      this.gateway.emitAdmitted(queueSessionId, await this.buildSnapshot(admittedRecord));
+    const waitingCount = await this.redis.zcard(this.waitingQueueKey(performanceId));
+    for (const admittedRecord of admittedRecords) {
+      this.gateway.emitAdmitted(
+        admittedRecord.queueSessionId,
+        await this.buildSnapshot(admittedRecord, { waitingCount, rank: null, remainingSeats }),
+      );
     }
 
     await this.broadcastWaitingPositions(performanceId);
   }
 
-  private async reconcilePerformanceQueueIfDue(performanceId: string): Promise<void> {
-    const lockKey = this.reconcileLockKey(performanceId);
-    const lockToken = randomUUID();
-    const acquired = await this.redis.set(
-      lockKey,
-      lockToken,
-      'PX',
-      QUEUE_RECONCILE_LOCK_TTL_MS,
-      'NX',
-    );
+  /**
+   * Admits up to `slotsToFill` sessions in queue order. Each admission is one
+   * atomic script (state + waiting + active), issued concurrently so a batch
+   * costs a few round trips instead of several per session. Members whose
+   * record already expired are dropped and the freed slots are refilled from
+   * the next sessions in line.
+   */
+  private async admitWaitingSessions(
+    performanceId: string,
+    slotsToFill: number,
+  ): Promise<QueueSessionRecord[]> {
+    const admitted: QueueSessionRecord[] = [];
+    let remainingSlots = slotsToFill;
 
-    if (acquired !== 'OK') {
+    for (
+      let round = 0;
+      round < QUEUE_RECONCILE_MAX_FILL_ROUNDS && remainingSlots > 0;
+      round += 1
+    ) {
+      const waitingIds = await this.redis.zrange(
+        this.waitingQueueKey(performanceId),
+        0,
+        remainingSlots - 1,
+      );
+      if (waitingIds.length === 0) {
+        break;
+      }
+
+      const records = await this.readQueueSessionRecords(performanceId, waitingIds);
+      const admissionArgs = [...this.buildAdmissionArgs(new Date()), ''];
+      const results = await Promise.all(
+        waitingIds.map((queueSessionId, index) => {
+          const record = records[index];
+          if (!record) {
+            return this.redis
+              .zrem(this.waitingQueueKey(performanceId), queueSessionId)
+              .then(() => null);
+          }
+          return this.transitionQueueSession(record, 'admit', admissionArgs);
+        }),
+      );
+
+      const applied = results.filter(
+        (result): result is QueueTransitionResult & { record: QueueSessionRecord } =>
+          Boolean(result?.applied && result.record),
+      );
+      await Promise.all(applied.map((result) => this.syncQueueSessionIndexes(result)));
+      admitted.push(...applied.map((result) => result.record));
+      remainingSlots -= applied.length;
+    }
+
+    return admitted;
+  }
+
+  private async reconcilePerformanceQueueIfDue(performanceId: string): Promise<void> {
+    // One in-flight reconcile per performance per instance, at most one run per
+    // interval across instances, and the lock keeps long runs exclusive.
+    if (this.reconcileInFlight.has(performanceId)) {
       return;
     }
 
+    this.reconcileInFlight.add(performanceId);
     try {
-      await this.reconcilePerformanceQueue(performanceId);
+      const due = await this.redis.set(
+        this.reconcileThrottleKey(performanceId),
+        '1',
+        'PX',
+        QUEUE_RECONCILE_MIN_INTERVAL_MS,
+        'NX',
+      );
+      if (due !== 'OK') {
+        return;
+      }
+
+      const lockKey = this.reconcileLockKey(performanceId);
+      const lockToken = randomUUID();
+      const acquired = await this.redis.set(
+        lockKey,
+        lockToken,
+        'PX',
+        QUEUE_RECONCILE_LOCK_TTL_MS,
+        'NX',
+      );
+
+      if (acquired !== 'OK') {
+        return;
+      }
+
+      try {
+        await this.reconcilePerformanceQueue(performanceId);
+      } finally {
+        await this.redis.eval(RELEASE_QUEUE_RECONCILE_LOCK_LUA, 1, lockKey, lockToken);
+      }
     } finally {
-      await this.redis.eval(RELEASE_QUEUE_RECONCILE_LOCK_LUA, 1, lockKey, lockToken);
+      this.reconcileInFlight.delete(performanceId);
     }
   }
 
   private async expireStaleSessions(performanceId: string): Promise<void> {
-    const activeIds = await this.redis.smembers(this.activeAdmissionsKey(performanceId));
+    const activeKey = this.activeAdmissionsKey(performanceId);
+    const activeIds = await this.redis.smembers(activeKey);
+    if (activeIds.length === 0) {
+      return;
+    }
 
-    for (const queueSessionId of activeIds) {
-      const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
+    const records = await this.readQueueSessionRecords(performanceId, activeIds);
+    const now = Date.now();
+    const missingIds: string[] = [];
+    const tasks: Promise<unknown>[] = [];
+
+    activeIds.forEach((queueSessionId, index) => {
+      const record = records[index];
       if (!record) {
-        await this.redis.srem(this.activeAdmissionsKey(performanceId), queueSessionId);
-        continue;
+        missingIds.push(queueSessionId);
+        return;
+      }
+
+      if (record.state === WAITING) {
+        // A WAITING record never owns an active slot. Older releases could leave
+        // one behind after a lost update; put it back in line at its old position.
+        tasks.push(this.transitionQueueSession(record, 'touch', [
+          '',
+          '',
+          '',
+          String(this.resolveEnteredAtScore(record)),
+        ]));
+        return;
       }
 
       const authorityEndsAt = this.resolveAuthorityExpiry(record);
-      if (authorityEndsAt === null || Date.now() <= authorityEndsAt) {
-        continue;
+      if (record.state !== EXPIRED && authorityEndsAt !== null && now <= authorityEndsAt) {
+        return;
       }
 
-      await this.expireQueueSession(record);
+      tasks.push(this.expireQueueSession(record));
+    });
+
+    if (missingIds.length > 0) {
+      tasks.push(this.redis.srem(activeKey, ...missingIds));
     }
+
+    await Promise.all(tasks);
   }
 
   private async expireQueueSession(record: QueueSessionRecord): Promise<QueueSessionRecord> {
-    const expiredAt = new Date(Date.now() + QUEUE_EXPIRED_RETENTION_SECONDS * 1000).toISOString();
-    const expiredRecord: QueueSessionRecord = {
-      ...record,
-      state: EXPIRED,
-      expiresAt: expiredAt,
-    };
+    const expiresAt = new Date(Date.now() + QUEUE_EXPIRED_RETENTION_SECONDS * 1000);
+    const result = await this.transitionQueueSession(record, 'expire', [
+      this.authorityFingerprint(record),
+      expiresAt.toISOString(),
+      String(QUEUE_EXPIRED_RETENTION_SECONDS * 1000),
+    ]);
 
-    await this.persistQueueSessionRecord(expiredRecord);
-    await this.redis.zrem(this.waitingQueueKey(record.performanceId), record.queueSessionId);
-    await this.redis.srem(this.activeAdmissionsKey(record.performanceId), record.queueSessionId);
+    if (!result.applied || !result.record) {
+      return result.record ?? { ...record, state: EXPIRED };
+    }
+
+    await this.syncQueueSessionIndexes(result);
     this.gateway.emitExpired(record.queueSessionId, {
       queueSessionId: record.queueSessionId,
       state: EXPIRED,
       autoEnter: false,
     });
 
-    return expiredRecord;
+    return result.record;
   }
 
   private async enablePaymentRecovery(record: QueueSessionRecord): Promise<QueueSessionRecord> {
-    if (!record.activeUntilAt || !record.reentryGraceUntilAt) {
+    if (!record.admittedAt || !record.activeUntilAt || !record.reentryGraceUntilAt) {
       return record;
     }
 
@@ -559,47 +948,69 @@ export class QueueService {
       return record;
     }
 
-    const updatedRecord: QueueSessionRecord = {
-      ...record,
-      paymentRecoveryUntilAt: record.reentryGraceUntilAt,
-      expiresAt: new Date(
-        targetRecovery + QUEUE_EXPIRED_RETENTION_SECONDS * 1000,
-      ).toISOString(),
-    };
+    const expiresAt = targetRecovery + QUEUE_EXPIRED_RETENTION_SECONDS * 1000;
+    const result = await this.transitionQueueSession(record, 'recovery', [
+      record.admittedAt,
+      record.reentryGraceUntilAt,
+      new Date(expiresAt).toISOString(),
+      String(Math.max(1, expiresAt - Date.now())),
+    ]);
+    if (result.applied) {
+      await this.syncQueueSessionIndexes(result);
+    }
 
-    await this.persistQueueSessionRecord(updatedRecord);
-    return updatedRecord;
+    return result.record ?? record;
   }
 
-  private toAdmittedRecord(record: QueueSessionRecord): QueueSessionRecord {
-    const admittedAt = new Date();
+  /** admittedAt, activeUntilAt, reentryGraceUntilAt, expiresAt, ttlMs for an admission now. */
+  private buildAdmissionArgs(admittedAt: Date): string[] {
     const activeUntilAt = new Date(
       admittedAt.getTime() + QUEUE_ACTIVE_WINDOW_SECONDS * 1000,
     );
     const reentryGraceUntilAt = new Date(
       activeUntilAt.getTime() + QUEUE_REENTRY_GRACE_SECONDS * 1000,
     );
+    const expiresAt = new Date(
+      reentryGraceUntilAt.getTime() + QUEUE_EXPIRED_RETENTION_SECONDS * 1000,
+    );
 
-    return {
-      ...record,
-      state: ADMITTED,
-      admittedAt: admittedAt.toISOString(),
-      activeUntilAt: activeUntilAt.toISOString(),
-      reentryGraceUntilAt: reentryGraceUntilAt.toISOString(),
-      paymentRecoveryUntilAt: null,
-      expiresAt: new Date(
-        reentryGraceUntilAt.getTime() + QUEUE_EXPIRED_RETENTION_SECONDS * 1000,
-      ).toISOString(),
-    };
+    return [
+      admittedAt.toISOString(),
+      activeUntilAt.toISOString(),
+      reentryGraceUntilAt.toISOString(),
+      expiresAt.toISOString(),
+      String(expiresAt.getTime() - admittedAt.getTime()),
+    ];
   }
 
-  private async buildSnapshot(record: QueueSessionRecord): Promise<QueueSessionSnapshot> {
-    const waitingCount = await this.redis.zcard(this.waitingQueueKey(record.performanceId));
-    const rank = await this.redis.zrank(
-      this.waitingQueueKey(record.performanceId),
-      record.queueSessionId,
-    );
-    const remainingSeats = await this.calculateRemainingSeats(record.performanceId);
+  /** Sliding WAITING expiresAt, ttlMs, and the original enteredAt score. */
+  private buildWaitingRenewalArgs(record: QueueSessionRecord, now: Date): string[] {
+    return [
+      new Date(now.getTime() + QUEUE_WAIT_SESSION_SECONDS * 1000).toISOString(),
+      String(QUEUE_WAIT_SESSION_SECONDS * 1000),
+      String(this.resolveEnteredAtScore(record, now)),
+    ];
+  }
+
+  private resolveEnteredAtScore(record: QueueSessionRecord, now: Date = new Date()): number {
+    const enteredAt = Date.parse(record.enteredAt);
+    return Number.isFinite(enteredAt) ? enteredAt : now.getTime();
+  }
+
+  private authorityFingerprint(record: QueueSessionRecord): string {
+    return [
+      record.state,
+      record.activeUntilAt ?? '',
+      record.paymentRecoveryUntilAt ?? '',
+    ].join('|');
+  }
+
+  private async buildSnapshot(
+    record: QueueSessionRecord,
+    context?: QueueSnapshotContext,
+  ): Promise<QueueSessionSnapshot> {
+    const { waitingCount, rank, remainingSeats } =
+      context ?? (await this.readSnapshotContext(record));
     const state = this.resolveVisibleState(record);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
     const etaSeconds = position > 1 ? (position - 1) * QUEUE_POSITION_STEP_SECONDS : 0;
@@ -616,6 +1027,16 @@ export class QueueService {
       activeUntilAt: record.activeUntilAt,
       reentryGraceUntilAt: record.reentryGraceUntilAt,
     };
+  }
+
+  private async readSnapshotContext(record: QueueSessionRecord): Promise<QueueSnapshotContext> {
+    const waitingKey = this.waitingQueueKey(record.performanceId);
+    const [waitingCount, rank, remainingSeats] = await Promise.all([
+      this.redis.zcard(waitingKey),
+      this.redis.zrank(waitingKey, record.queueSessionId),
+      this.calculateRemainingSeats(record.performanceId),
+    ]);
+    return { waitingCount, rank, remainingSeats };
   }
 
   private resolveVisibleState(record: QueueSessionRecord): QueueSessionState {
@@ -681,62 +1102,90 @@ export class QueueService {
       return null;
     }
 
-    return this.readQueueSessionRecord(performanceId, queueSessionId);
+    const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
+    // The token index is only a lookup; the record's current hash is the
+    // authority, so a token replaced by a concurrent re-entry stops working.
+    return record?.admissionTokenHash === tokenHash ? record : null;
   }
 
-  private rotateAdmissionToken(record: QueueSessionRecord): {
-    record: QueueSessionRecord;
-    admissionToken: string;
-  } {
-    const admissionToken = randomBytes(32).toString('hex');
-    const admissionTokenHash = createHash('sha256')
-      .update(admissionToken)
-      .digest('hex');
+  private generateAdmissionToken(): string {
+    return randomBytes(32).toString('hex');
+  }
 
+  private hashAdmissionToken(admissionToken: string): string {
+    return createHash('sha256').update(admissionToken).digest('hex');
+  }
+
+  private toLease(record: QueueSessionRecord, admissionToken: string): QueueSessionLease {
     return {
-      record: {
-        ...record,
-        admissionTokenHash,
-      },
+      queueSessionId: record.queueSessionId,
       admissionToken,
+      userId: record.userId,
+      refreshTokenFamilyId: record.refreshTokenFamilyId,
+      deviceSlotId: record.deviceSlotId,
     };
   }
 
-  private async persistQueueSessionRecord(record: QueueSessionRecord): Promise<void> {
-    const ttlSeconds = this.calculateTtlSeconds(record.expiresAt);
-    const previous = await this.readQueueSessionRecord(record.performanceId, record.queueSessionId);
-    if (previous?.admissionTokenHash && previous.admissionTokenHash !== record.admissionTokenHash) {
-      await this.redis.del(this.admissionTokenKey(previous.admissionTokenHash));
+  /**
+   * Applies one atomic session transition. The script reads the record stored
+   * at execution time and only rewrites the fields of that transition, so the
+   * state and admission token hash written by a concurrent request survive.
+   */
+  private async transitionQueueSession(
+    record: QueueSessionRecord,
+    op: QueueTransitionOp,
+    args: string[],
+  ): Promise<QueueTransitionResult> {
+    const reply = (await this.redis.eval(
+      QUEUE_SESSION_TRANSITION_LUA,
+      4,
+      this.sessionKey(record.performanceId, record.queueSessionId),
+      this.waitingQueueKey(record.performanceId),
+      this.activeAdmissionsKey(record.performanceId),
+      this.identityKey(record.performanceId, record),
+      record.queueSessionId,
+      op,
+      ...args,
+    )) as [number | string, string, string, string, number | string] | null;
+
+    const [applied, status, encoded, previousTokenHash, ttlMs] = reply ?? [0, 'MISSING', '', '', 0];
+    return {
+      applied: Number(applied) === 1,
+      status: String(status ?? ''),
+      record: encoded ? (JSON.parse(encoded) as QueueSessionRecord) : null,
+      previousTokenHash: String(previousTokenHash ?? ''),
+      ttlMs: Number(ttlMs) || 0,
+    };
+  }
+
+  /**
+   * Keeps the cross-slot index keys (session ref and admission token) alive
+   * as long as the session record. A rotated token gets a fresh index and the
+   * previous one is removed; otherwise only the TTL is refreshed so a stale
+   * caller can never resurrect a token index that a rotation already deleted.
+   */
+  private async syncQueueSessionIndexes(result: QueueTransitionResult): Promise<void> {
+    const record = result.record;
+    if (!record || result.ttlMs <= 0) {
+      return;
     }
 
-    await this.redis.set(
-      this.sessionKey(record.performanceId, record.queueSessionId),
-      JSON.stringify(record),
-      'EX',
-      ttlSeconds,
-    );
-    await this.redis.set(
-      this.sessionRefKey(record.queueSessionId),
-      record.performanceId,
-      'EX',
-      ttlSeconds,
-    );
-    await this.redis.set(
-      this.identityKey(record.performanceId, {
-        userId: record.userId,
-        refreshTokenFamilyId: record.refreshTokenFamilyId,
-        deviceSlotId: record.deviceSlotId,
-      }),
-      record.queueSessionId,
-      'EX',
-      ttlSeconds,
-    );
-    await this.redis.set(
-      this.admissionTokenKey(record.admissionTokenHash),
-      record.queueSessionId,
-      'EX',
-      ttlSeconds,
-    );
+    const ttlMs = Math.max(1, Math.floor(result.ttlMs));
+    const tokenKey = this.admissionTokenKey(record.admissionTokenHash);
+    const rotated =
+      result.previousTokenHash.length > 0
+      && result.previousTokenHash !== record.admissionTokenHash;
+
+    await Promise.all([
+      this.redis.set(this.sessionRefKey(record.queueSessionId), record.performanceId, 'PX', ttlMs),
+      rotated
+        ? this.redis.set(tokenKey, record.queueSessionId, 'PX', ttlMs)
+        : this.redis.expire(tokenKey, Math.max(1, Math.ceil(ttlMs / 1000))),
+    ]);
+
+    if (rotated) {
+      await this.redis.del(this.admissionTokenKey(result.previousTokenHash));
+    }
   }
 
   private async readQueueSessionRecord(
@@ -751,35 +1200,59 @@ export class QueueService {
     return JSON.parse(raw) as QueueSessionRecord;
   }
 
-  private async purgeQueueSessionRecord(record: QueueSessionRecord): Promise<void> {
-    const keys = [
-      this.sessionKey(record.performanceId, record.queueSessionId),
-      this.sessionRefKey(record.queueSessionId),
-      this.identityKey(record.performanceId, {
-        userId: record.userId,
-        refreshTokenFamilyId: record.refreshTokenFamilyId,
-        deviceSlotId: record.deviceSlotId,
-      }),
-      this.admissionTokenKey(record.admissionTokenHash),
-    ];
+  private async readQueueSessionRecords(
+    performanceId: string,
+    queueSessionIds: string[],
+  ): Promise<Array<QueueSessionRecord | null>> {
+    // Issued concurrently: ioredis pipelines the commands on one connection,
+    // so a batch costs about one round trip instead of one per session.
+    return Promise.all(
+      queueSessionIds.map((queueSessionId) =>
+        this.readQueueSessionRecord(performanceId, queueSessionId),
+      ),
+    );
+  }
 
-    for (const key of keys) {
-      await this.redis.del(key);
+  /**
+   * Removes a stale session. Same-slot keys go through one script that keeps a
+   * still-live session; cross-slot index keys are deleted one by one so the
+   * purge stays Redis Cluster slot safe.
+   */
+  private async purgeQueueSession(params: {
+    performanceId: string;
+    queueSessionId: string;
+    identityKey: string;
+    admissionTokenHash: string | null;
+    now: Date;
+  }): Promise<boolean> {
+    const purged = await this.redis.eval(
+      PURGE_QUEUE_SESSION_LUA,
+      4,
+      this.sessionKey(params.performanceId, params.queueSessionId),
+      this.waitingQueueKey(params.performanceId),
+      this.activeAdmissionsKey(params.performanceId),
+      params.identityKey,
+      params.queueSessionId,
+      params.now.toISOString(),
+    );
+
+    if (Number(purged) !== 1) {
+      return false;
     }
 
-    await this.redis.zrem(this.waitingQueueKey(record.performanceId), record.queueSessionId);
-    await this.redis.srem(this.activeAdmissionsKey(record.performanceId), record.queueSessionId);
+    await this.redis.del(this.sessionRefKey(params.queueSessionId));
+    if (params.admissionTokenHash) {
+      await this.redis.del(this.admissionTokenKey(params.admissionTokenHash));
+    }
+    return true;
   }
 
   private isReusable(record: QueueSessionRecord, now: Date): boolean {
     return record.state !== EXPIRED && Date.parse(record.expiresAt) > now.getTime();
   }
 
-  private calculateTtlSeconds(expiresAt: string): number {
-    return Math.max(
-      1,
-      Math.ceil((Date.parse(expiresAt) - Date.now()) / 1000),
-    );
+  private isValidDate(value: Date | null | undefined): value is Date {
+    return value instanceof Date && !Number.isNaN(value.getTime());
   }
 
   private async broadcastWaitingPositions(performanceId: string): Promise<void> {
@@ -788,14 +1261,28 @@ export class QueueService {
       0,
       QUEUE_POSITION_BROADCAST_LIMIT - 1,
     );
+    if (waitingIds.length === 0) {
+      return;
+    }
 
-    for (const queueSessionId of waitingIds) {
-      const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
-      if (!record) {
+    // Position is the ZRANGE index, so one batch read replaces a ZRANK/ZCARD
+    // and remaining-seat lookup per session.
+    const [records, waitingCount, remainingSeats] = await Promise.all([
+      this.readQueueSessionRecords(performanceId, waitingIds),
+      this.redis.zcard(this.waitingQueueKey(performanceId)),
+      this.calculateRemainingSeats(performanceId),
+    ]);
+
+    for (const [index, queueSessionId] of waitingIds.entries()) {
+      const record = records[index];
+      if (!record || record.state !== WAITING) {
         continue;
       }
 
-      this.gateway.emitPosition(queueSessionId, await this.buildSnapshot(record));
+      this.gateway.emitPosition(
+        queueSessionId,
+        await this.buildSnapshot(record, { waitingCount, rank: index, remainingSeats }),
+      );
     }
   }
 
@@ -846,10 +1333,23 @@ export class QueueService {
         ),
       );
 
-    let lockedCount = 0;
-    for (const showtime of showtimeRows) {
-      lockedCount += await this.redis.scard(`{${showtime.id}}:locked-seats`);
-    }
+    // Count only live seat locks: the locked-seats set has no TTL, so members of
+    // expired locks are removed here instead of shrinking capacity until the
+    // next seat-map read cleans them.
+    const lockedCounts = await Promise.all(
+      showtimeRows.map((showtime) =>
+        this.redis.eval(
+          COUNT_VALID_LOCKED_SEATS_LUA,
+          1,
+          `{${showtime.id}}:locked-seats`,
+          `{${showtime.id}}:seat:`,
+        ),
+      ),
+    );
+    const lockedCount = lockedCounts.reduce<number>(
+      (total, count) => total + (Number(count) || 0),
+      0,
+    );
 
     const performanceCapacity = seatCapacity.totalSeats * showtimeRows.length;
     return Math.max(performanceCapacity - Number(soldCount?.total ?? 0) - lockedCount, 0);
@@ -865,6 +1365,10 @@ export class QueueService {
 
   private reconcileLockKey(performanceId: string): string {
     return `${this.queuePrefix(performanceId)}:reconcile-lock`;
+  }
+
+  private reconcileThrottleKey(performanceId: string): string {
+    return `${this.queuePrefix(performanceId)}:reconcile-throttle`;
   }
 
   private remainingSeatsCacheKey(performanceId: string): string {

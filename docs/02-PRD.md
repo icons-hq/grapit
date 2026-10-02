@@ -75,7 +75,7 @@ Payment and reservation finalization are server-authoritative.
 
 - Toss Payments is the current payment provider integration.
 - The payment branch API chooses synchronous or asynchronous handling based on payment method.
-- Payment confirm validates amount, order identity, lock ownership, queue admission, and payment state before finalizing reservation state.
+- Payment confirm validates amount, order identity, lock ownership, queue admission (bound to the pending order until its server payment deadline), and payment state before finalizing reservation state. A confirmed purchase returns its queue slot to the waiting line.
 - Toss webhook handling records provider events and re-checks provider state before applying final state changes.
 - A confirmed reservation with completed payment issues a QR ticket and schedules QR reminder email when eligible.
 - Reservation detail must remain readable after field entry.
