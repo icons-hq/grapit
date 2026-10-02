@@ -307,7 +307,7 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
   });
 
   it('binds a rejected entry receipt to the requested showtime as well as the actual ticket', async () => {
-    const f = await fixture(); const input = { token: f.credentials[0]!.token, showtimeId: randomUUID(), deviceAttemptId: randomUUID(), confirmed: true };
+    const f = await fixture(); const input = { token: f.credentials[0]!.token, showtimeId: randomUUID() as string, deviceAttemptId: randomUUID(), confirmed: true };
     const send = (body: typeof input) => request(app.getHttpServer()).post('/field/check-in/consume').send(body);
     const first = await send(input); expect(first.body.outcome).toBe('wrong_showtime');
     const replay = await send(input); expect(replay.status).toBe(201);
@@ -318,7 +318,7 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
   it('binds a rejected benefit receipt to its requested showtime', async () => {
     const f = await fixture();
     const [entitlement] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
-    const input = { token: f.credentials[0]!.token, showtimeId: randomUUID(), benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
+    const input = { token: f.credentials[0]!.token, showtimeId: randomUUID() as string, benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
     const send = (body: typeof input) => request(app.getHttpServer()).post('/field/benefits/redeem').send(body);
     expect((await send(input)).body.outcome).toBe('wrong_showtime');
     expect((await send(input)).body.outcome).toBe('wrong_showtime');
