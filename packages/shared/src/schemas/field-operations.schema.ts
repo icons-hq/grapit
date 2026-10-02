@@ -94,6 +94,15 @@ export const fieldCheckInVerifyRequestSchema = z
     token: z.string().trim().min(1, 'QR token이 필요합니다').optional(),
     qrUrl: z.string().url('유효한 QR URL이 필요합니다').optional(),
     showtimeId: showtimeIdSchema.optional(),
+    // The scanner's attempt for this QR view; the same value is later used for
+    // consume. It lets the server record one rejected scan per attempt and skip
+    // re-checks of an attempt that consume already recorded.
+    deviceAttemptId: z
+      .string()
+      .trim()
+      .min(1, 'device attempt ID가 필요합니다')
+      .max(100, 'device attempt ID가 너무 깁니다')
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -236,6 +245,9 @@ export const fieldMonitorSummarySchema = z
     entryRate: z.number().min(0).max(1),
     duplicateScanCount: z.number().int().min(0),
     rejectedScanCount: z.number().int().min(0),
+    // Kept for response compatibility. Offline pending attempts exist only on
+    // field devices until they are synced, so the server always reports 0 and
+    // the monitor directs staff to each device's pending list instead.
     offlinePendingCount: z.number().int().min(0),
     offlineSyncedCount: z.number().int().min(0),
     latestAbnormalAlerts: z.array(fieldMonitorAlertSchema).default([]),

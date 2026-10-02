@@ -29,7 +29,8 @@ export class OfflineSyncController {
 
   @Post('offline-sync')
   @UseGuards(AdminCapabilitiesGuard)
-  @AdminCapabilities('field.scan.sync')
+  // Syncing a pending attempt confirms venue entry, so it needs entry permission too.
+  @AdminCapabilities('field.scan.sync', 'field.scan.consume')
   async syncPendingAttempts(
     @CurrentUser('id') scannerUserId: string,
     @Req() request: Request,

@@ -105,10 +105,10 @@ Field operations are web-first and scanner-account based.
 - Normal user accounts are denied on scanner-only surfaces.
 - Staff manually confirms entry after seeing ticket context.
 - Consuming one QR processes only the scanned Ticket Item. Other seats, including those owned by the same buyer for the same showtime, remain independent. Historical batch admission results are preserved (ADR 0011).
-- Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results.
+- Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results, including rejections found at verification before any entry action. Each scan is attributed to the showtime the scanner selected.
 - Benefit redemption requires the separate `field.benefits.redeem` capability and online confirmation; it never consumes admission.
-- Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence.
-- Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, rejections, and offline backlog.
+- Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence. Syncing confirms entry, so it requires both `field.scan.sync` and `field.scan.consume`.
+- Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, and rejections. Offline backlog stays on each field device until sync, so the monitor directs staff to the devices instead of showing a server count.
 
 ### 3.8 Admin Operations
 

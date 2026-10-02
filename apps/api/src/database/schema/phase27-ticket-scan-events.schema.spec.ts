@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 
@@ -88,6 +90,34 @@ describe('Phase 27 ticket scan event schema contracts', () => {
         'idx_ticket_scan_events_device_attempt_unique',
       ]),
     );
+  });
+
+  it('attributes scans to the gate showtime and allows missing ticket identity only for unverifiable QR scans', () => {
+    expectColumnName(ticketScanEvents.requestedShowtimeId, 'requested_showtime_id');
+    expect(ticketScanEvents.requestedShowtimeId.notNull).toBe(false);
+    expect(ticketScanEvents.ticketId.notNull).toBe(false);
+    expect(ticketScanEvents.reservationId.notNull).toBe(false);
+    expect(ticketScanEvents.showtimeId.notNull).toBe(false);
+    expect(indexNames(ticketScanEvents)).toContain('idx_ticket_scan_events_requested_showtime_id');
+    expect(getTableConfig(ticketScanEvents).checks.map((check) => check.name))
+      .toContain('ticket_scan_events_attribution_check');
+
+    const migrationsDir = resolve(__dirname, '../migrations');
+    const journal = JSON.parse(readFileSync(resolve(migrationsDir, 'meta/_journal.json'), 'utf8')) as {
+      entries: Array<{ tag: string }>;
+    };
+    const entry = journal.entries.find((candidate) => candidate.tag.endsWith('_field_scan_event_attribution'));
+    expect(entry).toBeDefined();
+    const migration = readFileSync(resolve(migrationsDir, `${entry!.tag}.sql`), 'utf8');
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "requested_showtime_id" uuid');
+    for (const column of ['ticket_id', 'reservation_id', 'showtime_id']) {
+      expect(migration).toContain(`ALTER COLUMN "${column}" DROP NOT NULL`);
+    }
+    expect(migration).toContain('"ticket_scan_events_attribution_check" CHECK');
+    expect(migration).toContain(`OR ("result" = 'tampered' AND "requested_showtime_id" IS NOT NULL)`);
+    expect(migration).toContain(`"metadata"->>'requestedShowtimeId'`);
+    expect(migration).toContain('CREATE INDEX IF NOT EXISTS "idx_ticket_scan_events_requested_showtime_id"');
+    expect(migration).not.toMatch(/\bDROP (TABLE|COLUMN)\b|\bDELETE FROM\b|\bTRUNCATE\b/);
   });
 
   it('extends admin audit action contracts for field scan and settlement evidence', () => {

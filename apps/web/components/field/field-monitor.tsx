@@ -122,13 +122,8 @@ const KPI_DEFINITIONS = [
     tone: 'red',
     value: (summary: NormalizedSummary) => summary.rejectedScanCount,
   },
-  {
-    key: 'offline-pending',
-    label: '동기화 대기',
-    icon: WifiOff,
-    tone: 'amber',
-    value: (summary: NormalizedSummary) => summary.offlinePendingCount,
-  },
+  // No server KPI for offline pending: those attempts stay on each device until
+  // synced, so a server count is always 0. DeviceBacklogNotice says where to look.
   {
     key: 'offline-synced',
     label: '동기화 완료',
@@ -156,7 +151,6 @@ const OUTCOME_OPTIONS = [
 
 const OFFLINE_STATE_OPTIONS = [
   { value: 'all', label: '전체 동기화' },
-  { value: 'pending', label: '대기' },
   { value: 'synced', label: '동기화 완료' },
   { value: 'rejected', label: '충돌/거절' },
 ] as const;
@@ -177,7 +171,6 @@ interface NormalizedSummary {
   entryRatePercent: number;
   duplicateScanCount: number;
   rejectedScanCount: number;
-  offlinePendingCount: number;
   offlineSyncedCount: number;
   alerts: NormalizedAlert[];
   updatedAt?: string;
@@ -293,7 +286,7 @@ export function FieldMonitor({
       </div>
 
       <MonitorFilters filters={filters} updateFilter={updateFilter} scanners={scanners} />
-      <p className="text-sm text-gray-600">요약은 선택한 회차 전체 기준입니다. 결과·동기화·스캐너·기간 필터는 아래 스캔 로그에만 적용됩니다. 조회 날짜와 표시 시각은 한국 시간(KST)입니다.</p>
+      <p className="text-sm text-gray-600">요약은 선택한 회차 전체 기준입니다. 중복·거절 스캔과 스캔 로그는 검표 화면에서 이 회차를 선택하고 확인한 기록입니다. 결과·동기화·스캐너·기간 필터는 아래 스캔 로그에만 적용됩니다. 조회 날짜와 표시 시각은 한국 시간(KST)입니다.</p>
       {stateMessage && <p role="status" className="rounded-lg border border-gray-200 bg-white p-5 text-gray-600">{stateMessage}</p>}
       {summaryReady && summary?.updatedAt && <p className="text-sm text-gray-500">최근 조회 {formatTimestamp(summary.updatedAt)} KST{summaryQuery.isFetching || logsQuery.isFetching ? ' · 갱신 중' : ''}</p>}
 
@@ -325,6 +318,8 @@ export function FieldMonitor({
           />
         ))}
       </div>
+
+      <DeviceBacklogNotice />
 
       {summaryReady && logsReady && <AlertPanel alerts={summary?.alerts ?? []} />}
 
@@ -468,6 +463,22 @@ function KpiCard({
   );
 }
 
+function DeviceBacklogNotice() {
+  return (
+    <div
+      data-testid="field-monitor-device-backlog-notice"
+      className="flex items-start gap-3 rounded-lg border border-[#FDE68A] bg-[#FFFBEB] p-4 text-[#8B6306]"
+    >
+      <WifiOff className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+      <p className="text-sm leading-[1.5]">
+        <span className="font-semibold">동기화 대기는 이 화면에 집계되지 않습니다.</span>{' '}
+        통신이 끊긴 동안 처리한 입장은 각 현장 단말의 동기화 대기 목록에만 있고, 동기화하기 전에는 입장 완료·중복 스캔에도 반영되지 않습니다.
+        단말마다 대기 목록을 확인하고 연결이 복구되면 보류 스캔 동기화를 실행하도록 안내하세요.
+      </p>
+    </div>
+  );
+}
+
 function AlertPanel({ alerts }: { alerts: readonly NormalizedAlert[] }) {
   return (
     <Card
@@ -596,9 +607,6 @@ function normalizeSummary(summary?: SummaryInput | null): NormalizedSummary | nu
       summary.duplicateScanCount ?? summary.duplicateScans,
     ),
     rejectedScanCount: toNumber(summary.rejectedScanCount ?? summary.rejectedScans),
-    offlinePendingCount: toNumber(
-      summary.offlinePendingCount ?? summary.offlinePending,
-    ),
     offlineSyncedCount: toNumber(
       summary.offlineSyncedCount ?? summary.offlineSynced,
     ),

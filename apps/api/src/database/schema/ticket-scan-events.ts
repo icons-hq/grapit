@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  check,
   index,
   jsonb,
   pgEnum,
@@ -44,22 +45,24 @@ export const ticketScanSyncStateEnum = pgEnum('ticket_scan_sync_state', [
   'failed',
 ]);
 
+// Ticket identity columns describe the scanned ticket and are null only for a
+// tampered/unverifiable QR. requested_showtime_id is the gate showtime the
+// scanner selected; it has no FK because it is unverified scanner input. Field
+// monitor KPIs, alerts and logs are attributed to the gate showtime.
 export const ticketScanEvents = pgTable(
   'ticket_scan_events',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     ticketId: uuid('ticket_id')
-      .notNull()
       .references(() => tickets.id, { onDelete: 'restrict' }),
     ticketItemId: uuid('ticket_item_id').references(() => ticketItems.id, {
       onDelete: 'restrict',
     }),
     reservationId: uuid('reservation_id')
-      .notNull()
       .references(() => reservations.id, { onDelete: 'restrict' }),
     showtimeId: uuid('showtime_id')
-      .notNull()
       .references(() => showtimes.id, { onDelete: 'restrict' }),
+    requestedShowtimeId: uuid('requested_showtime_id'),
     scannerUserId: uuid('scanner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
@@ -84,6 +87,7 @@ export const ticketScanEvents = pgTable(
   (table) => [
     index('idx_ticket_scan_events_ticket_item_id').on(table.ticketItemId),
     index('idx_ticket_scan_events_showtime_id').on(table.showtimeId),
+    index('idx_ticket_scan_events_requested_showtime_id').on(table.requestedShowtimeId),
     index('idx_ticket_scan_events_result').on(table.result),
     index('idx_ticket_scan_events_scanner_user_id').on(table.scannerUserId),
     index('idx_ticket_scan_events_device_attempt_id').on(table.deviceAttemptId),
@@ -91,5 +95,9 @@ export const ticketScanEvents = pgTable(
     uniqueIndex('idx_ticket_scan_events_device_attempt_unique')
       .on(table.deviceAttemptId)
       .where(sql`${table.deviceAttemptId} IS NOT NULL`),
+    check(
+      'ticket_scan_events_attribution_check',
+      sql`(${table.ticketId} IS NOT NULL AND ${table.reservationId} IS NOT NULL AND ${table.showtimeId} IS NOT NULL) OR (${table.result} = 'tampered' AND ${table.requestedShowtimeId} IS NOT NULL)`,
+    ),
   ],
 );
