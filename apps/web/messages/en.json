@@ -302,7 +302,8 @@
       "totalSeatCount": "Total seats: {count}",
       "selectionConflict": "Check seat availability and the per-person ticket limit, then try again.",
       "showtimeClosed": "This showtime has already started and can no longer be booked.",
-      "selectionResynced": "Some seats changed hold status, so your selection was updated. Please check your selected seats."
+      "selectionResynced": "Some seats changed hold status, so your selection was updated. Please check your selected seats.",
+      "selectionVerifyFailed": "We couldn't confirm the hold on your selected seats. Please try again in a moment."
     }
   },
   "locale": {

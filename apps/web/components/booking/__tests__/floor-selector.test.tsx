@@ -11,6 +11,7 @@ import { useBookingStore } from '@/stores/use-booking-store';
 type MyLocksMockData = {
   seatIds: string[];
   expiresAt: number | null;
+  requestSeq?: number;
 };
 
 const {
@@ -337,6 +338,9 @@ describe('BookingPage floor selector', () => {
     myLocksDataMock.mockReturnValue({
       seatIds: ['1F:A-1'],
       expiresAt: Date.now() + 7 * 60 * 1000,
+      // Fetched after this page mounted (a snapshot cached from before the
+      // mount is not trusted and is fetched again).
+      requestSeq: Number.MAX_SAFE_INTEGER,
     });
 
     renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);

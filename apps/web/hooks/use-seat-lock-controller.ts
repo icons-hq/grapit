@@ -24,6 +24,13 @@ export interface LockSeatRequestOptions {
   perUserLimit?: number;
 }
 
+/** A seat whose lock or release request of this page is still in flight. */
+export interface PendingSeatOperation {
+  showtimeId: string;
+  seatKey: string;
+  kind: 'lock' | 'unlock';
+}
+
 export interface SeatLockController {
   /** Optimistically selects the seat and locks it on the server. */
   lockSeat: (showtimeId: string, seat: FloorAwareSeatSelection, options?: LockSeatRequestOptions) => void;
@@ -40,14 +47,21 @@ export interface SeatLockController {
    * operation, so it reflects all of them.
    */
   isSnapshotCurrent: (requestSeq: number) => boolean;
+  /**
+   * True for a snapshot requested before this page mounted (a cached
+   * my-locks from an earlier visit). It is never trusted; the page asks again.
+   */
+  predatesMount: (requestSeq: number) => boolean;
   /** Resolves once every in-flight seat operation has settled. */
   waitForIdle: () => Promise<void>;
+  /** Seats with an in-flight lock/release request (re-renders on change). */
+  pendingSeats: readonly PendingSeatOperation[];
   pendingLockCount: number;
   isReleasingAll: boolean;
 }
 
 type PendingLock = { showtimeId: string; seatKey: string; promise: Promise<void> };
-type PendingUnlock = { showtimeId: string; promise: Promise<void> };
+type PendingUnlock = { showtimeId: string; seatKey: string; promise: Promise<void> };
 
 function toOperationKey(showtimeId: string, seatKey: string): string {
   return `${showtimeId}\u0000${seatKey}`;
@@ -79,7 +93,11 @@ async function settleQuietly(promises: Iterable<Promise<unknown>>): Promise<void
 export function useSeatLockController(options: {
   onLockRejected?: (rejection: SeatLockRejection) => void;
 } = {}): SeatLockController {
-  const lastServerResponseSeqRef = useRef(0);
+  // Snapshots requested before this mount (cached from an earlier visit)
+  // predate whatever happened in between (checkout, another tab), so the
+  // baseline starts at mount instead of 0.
+  const [mountSeq] = useState(nextSeatSyncSequence);
+  const lastServerResponseSeqRef = useRef(mountSeq);
   const markServerResponse = useCallback(() => {
     lastServerResponseSeqRef.current = nextSeatSyncSequence();
   }, []);
@@ -104,8 +122,19 @@ export function useSeatLockController(options: {
   const pendingReleaseAllRef = useRef(new Map<string, Promise<void>>());
   /** Bumped by every release-all; a lock sent before the bump may have been released by it. */
   const releaseGenerationRef = useRef(new Map<string, number>());
-  const [pendingLockCount, setPendingLockCount] = useState(0);
+  const [pendingSeats, setPendingSeats] = useState<readonly PendingSeatOperation[]>([]);
   const [releasingAllCount, setReleasingAllCount] = useState(0);
+
+  const publishPendingSeats = useCallback(() => {
+    const operations: PendingSeatOperation[] = [];
+    for (const lock of pendingLocksRef.current.values()) {
+      operations.push({ showtimeId: lock.showtimeId, seatKey: lock.seatKey, kind: 'lock' });
+    }
+    for (const unlock of pendingUnlocksRef.current.values()) {
+      operations.push({ showtimeId: unlock.showtimeId, seatKey: unlock.seatKey, kind: 'unlock' });
+    }
+    setPendingSeats(operations);
+  }, []);
 
   const startUnlock = useCallback((showtimeId: string, seatKey: string): Promise<void> => {
     const key = toOperationKey(showtimeId, seatKey);
@@ -122,10 +151,12 @@ export function useSeatLockController(options: {
       }
     })().finally(() => {
       pendingUnlocksRef.current.delete(key);
+      publishPendingSeats();
     });
-    pendingUnlocksRef.current.set(key, { showtimeId, promise });
+    pendingUnlocksRef.current.set(key, { showtimeId, seatKey, promise });
+    publishPendingSeats();
     return promise;
-  }, []);
+  }, [publishPendingSeats]);
 
   const collectReleases = useCallback((showtimeId: string, exceptKey: string) => {
     const releases: Promise<void>[] = [];
@@ -221,12 +252,12 @@ export function useSeatLockController(options: {
       }
     })().finally(() => {
       pendingLocksRef.current.delete(key);
-      setPendingLockCount(pendingLocksRef.current.size);
+      publishPendingSeats();
     });
 
     pendingLocksRef.current.set(key, { showtimeId, seatKey: seat.seatKey, promise });
-    setPendingLockCount(pendingLocksRef.current.size);
-  }, [collectReleases, startUnlock]);
+    publishPendingSeats();
+  }, [collectReleases, publishPendingSeats, startUnlock]);
 
   const releaseSeat = useCallback((showtimeId: string, seatKey: string) => {
     const state = useBookingStore.getState();
@@ -285,6 +316,7 @@ export function useSeatLockController(options: {
     (requestSeq: number) => !hasPendingOperations() && requestSeq >= lastServerResponseSeqRef.current,
     [hasPendingOperations],
   );
+  const predatesMount = useCallback((requestSeq: number) => requestSeq < mountSeq, [mountSeq]);
 
   const waitForIdle = useCallback(async () => {
     while (hasPendingOperations()) {
@@ -296,6 +328,11 @@ export function useSeatLockController(options: {
     }
   }, [hasPendingOperations]);
 
+  const pendingLockCount = useMemo(
+    () => pendingSeats.filter((operation) => operation.kind === 'lock').length,
+    [pendingSeats],
+  );
+
   return useMemo(() => ({
     lockSeat,
     releaseSeat,
@@ -304,7 +341,9 @@ export function useSeatLockController(options: {
     isUnlockPending,
     hasPendingLocksFor,
     isSnapshotCurrent,
+    predatesMount,
     waitForIdle,
+    pendingSeats,
     pendingLockCount,
     isReleasingAll: releasingAllCount > 0,
   }), [
@@ -314,6 +353,8 @@ export function useSeatLockController(options: {
     isUnlockPending,
     lockSeat,
     pendingLockCount,
+    pendingSeats,
+    predatesMount,
     releaseAll,
     releaseSeat,
     releasingAllCount,

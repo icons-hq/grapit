@@ -3,6 +3,13 @@
 import { create } from 'zustand';
 import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
+/**
+ * A hold deadline closer than this is treated as already over: it cannot be
+ * used to continue, so it neither dismisses an expiry notice nor counts as a
+ * live server hold.
+ */
+export const HOLD_EXPIRY_MARGIN_MS = 1_000;
+
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
 
@@ -114,7 +121,7 @@ export const useBookingStore = create<BookingState>((set) => ({
         return state;
       }
       // No held seat means no server deadline: a later first lock gets a fresh
-      // TTL. An expiry notice already shown stays until the user resets.
+      // TTL. An expiry notice already shown stays (see setTimerExpiry).
       return selectedSeats.length === 0
         ? { selectedSeats, timerExpiresAt: null }
         : { selectedSeats };
@@ -123,11 +130,19 @@ export const useBookingStore = create<BookingState>((set) => ({
   clearSeats: () => set({ selectedSeats: [], timerExpiresAt: null, isTimerExpired: false }),
 
   // Always follow the latest server deadline (lock response or my-locks).
-  // Seats held together share the user's TTL, so overwriting is safe.
+  // Seats held together share the user's TTL, so overwriting is safe. An
+  // expiry notice already shown is dismissed only by a deadline that is still
+  // ahead (the server proved the hold alive); a past deadline, e.g. from a
+  // background resync, keeps it until the user resets.
   setTimerExpiry: (expiresAt) =>
-    set((state) => (state.timerExpiresAt === expiresAt && !state.isTimerExpired
-      ? state
-      : { timerExpiresAt: expiresAt, isTimerExpired: false })),
+    set((state) => {
+      const isTimerExpired = state.isTimerExpired
+        && expiresAt - Date.now() <= HOLD_EXPIRY_MARGIN_MS;
+      if (state.timerExpiresAt === expiresAt && state.isTimerExpired === isTimerExpired) {
+        return state;
+      }
+      return { timerExpiresAt: expiresAt, isTimerExpired };
+    }),
 
   applyPaymentDeadline: (paymentDeadlineAt) => {
     const parsedDeadline = Date.parse(paymentDeadlineAt);

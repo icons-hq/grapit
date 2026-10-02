@@ -6,6 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { BookingPage } from '@/components/booking/booking-page';
 import { formatKstTimeLabel, getKstCalendarDate } from '@/lib/booking-datetime';
+import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
 import { useBookingStore } from '@/stores/use-booking-store';
 
 /**
@@ -134,25 +135,41 @@ vi.mock('@/components/booking/seat-map-viewer', () => ({
     seatConfig,
     seatStates,
     selectedSeatIds,
+    myLockedSeatIds,
     onSeatClick,
+    maxSelect,
   }: {
     seatConfig: { tiers: Array<{ seatIds: string[] }> };
     seatStates: Map<string, string>;
     selectedSeatIds: Set<string>;
+    myLockedSeatIds?: Set<string>;
     onSeatClick: (seatId: string) => void;
+    maxSelect: number;
   }) => (
     <div>
-      {seatConfig.tiers.flatMap((tier) => tier.seatIds).map((seatId) => (
-        <button
-          key={seatId}
-          type="button"
-          aria-pressed={selectedSeatIds.has(seatId)}
-          data-state={seatStates.get(seatId) ?? 'available'}
-          onClick={() => onSeatClick(seatId)}
-        >
-          {`좌석 ${seatId}`}
-        </button>
-      ))}
+      {seatConfig.tiers.flatMap((tier) => tier.seatIds).map((seatId) => {
+        const state = seatStates.get(seatId) ?? 'available';
+        const isSelected = selectedSeatIds.has(seatId);
+        const isMyLocked = state === 'locked' && (myLockedSeatIds?.has(seatId) ?? false);
+        return (
+          <button
+            key={seatId}
+            type="button"
+            aria-pressed={isSelected}
+            data-state={state}
+            data-my-lock={isMyLocked}
+            onClick={() => {
+              // Same guard as SeatMapViewer.handleClick: a seat that looks
+              // held by someone else never reaches the page.
+              if (state !== 'available' && !isSelected && !isMyLocked) return;
+              if (!isSelected && !isMyLocked && selectedSeatIds.size >= maxSelect) return;
+              onSeatClick(seatId);
+            }}
+          >
+            {`좌석 ${seatId}`}
+          </button>
+        );
+      })}
     </div>
   ),
 }));
@@ -177,6 +194,11 @@ const server = {
   held: new Map<string, Map<string, number>>(),
   takenByOthers: new Set<string>(),
   lockGates: new Map<string, Deferred>(),
+  unlockGates: new Map<string, Deferred>(),
+  /** Each my-locks GET takes the next gate (if any) before answering. */
+  myLocksGates: [] as Deferred[],
+  /** my-locks GETs that fail with a 503 before answering normally. */
+  myLocksFailures: 0,
   holdMs: 10 * 60 * 1000,
   maxSeats: 2,
 };
@@ -221,6 +243,14 @@ function installServer() {
     }
     const myLocks = path.match(/^\/api\/v1\/booking\/my-locks\/([^/]+)$/);
     if (myLocks) {
+      const gate = server.myLocksGates.shift();
+      if (gate) {
+        await gate.promise;
+      }
+      if (server.myLocksFailures > 0) {
+        server.myLocksFailures -= 1;
+        throw new hoisted.ApiClientError('일시적인 오류가 발생했습니다', 503);
+      }
       const held = heldFor(myLocks[1]);
       return {
         seatIds: [...held.keys()],
@@ -264,7 +294,13 @@ function installServer() {
     }
     const single = path.match(/^\/api\/v1\/booking\/seats\/lock\/([^/]+)\/([^/]+)$/);
     if (single) {
-      heldFor(decodeURIComponent(single[1])).delete(decodeURIComponent(single[2]));
+      const seatKey = decodeURIComponent(single[2]);
+      const gate = server.unlockGates.get(seatKey);
+      if (gate) {
+        server.unlockGates.delete(seatKey);
+        await gate.promise;
+      }
+      heldFor(decodeURIComponent(single[1])).delete(seatKey);
       return undefined;
     }
     throw new Error(`unexpected DELETE ${path}`);
@@ -352,13 +388,17 @@ function selectShowtimeInStore(showtimeId: string) {
   useBookingStore.getState().setShowtime(showtimeId);
 }
 
-function renderBookingPage(performanceId = 'performance-a') {
-  const queryClient = new QueryClient({
+function createQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+}
+
+function renderBookingPage(options: { performanceId?: string; queryClient?: QueryClient } = {}) {
+  const { performanceId = 'performance-a', queryClient = createQueryClient() } = options;
   const view = render(
     <QueryClientProvider client={queryClient}>
       <BookingPage performanceId={performanceId} />
@@ -392,6 +432,9 @@ describe('BookingPage seat lock flow', () => {
     server.held.clear();
     server.takenByOthers.clear();
     server.lockGates.clear();
+    server.unlockGates.clear();
+    server.myLocksGates = [];
+    server.myLocksFailures = 0;
     server.holdMs = 10 * 60 * 1000;
     server.maxSeats = 2;
     installServer();
@@ -775,22 +818,65 @@ describe('BookingPage seat lock flow', () => {
     expect(lockAllCalls(SHOWTIME_A)).toBe(1);
   });
 
-  it('#27 reloads the seat map and my locks after a lock conflict', async () => {
+  it('#27 #8 marks contended seats locked without reloading seat-status or my-locks per conflict', async () => {
     const user = userEvent.setup();
     selectShowtimeInStore(SHOWTIME_A);
     renderBookingPage();
 
-    const seatButton = await screen.findByRole('button', { name: '좌석 A-1' });
+    await screen.findByRole('button', { name: '좌석 A-1' });
     await waitFor(() => expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1));
-    // Taken after our snapshot; no broadcast reached this page.
-    server.takenByOthers.add('1F:A-1');
-    expect(seatButton).toHaveAttribute('data-state', 'available');
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+    // Taken after our snapshot; no broadcast reached this page (open peak).
+    for (const seatId of ['A-1', 'A-2', 'A-3']) {
+      server.takenByOthers.add(`1F:${seatId}`);
+    }
 
-    await user.click(seatButton);
+    for (const seatId of ['A-1', 'A-2', 'A-3']) {
+      const seatButton = screen.getByRole('button', { name: `좌석 ${seatId}` });
+      expect(seatButton).toHaveAttribute('data-state', 'available');
+      await user.click(seatButton);
+      await waitFor(() => expect(seatButton).toHaveAttribute('data-state', 'locked'));
+    }
+    await settle();
 
-    await waitFor(() => expect(countGets(/schedules\/showtime-a\/seats/)).toBe(2));
-    await waitFor(() => expect(screen.getByRole('button', { name: '좌석 A-1' })).toHaveAttribute('data-state', 'locked'));
-    expect(countGets(/my-locks\/showtime-a/)).toBeGreaterThanOrEqual(2);
+    // No full seat map reload (audit #8) and no my-locks read per conflict.
+    expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
+    expect(countGets(/my-locks\/showtime-a/)).toBe(1);
+    expect(hoisted.toastInfoMock).toHaveBeenCalledTimes(3);
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+
+    // The stale seat no longer invites the same failing click (no 409 loop).
+    await user.click(screen.getByRole('button', { name: '좌석 A-1' }));
+    await settle();
+    expect(hoisted.postMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('#27 reads my-locks back (not the seat map) on a per-user limit conflict, once per cooldown', async () => {
+    const user = userEvent.setup();
+    // The server counts one more hold than this page knows about.
+    server.maxSeats = 1;
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+
+    await screen.findByRole('button', { name: '좌석 A-1' });
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+    // A hold from another tab that this page has not seen.
+    heldFor(SHOWTIME_A).set('1F:A-3', Date.now() + 5 * 60 * 1000);
+
+    await user.click(screen.getByRole('button', { name: '좌석 A-1' }));
+    // The hidden hold is restored so the user can see and release it.
+    await waitFor(() => expect(selectedTag('A-3')).toBeInTheDocument());
+    expect(countGets(/my-locks\/showtime-a/)).toBe(2);
+    expect(screen.getByRole('button', { name: '좌석 A-1' })).toHaveAttribute('data-state', 'available');
+
+    await user.click(screen.getByRole('button', { name: '좌석 A-2' }));
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(2));
+    await settle();
+
+    // Inside the cooldown: no second read yet, and the seat map is untouched.
+    expect(countGets(/my-locks\/showtime-a/)).toBe(2);
+    expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
+    expect(screen.getByRole('button', { name: '좌석 A-2' })).toHaveAttribute('data-state', 'available');
   });
 
   it('#8 updates the seat map locally after a successful lock instead of reloading it', async () => {
@@ -804,6 +890,197 @@ describe('BookingPage seat lock flow', () => {
 
     expect(countGets(/schedules\/showtime-a\/seats/)).toBe(1);
     expect(screen.getByRole('button', { name: '좌석 A-1' })).toHaveAttribute('data-state', 'locked');
+  });
+
+  it('#28 lets the user pick a seat again while its release is still in flight', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+
+    const seatButton = await screen.findByRole('button', { name: '좌석 A-1' });
+    await user.click(seatButton);
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    await waitFor(() => expect(seatButton).toHaveAttribute('data-state', 'locked'));
+
+    const unlockGate = deferred();
+    server.unlockGates.set('1F:A-1', unlockGate);
+    await user.click(seatButton);
+    await waitFor(() => expect(singleUnlockCalls(SHOWTIME_A, '1F:A-1')).toBe(1));
+    expect(selectedTag('A-1')).not.toBeInTheDocument();
+    // Our own release is in flight: the seat is not someone else's.
+    expect(seatButton).toHaveAttribute('data-state', 'available');
+
+    await user.click(seatButton);
+    expect(selectedTag('A-1')).toBeInTheDocument();
+    // The new lock waits for the release so the release cannot drop it.
+    expect(hoisted.postMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      unlockGate.resolve();
+    });
+
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    expect(selectedTag('A-1')).toBeInTheDocument();
+    expect(hoisted.toastInfoMock).not.toHaveBeenCalled();
+  });
+
+  it('#28 shows a selected seat as held when its locked state arrives before its own lock response', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    const gate = deferred();
+    server.lockGates.set('1F:A-1', gate);
+    const { queryClient } = renderBookingPage();
+
+    const seatButton = await screen.findByRole('button', { name: '좌석 A-1' });
+    await waitFor(() => expect(queryClient.getQueryData(['seat-status', SHOWTIME_A])).toBeDefined());
+    await user.click(seatButton);
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(1));
+    // Our own seat-update broadcast lands before the HTTP response.
+    act(() => {
+      queryClient.setQueryData(['seat-status', SHOWTIME_A], (old: { seats: Record<string, string> } | undefined) => (
+        old ? { ...old, seats: { ...old.seats, '1F:A-1': 'locked' } } : old
+      ));
+    });
+
+    await waitFor(() => expect(seatButton).toHaveAttribute('data-state', 'locked'));
+    expect(seatButton).toHaveAttribute('data-my-lock', 'true');
+    expect(seatButton).toHaveAttribute('aria-pressed', 'true');
+
+    await act(async () => {
+      gate.resolve();
+    });
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    expect(seatButton).toHaveAttribute('data-my-lock', 'true');
+  });
+
+  it('#30 does not trust a my-locks snapshot cached before this page mounted', async () => {
+    const queryClient = createQueryClient();
+    // Cached from an earlier visit (e.g. before checkout); A-1 is gone since.
+    queryClient.setQueryData(['my-locks', SHOWTIME_A], {
+      seatIds: ['1F:A-1'],
+      expiresAt: Date.now() + 60_000,
+      requestSeq: nextSeatSyncSequence(),
+    });
+    const gate = deferred();
+    server.myLocksGates.push(gate);
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage({ queryClient });
+
+    await screen.findByRole('button', { name: '좌석 A-1' });
+    await settle();
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    expect(useBookingStore.getState().timerExpiresAt).toBeNull();
+
+    await act(async () => {
+      gate.resolve();
+    });
+    await waitFor(() => expect(queryClient.getQueryData(['my-locks', SHOWTIME_A])).toMatchObject({ seatIds: [] }));
+    await settle();
+
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    expect(useBookingStore.getState().timerExpiresAt).toBeNull();
+    expect(hoisted.toastInfoMock).not.toHaveBeenCalled();
+    // The mount refetch was reused; no extra read.
+    expect(countGets(/my-locks\/showtime-a/)).toBe(1);
+  });
+
+  it('#30 asks my-locks again when the only answer was requested before this page mounted', async () => {
+    const queryClient = createQueryClient();
+    const gate = deferred();
+    server.myLocksGates.push(gate);
+    selectShowtimeInStore(SHOWTIME_A);
+    const firstVisit = renderBookingPage({ queryClient });
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+    firstVisit.unmount();
+
+    // Held meanwhile; the request from the first visit answers late.
+    heldFor(SHOWTIME_A).set('1F:A-1', Date.now() + 5 * 60 * 1000);
+    renderBookingPage({ queryClient });
+    await act(async () => {
+      gate.resolve();
+    });
+
+    await waitFor(() => expect(selectedTag('A-1')).toBeInTheDocument());
+    expect(countGets(/my-locks\/showtime-a/)).toBe(2);
+  });
+
+  it('#29 releases a showtime left before its my-locks first load finished', async () => {
+    const user = userEvent.setup();
+    // Held before a reload; this page has not read it yet.
+    heldFor(SHOWTIME_A).set('1F:A-1', Date.now() + 5 * 60 * 1000);
+    const gate = deferred();
+    server.myLocksGates.push(gate);
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(1));
+
+    const performance = hoisted.performanceRef.current as ReturnType<typeof createPerformance>;
+    const date = getKstCalendarDate(performance.showtimes[1]!.dateTime);
+    await user.click(screen.getByRole('button', { name: `날짜 ${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}` }));
+
+    await waitFor(() => expect(lockAllCalls(SHOWTIME_A)).toBe(1));
+    expect(heldFor(SHOWTIME_A).size).toBe(0);
+    await act(async () => {
+      gate.resolve();
+    });
+  });
+
+  it('#10 tells the user when the hold could not be verified before checkout', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    renderBookingPage();
+
+    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    const readsBefore = countGets(/my-locks\/showtime-a/);
+
+    server.myLocksFailures = 2;
+    await user.click(screen.getByRole('button', { name: '다음' }));
+
+    await waitFor(() => expect(hoisted.toastErrorMock).toHaveBeenCalledWith(
+      '선택 좌석의 점유 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+    ));
+    expect(countGets(/my-locks\/showtime-a/)).toBe(readsBefore + 2);
+    expect(hoisted.routerPushMock).not.toHaveBeenCalled();
+    expect(selectedTag('A-1')).toBeInTheDocument();
+  });
+
+  it('#10 does not take a cancelled verification read as the server answer', async () => {
+    const user = userEvent.setup();
+    selectShowtimeInStore(SHOWTIME_A);
+    const { queryClient } = renderBookingPage();
+
+    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+    await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
+    // A fresh snapshot with A-1 has been read and applied.
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['my-locks', SHOWTIME_A] });
+    });
+    await settle();
+
+    // The server loses A-1. The verification read is held back and then
+    // cancelled, as a lock success's cache patch does; the refetch then
+    // resolves with the older cached snapshot.
+    heldFor(SHOWTIME_A).delete('1F:A-1');
+    const gate = deferred();
+    server.myLocksGates.push(gate);
+    const readsBefore = countGets(/my-locks\/showtime-a/);
+    await user.click(screen.getByRole('button', { name: '다음' }));
+    await waitFor(() => expect(countGets(/my-locks\/showtime-a/)).toBe(readsBefore + 1));
+    await act(async () => {
+      await queryClient.cancelQueries({ queryKey: ['my-locks', SHOWTIME_A] });
+    });
+
+    await waitFor(() => expect(selectedTag('A-1')).not.toBeInTheDocument());
+    expect(countGets(/my-locks\/showtime-a/)).toBe(readsBefore + 2);
+    expect(hoisted.routerPushMock).not.toHaveBeenCalled();
+    expect(hoisted.toastInfoMock).toHaveBeenCalledWith(
+      '점유 상태가 바뀐 좌석이 있어 선택 목록을 갱신했습니다. 선택 좌석을 확인해 주세요.',
+    );
+    await act(async () => {
+      gate.resolve();
+    });
   });
 
   it('#10 verifies held seats with the server before moving to checkout', async () => {

@@ -54,10 +54,39 @@ describe('seat-status resync (audit #27, #8)', () => {
   });
 
   it('spreads the poll interval with a bounded per-viewer jitter', () => {
+    // Connected: the socket carries lock/unlock, polling only catches TTL
+    // expiry, so it stays at 30-60 s; disconnected it is the only sync path.
+    expect(SEAT_STATUS_POLL_CONNECTED_MS).toBe(30_000);
     expect(getSeatStatusPollInterval(true, 0)).toBe(SEAT_STATUS_POLL_CONNECTED_MS);
-    expect(getSeatStatusPollInterval(true, 1)).toBe(SEAT_STATUS_POLL_CONNECTED_MS * 1.5);
+    expect(getSeatStatusPollInterval(true, 1)).toBe(SEAT_STATUS_POLL_CONNECTED_MS * 2);
     expect(getSeatStatusPollInterval(false, 0)).toBe(SEAT_STATUS_POLL_DISCONNECTED_MS);
-    expect(getSeatStatusPollInterval(false, 7)).toBe(SEAT_STATUS_POLL_DISCONNECTED_MS * 1.5);
+    expect(getSeatStatusPollInterval(false, 7)).toBe(SEAT_STATUS_POLL_DISCONNECTED_MS * 2);
+  });
+
+  it('does not refetch seat-status on window focus while the data is younger than 15 s', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    useBookingStore.getState().setConnected(true);
+    const { Wrapper, queryClient } = createWrapper();
+    renderHook(() => useSeatStatus('showtime-1'), { wrapper: Wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(seatStatusCalls()).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(14_000);
+      queryClient.getQueryCache().onFocus();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(seatStatusCalls()).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      queryClient.getQueryCache().onFocus();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(seatStatusCalls()).toHaveLength(2);
   });
 
   it('polls seat-status so seats released by Redis TTL reappear without a reload', async () => {

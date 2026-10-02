@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useBookingStore } from '../use-booking-store';
+import { HOLD_EXPIRY_MARGIN_MS, useBookingStore } from '../use-booking-store';
 
 function seat(seatId: string) {
   return {
@@ -59,17 +59,34 @@ describe('booking store seat selection', () => {
     expect(useBookingStore.getState().timerExpiresAt).toBe(2_000_000);
   });
 
-  it('keeps an expiry notice open when the selection empties, and closes it on a new deadline', () => {
+  it('keeps an expiry notice open when the selection empties, and closes it on a deadline still ahead', () => {
     const store = useBookingStore.getState();
     store.setShowtime('showtime-1');
     store.addSeat(seat('A-1'));
-    store.setTimerExpiry(1_000_000);
+    store.setTimerExpiry(Date.now() - 1_000);
     useBookingStore.getState().expireTimer();
 
     useBookingStore.getState().removeSeat('1F:A-1');
     expect(useBookingStore.getState().isTimerExpired).toBe(true);
 
-    useBookingStore.getState().setTimerExpiry(3_000_000);
+    useBookingStore.getState().setTimerExpiry(Date.now() + 5 * 60 * 1000);
     expect(useBookingStore.getState().isTimerExpired).toBe(false);
+  });
+
+  it('keeps the expiry notice when a background resync brings a deadline that is already over', () => {
+    const store = useBookingStore.getState();
+    store.setShowtime('showtime-1');
+    store.addSeat(seat('A-1'));
+    const expiredAt = Date.now() - 1_000;
+    store.setTimerExpiry(expiredAt);
+    useBookingStore.getState().expireTimer();
+
+    // e.g. a focus refetch of my-locks reconciling the same (past) deadline
+    useBookingStore.getState().setTimerExpiry(expiredAt);
+    expect(useBookingStore.getState().isTimerExpired).toBe(true);
+
+    // ...or a deadline inside the safety margin
+    useBookingStore.getState().setTimerExpiry(Date.now() + HOLD_EXPIRY_MARGIN_MS / 2);
+    expect(useBookingStore.getState().isTimerExpired).toBe(true);
   });
 });

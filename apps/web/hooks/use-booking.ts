@@ -1,6 +1,6 @@
 import { getClientLocale } from '@/lib/i18n/client-copy';
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { hashKey, useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
@@ -22,6 +22,7 @@ import type {
   PrepareReservationResponse,
   ReservationDetail,
   SeatSelection,
+  SeatState,
   SeatStatusResponse,
   LockSeatResponse,
   UnlockAllResponse,
@@ -58,13 +59,22 @@ export const myLocksQueryKey = (showtimeId: string | null) => ['my-locks', showt
 /**
  * Seat-status polling: TTL expiry is not broadcast, so polling is the
  * resync path for seats released by Redis TTL and for missed socket events.
- * Faster while the socket is down (including after reconnect_failed).
- * The per-viewer jitter spreads requests from viewers who opened together.
+ * While connected the socket carries every lock/unlock, so the poll only has
+ * to catch TTL expiry (10 min holds) and stays slow: 30-60 s. While the
+ * socket is down (including after reconnect_failed) it is the only sync
+ * path: 10-20 s. The per-viewer jitter spreads requests from viewers who
+ * opened together.
  */
-export const SEAT_STATUS_POLL_CONNECTED_MS = 20_000;
+export const SEAT_STATUS_POLL_CONNECTED_MS = 30_000;
 export const SEAT_STATUS_POLL_DISCONNECTED_MS = 10_000;
-const SEAT_STATUS_POLL_JITTER_RATIO = 0.5;
-const SEAT_STATUS_STALE_MS = 5_000;
+const SEAT_STATUS_POLL_JITTER_RATIO = 1;
+/** Window focus refetches skip data younger than this (mobile app switches). */
+const SEAT_STATUS_STALE_MS = 15_000;
+/**
+ * Minimum spacing of lock-failure resyncs per query. Repeated failures inside
+ * the window share one trailing reload instead of one reload per click.
+ */
+export const LOCK_FAILURE_RESYNC_COOLDOWN_MS = 10_000;
 
 export function getSeatStatusPollInterval(isConnected: boolean, jitter: number): number {
   const base = isConnected ? SEAT_STATUS_POLL_CONNECTED_MS : SEAT_STATUS_POLL_DISCONNECTED_MS;
@@ -135,6 +145,75 @@ async function patchMyLocks(
   }
   queryClient.setQueryData<MyLocksSnapshot>(queryKey, (old) => (old ? update(old) : old));
   return true;
+}
+
+/**
+ * Server 409 messages (Korean, optional trailing period) that mean the seat
+ * itself is not available, with the seat-status they imply. Any other 409
+ * (per-user/per-performance limits) is about the user, not the seat.
+ */
+const SEAT_CONFLICT_STATES: ReadonlyArray<readonly [message: string, state: SeatState]> = [
+  ['이미 다른 사용자가 선택한 좌석입니다', 'locked'],
+  ['이미 판매된 좌석입니다', 'sold'],
+  ['환불 처리 중인 좌석입니다', 'held'],
+  ['운영자가 판매를 중지한 좌석입니다', 'disabled'],
+];
+
+function normalizeServerMessage(message: string): string {
+  return message.trim().replace(/[.!]+$/u, '');
+}
+
+/** Seat-status implied by a seat-level lock conflict, or null for any other error. */
+export function getSeatConflictState(error: unknown): SeatState | null {
+  if (!(error instanceof ApiClientError) || error.statusCode !== 409) {
+    return null;
+  }
+  const message = normalizeServerMessage(error.message);
+  return SEAT_CONFLICT_STATES.find(([candidate]) => candidate === message)?.[1] ?? null;
+}
+
+/**
+ * Invalidates a query at most once per cooldown. A call inside the cooldown
+ * schedules one trailing reload at the end of the window (later calls join
+ * it), so the last failure is still followed by a reload.
+ */
+function useCooldownInvalidate(cooldownMs: number) {
+  const queryClient = useQueryClient();
+  const entriesRef = useRef(new Map<string, { lastAt: number; timer: ReturnType<typeof setTimeout> | null }>());
+
+  useEffect(() => {
+    const entries = entriesRef.current;
+    return () => {
+      for (const entry of entries.values()) {
+        if (entry.timer !== null) clearTimeout(entry.timer);
+      }
+      entries.clear();
+    };
+  }, []);
+
+  return useCallback((queryKey: QueryKey, options: { cancelRefetch: boolean }) => {
+    const id = hashKey(queryKey);
+    let entry = entriesRef.current.get(id);
+    if (!entry) {
+      entry = { lastAt: Number.NEGATIVE_INFINITY, timer: null };
+      entriesRef.current.set(id, entry);
+    }
+    if (entry.timer !== null) {
+      return;
+    }
+    const scheduled = entry;
+    const run = () => {
+      scheduled.timer = null;
+      scheduled.lastAt = Date.now();
+      void queryClient.invalidateQueries({ queryKey }, { cancelRefetch: options.cancelRefetch });
+    };
+    const waitMs = scheduled.lastAt + cooldownMs - Date.now();
+    if (waitMs <= 0) {
+      run();
+    } else {
+      scheduled.timer = setTimeout(run, waitMs);
+    }
+  }, [cooldownMs, queryClient]);
 }
 
 /**
@@ -385,6 +464,7 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
   const { bookingAvailable, bookingDisabledMessage, bookingEndedMessage, isAdmin } =
     useBookingAvailability();
   const { onServerResponse } = options;
+  const resyncAfterLockFailure = useCooldownInvalidate(LOCK_FAILURE_RESYNC_COOLDOWN_MS);
 
   return useMutation({
     mutationFn: (data: LockSeatRequest) => {
@@ -439,12 +519,36 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
       if (error instanceof BookingDisabledError) {
         return;
       }
-      // A conflict means our seat map is stale; a transport failure may
-      // hide a lock that was created. Resync from the server.
-      if (!(error instanceof ApiClientError) || error.statusCode === 409) {
-        void queryClient.invalidateQueries({ queryKey: seatStatusQueryKey(variables.showtimeId) });
+      // No full seat-status reload here: at an open peak most clicks end in a
+      // conflict, and a reload per conflict is the O(N) per-click load that
+      // audit #8 removed. Seats elsewhere on the map resync via polling.
+      const conflictState = getSeatConflictState(error);
+      if (conflictState) {
+        // Only this seat was stale on our map; the rejected lock changed
+        // nothing we hold, so my-locks stays as is.
+        const runtimeSeatId = toRuntimeSeatId(variables);
+        queryClient.setQueryData<SeatStatusResponse>(
+          seatStatusQueryKey(variables.showtimeId),
+          (old) => (old && old.seats[runtimeSeatId] !== conflictState
+            ? { ...old, seats: { ...old.seats, [runtimeSeatId]: conflictState } }
+            : old),
+        );
+        return;
       }
-      void queryClient.invalidateQueries({ queryKey: myLocksQueryKey(variables.showtimeId) });
+      if (error instanceof ApiClientError && error.statusCode < 500) {
+        if (error.statusCode === 409) {
+          // A per-user limit: the user may hold locks this page does not show
+          // (another tab, a lost response). Reload my-locks so they can be
+          // restored and released.
+          resyncAfterLockFailure(myLocksQueryKey(variables.showtimeId), { cancelRefetch: true });
+        }
+        // 401/403/429: nothing was locked.
+        return;
+      }
+      // Transport failure or 5xx: the lock may have been created. A created
+      // lock is broadcast to the seat map; my-locks must be read back so the
+      // selection can restore (and release) it.
+      resyncAfterLockFailure(myLocksQueryKey(variables.showtimeId), { cancelRefetch: true });
     },
   });
 }
