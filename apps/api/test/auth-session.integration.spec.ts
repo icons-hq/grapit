@@ -30,6 +30,12 @@ describe('Auth session and email identity — PostgreSQL', () => {
     sendEmailVerificationEmail: vi.fn().mockResolvedValue({ success: true }),
     sendPasswordResetEmail: vi.fn().mockResolvedValue({ success: true }),
   };
+  // Signup consumes a single-use phone token through a claim it can release on a failed write.
+  const phoneClaimRelease = vi.fn().mockResolvedValue(undefined);
+  const smsService = {
+    verifyPhoneVerificationToken: vi.fn(),
+    claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: phoneClaimRelease }),
+  };
 
   beforeAll(async () => {
     container = await new GenericContainer('postgres:16-alpine')
@@ -53,7 +59,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
       new JwtService({ secret: 'integration-jwt-secret', signOptions: { expiresIn: '15m' } }),
       config,
       users,
-      { verifyPhoneVerificationToken: vi.fn() } as unknown as SmsService,
+      smsService as unknown as SmsService,
       emailService as unknown as EmailService,
       db,
       {
@@ -233,9 +239,17 @@ describe('Auth session and email identity — PostgreSQL', () => {
       } as never);
 
       expect(registered.email).toBe('new.fan@example.test');
+      expect(smsService.claimPhoneVerificationToken).toHaveBeenCalledWith('phone-token', {
+        phone: '01011112222',
+        purpose: 'signup',
+      });
+      smsService.claimPhoneVerificationToken.mockClear();
       await expect(auth.checkEmailAvailability('NEW.FAN@example.test')).resolves.toEqual({ available: false });
       await expect(auth.register({ ...({} as never), email: 'new.FAN@example.test', password: 'Test1234!', name: 'Dup', gender: 'female', country: 'KR', birthDate: '1995-05-15', phone: '01011113333', phoneVerificationToken: 'x', termsOfService: true, privacyPolicy: true, marketingConsent: false, consentItems: [] } as never))
         .rejects.toThrow(ConflictException);
+      // The case-only duplicate is refused before its phone token is consumed.
+      expect(smsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
+      expect(phoneClaimRelease).not.toHaveBeenCalled();
       const rows = await db.select().from(schema.users).where(sql`lower(${schema.users.email}) = 'new.fan@example.test'`);
       expect(rows).toHaveLength(1);
     }, 30000);
