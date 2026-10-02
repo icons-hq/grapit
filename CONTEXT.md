@@ -281,7 +281,7 @@ The server-stored method, provider route and charge currency selected for a Prep
 _Avoid_: UI language, card issuer choice, actual provider payment result.
 
 **Provider Handoff**:
-The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured. For a merchant-confirmed method, the browser that made it can release it within seconds when the provider SDK rejected before opening checkout, as long as no payment confirm was ever attempted for the order; otherwise only provider evidence ends it.
+The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured. For a merchant-confirmed method, the browser that made it can release it within seconds whenever the provider SDK rejected `requestPayment` (before opening checkout, or after the Buyer closed the checkout it opened), as long as no payment confirm was ever attempted for the order; otherwise only provider evidence ends it. Provider Handoff re-checks the Checkout Payment Method against the performance's current allowed payment methods and the showtime sales cutoff.
 _Avoid_: Payment success, browser redirect, confirmed Reservation.
 
 **Provider Partial Cancellation**:

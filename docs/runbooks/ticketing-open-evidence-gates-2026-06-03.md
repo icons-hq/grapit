@@ -660,9 +660,14 @@ during the first 24 hours.
       Additional Sensitive Fields (second layer behind the code redaction in
       `docs/03-ARCHITECTURE.md` section 9).
 - [ ] Create and dry-run Sentry alert rules for new API events tagged
-      `http.status_code:500` and for spikes of events tagged `toss.code`
-      (Toss failures answered with `502`); check spike protection and rate
-      limits so an incident burst does not exhaust the quota.
+      `http.status_code:500`, for spikes of events tagged `toss.code`
+      (Toss failures answered with `502`), and for spikes of events tagged
+      `http.status_code:503`: a Toss 5xx or timeout during payment confirm
+      is answered with `503` (`PAYMENT_CONFIRM_OUTCOME_UNKNOWN`, the
+      `TossPaymentError` linked as its cause) and carries no `toss.code`
+      tag, so neither of the first two rules fires on a Toss approval
+      outage. Check spike protection and rate limits so an incident burst
+      does not exhaust the quota.
 - [ ] Create a Cloud Monitoring alert policy on the Cloud Run API 5xx ratio,
       separate from Sentry.
 - [ ] After the API and web deploy, trigger the admin Sentry test endpoint
@@ -687,8 +692,8 @@ during the first 24 hours.
 
 - [ ] Owner schedule and backup.
 - [ ] Dashboard/access confirmation.
-- [ ] Alert delivery test, including the Sentry 500/`toss.code` rules and the
-      Cloud Run 5xx policy.
+- [ ] Alert delivery test, including the Sentry 500/`toss.code`/503-spike
+      rules and the Cloud Run 5xx policy.
 - [ ] Sentry Data Scrubber settings and a redacted test event (masked
       screenshot or event ID).
 - [ ] First-24h checklist artifact.

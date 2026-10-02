@@ -33,7 +33,9 @@ import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
 import type { TossTransactionRow } from '../src/modules/payment/toss-payments.client.js';
 
-const { users, venues, performances, showtimes, reservations, payments, reservationPaymentFailureDiagnostics } = schema;
+const {
+  users, venues, performances, showtimes, reservations, payments, reservationPaymentFailureDiagnostics, ticketItems,
+} = schema;
 const CARD: PaymentMethod = { method: 'CARD', provider: 'CARD', currency: 'KRW' };
 
 // Never reads DATABASE_URL or REDIS_URL. Every test uses the disposable containers below.
@@ -149,7 +151,7 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
       orderId: prepared.orderId, paymentMethod, userId: user!.id,
       successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
     };
-    return { userId: user!.id, showtimeId: showtime!.id, prepared, reservationService, paymentService, branch };
+    return { userId: user!.id, showtimeId: showtime!.id, prepared, reservationService, paymentService, branch, input };
   }
 
   async function readReservation(id: string) {
@@ -197,6 +199,46 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
     await f.paymentService.releaseTossPaymentHandoff({ orderId: f.prepared.orderId, userId: f.userId });
     await f.reservationService.cancelPendingReservation(f.prepared.reservationId, f.userId);
     expect((await readReservation(f.prepared.reservationId)).status).toBe('CANCELLED');
+  });
+
+  it('compensates the old tab\'s card approval after a release and a re-prepare with another method (D1 #70, w2a)', async () => {
+    const f = await checkout();
+    await f.paymentService.prepareTossPaymentBranch(f.branch);
+    // The SDK rejected (or the buyer closed the card checkout): the handoff is released.
+    await f.paymentService.releaseTossPaymentHandoff({ orderId: f.prepared.orderId, userId: f.userId });
+
+    // The same order is prepared again with a transfer and handed off in a new tab.
+    const TRANSFER: PaymentMethod = { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' };
+    await f.reservationService.prepareReservation({ ...f.input, paymentMethod: TRANSFER }, f.userId);
+    await f.paymentService.prepareTossPaymentBranch({ ...f.branch, paymentMethod: TRANSFER });
+    expect((await readReservation(f.prepared.reservationId)).checkoutPaymentMethod).toEqual(TRANSFER);
+
+    // The old tab still completes its card checkout and returns to confirm.
+    const paymentKey = `test-${randomUUID()}`;
+    const toss = {
+      confirmPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: f.prepared.orderId, status: 'DONE',
+        currency: 'KRW', method: '카드', totalAmount: 52000, approvedAt: new Date().toISOString() }),
+      queryPayment: vi.fn(),
+      cancelPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: f.prepared.orderId, status: 'CANCELED',
+        totalAmount: 52000, cancels: [{ cancelStatus: 'DONE' }] }),
+    };
+    const finalization = new ReservationFinalizationService(
+      db, toss as never, locks as never, { broadcastSeatUpdate: vi.fn() } as never, qr,
+    );
+
+    await expect(finalization.confirmAndCreateReservation(
+      { orderId: f.prepared.orderId, paymentKey, amount: 52000 },
+      f.userId,
+    )).rejects.toThrow('결제 승인 정보가 주문과 일치하지 않아');
+
+    expect(toss.cancelPayment).toHaveBeenCalledWith(paymentKey, '허용되지 않은 결제수단으로 인한 자동 취소',
+      expect.anything());
+    expect(await db.select().from(payments).where(eq(payments.reservationId, f.prepared.reservationId)))
+      .toMatchObject([{ paymentKey, status: 'CANCELED', asyncStatus: 'compensation_cancelled' }]);
+    expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.prepared.reservationId)))
+      .toEqual([]);
+    expect((await readReservation(f.prepared.reservationId)).status).toBe('FAILED');
+    expect(await heldConfirmLeases()).toEqual([]);
   });
 
   it('keeps the handoff after a confirm ended without a Payment row, even though its lease is gone', async () => {

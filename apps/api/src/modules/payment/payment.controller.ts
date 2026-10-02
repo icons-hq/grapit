@@ -24,6 +24,8 @@ const asyncPaymentReturnSchema = z.object({
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
   amount: z.number().positive('결제 금액은 0보다 커야 합니다').optional(),
+  // Accepted for older clients and ignored: the wallet comes from the provider
+  // lookup and the order's frozen checkout method.
   provider: z.enum(['ALIPAY_PLUS', 'TRUEMONEY']).optional(),
 });
 
@@ -46,8 +48,9 @@ export class PaymentController {
   }
 
   /**
-   * Called by the checkout page when the provider SDK rejected before opening checkout,
-   * or when the branch response was lost or failed with a 5xx after a possible commit.
+   * Called by the checkout page whenever the provider SDK rejected `requestPayment`
+   * (before opening checkout, or after the buyer closed it), or when the branch response
+   * was lost or failed with a 5xx after a possible commit.
    */
   @Post('branch/release')
   @HttpCode(200)
@@ -62,6 +65,7 @@ export class PaymentController {
     });
   }
 
+  /** Pending return of an asynchronously approved foreign wallet order (others get 409). */
   @Post('async-return')
   async reconcileAsyncPaymentReturn(
     @Body(new ZodValidationPipe(asyncPaymentReturnSchema))

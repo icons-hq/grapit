@@ -19,6 +19,10 @@ import {
   REJECTED_DONE_ASYNC_STATUSES,
   isSettledOrCompensatedPaymentState,
 } from './async-done-compensation.js';
+import {
+  normalizeTossApprovedMethod,
+  readTossEasyPayProvider,
+} from './payment-method-policy.js';
 
 const paymentStatusPriority = {
   READY: 0,
@@ -54,6 +58,15 @@ function isProviderPaymentStatusAhead(
 const tossWebhookDatetimeSchema = z.string().min(1);
 const tossWebhookOptionalStringSchema = z.preprocess(
   (value) => value === null ? undefined : value,
+  z.string().min(1).optional(),
+);
+/**
+ * Foreign wallet callbacks carry `easyPay` as a string; a Payment object
+ * carries `{ provider, amount, discountAmount }`. Both read as the provider
+ * label, so a domestic easy pay callback is not rejected as malformed.
+ */
+const tossWebhookEasyPaySchema = z.preprocess(
+  (value) => value === null || typeof value === 'object' ? readTossEasyPayProvider(value) : value,
   z.string().min(1).optional(),
 );
 const tossWebhookOptionalAmountSchema = z.preprocess(
@@ -95,7 +108,7 @@ const tossPaymentStatusChangedWebhookSchema = z.object({
       tossWebhookDatetimeSchema.optional(),
     ),
     cancelReason: tossWebhookOptionalStringSchema,
-    easyPay: tossWebhookOptionalStringSchema,
+    easyPay: tossWebhookEasyPaySchema,
   }),
 });
 
@@ -380,6 +393,11 @@ export class PaymentWebhookController {
       return { stale: true, staleMessage: verification.message };
     }
 
+    // The payment method (and easy pay provider) the provider reports decides
+    // the payment method policy; callback values only fill what it omits for
+    // routing and storage.
+    const verifiedEasyPayProvider = readTossEasyPayProvider(queried.easyPay);
+    const verifiedMethod = normalizeTossApprovedMethod(queried.method, queried.easyPay);
     const providerData: TossWebhookRequestBody['data'] = {
       ...body.data,
       paymentKey: queried.paymentKey,
@@ -389,7 +407,10 @@ export class PaymentWebhookController {
       // Amount checks must compare the provider's currency, not the callback's.
       currency: queried.currency ?? body.data.currency,
       totalAmount: queried.totalAmount,
-      easyPay: body.data.easyPay,
+      easyPay: verifiedEasyPayProvider ?? body.data.easyPay,
+      ...(verifiedMethod.category === 'FOREIGN_EASY_PAY' && verifiedMethod.provider
+        ? { provider: verifiedMethod.provider === 'ALIPAY_PLUS' ? 'ALIPAY' as const : verifiedMethod.provider }
+        : {}),
     };
 
     if (body.eventType === 'PAYMENT_STATUS_CHANGED' && queried.approvedAt) {
@@ -408,6 +429,10 @@ export class PaymentWebhookController {
       stale: false,
       webhook: {
         ...body,
+        providerVerified: {
+          method: queried.method ?? null,
+          easyPayProvider: verifiedEasyPayProvider ?? null,
+        },
         data: providerData,
       },
       providerResponse: queried,

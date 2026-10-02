@@ -193,9 +193,27 @@ at the PG: seat taken by another checkout after the checkout lock expired (a
 late DONE for a `FAILED` order never takes a seat the same buyer re-locked for a
 newer reservation), ticket limit, amount or currency mismatch with the stored
 quote (a USD quote never accepts a same-number KRW charge), an unsupported
-provider (TrueMoney), or a second paymentKey for an order whose payment is
-already accepted, cancelled or compensated (including a buyer-cancelled
-reservation or an earlier refunded late DONE).
+provider (TrueMoney), a payment method the order or the performance policy
+does not allow (`payment_method_not_allowed`: the provider lookup's `method`
+and `easyPay.provider` must match the frozen Checkout Payment Method and be in
+the performance's allowed methods intersected with
+`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`; virtual account and mobile phone never
+pass), or a second paymentKey for an order whose payment is already accepted,
+cancelled or compensated (including a buyer-cancelled reservation or an
+earlier refunded late DONE).
+
+- The method policy is decided only on the provider lookup of the paymentKey,
+  never on callback or browser values. The pending return
+  (`POST /payments/async-return`) serves only orders checked out with an
+  asynchronously approved foreign wallet (Alipay+, TrueMoney); any other order
+  gets 409 without a provider call, and the browser's `provider` parameter is
+  ignored (the wallet comes from the provider lookup or the frozen checkout
+  method).
+- A deposited virtual account DONE is never cancelled automatically: its full
+  refund needs the buyer's refund account. The row stays `DONE/cancel_pending`
+  (unissuable) with an `attention` record (`attempts=0`), a
+  `ASYNC_DONE_COMPENSATION_ATTENTION` diagnostic and an error log; refund it at
+  the provider manually.
 
 - The payment row stays `DONE` + `async_status=cancel_pending` until the PG
   reports the cancel complete, so confirm and DONE replays cannot issue it.
@@ -206,13 +224,24 @@ reservation or an earlier refunded late DONE).
   `duplicatePaymentCompensations[]`.
 - A cancel `ABORTED` webhook is recorded as `ASYNC_DONE_COMPENSATION_CANCEL_ABORTED`
   (ledger code and payment failure diagnostic).
+- A `DONE/cancel_pending` row claimed by payment confirm
+  (`confirmCompensationClaim: true`, no `asyncDoneCompensation` record) belongs
+  to its `payment-confirm-reconcile` job: the sweep never adopts it, and its
+  cancel `ABORTED` is left to that job. The reconcile job in turn never touches
+  a row this sweep owns. A `CANCELED` webhook that completes either kind records
+  the owner's compensated-cancel code.
 - The recovery sweep (`AsyncDoneCompensationRecoveryWorker`, every minute where
   background processing runs and once per bounded worker window) queries the
   PG: completed cancels converge locally to `CANCELED/compensation_cancelled`
-  and `FAILED`; `IN_PROGRESS` is re-checked after 10 minutes; a DONE without a
-  live cancel is re-cancelled with a new idempotency key and
+  and `FAILED`; `IN_PROGRESS` is re-checked after 10 minutes and becomes
+  `attention` (error log, `ASYNC_DONE_COMPENSATION_ATTENTION`) once the provider
+  has kept it `IN_PROGRESS` for 24 hours after the first cancel request; a DONE
+  without a live cancel is re-cancelled with a new idempotency key and
   `cancelRequestId` suffix `-r<n>`. After 5 requests the record becomes
   `attention`, logs an error and writes `ASYNC_DONE_COMPENSATION_ATTENTION`.
+  The sweep reads candidates in creation order page by page and skips rows not
+  yet due, so up to 100 due orders are processed per run however many open
+  compensations are waiting.
   A provider query that keeps failing (wrong secret scope or key, provider
   outage) is logged as a warning on each attempt, counted in `queryFailures`
   since `queryFailingSince`, and becomes `attention` after at least 3

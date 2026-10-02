@@ -1,5 +1,14 @@
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
-import { CONFIRM_COMPENSATION_CLAIM_METADATA_KEY } from '../payment/async-done-compensation.js';
+import {
+  ASYNC_DONE_COMPENSATION_METADATA_KEY,
+  CONFIRM_COMPENSATION_CLAIM_METADATA_KEY,
+  isConfirmCompensationClaimOwned,
+} from '../payment/async-done-compensation.js';
+import {
+  findApprovedMethodPolicyMismatch,
+  normalizeTossApprovedMethod,
+  resolveEnforcedAllowedPaymentMethods,
+} from '../payment/payment-method-policy.js';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
 import {
   BadRequestException,
@@ -30,6 +39,7 @@ import {
   isTransientDatabaseError,
 } from '../../database/transient-db-error.js';
 import {
+  bookingPolicies,
   payments,
   reservationSeats,
   reservations,
@@ -192,7 +202,9 @@ export type PaymentConfirmReconcileOutcome =
         | 'compensated'
         | 'not_approved'
         | 'duplicate_cancelled'
-        | 'manual_review';
+        | 'manual_review'
+        /** A DONE/cancel_pending row owned by the async DONE compensation recovery. */
+        | 'async_compensation_owned';
     }
   | { status: 'retry'; reason: string; retryAt: Date };
 
@@ -261,8 +273,11 @@ const PROVIDER_NOT_APPROVED_STATUSES = new Set(['ABORTED', 'EXPIRED']);
 
 /**
  * Toss returns Korean method labels by default and English codes with an
- * English Accept-Language. Virtual accounts and gift certificates are not
- * sold here, and foreign easy pay only belongs to the PayPal route.
+ * English Accept-Language. These are the route-level labels; the performance
+ * policy and the frozen checkout method are checked on top of them
+ * (payment-method-policy.ts). Virtual accounts, mobile phone payments and gift
+ * certificates are not sold here, and foreign easy pay only belongs to the
+ * PayPal route.
  */
 const CARD_METHOD_LABELS = new Set(['카드', 'CARD']);
 const FOREIGN_EASY_PAY_METHOD_LABELS = new Set(['해외간편결제', 'FOREIGN_EASY_PAY']);
@@ -272,9 +287,53 @@ const DOMESTIC_METHOD_LABELS = new Set([
   'TRANSFER',
   '간편결제',
   'EASY_PAY',
-  '휴대폰',
-  'MOBILE_PHONE',
 ]);
+
+/**
+ * Definite Toss confirm rejections (4xx) that still stay a TossPaymentError
+ * (502 with a `toss.code` Sentry event, retried by the client): merchant key,
+ * contract or integration errors an operator must see, and request collisions
+ * whose outcome a later retry can change. Every other 4xx rejection (card
+ * declined, stopped card, daily limit, expired payment session) is the buyer's
+ * answer and is returned as a 400 with the provider message and code.
+ */
+const CONFIRM_REJECTION_PASSTHROUGH_CODES: ReadonlySet<string> = new Set([
+  'UNAUTHORIZED_KEY',
+  'FORBIDDEN_REQUEST',
+  'INVALID_API_KEY',
+  'INVALID_CLIENT_KEY',
+  'API_KEY_ACCESS_DENIED',
+  'NOT_FOUND_MERCHANT',
+  'NOT_FOUND_MERCHANT_INTEGRATION',
+  'NOT_FOUND_TERMINAL_ID',
+  'NOT_REGISTERED_BUSINESS',
+  'NOT_REGISTERED_SUBMALL',
+  'INVALID_UNREGISTERED_SUBMALL',
+  'API_VERSION_UPDATE_NEEDED',
+  'NOT_FOUND_HTTP_METHOD',
+  'INVALID_REQUEST',
+  'INVALID_REQUIRED_PARAM',
+  'FORBIDDEN_CONSECUTIVE_REQUEST',
+  'ALREADY_PROCESSING_REQUEST',
+  'DUPLICATED_REQUEST',
+]);
+
+/** A buyer-facing 400 for a definite confirm rejection; anything else unchanged. */
+function toDefinitiveConfirmRejection(confirmError: unknown): unknown {
+  if (
+    confirmError instanceof TossPaymentError
+    && typeof confirmError.httpStatus === 'number'
+    && confirmError.httpStatus >= 400
+    && confirmError.httpStatus < 500
+    && !CONFIRM_REJECTION_PASSTHROUGH_CODES.has(confirmError.code)
+  ) {
+    return new BadRequestException(
+      { message: confirmError.message, code: confirmError.code },
+      { cause: confirmError },
+    );
+  }
+  return confirmError;
+}
 /** Foreign merchant webhooks label USD charges as MUSD. */
 const USD_CURRENCY_LABELS = new Set(['USD', 'MUSD']);
 
@@ -518,6 +577,8 @@ export class ReservationFinalizationService {
   /**
    * Answers an unknown confirm outcome with a 503 after scheduling the
    * reconcile job, so the order converges even if the client never retries.
+   * The cause (for example the Toss 5xx or timeout) is linked to the 503, so
+   * the Sentry event of a provider outage carries the TossPaymentError too.
    */
   private async throwOutcomeUnknown(input: {
     identity: ConfirmPaymentIdentity;
@@ -536,7 +597,10 @@ export class ReservationFinalizationService {
     if (input.reconcile) {
       await this.scheduleConfirmReconcile(input.reconcile, reason);
     }
-    throw new ServiceUnavailableException(input.message ?? PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+    throw new ServiceUnavailableException(
+      input.message ?? PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE,
+      cause === undefined ? undefined : { cause },
+    );
   }
 
   /** Best effort: a failed enqueue is logged for the manual reconciliation runbook. */
@@ -700,6 +764,7 @@ export class ReservationFinalizationService {
     approvedPayment: ApprovedPaymentSnapshot,
     reservationId: string,
     reason: string,
+    confirmLockToken: string,
   ): Promise<void> {
     if (approvedPayment.existingPaymentId) {
       await this.cancelExistingDonePaymentAfterFailure({
@@ -710,18 +775,118 @@ export class ReservationFinalizationService {
       return;
     }
 
+    await this.compensateConfirmApproval({
+      approvedPayment,
+      reservationId,
+      reason,
+      confirmLockToken,
+    });
+  }
+
+  /**
+   * Compensates a provider approval this confirm request holds and that no
+   * local payment row records yet (approval mismatch, hold lost after the
+   * approval, definitive issuance failure). Like the pre-approval rejections,
+   * the order is first claimed with a DONE/cancel_pending payment row
+   * (`confirmCompensationClaim`), so a late DONE webhook or pending return
+   * answers DONE_CANCEL_PENDING instead of issuing it, and a completed cancel
+   * is recorded (payment CANCELED/compensation_cancelled, reservation FAILED,
+   * CONFIRM_APPROVAL_COMPENSATED) instead of leaving the order in
+   * PENDING_PAYMENT. A cancel that is still pending or failed is handed to the
+   * reconcile job. Returns once the compensation is claimed (or another claim
+   * is already cancelling the order); the caller then answers its own error.
+   */
+  private async compensateConfirmApproval(input: {
+    approvedPayment: ApprovedPaymentSnapshot;
+    reservationId: string;
+    reason: string;
+    confirmLockToken: string;
+  }): Promise<void> {
+    const { approvedPayment, reservationId, reason } = input;
+    const reconcile = approvedPayment.reconcileContext;
+    let result: CompensationResult;
     try {
-      await this.cancelApprovedPaymentOrThrow(approvedPayment, reason);
+      result = await this.compensateUnrecordedApproval({
+        snapshot: approvedPayment,
+        reservationId,
+        reason,
+        diagnosticSource: 'payment_confirm',
+        leaseStillOwned: () => this.bookingService.refreshPaymentConfirmLock(
+          approvedPayment.orderId,
+          input.confirmLockToken,
+        ),
+      });
+    } catch (compensationError) {
+      if (compensationError instanceof HttpException) {
+        // The cancel failed (logged as CRITICAL); the claimed row keeps the
+        // order unissuable and the reconcile job retries the cancel.
+        if (reconcile) {
+          await this.scheduleConfirmReconcile(reconcile, 'compensation_cancel_failed');
+        }
+        throw compensationError;
+      }
+      // The claim row could not be written (database failure): cancel at the
+      // provider without it rather than leave the charge in place.
+      this.logger.error(
+        `Compensation claim failed; cancelling the approval without a claim row. paymentKey=${approvedPayment.paymentKey}, orderId=${approvedPayment.orderId}`,
+        compensationError instanceof Error ? compensationError.stack : String(compensationError),
+      );
+      await this.cancelUnclaimedApproval(approvedPayment, reason);
+      return;
+    }
+
+    switch (result.kind) {
+      case 'compensated':
+        return;
+      case 'cancel_pending':
+        // The provider accepted the cancel without completing it; the CANCELED
+        // webhook or the reconcile job records it.
+        if (reconcile) {
+          await this.scheduleConfirmReconcile(reconcile, 'compensation_cancel_pending');
+        }
+        return;
+      case 'lease_lost':
+        return await this.throwOutcomeUnknown({
+          identity: approvedPayment,
+          reconcile,
+          reason: 'confirm_lease_lost_before_compensation',
+          message: PAYMENT_CONFIRM_IN_PROGRESS_MESSAGE,
+        });
+      case 'recorded_elsewhere':
+        if (result.state.kind === 'committed') {
+          // Another finalizer committed the order between the approval and the
+          // claim; a retry reads the committed order.
+          await this.cancelApprovalIfCommittedWithAnotherPayment(approvedPayment, result.state);
+          throw new ServiceUnavailableException(PAYMENT_CONFIRM_IN_PROGRESS_MESSAGE);
+        }
+        if (result.state.kind === 'cancelled') {
+          return;
+        }
+        return await this.throwOutcomeUnknown({
+          identity: approvedPayment,
+          reconcile,
+          reason: 'compensation_claim_unresolved',
+        });
+    }
+  }
+
+  /** Fallback when the claim row cannot be written: provider cancel plus reconcile. */
+  private async cancelUnclaimedApproval(
+    approvedPayment: ApprovedPaymentSnapshot,
+    reason: string,
+  ): Promise<void> {
+    const reconcile = approvedPayment.reconcileContext;
+    let completed: boolean;
+    try {
+      completed = await this.cancelApprovedPaymentOrThrow(approvedPayment, reason);
     } catch (cancelError) {
-      // Nothing local records this approval; the reconcile job retries the
-      // compensation instead of leaving it to a manual refund.
-      if (approvedPayment.reconcileContext) {
-        await this.scheduleConfirmReconcile(
-          approvedPayment.reconcileContext,
-          'compensation_cancel_failed',
-        );
+      if (reconcile) {
+        await this.scheduleConfirmReconcile(reconcile, 'compensation_cancel_failed');
       }
       throw cancelError;
+    }
+    if (!completed && reconcile) {
+      await this.scheduleConfirmReconcile(reconcile, 'compensation_cancel_pending');
     }
   }
 
@@ -989,6 +1154,7 @@ export class ReservationFinalizationService {
           confirmAmount,
           providerCharge,
           expectation: approvalExpectation,
+          confirmLockToken,
         });
         unrecordedApproval = approvedPayment.reconcileContext;
       }
@@ -1047,6 +1213,7 @@ export class ReservationFinalizationService {
           approvedPayment,
           reservation.id,
           '좌석 점유 만료로 인한 자동 취소',
+          confirmLockToken,
         );
         throw lockError;
       }
@@ -1058,6 +1225,7 @@ export class ReservationFinalizationService {
         pendingSeats,
         performanceId: ticketLimit.performanceId,
         approvedPayment,
+        confirmLockToken,
       });
 
       unrecordedApproval = undefined;
@@ -1191,8 +1359,11 @@ export class ReservationFinalizationService {
    * still finalize the order (its admission window or payment deadline is
    * open) it only waits. After that, under the order's confirm lease (the
    * same lease as confirm and the provider webhooks):
-   * - a payment row of this paymentKey means the order is recorded; a claimed
-   *   compensation (DONE/cancel_pending) is finished,
+   * - a payment row of this paymentKey means the order is recorded; a
+   *   compensation this job owns (a DONE/cancel_pending row with
+   *   `confirmCompensationClaim` and no async DONE compensation record) is
+   *   finished, and any other DONE/cancel_pending row belongs to the async
+   *   DONE compensation recovery and is left to it untouched,
    * - a payment row of another paymentKey means this approval can never be
    *   recorded (payments.reservation_id is unique), so it is cancelled,
    * - otherwise the provider decides: an approval is claimed with a
@@ -1305,12 +1476,21 @@ export class ReservationFinalizationService {
     }
 
     if (payment) {
-      const claimedCompensation = payment.status === 'DONE'
+      const compensationPending = payment.status === 'DONE'
         && payment.asyncStatus === 'cancel_pending'
         && reservation.status !== 'CONFIRMED';
-      return claimedCompensation
-        ? this.resumeClaimedCompensation({ ...input, reservation, payment })
-        : { status: 'resolved', resolution: 'recorded' };
+      if (!compensationPending) {
+        return { status: 'resolved', resolution: 'recorded' };
+      }
+      if (!isConfirmCompensationClaimOwned(payment.providerMetadata)) {
+        // One owner per compensation row: no provider lookup, cancel or
+        // diagnostic from here.
+        this.logger.log(
+          `Payment confirm reconcile left a compensation to its owner. owner=async_done_recovery, paymentId=${payment.id}, paymentKey=${payment.paymentKey}, orderId=${identity.orderId}`,
+        );
+        return { status: 'resolved', resolution: 'async_compensation_owned' };
+      }
+      return this.resumeClaimedCompensation({ ...input, reservation, payment });
     }
 
     if (reservation.status === 'CONFIRMED') {
@@ -1341,6 +1521,7 @@ export class ReservationFinalizationService {
       await this.recordProviderNotApprovedPaymentIfTerminal(
         { dto: identity, reservation, providerCharge, expectation },
         lookup.payment,
+        'payment_confirm_reconcile',
       );
       return { status: 'resolved', resolution: 'not_approved' };
     }
@@ -1560,14 +1741,24 @@ export class ReservationFinalizationService {
   /**
    * Calls Toss confirm and accepts the result only when the provider approved
    * exactly this order, in the expected currency and amount, with a completed
-   * status and an allowed method. A mismatching approval is cancelled at once.
+   * status and a method that the route, the order's frozen checkout method
+   * and the performance policy all allow. Every approval reaching this point
+   * (new, recovered by lookup after a failed confirm, or looked up at the
+   * sales cutoff) is checked the same way; a mismatching one is claimed and
+   * cancelled at once and never issued.
    */
   private async approvePaymentWithProvider(input: {
     dto: ConfirmPaymentRequest;
-    reservation: { id: string; showtimeId: string; totalAmount: number };
+    reservation: {
+      id: string;
+      showtimeId: string;
+      totalAmount: number;
+      checkoutPaymentMethod?: PaymentMethod | null;
+    };
     confirmAmount: number;
     providerCharge: PaypalResolvedProviderCharge | null;
     expectation: ProviderApprovalExpectation;
+    confirmLockToken: string;
   }): Promise<ApprovedPaymentSnapshot> {
     const { dto, expectation } = input;
     const reconcile: ConfirmReconcileContext = {
@@ -1575,12 +1766,13 @@ export class ReservationFinalizationService {
       expectation,
       providerCharge: input.providerCharge,
     };
+    const saleContext = await this.loadShowtimeSaleContext(input.reservation.showtimeId);
     let providerPayment: TossPaymentResponse;
     // C1 sales cutoff, checked at the last moment before anything is charged.
     // A payment an earlier attempt already approved is not a new sale: it is
     // looked up and finalized (or compensated) like any approved payment. A
     // failed lookup proves nothing, so it is a retryable 503, not a final 403.
-    if (await this.isShowtimeSalesClosed(input.reservation.showtimeId)) {
+    if (isShowtimeSalesClosedAt(saleContext.startsAt)) {
       if (!await this.mayHaveProviderApproval(dto.orderId)) {
         throw new ForbiddenException(SHOWTIME_SALES_CLOSED_MESSAGE);
       }
@@ -1618,7 +1810,12 @@ export class ReservationFinalizationService {
       providerCharge: input.providerCharge,
       providerPayment,
     });
-    const mismatch = this.findProviderApprovalMismatch(providerPayment, dto, expectation);
+    const mismatch = this.findProviderApprovalMismatch(providerPayment, dto, expectation, {
+      checkoutPaymentMethod: input.reservation.checkoutPaymentMethod ?? null,
+      enforcedAllowedPaymentMethods: resolveEnforcedAllowedPaymentMethods(
+        saleContext.allowedPaymentMethods,
+      ),
+    });
     if (!mismatch) {
       return approvedPayment;
     }
@@ -1627,16 +1824,19 @@ export class ReservationFinalizationService {
     // lookup path only returns this order's payment), so the requested
     // paymentKey is this order's payment and is safe to cancel.
     this.logger.error(
-      `CRITICAL: provider approval does not match the order. mismatch=${mismatch}, route=${expectation.route}, orderId=${dto.orderId}, providerStatus=${providerPayment.status}, providerCurrency=${providerPayment.currency ?? 'missing'}, providerAmount=${providerPayment.totalAmount}, providerMethod=${providerPayment.method ?? 'missing'}`,
+      `CRITICAL: provider approval does not match the order. mismatch=${mismatch.kind}${mismatch.detail ? `, detail=${mismatch.detail}` : ''}, route=${expectation.route}, orderId=${dto.orderId}, providerStatus=${providerPayment.status}, providerCurrency=${providerPayment.currency ?? 'missing'}, providerAmount=${providerPayment.totalAmount}, providerMethod=${providerPayment.method ?? 'missing'}, providerEasyPay=${providerPayment.easyPay?.provider ?? 'none'}`,
     );
     await this.cancelApprovedPaymentAfterFailure(
       approvedPayment,
       input.reservation.id,
-      mismatch === 'status'
+      mismatch.kind === 'status'
         ? '결제 미완료 상태로 인한 자동 취소'
-        : '결제 승인 정보 불일치로 인한 자동 취소',
+        : mismatch.kind === 'method'
+          ? '허용되지 않은 결제수단으로 인한 자동 취소'
+          : '결제 승인 정보 불일치로 인한 자동 취소',
+      input.confirmLockToken,
     );
-    if (mismatch === 'status') {
+    if (mismatch.kind === 'status') {
       throw new ConflictException(PAYMENT_APPROVAL_NOT_DONE_MESSAGE);
     }
     throw new BadRequestException(PAYMENT_APPROVAL_MISMATCH_MESSAGE);
@@ -1683,18 +1883,29 @@ export class ReservationFinalizationService {
         return queried;
       }
       if (queried.status === 'CANCELED') {
+        // Already cancelled at the provider with nothing local recording it
+        // (an earlier attempt's compensation, or a manual cancel): record it
+        // so the order leaves PENDING_PAYMENT.
+        await this.recordProviderCancelledApproval({
+          ...input,
+          providerPayment: queried,
+          diagnosticSource: 'payment_confirm',
+        });
         throw new ConflictException(PAYMENT_CANCEL_IN_PROGRESS_MESSAGE);
       }
       if (PROVIDER_NOT_APPROVED_STATUSES.has(queried.status)) {
         await this.recordProviderNotApprovedPayment({ ...input, providerPayment: queried });
         throw outcomeUnknown
           ? new ConflictException(PAYMENT_NOT_APPROVED_MESSAGE)
-          : confirmError;
+          : toDefinitiveConfirmRejection(confirmError);
       }
     }
 
     if (!outcomeUnknown) {
-      throw confirmError;
+      // A definite provider rejection (card declined, stopped card, daily
+      // limit) is the buyer's answer: a 400 with the provider message, which
+      // the client does not retry. Merchant configuration errors stay a 502.
+      throw toDefinitiveConfirmRejection(confirmError);
     }
 
     return await this.throwOutcomeUnknown({
@@ -1776,15 +1987,19 @@ export class ReservationFinalizationService {
     providerPayment: TossPaymentResponse,
     dto: ConfirmPaymentRequest,
     expectation: ProviderApprovalExpectation,
-  ): ProviderApprovalMismatch | null {
+    policy: {
+      checkoutPaymentMethod: PaymentMethod | null;
+      enforcedAllowedPaymentMethods: readonly string[];
+    },
+  ): { kind: ProviderApprovalMismatch; detail?: string } | null {
     if (
       providerPayment.paymentKey !== dto.paymentKey
       || providerPayment.orderId !== dto.orderId
     ) {
-      return 'identity';
+      return { kind: 'identity' };
     }
     if (providerPayment.status !== 'DONE') {
-      return 'status';
+      return { kind: 'status' };
     }
 
     const currency = providerPayment.currency?.trim().toUpperCase();
@@ -1792,7 +2007,7 @@ export class ReservationFinalizationService {
       ? currency !== undefined && USD_CURRENCY_LABELS.has(currency)
       : currency === 'KRW';
     if (!currencyMatches) {
-      return 'currency';
+      return { kind: 'currency' };
     }
 
     const totalAmount = providerPayment.totalAmount;
@@ -1802,11 +2017,22 @@ export class ReservationFinalizationService {
         ? Math.round(totalAmount * 100) === expectation.amountMinor
         : totalAmount === expectation.amountMinor);
     if (!amountMatches) {
-      return 'amount';
+      return { kind: 'amount' };
     }
 
     if (!isAllowedApprovedMethod(providerPayment.method, expectation.route)) {
-      return 'method';
+      return { kind: 'method', detail: 'route' };
+    }
+
+    // The approved method (with its easy pay provider) must be the order's
+    // frozen checkout method and allowed by the performance policy.
+    const policyMismatch = findApprovedMethodPolicyMismatch(
+      normalizeTossApprovedMethod(providerPayment.method, providerPayment.easyPay),
+      policy.checkoutPaymentMethod,
+      policy.enforcedAllowedPaymentMethods,
+    );
+    if (policyMismatch) {
+      return { kind: 'method', detail: policyMismatch };
     }
 
     return null;
@@ -1852,22 +2078,27 @@ export class ReservationFinalizationService {
     };
   }
 
-  /** C1: a showtime stops selling at its scheduled start (no offset). */
-  private async isShowtimeSalesClosed(
+  /**
+   * The showtime's scheduled start (C1: it stops selling then, no offset) and
+   * its performance's stored allowed payment methods (a missing policy row
+   * reads as null, which the policy resolves to the platform default).
+   */
+  private async loadShowtimeSaleContext(
     showtimeId: string,
-    now: Date = new Date(),
-  ): Promise<boolean> {
+  ): Promise<{ startsAt: Date; allowedPaymentMethods: unknown }> {
     const result = await this.db.execute(sql`
-      SELECT ${showtimes.dateTime} AS date_time
+      SELECT ${showtimes.dateTime} AS date_time,
+        ${bookingPolicies.allowedPaymentMethods} AS allowed_payment_methods
       FROM ${showtimes}
+      LEFT JOIN ${bookingPolicies} ON ${bookingPolicies.performanceId} = ${showtimes.performanceId}
       WHERE ${showtimes.id} = ${showtimeId}
     `);
-    const row = result.rows[0] as { date_time?: unknown } | undefined;
+    const row = result.rows[0] as { date_time?: unknown; allowed_payment_methods?: unknown } | undefined;
     const startsAt = toValidDate(row?.date_time);
     if (!startsAt) {
       throw new NotFoundException('회차를 찾을 수 없습니다');
     }
-    return isShowtimeSalesClosedAt(startsAt, now);
+    return { startsAt, allowedPaymentMethods: row?.allowed_payment_methods ?? null };
   }
 
   /**
@@ -2121,7 +2352,11 @@ export class ReservationFinalizationService {
 
   /**
    * Best effort after a completed provider cancel: the CANCELED webhook or
-   * the reconcile job converges a claimed row whose record failed.
+   * the reconcile job converges a claimed row whose record failed. Only a row
+   * this flow still owns (DONE/cancel_pending, claimed by confirm, no async
+   * DONE compensation record) is converged; when another path has already
+   * settled or adopted it, nothing here (reservation or diagnostic) is written,
+   * so the other path's diagnostic code is never overwritten.
    */
   private async recordCompensatedCancel(input: {
     paymentId: string;
@@ -2132,8 +2367,8 @@ export class ReservationFinalizationService {
   }): Promise<void> {
     try {
       const cancelledAt = new Date();
-      await this.db.transaction(async (tx) => {
-        await tx
+      const converged = await this.db.transaction(async (tx) => {
+        const updated = await tx
           .update(payments)
           .set({
             status: 'CANCELED',
@@ -2143,8 +2378,15 @@ export class ReservationFinalizationService {
           })
           .where(and(
             eq(payments.id, input.paymentId),
+            eq(payments.status, 'DONE'),
             eq(payments.asyncStatus, 'cancel_pending'),
-          ));
+            sql`${payments.providerMetadata}->>${CONFIRM_COMPENSATION_CLAIM_METADATA_KEY} = 'true'`,
+            sql`${payments.providerMetadata}->${ASYNC_DONE_COMPENSATION_METADATA_KEY} IS NULL`,
+          ))
+          .returning({ id: payments.id });
+        if (updated.length === 0) {
+          return false;
+        }
         await tx
           .update(reservations)
           .set({ status: 'FAILED', updatedAt: cancelledAt })
@@ -2152,7 +2394,14 @@ export class ReservationFinalizationService {
             eq(reservations.id, input.reservationId),
             eq(reservations.status, 'PENDING_PAYMENT'),
           ));
+        return true;
       });
+      if (!converged) {
+        this.logger.log(
+          `Compensated cancel already recorded by its owner; nothing to converge. paymentId=${input.paymentId}, orderId=${input.orderId}`,
+        );
+        return;
+      }
       await recordReservationPaymentFailureDiagnostic(this.db, {
         reservationId: input.reservationId,
         paymentId: input.paymentId,
@@ -2178,9 +2427,93 @@ export class ReservationFinalizationService {
       expectation: ProviderApprovalExpectation;
     },
     providerPayment: TossPaymentResponse | null,
+    diagnosticSource = 'payment_confirm',
   ): Promise<void> {
     if (providerPayment && PROVIDER_NOT_APPROVED_STATUSES.has(providerPayment.status)) {
       await this.recordProviderNotApprovedPayment({ ...input, providerPayment });
+    } else if (providerPayment?.status === 'CANCELED') {
+      await this.recordProviderCancelledApproval({ ...input, providerPayment, diagnosticSource });
+    }
+  }
+
+  /**
+   * The provider shows this order's payment cancelled in full while no local
+   * payment row records it (an earlier attempt's compensation cancel, or a
+   * manual cancel at the provider). It is recorded like a completed
+   * compensation (payment CANCELED/compensation_cancelled, reservation FAILED,
+   * CONFIRM_APPROVAL_COMPENSATED), because a handed-off order left in
+   * PENDING_PAYMENT is skipped by the expiry worker and flagged daily by the
+   * abandoned handoff sweep. A row written meanwhile by another path wins
+   * (insert on conflict does nothing). Best effort.
+   */
+  private async recordProviderCancelledApproval(input: {
+    dto: ConfirmPaymentIdentity;
+    reservation: { id: string; totalAmount: number };
+    providerCharge: PaypalResolvedProviderCharge | null;
+    expectation: ProviderApprovalExpectation;
+    providerPayment: TossPaymentResponse;
+    diagnosticSource: string;
+  }): Promise<void> {
+    const snapshot = this.toNewApprovedPaymentSnapshot(input);
+    const lastCancel = input.providerPayment.cancels?.at(-1);
+    const cancelReason = lastCancel?.cancelReason?.trim() || '결제사에서 취소된 결제';
+    const cancelledAt = toValidDate(lastCancel?.canceledAt) ?? new Date();
+    try {
+      const paymentId = await this.db.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(payments)
+          .values({
+            reservationId: input.reservation.id,
+            paymentKey: input.dto.paymentKey,
+            tossOrderId: input.dto.orderId,
+            method: snapshot.method,
+            provider: snapshot.provider,
+            currency: snapshot.currency,
+            asyncStatus: 'compensation_cancelled',
+            amount: input.reservation.totalAmount,
+            status: 'CANCELED',
+            paidAt: toValidDate(input.providerPayment.approvedAt),
+            cancelledAt,
+            cancelReason,
+            ...this.toPaymentProviderChargeValues(snapshot),
+            ...this.toPaymentProviderMetadataValues(snapshot),
+          })
+          .onConflictDoNothing()
+          .returning({ id: payments.id });
+        if (!inserted) {
+          return null;
+        }
+
+        await tx
+          .update(reservations)
+          .set({ status: 'FAILED', updatedAt: cancelledAt })
+          .where(and(
+            eq(reservations.id, input.reservation.id),
+            eq(reservations.status, 'PENDING_PAYMENT'),
+          ));
+        return inserted.id;
+      });
+      if (!paymentId) {
+        return;
+      }
+
+      this.logger.warn(
+        `Provider payment already cancelled without a local record; recorded as a compensated cancel. paymentKey=${input.dto.paymentKey}, orderId=${input.dto.orderId}`,
+      );
+      await recordReservationPaymentFailureDiagnostic(this.db, {
+        reservationId: input.reservation.id,
+        paymentId,
+        tossOrderId: input.dto.orderId,
+        diagnosticKind: 'payment_compensated_cancel',
+        diagnosticCode: CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
+        diagnosticMessage: cancelReason,
+        diagnosticSource: input.diagnosticSource,
+      });
+    } catch (recordError) {
+      this.logger.warn(
+        `Recording a provider-cancelled payment failed; the provider webhook converges it. orderId=${input.dto.orderId}`,
+        recordError instanceof Error ? recordError.stack : String(recordError),
+      );
     }
   }
 
@@ -2218,6 +2551,13 @@ export class ReservationFinalizationService {
     }
   }
 
+  /**
+   * The confirm route must be the one the frozen checkout method was handed
+   * off with, in both directions: a PayPal or USD overseas card request needs
+   * that checkout method, and a PayPal or overseas card checkout is never
+   * confirmed on the domestic route (default key, KRW amount). Checked before
+   * anything is sent to Toss.
+   */
   private assertCheckoutMethodMatchesProviderChargeRequest(
     dto: ConfirmPaymentRequest,
     reservation: { checkoutPaymentMethod?: PaymentMethod | null },
@@ -2228,12 +2568,20 @@ export class ReservationFinalizationService {
       }
       return;
     }
-    if (
-      isOverseasCardConfirmPaymentRequest(dto)
-      && 'providerChargeAmount' in dto
-      && dto.providerChargeAmount
-      && !isOverseasCardCheckoutMethod(reservation.checkoutPaymentMethod)
-    ) {
+    if (isOverseasCardConfirmPaymentRequest(dto)) {
+      if (
+        'providerChargeAmount' in dto
+        && dto.providerChargeAmount
+        && !isOverseasCardCheckoutMethod(reservation.checkoutPaymentMethod)
+      ) {
+        throw new BadRequestException('예매에 저장된 결제수단과 해외카드 결제 요청이 일치하지 않습니다');
+      }
+      return;
+    }
+    if (isPaypalCheckoutMethod(reservation.checkoutPaymentMethod)) {
+      throw new BadRequestException('예매에 저장된 결제수단과 PayPal 결제 요청이 일치하지 않습니다');
+    }
+    if (isOverseasCardCheckoutMethod(reservation.checkoutPaymentMethod)) {
       throw new BadRequestException('예매에 저장된 결제수단과 해외카드 결제 요청이 일치하지 않습니다');
     }
   }
@@ -2333,8 +2681,9 @@ export class ReservationFinalizationService {
     pendingSeats: FloorAwareSeatSelection[];
     performanceId: string;
     approvedPayment: ApprovedPaymentSnapshot;
+    confirmLockToken: string;
   }): Promise<string | null> {
-    const { dto, reservation, approvedPayment } = input;
+    const { dto, reservation, approvedPayment, confirmLockToken } = input;
     let mayHaveCommitted = false;
     const throwIfCommitUnverifiable = async (
       state: FinalizationState,
@@ -2384,6 +2733,7 @@ export class ReservationFinalizationService {
             approvedPayment,
             reservation.id,
             this.resolvePostApprovalConflictCancelReason(dbError),
+            confirmLockToken,
           );
           throw dbError;
         }
@@ -2409,6 +2759,7 @@ export class ReservationFinalizationService {
           approvedPayment,
           reservation.id,
           '서버 오류로 인한 자동 취소',
+          confirmLockToken,
         );
         throw new InternalServerErrorException(POST_APPROVAL_FAILURE_MESSAGE);
       }

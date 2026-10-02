@@ -5,16 +5,23 @@ import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
-import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
-import type { PaymentMethod } from '@grabit/shared';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS, type PaymentMethod } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
 import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
 import {
+  buildPgBossOptions,
   loadPgBossConstructor,
   markBossAvailable,
   type PgBossContract,
 } from '../src/modules/jobs/pgboss.provider.js';
+import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { PaymentConfirmReconcileWorker } from '../src/modules/reservation/payment-confirm-reconcile.worker.js';
 import {
   PAYMENT_CONFIRM_RECONCILE_JOB,
@@ -57,9 +64,13 @@ describe('Payment confirm core — PostgreSQL', () => {
   /** A real pg-boss on the disposable database (never DATABASE_URL). */
   async function startBoss() {
     const PgBoss = loadPgBossConstructor();
-    const instance = new PgBoss({
-      connectionString: `postgres://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/confirm_core_test`,
-    });
+    // The production option shape (bounded pool, application name), not the
+    // pg-boss default pool of 10 (D8).
+    const instance = new PgBoss(buildPgBossOptions(
+      `postgres://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/confirm_core_test`,
+      true,
+      { max: 2, applicationName: 'grabit-it-confirm-core-pgboss' },
+    ));
     instance.on?.('error', () => {});
     await instance.start();
     boss = markBossAvailable(instance, true) as typeof boss;
@@ -96,6 +107,8 @@ describe('Payment confirm core — PostgreSQL', () => {
     checkoutPaymentMethod?: PaymentMethod;
     providerChargeAmountMinor?: number;
     admissionActiveUntilAt?: Date;
+    /** The performance policy; every checkout method unless a case narrows it. */
+    allowedPaymentMethods?: string[];
   }) {
     const id = randomUUID();
     const [user] = await db.insert(users).values({ email: `${id}@example.test`, name: 'Fixture',
@@ -105,7 +118,8 @@ describe('Payment confirm core — PostgreSQL', () => {
     const [performance] = await db.insert(performances).values({ title: 'Fixture', genre: 'artist_celebrity',
       venueId: venue!.id, ageRating: '전체관람가', status: 'selling', publishState: 'published',
       startDate: new Date('2026-01-01'), endDate: new Date('2099-01-02') }).returning();
-    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4 });
+    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4,
+      allowedPaymentMethods: options.allowedPaymentMethods ?? [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS] });
     const [showtime] = await db.insert(showtimes).values({ performanceId: performance!.id,
       dateTime: options.showtimeAt }).returning();
     const [reservation] = await db.insert(reservations).values({ userId: user!.id, showtimeId: showtime!.id,
@@ -188,7 +202,7 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(toss.cancelPayment).not.toHaveBeenCalled();
   });
 
-  it('cancels a PayPal approval settled in KRW and writes nothing', async () => {
+  it('claims, cancels and records a PayPal approval settled in KRW without issuing it (pay-server-4)', async () => {
     const { userId, reservation } = await pendingOrder({
       showtimeAt: new Date('2099-01-01'),
       checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' },
@@ -208,10 +222,37 @@ describe('Payment confirm core — PostgreSQL', () => {
     )).rejects.toThrow('결제 승인 정보가 주문과 일치하지 않아');
 
     expect(toss.cancelPayment).toHaveBeenCalledOnce();
-    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id))).toHaveLength(0);
+    // The claim row made a late DONE harmless; the completed cancel closes the order.
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id)))
+      .toMatchObject([{ paymentKey, status: 'CANCELED', asyncStatus: 'compensation_cancelled' }]);
     expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id))).toHaveLength(0);
     const [stored] = await db.select().from(reservations).where(eq(reservations.id, reservation.id));
-    expect(stored!.status).toBe('PENDING_PAYMENT');
+    expect(stored!.status).toBe('FAILED');
+    expect(await db.select().from(reservationPaymentFailureDiagnostics)
+      .where(eq(reservationPaymentFailureDiagnostics.reservationId, reservation.id)))
+      .toMatchObject([{ diagnosticCode: 'CONFIRM_APPROVAL_COMPENSATED', diagnosticSource: 'payment_confirm' }]);
+  });
+
+  it('compensates a mobile phone approval under a CARD-only performance policy (D1 #70)', async () => {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01'), allowedPaymentMethods: ['CARD'] });
+    const paymentKey = `pay-${randomUUID()}`;
+    const toss = {
+      confirmPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId, status: 'DONE',
+        currency: 'KRW', method: '휴대폰', totalAmount: 52000, approvedAt: new Date().toISOString() }),
+      queryPayment: vi.fn(),
+      cancelPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
+        status: 'CANCELED', totalAmount: 52000, cancels: [{ cancelStatus: 'DONE' }] }),
+    };
+
+    await expect(finalization(toss).confirmAndCreateReservation(
+      { paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId,
+    )).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(toss.cancelPayment).toHaveBeenCalledWith(paymentKey, '허용되지 않은 결제수단으로 인한 자동 취소',
+      expect.anything());
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id)))
+      .toMatchObject([{ paymentKey, status: 'CANCELED', asyncStatus: 'compensation_cancelled' }]);
+    expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id))).toHaveLength(0);
   });
 
   it('records a provider-verified ABORTED confirm like the terminal webhook', async () => {
@@ -225,9 +266,10 @@ describe('Payment confirm core — PostgreSQL', () => {
       cancelPayment: vi.fn(),
     };
 
+    // pay-server-7: a definite card rejection is a buyer-facing 400.
     await expect(finalization(toss).confirmAndCreateReservation(
       { paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId,
-    )).rejects.toBe(rejection);
+    )).rejects.toMatchObject({ cause: rejection, status: 400 });
 
     expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id)))
       .toMatchObject([{ status: 'ABORTED', asyncStatus: 'confirm_rejected', paidAt: null, paymentKey }]);
@@ -393,6 +435,92 @@ describe('Payment confirm core — PostgreSQL', () => {
     const [stored] = await db.select().from(reservations).where(eq(reservations.id, reservation.id));
     expect(stored!.status).toBe('CONFIRMED');
     expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id))).toHaveLength(1);
+  });
+
+  it('gives one owner per compensation row: reconcile and the async DONE sweep record one diagnostic each (D9)', async () => {
+    const asyncOwned = await pendingOrder({ showtimeAt: new Date('2099-01-01'), checkoutPaymentMethod: PAYPAL_CHECKOUT,
+      providerChargeAmountMinor: 3536 });
+    const confirmClaimed = await pendingOrder({ showtimeAt: new Date('2099-01-01'), checkoutPaymentMethod: PAYPAL_CHECKOUT,
+      providerChargeAmountMinor: 3536 });
+    const asyncKey = `pay-${randomUUID()}`;
+    const claimKey = `pay-${randomUUID()}`;
+    const reason = '판매 불가능 좌석으로 인한 자동 취소';
+    const record = {
+      version: 1,
+      kind: 'seat_conflict',
+      paymentKey: asyncKey,
+      reason,
+      payment: { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'KRW', amount: 52000,
+        providerChargeCurrency: 'USD', providerChargeAmountMinor: 3536, secretKeyScope: 'default' },
+      cancelRequest: { paymentKey: asyncKey, reason, options: { cancelRequestId: `cancel_${asyncOwned.reservation.id}` } },
+      cancelRequestIds: [`cancel_${asyncOwned.reservation.id}`],
+      attempts: 1,
+      state: 'pending',
+      requestedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      lastAttemptAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      lastCheckedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    };
+    const baseRow = { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'KRW', amount: 52000,
+      status: 'DONE' as const, asyncStatus: 'cancel_pending', paidAt: new Date(), cancelReason: reason,
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 3536 };
+    await db.insert(payments).values([
+      { ...baseRow, reservationId: asyncOwned.reservation.id, paymentKey: asyncKey,
+        tossOrderId: asyncOwned.reservation.tossOrderId!,
+        providerMetadata: { asyncDoneCompensation: record, asyncDoneCompensationOpen: true } },
+      { ...baseRow, reservationId: confirmClaimed.reservation.id, paymentKey: claimKey,
+        tossOrderId: confirmClaimed.reservation.tossOrderId!,
+        providerMetadata: { confirmCompensationClaim: true } },
+    ]);
+    await endClientWindows(asyncOwned.reservation.id);
+    await endClientWindows(confirmClaimed.reservation.id);
+    const cancelled = (key: string, orderId: string) => paypalPayment(key, orderId, {
+      status: 'CANCELED',
+      cancels: [{ cancelAmount: 35.36, cancelReason: reason, canceledAt: new Date().toISOString(), cancelStatus: 'DONE' }],
+    });
+    const orderOf = (key: string) => (key === asyncKey ? asyncOwned : confirmClaimed).reservation.tossOrderId!;
+    const toss = {
+      confirmPayment: vi.fn(),
+      queryPayment: vi.fn((key: string) => Promise.resolve(cancelled(key, orderOf(key)))),
+      cancelPayment: vi.fn(),
+    };
+    const lease = {
+      acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
+      refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
+      releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
+    };
+    const reconcile = finalization(toss);
+    const sweep = new PaymentService(db, undefined, undefined, toss as never, undefined, undefined, lease as never);
+
+    // The reconcile job of an async-owned row neither looks it up nor cancels it.
+    await expect(reconcile.reconcileUnresolvedConfirm(reconcilePayload(asyncOwned.reservation.tossOrderId!, asyncKey)))
+      .resolves.toEqual({ status: 'resolved', resolution: 'async_compensation_owned' });
+    expect(toss.queryPayment).not.toHaveBeenCalled();
+
+    // The sweep converges its own row and never adopts the confirm claim.
+    await expect(sweep.recoverAsyncDoneCompensations()).resolves.toMatchObject({ cancelled: 1, attention: 0 });
+    expect(toss.queryPayment).toHaveBeenCalledTimes(1);
+    expect(toss.queryPayment).toHaveBeenCalledWith(asyncKey, expect.anything());
+
+    // The claim is converged by its reconcile job only, then both paths are no-ops.
+    await expect(reconcile.reconcileUnresolvedConfirm(reconcilePayload(confirmClaimed.reservation.tossOrderId!, claimKey)))
+      .resolves.toEqual({ status: 'resolved', resolution: 'compensated' });
+    await expect(reconcile.reconcileUnresolvedConfirm(reconcilePayload(asyncOwned.reservation.tossOrderId!, asyncKey)))
+      .resolves.toEqual({ status: 'resolved', resolution: 'recorded' });
+    await expect(sweep.recoverAsyncDoneCompensations()).resolves.toMatchObject({ checked: 0, attention: 0 });
+
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+    for (const [order, code] of [
+      [asyncOwned, 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'],
+      [confirmClaimed, 'CONFIRM_APPROVAL_COMPENSATED'],
+    ] as const) {
+      expect(await db.select().from(payments).where(eq(payments.reservationId, order.reservation.id)))
+        .toMatchObject([{ status: 'CANCELED', asyncStatus: 'compensation_cancelled' }]);
+      expect((await db.select().from(reservations).where(eq(reservations.id, order.reservation.id)))[0]!.status)
+        .toBe('FAILED');
+      expect(await db.select().from(reservationPaymentFailureDiagnostics)
+        .where(eq(reservationPaymentFailureDiagnostics.reservationId, order.reservation.id)))
+        .toMatchObject([{ diagnosticKind: 'payment_compensated_cancel', diagnosticCode: code }]);
+    }
   });
 
   it('keeps a claimed order unissuable while its cancel is in progress', async () => {

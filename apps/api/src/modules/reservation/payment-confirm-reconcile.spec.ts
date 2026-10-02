@@ -135,15 +135,35 @@ function createReconcile(options: {
     insert: (table: unknown) => ({ values: (values: Record<string, unknown>) => insertInto(table, values) }),
     update: (table: unknown) => ({
       set: (values: Record<string, unknown>) => ({
-        // Mirrors the conditional updates: only a cancel_pending claim and a
+        // Mirrors the conditional updates: only a DONE/cancel_pending row this
+        // confirm flow still owns (claim marker, no async DONE record) and a
         // PENDING_PAYMENT reservation change.
-        where: async () => {
-          if (table === payments && state.payment?.asyncStatus === 'cancel_pending') {
-            state.payment = { ...state.payment, ...values } as PaymentRow;
-          }
-          if (table === reservations && state.reservation?.status === 'PENDING_PAYMENT') {
-            state.reservation = { ...state.reservation, ...values } as ReservationState;
-          }
+        where: () => {
+          const apply = (): Array<{ id: string }> => {
+            if (table === payments) {
+              const metadata = (state.payment?.providerMetadata ?? {}) as Record<string, unknown>;
+              if (
+                state.payment?.status === 'DONE'
+                && state.payment.asyncStatus === 'cancel_pending'
+                && metadata.confirmCompensationClaim === true
+                && metadata.asyncDoneCompensation === undefined
+              ) {
+                state.payment = { ...state.payment, ...values } as PaymentRow;
+                return [{ id: state.payment.id }];
+              }
+              return [];
+            }
+            if (table === reservations && state.reservation?.status === 'PENDING_PAYMENT') {
+              state.reservation = { ...state.reservation, ...values } as ReservationState;
+              return [{ id: state.reservation.id }];
+            }
+            return [];
+          };
+          return {
+            then: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) =>
+              Promise.resolve().then(apply).then(resolve, reject),
+            returning: async () => apply(),
+          };
         },
       }),
     }),
@@ -405,6 +425,7 @@ describe('Payment confirm reconcile (#18)', () => {
       cancelReason: '좌석 점유 만료로 인한 자동 취소',
       providerChargeCurrency: 'USD',
       providerChargeAmountMinor: 10800,
+      providerMetadata: { confirmCompensationClaim: true },
     });
 
     it('records the cancel the provider already completed without cancelling again', async () => {
@@ -438,6 +459,88 @@ describe('Payment confirm reconcile (#18)', () => {
         .resolves.toEqual({ status: 'resolved', resolution: 'recorded' });
       expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
       expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('compensation ownership (pay-server-3, D9)', () => {
+    const asyncDoneRecord = {
+      version: 1,
+      kind: 'seat_conflict',
+      paymentKey: 'payment-key-1',
+      reason: '판매 불가능 좌석으로 인한 자동 취소',
+      payment: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'KRW', amount: 150000, secretKeyScope: 'foreign-easy-pay' },
+      cancelRequest: { paymentKey: 'payment-key-1', reason: 'x', options: { cancelRequestId: 'cancel_reservation-1' } },
+      cancelRequestIds: ['cancel_reservation-1'],
+      attempts: 1,
+      state: 'pending',
+      requestedAt: '2026-10-02T09:00:00.000Z',
+      lastAttemptAt: '2026-10-02T09:00:00.000Z',
+    };
+    const asyncDoneOwned = (providerMetadata: Record<string, unknown> | null): PaymentRow => ({
+      id: 'payment-async-1',
+      reservationId: 'reservation-1',
+      paymentKey: 'payment-key-1',
+      tossOrderId: 'order-1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY_PLUS',
+      currency: 'KRW',
+      amount: 150000,
+      status: 'DONE',
+      asyncStatus: 'cancel_pending',
+      cancelReason: '판매 불가능 좌석으로 인한 자동 취소',
+      providerMetadata,
+    });
+
+    it.each([
+      ['its own async DONE compensation record', { asyncDoneCompensation: asyncDoneRecord, asyncDoneCompensationOpen: true }],
+      ['a claim marker next to an async DONE record', { confirmCompensationClaim: true, asyncDoneCompensation: asyncDoneRecord }],
+      ['no ownership marker (legacy)', null],
+    ])('leaves a cancel_pending row with %s to the async DONE recovery', async (_label, metadata) => {
+      const deps = createReconcile({ payment: asyncDoneOwned(metadata) });
+
+      await expect(deps.service.reconcileUnresolvedConfirm(paypalPayload(), NOW))
+        .resolves.toEqual({ status: 'resolved', resolution: 'async_compensation_owned' });
+      expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+      expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(deps.state.diagnostics).toEqual([]);
+      expect(deps.state.payment).toMatchObject({ status: 'DONE', asyncStatus: 'cancel_pending' });
+    });
+
+    it('keeps the diagnostic the async DONE recovery recorded after it converged the row first', async () => {
+      const deps = createReconcile({
+        reservation: { status: 'FAILED' },
+        payment: {
+          ...asyncDoneOwned({ asyncDoneCompensation: { ...asyncDoneRecord, state: 'cancelled' } }),
+          status: 'CANCELED',
+          asyncStatus: 'compensation_cancelled',
+        },
+      });
+
+      await expect(deps.service.reconcileUnresolvedConfirm(paypalPayload(), NOW))
+        .resolves.toEqual({ status: 'resolved', resolution: 'recorded' });
+      expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+      expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(deps.state.diagnostics).toEqual([]);
+    });
+
+    it('records nothing when a provider-completed cancel finds its claim already adopted elsewhere', async () => {
+      const deps = createReconcile({
+        payment: { ...asyncDoneOwned({ confirmCompensationClaim: true }), id: 'claim-1' },
+      });
+      deps.tossClient.queryPayment.mockImplementation(async () => {
+        // Between the read and the record the row gains an async DONE record.
+        deps.state.payment = {
+          ...deps.state.payment!,
+          providerMetadata: { confirmCompensationClaim: true, asyncDoneCompensation: asyncDoneRecord },
+        };
+        return paypalApproval({ status: 'CANCELED' });
+      });
+
+      await deps.service.reconcileUnresolvedConfirm(paypalPayload(), NOW);
+
+      expect(deps.state.payment).toMatchObject({ status: 'DONE', asyncStatus: 'cancel_pending' });
+      expect(deps.state.reservation?.status).toBe('PENDING_PAYMENT');
+      expect(deps.state.diagnostics).toEqual([]);
     });
   });
 

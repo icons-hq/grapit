@@ -110,6 +110,18 @@ function compensationRecord(
   };
 }
 
+/** A policy allowing every checkout method, and an Alipay checkout. */
+const ALL_CHECKOUT_METHODS = ['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY'];
+const ALIPAY_DONE_POLICY = {
+  checkoutPaymentMethod: {
+    method: 'FOREIGN_EASY_PAY',
+    provider: 'ALIPAY_PLUS',
+    currency: 'USD',
+    pendingUrlRequired: true,
+  },
+  allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+};
+
 describe('PaymentService async DONE safety and recovery', () => {
   let service: PaymentService;
   let db: {
@@ -175,6 +187,7 @@ describe('PaymentService async DONE safety and recovery', () => {
         showtimeId: input.showtimeId,
         status: 'PENDING_PAYMENT',
         totalAmount: input.seats.length * 52000,
+        ...ALIPAY_DONE_POLICY,
       }]))
       .mockImplementationOnce(() => selectChain([]))
       .mockImplementationOnce(() => selectChain(input.seats.map((seatId) => ({
@@ -271,6 +284,7 @@ describe('PaymentService async DONE safety and recovery', () => {
       db.select
         .mockImplementationOnce(() => selectChain([{
           id: reservationId, userId: 'buyer-a', showtimeId: 'showtime-1', status: 'PENDING_PAYMENT', totalAmount: 104000,
+          ...ALIPAY_DONE_POLICY,
         }]))
         .mockImplementationOnce(() => selectChain([]))
         .mockImplementationOnce(() => selectChain([
@@ -324,6 +338,7 @@ describe('PaymentService async DONE safety and recovery', () => {
           showtimeId: input.showtimeId,
           status: 'FAILED',
           totalAmount: input.seats.length * 52000,
+          ...ALIPAY_DONE_POLICY,
         }]))
         .mockImplementationOnce(() => selectChain([]))
         .mockImplementationOnce(() => selectChain(input.seats.map((seatId) => ({
@@ -958,7 +973,9 @@ describe('PaymentService async DONE safety and recovery', () => {
   describe('async-return for an already settled order (#87)', () => {
     it('skips the provider query and order lease when the same payment is already issued', async () => {
       db.select
-        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', userId: 'buyer-a', status: 'CONFIRMED' }]))
+        .mockImplementationOnce(() => selectChain([{
+          id: 'reservation-1', userId: 'buyer-a', status: 'CONFIRMED', ...ALIPAY_DONE_POLICY,
+        }]))
         .mockImplementationOnce(() => selectChain([{ id: 'payment-1', paymentKey: 'pay_done', status: 'DONE' }]));
 
       await service.reconcileAsyncPaymentReturn({
@@ -974,7 +991,9 @@ describe('PaymentService async DONE safety and recovery', () => {
 
     it('still reconciles through the provider when the confirmed order has a different paymentKey', async () => {
       db.select
-        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', userId: 'buyer-a', status: 'CONFIRMED' }]))
+        .mockImplementationOnce(() => selectChain([{
+          id: 'reservation-1', userId: 'buyer-a', status: 'CONFIRMED', ...ALIPAY_DONE_POLICY,
+        }]))
         .mockImplementationOnce(() => selectChain([{ id: 'payment-1', paymentKey: 'pay_other', status: 'DONE' }]));
       tossClient.queryPayment.mockRejectedValueOnce(new Error('provider unavailable'));
 
@@ -1039,6 +1058,480 @@ describe('PaymentService async DONE safety and recovery', () => {
       expect(db.update).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
       expect(db.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('payment method policy of an async DONE (D1 #70, pay-server-2)', () => {
+    const CARD_CHECKOUT = { method: 'CARD', provider: 'CARD', currency: 'KRW' };
+
+    function doneFixture(overrides: Record<string, unknown> = {}) {
+      db.select
+        .mockImplementationOnce(() => selectChain([{
+          id: 'reservation-1',
+          userId: 'buyer-a',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 52000,
+          ...ALIPAY_DONE_POLICY,
+          ...overrides,
+        }]))
+        .mockImplementationOnce(() => selectChain([]))
+        .mockImplementationOnce(() => selectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+        ]));
+    }
+
+    function capturedInserts() {
+      const inserts: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+      db.insert.mockImplementation((table: unknown) => {
+        const chain = mutationChain([{ id: 'payment-row-1' }]);
+        chain.values.mockImplementation((values: Record<string, unknown>) => {
+          inserts.push({ table, values });
+          return chain;
+        });
+        return chain;
+      });
+      return inserts;
+    }
+
+    function domesticDone(method: string, providerVerified?: { method: string | null; easyPayProvider: string | null }) {
+      return {
+        eventId: `evt-${randomUUID()}`,
+        eventType: 'PAYMENT_STATUS_CHANGED' as const,
+        ...(providerVerified ? { providerVerified } : {}),
+        data: {
+          paymentKey: 'pay_policy',
+          orderId: 'GRP-POLICY-1',
+          status: 'DONE',
+          method,
+          currency: 'KRW',
+          totalAmount: 52000,
+          approvedAt: '2026-10-01T00:20:00.000Z',
+        },
+      };
+    }
+
+    it('refunds a provider-verified 휴대폰 DONE instead of issuing it and stores it as MOBILE_PHONE', async () => {
+      doneFixture({ checkoutPaymentMethod: CARD_CHECKOUT });
+      const inserts = capturedInserts();
+      tossClient.cancelPayment.mockResolvedValueOnce({
+        status: 'CANCELED',
+        cancels: [{ cancelAmount: 52000, cancelReason: 'x', canceledAt: '2026-10-01T00:20:01.000Z', cancelStatus: 'DONE' }],
+      });
+
+      await expect(service.upsertAsyncPaymentProgress(
+        domesticDone('휴대폰', { method: '휴대폰', easyPayProvider: null }),
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_COMPENSATED_PAYMENT_METHOD_NOT_ALLOWED');
+
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+      expect(tossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_policy',
+        '허용되지 않은 결제수단으로 인한 자동 취소',
+        expect.objectContaining({ idempotencyKey: 'async-done-payment-method-cancel:GRP-POLICY-1:pay_policy' }),
+      );
+      expect(inserts).toContainEqual({
+        table: payments,
+        values: expect.objectContaining({
+          method: 'MOBILE_PHONE',
+          status: 'CANCELED',
+          asyncStatus: 'compensation_cancelled',
+          providerMetadata: expect.objectContaining({
+            asyncDoneCompensation: expect.objectContaining({ kind: 'payment_method_not_allowed', state: 'cancelled' }),
+          }),
+        }),
+      });
+      expect(inserts).toContainEqual({
+        table: reservationPaymentFailureDiagnostics,
+        values: expect.objectContaining({ diagnosticCode: 'ASYNC_DONE_PAYMENT_METHOD_NOT_ALLOWED_CANCELLED' }),
+      });
+    });
+
+    it('never cancels a deposited 가상계좌 DONE automatically; it raises attention at once', async () => {
+      doneFixture({ checkoutPaymentMethod: CARD_CHECKOUT });
+      const inserts = capturedInserts();
+      const errorLog = vi.spyOn((service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        domesticDone('가상계좌', { method: '가상계좌', easyPayProvider: null }),
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_PAYMENT_METHOD_NOT_ALLOWED_ATTENTION');
+
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(inserts).toContainEqual({
+        table: payments,
+        values: expect.objectContaining({
+          method: 'VIRTUAL_ACCOUNT',
+          status: 'DONE',
+          asyncStatus: 'cancel_pending',
+          providerMetadata: expect.objectContaining({
+            asyncDoneCompensation: expect.objectContaining({
+              kind: 'payment_method_not_allowed',
+              state: 'attention',
+              attempts: 0,
+              cancelRequestIds: [],
+            }),
+            asyncDoneCompensationOpen: false,
+          }),
+        }),
+      });
+      expect(inserts).toContainEqual({
+        table: reservationPaymentFailureDiagnostics,
+        values: expect.objectContaining({ diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION' }),
+      });
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('needs operator reconciliation'));
+    });
+
+    it('decides on the provider-verified method, not on the callback method', async () => {
+      doneFixture();
+      capturedInserts();
+
+      // The callback claims a foreign wallet; the provider lookup reports 휴대폰.
+      await expect(service.upsertAsyncPaymentProgress(
+        { ...lateDonePayload('GRP-POLICY-2'), providerVerified: { method: '휴대폰', easyPayProvider: null } },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(tossClient.cancelPayment).toHaveBeenCalledOnce();
+    });
+
+    it('refunds an Alipay DONE when the performance policy no longer allows foreign easy pay', async () => {
+      doneFixture({ allowedPaymentMethods: ['CARD'] });
+      capturedInserts();
+
+      await expect(service.upsertAsyncPaymentProgress(
+        { ...lateDonePayload('GRP-POLICY-3'), providerVerified: { method: '해외간편결제', easyPayProvider: '알리페이' } },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it('issues an Alipay DONE that the policy and the checkout method allow', async () => {
+      doneFixture();
+      mockCommittingTransaction();
+
+      await expect(service.upsertAsyncPaymentProgress(
+        { ...lateDonePayload('GRP-POLICY-4'), providerVerified: { method: '해외간편결제', easyPayProvider: '알리페이' } },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_APPLIED');
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    it('answers DONE_CANCEL_PENDING for a late DONE of an approval payment confirm already claimed (pay-server-4)', async () => {
+      db.select
+        .mockImplementationOnce(() => selectChain([{
+          id: 'reservation-1', userId: 'buyer-a', showtimeId: 'showtime-1', status: 'PENDING_PAYMENT',
+          totalAmount: 52000, checkoutPaymentMethod: CARD_CHECKOUT, allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+        }]))
+        .mockImplementationOnce(() => selectChain([{
+          id: 'claim-1', reservationId: 'reservation-1', paymentKey: 'pay_policy', tossOrderId: 'GRP-POLICY-1',
+          method: '카드', provider: 'CARD', currency: 'KRW', amount: 52000, status: 'DONE',
+          asyncStatus: 'cancel_pending', providerMetadata: { confirmCompensationClaim: true },
+        }]));
+
+      await expect(service.upsertAsyncPaymentProgress(
+        domesticDone('카드', { method: '카드', easyPayProvider: null }),
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pending return (async-return) trust boundary (pay-server-2)', () => {
+    it('rejects a pending return for an order that is not an async foreign wallet, without a provider call', async () => {
+      db.select.mockImplementationOnce(() => selectChain([{
+        id: 'reservation-1',
+        userId: 'buyer-a',
+        status: 'PENDING_PAYMENT',
+        checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+      }]));
+
+      await expect(service.reconcileAsyncPaymentReturn({
+        orderId: 'GRP-CARD', paymentKey: 'pay_card', provider: 'ALIPAY_PLUS', userId: 'buyer-a',
+      })).rejects.toBeInstanceOf(ConflictException);
+      expect(tossClient.queryPayment).not.toHaveBeenCalled();
+      expect(bookingService.acquirePaymentConfirmLock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the provider lookup', { provider: 'TRUEMONEY' }, 'TRUEMONEY', '트루머니'],
+      ['the frozen checkout method', null, 'ALIPAY', undefined],
+    ])('takes the wallet from %s and ignores the client provider', async (_label, easyPay, provider, easyPayLabel) => {
+      db.select.mockImplementationOnce(() => selectChain([{
+        id: 'reservation-1', userId: 'buyer-a', status: 'PENDING_PAYMENT', ...ALIPAY_DONE_POLICY,
+      }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_wallet',
+        orderId: 'GRP-WALLET',
+        method: '해외간편결제',
+        currency: 'KRW',
+        totalAmount: 52000,
+        status: 'DONE',
+        approvedAt: '2026-10-01T00:20:00.000Z',
+        easyPay: easyPay ? { provider: easyPayLabel } : null,
+      });
+      const upsert = vi.spyOn(service, 'upsertAsyncPaymentProgress').mockResolvedValue(undefined);
+
+      await service.reconcileAsyncPaymentReturn({
+        // A forged provider: the order was checked out with Alipay.
+        orderId: 'GRP-WALLET', paymentKey: 'pay_wallet', provider: 'TRUEMONEY', userId: 'buyer-a',
+      });
+
+      expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_wallet', { secretKeyScope: 'foreign-easy-pay' });
+      expect(upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerVerified: { method: '해외간편결제', easyPayProvider: easyPayLabel ?? null },
+          data: expect.objectContaining({ provider }),
+        }),
+        'DONE',
+        'client_return:done',
+      );
+    });
+  });
+
+  describe('compensation ownership with payment confirm (pay-server-3, D9)', () => {
+    function paymentRow(overrides: Record<string, unknown>) {
+      return {
+        id: 'payment-1',
+        reservationId: 'reservation-1',
+        paymentKey: 'pay_claimed',
+        tossOrderId: 'GRP-CLAIM-1',
+        method: '카드',
+        provider: 'CARD',
+        currency: 'KRW',
+        amount: 52000,
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+        paidAt: new Date('2026-10-01T00:00:00.000Z'),
+        cancelReason: '좌석 점유 만료로 인한 자동 취소',
+        providerMetadata: { confirmCompensationClaim: true },
+        providerChargeCurrency: null,
+        providerChargeAmountMinor: null,
+        ...overrides,
+      };
+    }
+
+    it('advances only the duplicate charge on a confirm claim row, never adopting the claim itself', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      const duplicate = compensationRecord({
+        reservationId: 'reservation-1',
+        kind: 'duplicate_payment_key',
+        paymentKey: 'pay_duplicate',
+        state: 'error',
+        lastCheckedAt: '2026-10-01T00:50:00.000Z',
+      });
+      const metadata = {
+        confirmCompensationClaim: true,
+        duplicatePaymentCompensations: [duplicate],
+        asyncDoneCompensationOpen: true,
+      };
+      db.select
+        .mockImplementationOnce(() => selectChain([{
+          id: 'payment-1', tossOrderId: 'GRP-CLAIM-1', status: 'DONE', asyncStatus: 'cancel_pending',
+          providerMetadata: metadata, reservationStatus: 'PENDING_PAYMENT', cursorCreatedAt: '2026-10-01 00:00:00+00',
+        }]))
+        .mockImplementationOnce(() => selectChain([paymentRow({ providerMetadata: metadata })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_duplicate',
+        orderId: 'GRP-CLAIM-1',
+        totalAmount: 52000,
+        status: 'CANCELED',
+        cancels: [{ cancelAmount: 52000, cancelReason: 'x', canceledAt: '2026-10-01T00:55:00.000Z', cancelStatus: 'DONE' }],
+      });
+      const metadataUpdate = mutationChain();
+      db.update.mockImplementationOnce(() => metadataUpdate);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ checked: 1, cancelled: 1 });
+
+      expect(tossClient.queryPayment).toHaveBeenCalledOnce();
+      expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_duplicate', expect.anything());
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(db.update).toHaveBeenCalledOnce();
+      const patch = findJsonParam(metadataUpdate.set.mock.calls[0]?.[0], 'duplicatePaymentCompensations') as Record<string, unknown>;
+      expect(patch).not.toHaveProperty('asyncDoneCompensation');
+      expect(patch.asyncDoneCompensationOpen).toBe(false);
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('leaves a provider ABORTED cancel of a confirm claim to its reconcile job', async () => {
+      db.select
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]))
+        .mockImplementationOnce(() => selectChain([paymentRow({})]));
+
+      await expect(service.recordCompensationCancelAborted({
+        eventId: 'evt-claim-aborted',
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: {
+          paymentKey: 'pay_claimed',
+          orderId: 'GRP-CLAIM-1',
+          cancelStatus: 'ABORTED',
+          cancelRequestId: 'cancel_payment-1',
+        },
+      })).resolves.toBeNull();
+      expect(db.update).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a payment confirm claim', { confirmCompensationClaim: true }, 'CONFIRM_APPROVAL_COMPENSATED'],
+      [
+        'an async DONE compensation',
+        { asyncDoneCompensation: compensationRecord({ reservationId: 'reservation-1', kind: 'ticket_limit' }) },
+        'ASYNC_DONE_TICKET_LIMIT_CANCELLED',
+      ],
+      ['a legacy row', null, 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'],
+    ])('records the CANCELED webhook that completes %s in the compensated_cancel bucket', async (_label, metadata, code) => {
+      db.select
+        .mockImplementationOnce(() => selectChain([{
+          id: 'reservation-1', userId: 'buyer-a', showtimeId: 'showtime-1', status: 'PENDING_PAYMENT',
+          totalAmount: 52000, checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+          allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+        }]))
+        .mockImplementationOnce(() => selectChain([paymentRow({
+          providerMetadata: metadata,
+          cancelReason: metadata === null ? '판매 불가능 좌석으로 인한 자동 취소' : '좌석 점유 만료로 인한 자동 취소',
+        })]));
+      const diagnosticInsert = mutationChain();
+      db.insert.mockImplementationOnce(() => diagnosticInsert);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-claim-cancelled',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_claimed', orderId: 'GRP-CLAIM-1', status: 'CANCELED', method: '카드',
+            currency: 'KRW', totalAmount: 52000, canceledAt: '2026-10-01T00:30:00.000Z',
+          },
+        },
+        'CANCELED',
+        'cancelled_webhook',
+      );
+
+      expect(diagnosticInsert.values).toHaveBeenCalledWith(expect.objectContaining({
+        diagnosticKind: 'payment_compensated_cancel',
+        diagnosticCode: code,
+      }));
+    });
+  });
+
+  describe('compensation sweep limits (pay-server-6, #76)', () => {
+    it('raises attention when the provider keeps a compensation cancel IN_PROGRESS for over 24 hours', async () => {
+      const now = new Date('2026-10-02T01:00:00.000Z');
+      const record = compensationRecord({
+        reservationId: 'reservation-1',
+        requestedAt: '2026-10-01T00:00:00.000Z',
+        lastCheckedAt: '2026-10-02T00:40:00.000Z',
+      });
+      db.select
+        .mockImplementationOnce(() => selectChain([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]))
+        .mockImplementationOnce(() => selectChain([{
+          id: 'payment-1', reservationId: 'reservation-1', paymentKey: 'pay_compensated', tossOrderId: 'GRP-COMP-1',
+          method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'KRW', amount: 102000, status: 'DONE',
+          asyncStatus: 'cancel_pending', paidAt: null, cancelReason: record.reason,
+          providerMetadata: { asyncDoneCompensation: record, asyncDoneCompensationOpen: true },
+          providerChargeCurrency: 'USD', providerChargeAmountMinor: 6936,
+        }]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_compensated',
+        orderId: 'GRP-COMP-1',
+        totalAmount: 69.36,
+        status: 'DONE',
+        cancels: [{ cancelAmount: 69.36, cancelReason: 'x', canceledAt: '2026-10-01T00:00:01.000Z', cancelStatus: 'IN_PROGRESS', cancelRequestId: 'cancel_reservation-1' }],
+      });
+      const recordUpdate = mutationChain();
+      db.update.mockImplementation(() => recordUpdate);
+      const diagnosticInsert = mutationChain();
+      db.insert.mockImplementationOnce(() => diagnosticInsert);
+      const errorLog = vi.spyOn((service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ attention: 1, waiting: 0 });
+
+      const patch = findJsonParam(recordUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensation') as {
+        asyncDoneCompensation: AsyncDoneCompensationRecord;
+      };
+      expect(patch.asyncDoneCompensation.state).toBe('attention');
+      expect(patch.asyncDoneCompensation.lastError).toContain('IN_PROGRESS since 2026-10-01T00:00:00.000Z');
+      expect(diagnosticInsert.values).toHaveBeenCalledWith(expect.objectContaining({
+        diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION',
+      }));
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('needs operator reconciliation'));
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    it('still processes a due compensation behind 100 open ones that are not yet due', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      const notDue = Array.from({ length: 100 }, (_, index) => ({
+        id: `payment-wait-${index}`,
+        tossOrderId: `GRP-WAIT-${index}`,
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+        reservationStatus: 'PENDING_PAYMENT',
+        cursorCreatedAt: `2026-10-01 00:00:${String(index % 60).padStart(2, '0')}+00`,
+        providerMetadata: {
+          asyncDoneCompensation: compensationRecord({
+            reservationId: `reservation-wait-${index}`,
+            state: 'pending',
+            lastCheckedAt: '2026-10-01T00:59:00.000Z',
+          }),
+          asyncDoneCompensationOpen: true,
+        },
+      }));
+      const dueRecord = compensationRecord({
+        reservationId: 'reservation-1',
+        state: 'aborted',
+        lastCheckedAt: '2026-10-01T00:30:00.000Z',
+      });
+      const dueRow = {
+        id: 'payment-1',
+        tossOrderId: 'GRP-COMP-1',
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+        reservationStatus: 'PENDING_PAYMENT',
+        cursorCreatedAt: '2026-10-01 00:05:00+00',
+        providerMetadata: { asyncDoneCompensation: dueRecord, asyncDoneCompensationOpen: true },
+      };
+      const firstPage = selectChain(notDue);
+      const secondPage = selectChain([dueRow]);
+      db.select
+        .mockImplementationOnce(() => firstPage)
+        .mockImplementationOnce(() => secondPage)
+        .mockImplementationOnce(() => selectChain([{
+          id: 'payment-1', reservationId: 'reservation-1', paymentKey: 'pay_compensated', tossOrderId: 'GRP-COMP-1',
+          method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'KRW', amount: 102000, status: 'DONE',
+          asyncStatus: 'cancel_pending', paidAt: null, cancelReason: dueRecord.reason,
+          providerMetadata: dueRow.providerMetadata, providerChargeCurrency: 'USD', providerChargeAmountMinor: 6936,
+        }]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_compensated',
+        orderId: 'GRP-COMP-1',
+        totalAmount: 69.36,
+        status: 'CANCELED',
+        cancels: [{ cancelAmount: 69.36, cancelReason: dueRecord.reason, canceledAt: '2026-10-01T00:45:00.000Z', cancelStatus: 'DONE' }],
+      });
+      db.update.mockImplementation(() => mutationChain([{ id: 'payment-1' }]));
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ checked: 1, cancelled: 1 });
+
+      expect(tossClient.queryPayment).toHaveBeenCalledOnce();
+      expect(bookingService.acquirePaymentConfirmLock).toHaveBeenCalledWith('GRP-COMP-1', expect.any(String));
+      expect(bookingService.acquirePaymentConfirmLock).not.toHaveBeenCalledWith('GRP-WAIT-0', expect.any(String));
+      // The second page continues after the last row of the first one.
+      const cursorQuery = new PgDialect().sqlToQuery(secondPage.where.mock.calls[0]?.[0]);
+      expect(cursorQuery.params).toEqual(expect.arrayContaining(['2026-10-01 00:00:39+00', 'payment-wait-99']));
     });
   });
 });

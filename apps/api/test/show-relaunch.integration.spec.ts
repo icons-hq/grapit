@@ -75,7 +75,9 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const [performance] = await db.insert(performances).values({ title: 'Fixture', genre: 'artist_celebrity',
       venueId: venue!.id, ageRating: '전체관람가', status: 'selling', publishState: 'published',
       startDate: new Date('2099-01-01'), endDate: new Date('2099-01-02') }).returning();
-    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4 });
+    // Every checkout category is allowed so the async DONE payment method policy (audit #70) admits the wallet fixtures.
+    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4,
+      allowedPaymentMethods: ['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY'] });
     const [showtime] = await db.insert(showtimes).values({ performanceId: performance!.id,
       dateTime: new Date('2099-01-01') }).returning();
     const [config] = await db.insert(ticketBenefitConfigurations).values({ showtimeId: showtime!.id, version: 1 }).returning();
@@ -129,7 +131,10 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const id = randomUUID();
     const [reservation] = await db.insert(reservations).values({ userId: f.userId, showtimeId: f.showtimeId,
       reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status, totalAmount: 52000,
-      cancelDeadline: new Date('2098-12-31'), paymentDeadlineAt: new Date(Date.now() + 600000) }).returning();
+      cancelDeadline: new Date('2098-12-31'), paymentDeadlineAt: new Date(Date.now() + 600000),
+      // The async DONE fixtures below are Alipay checkouts.
+      checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD', pendingUrlRequired: true },
+    }).returning();
     await db.insert(reservationSeats).values({ reservationId: reservation!.id, seatId: seatKey,
       tierName: 'VIP', price: 50000, row: 'A', number: '1' });
     return reservation!;

@@ -36,13 +36,15 @@ function ticketLimitResult({
   activeTicketCount?: number;
   showtimeStartsAt?: Date;
 } = {}) {
-  // db.execute also serves the pre-approval showtime cutoff lookup.
+  // db.execute also serves the pre-approval showtime cutoff and payment
+  // method policy lookup.
   return {
     rows: [{
       performance_id: performanceId,
       max_tickets_per_user: maxTicketsPerUser,
       active_ticket_count: activeTicketCount,
       date_time: showtimeStartsAt,
+      allowed_payment_methods: ['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY'],
     }],
   };
 }
@@ -210,6 +212,7 @@ describe('ReservationFinalizationService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 204000,
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
         },
       ]))
       .mockReturnValueOnce(chainResult([
@@ -444,6 +447,7 @@ describe('ReservationFinalizationService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 52000,
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
         },
       ]))
       .mockReturnValueOnce(chainResult([
@@ -526,6 +530,7 @@ describe('ReservationFinalizationService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
         },
       ]))
       .mockReturnValueOnce(chainResult([
@@ -1591,6 +1596,7 @@ describe('ReservationFinalizationService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 204000,
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
         },
       ]))
       .mockReturnValueOnce(chainResult([

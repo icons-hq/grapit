@@ -517,6 +517,7 @@ describe('ReservationService', () => {
         tossOrderId: args.orderId,
         status: 'PENDING_PAYMENT',
         totalAmount: args.amount,
+        checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
       }]))
       .mockReturnValueOnce(chainResult(reservationSeatRowsForAmount(seats, args.amount)));
   }
@@ -2670,6 +2671,7 @@ describe('ReservationService', () => {
             tossOrderId: orderId,
             status: 'PENDING_PAYMENT',
             totalAmount: 150000,
+            checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
           }]),
         }),
       });
