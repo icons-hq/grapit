@@ -283,6 +283,13 @@
       "breakpoints": true
     },
     {
+      "idx": 40,
+      "version": "7",
+      "when": 1790042400000,
+      "tag": "0039_buyer_phone_identity_and_admission_token_cleanup",
+      "breakpoints": true
+    },
+    {
       "idx": 41,
       "version": "7",
       "when": 1790046000000,

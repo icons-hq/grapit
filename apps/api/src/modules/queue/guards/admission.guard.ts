@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
+import { canUseAdminBookingBypass } from '../../../common/admin-booking-bypass.js';
 import {
   QueueService,
   readQueueAdmissionCookie,
@@ -21,6 +22,8 @@ type AuthenticatedRequest = Request & {
   user?: {
     id?: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
   };
   body?: Record<string, unknown>;
   queueAdmission?: {
@@ -49,7 +52,9 @@ export class AdmissionGuard implements CanActivate {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
-    if (request.user?.role === 'admin') {
+    // Restricted admin bundles (scanner, finance, ...) also carry role='admin'
+    // but must pass the queue like any Buyer.
+    if (canUseAdminBookingBypass(request.user)) {
       request.queueAdmission = this.createAdminBypassAdmission(userId);
       return true;
     }

@@ -42,4 +42,8 @@ export const users = pgTable('users', {
 }, (table) => [
   // Case-insensitive login/signup lookups. Not unique: legacy rows may differ only by case.
   index('idx_users_email_lower').using('btree', sql`lower(${table.email})`),
+  // Verified phone identity lookup for the per-person ticket limit (ticket-limit.ts, migration 0039).
+  index('idx_users_verified_phone_suffix')
+    .on(sql`(right(regexp_replace(translate(${table.phone}, '０１２３４５６７８９', '0123456789'), '[^0-9]', '', 'g'), 8))`)
+    .where(sql`${table.isPhoneVerified} = true`),
 ]);

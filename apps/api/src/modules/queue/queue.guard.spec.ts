@@ -118,7 +118,7 @@ describe('AdmissionGuard', () => {
 
   it('allows admin booking tests without queue cookies and attaches bypass admission context', async () => {
     const context = createExecutionContext({
-      user: { id: 'admin-1', role: 'admin' },
+      user: { id: 'admin-1', role: 'admin', adminCapabilityBundle: 'admin', adminCapabilities: [] },
       cookies: {},
     });
 
@@ -136,6 +136,42 @@ describe('AdmissionGuard', () => {
       refreshFamilyId: 'admin-bypass-admin-1',
       deviceSlotKey: 'admin-bypass-admin-1',
     });
+  });
+
+  it('keeps the legacy full admin (no bundle, no explicit capabilities) on the bypass', async () => {
+    const context = createExecutionContext({
+      user: { id: 'admin-1', role: 'admin', adminCapabilityBundle: null, adminCapabilities: [] },
+      cookies: {},
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['scanner bundle', { adminCapabilityBundle: 'scanner', adminCapabilities: [] }],
+    ['finance bundle', { adminCapabilityBundle: 'finance', adminCapabilities: [] }],
+    ['explicit capabilities only', { adminCapabilityBundle: null, adminCapabilities: ['field.scan.verify'] }],
+    ['claims not forwarded', {}],
+  ])('makes a restricted admin (%s) pass queue admission like a Buyer (audit #25)', async (_label, claims) => {
+    const context = createExecutionContext({
+      user: { id: 'scanner-1', role: 'admin', ...claims },
+      cookies: {},
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it('validates a restricted admin with queue cookies through normal admission', async () => {
+    const context = createExecutionContext({
+      user: { id: 'user-1', role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] },
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).toHaveBeenCalled();
+    const request = context.switchToHttp().getRequest() as { queueAdmission?: Record<string, string> };
+    expect(request.queueAdmission?.queueSessionId).toBe('queue-session-1');
   });
 
   it('validates confirm-payment requests through orderId binding', async () => {

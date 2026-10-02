@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import {
   QUEUE_ACTIVE_WINDOW_SECONDS,
   QUEUE_ADMISSION_COOKIE_NAME,
@@ -21,6 +22,8 @@ type AuthenticatedRequest = Request & {
   user: {
     id: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
   };
 };
 
@@ -46,11 +49,14 @@ export class QueueController {
       req.user.id,
       readRefreshCookie(req.cookies as Record<string, string | undefined>),
     );
+    // QueueService treats actorRole 'admin' as Admin Booking Bypass, so only a
+    // full admin may pass it; restricted bundles queue like Buyers.
+    const adminBookingBypass = canUseAdminBookingBypass(req.user);
     const result = await this.queueService.enterPerformanceQueue({
       performanceId,
       identity,
-      bypassQueue: req.user.role === 'admin',
-      actorRole: req.user.role,
+      bypassQueue: adminBookingBypass,
+      actorRole: adminBookingBypass ? 'admin' : undefined,
       presentedAdmissionToken: readQueueAdmissionCookie(
         req.cookies as Record<string, string | undefined>,
       ),

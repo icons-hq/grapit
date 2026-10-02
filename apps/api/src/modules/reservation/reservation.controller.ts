@@ -50,6 +50,8 @@ type QueueAdmissionRequest = ExpressRequest & {
   user: {
     id: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
     isEmailVerified?: boolean;
     isPhoneVerified?: boolean;
   };
@@ -59,6 +61,8 @@ type QueueAdmissionRequest = ExpressRequest & {
 type AuthenticatedReservationUser = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -87,6 +91,8 @@ export class ReservationController {
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
@@ -110,15 +116,19 @@ export class ReservationController {
       user: AuthenticatedReservationUser;
       queueAdmission?: { queueSessionId?: string };
     },
+    @Query('locale') locale?: string,
   ) {
     const reservation = await this.reservationService.confirmAndCreateReservation(
       body as ConfirmPaymentRequest,
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
+      locale,
     );
 
     // Return the queue slot as soon as the purchase is confirmed instead of

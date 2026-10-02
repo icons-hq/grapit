@@ -23,6 +23,8 @@ import { SEAT_STATUS_THROTTLE } from './seat-status-throttle.js';
 type AuthenticatedBookingUser = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -47,6 +49,8 @@ export class BookingController {
       {
         id: user.id,
         role: user.role,
+        adminCapabilityBundle: user.adminCapabilityBundle,
+        adminCapabilities: user.adminCapabilities,
         isEmailVerified: user.isEmailVerified,
         isPhoneVerified: user.isPhoneVerified,
       },

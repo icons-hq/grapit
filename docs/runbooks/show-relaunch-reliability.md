@@ -8,7 +8,7 @@
 - migration `0033`은 모든 회차의 활성 `showtime_id + seat_key`를 유일하게 만든다. 취소 이력은 보존한다. 기본 베네핏 중복 방지는 `active`와 `redeemed`를 모두 포함한다.
 - 보상 취소 `cancel_pending` 동안 DONE 재전송은 재발권하지 않는다. PG CANCELED만 미발권 취소 완료로 수렴한다. 전체 취소는 `CANCEL_STATUS_CHANGED`와 `PAYMENT_STATUS_CHANGED/CANCELED` 양쪽에서 같은 finalizer로 처리한다. 잘못된 금액의 callback도 이미 수락한 결제 상태를 덮어쓰지 않는다.
 - 일반 confirm과 비동기 progress는 동일 주문의 Redis confirmation lease를 공유한다. 잠금 경합·유실은 503 재시도로 처리한다. 타 요청이 처리 중인 정상 결제를 보상 취소하지 않는다. 이전 진행/실패/만료 이벤트는 확정·취소된 상태를 되돌리지 못한다. 이미 발권된 취소는 progress가 부분 갱신하지 않고 취소 finalizer로 수렴하도록 재시도한다.
-- 두 발권 경로는 같은 기본 베네핏 생성 함수와 사용자·공연 단위 매수 제한/advisory lock을 사용한다. 회차가 달라도 공연 매수 제한을 지킨다. 초과 결제 보상 사유는 좌석 충돌과 구분한다.
+- 두 발권 경로는 같은 기본 베네핏 생성 함수와 사용자·공연 단위 매수 제한/advisory lock을 사용한다. 회차가 달라도 공연 매수 제한을 지킨다. 초과 결제 보상 사유는 좌석 충돌과 구분한다. (2026-10 감사 #62 이후 '사용자'는 같은 인증 휴대폰(E.164)을 쓰는 Buyer Account 전체이며, 휴대폰 미인증 계정만 계정 단위로 남는다.)
 - 베네핏 생성(두 발권 경로)의 showtime 잠금은 `FOR SHARE`다(2026-10 감사 #56으로 `FOR NO KEY UPDATE`에서 변경). 같은 회차의 결제끼리는 공유해 병렬로 확정되고, Ticket FK의 KEY SHARE와도 호환한다. 설정 저장·live run·rollback·현장 특전 수령·repair apply는 `FOR NO KEY UPDATE`를 잡으므로 발권과는 계속 직렬화된다. 발권 transaction 안에서 이 잠금을 더 강한 모드로 올리지 않는다(공유 보유자끼리 upgrade하면 deadlock).
 - 설정 저장·live run·rollback은 transaction 시작 시 `lock_timeout 3s`, `statement_timeout 30s`를 건다. 결제가 회차를 잡고 있으면 기다리지 않고 409(`잠시 후 다시 시도`)로 실패하며, 기존 권리 동기화는 판매 수와 무관한 3개의 set-based 문장으로 처리한다.
 - 최초 payment deadline은 서버의 공연 정책을 사용하고 prepare 시 선택 좌석의 Redis TTL을 동일 기한으로 맞춘다(기존 TTL이 길면 단축). 공유 선택 목록과 관련 없는 좌석의 TTL은 줄이지 않는다. 결제 앱으로 넘길 때 기존 grace(8분, 생성 후 총 15분 cap)와 서버 응답 deadline을 유지한다. 클라이언트가 보낸 deadline을 기준으로 삼지 않는다. 화면 제목에는 고정 7분을 표시하지 않고 서버 countdown을 기준으로 안내한다. prepare 응답을 결제 위젯 호출 전에 적용하고, 좌석 선택 화면을 포함한 모든 클라이언트 타이머를 서버 기한에 맞춰 단축·연장한다. 준비 응답이 늦게 도착했을 때 화면이 종료됐거나 공연·회차·좌석 선택이 바뀌었으면 새 선택의 타이머를 변경하지 않고 이전 pending 예약만 정리한다(기존 결제 재개는 보존).
@@ -95,6 +95,57 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 - 대형 테이블 인덱스는 단일 transaction migration 안에서 `CREATE INDEX CONCURRENTLY`를 쓸 수 없다. 별도 승인 runbook으로 `CONCURRENTLY` 생성 후 migration은 `IF NOT EXISTS`로 확인만 하도록 분리한다.
 - migration 자체에 더 긴 잠금 대기가 필요하면(예: 0033의 `SET LOCAL lock_timeout = '10s'`) 그 migration 안에서만 명시하고, 판매 시간대를 피한 배포 창을 따로 잡는다.
 - 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
+
+## 예매 게이트 변경의 배포 차단 점검 (2026-10 감사 #62·#68·#70)
+
+### 결제수단 정책 (#70)
+
+reservation prepare는 공연 `allowed_payment_methods`에 없는 결제수단을 409로 거절한다. 정책 행이 없거나 목록이 비면 플랫폼 기본값 `["CARD"]`만 허용한다. 결제 단계 화면은 좌석을 유지한 채 다른 수단을 고르게 한다. 그래도 위젯에 보이는 수단이 정책에서 빠져 있으면 구매자는 그 수단으로 결제할 수 없다.
+
+1. Toss 위젯 관리자에서 `DEFAULT`·`uspay` variant에 실제로 켜진 결제수단을 read-only로 확인해 기준 목록을 정한다. 범주는 국내·해외 카드 `CARD`, 계좌이체 `TRANSFER`, 토스페이·네이버페이·카카오페이 `SIMPLE_PAY`, Alipay·PayPal·TrueMoney `FOREIGN_EASY_PAY`다. [2026-09-21 가맹점 설정 확인](../research/2026-09-21-payment-merchant-settings-audit.md) 기준으로 `DEFAULT`는 카드·계좌이체, `uspay`는 카드·Alipay·PayPal이므로 기준 목록은 `["CARD", "TRANSFER", "FOREIGN_EASY_PAY"]`다. 국내 간편결제가 켜져 있으면 `"SIMPLE_PAY"`를 추가한다.
+2. 배포 전에 판매 종료가 아닌 공개 공연 전체를 아래 쿼리로 점검한다. 쿼리의 목록을 1번 기준 목록으로 바꿔 넣는다. 결과가 한 행이라도 있으면 배포를 멈추고 관리자 공연 편집에서 결제수단을 저장한다. 운영자가 특정 공연에서 의도적으로 뺀 범주는 그 공연만 예외로 기록한다.
+3. 배포 전 관리자 화면은 `SIMPLE_PAY`를 선택지에 두지 않고, 불러올 때와 저장할 때 지운다. 이번 release부터 관리자 화면은 `@grabit/shared`의 `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`(`CARD`, `TRANSFER`, `SIMPLE_PAY`, `FOREIGN_EASY_PAY`)를 모두 제공한다. 이 목록은 결제 화면이 prepare에 보낼 수 있는 범주와 같다. 기준 목록에 `SIMPLE_PAY`가 있으면 나머지 범주만 배포 전에 맞춘다. 배포는 판매·대기열 시간 밖에 하고, 배포 직후 각 공연 편집에서 `국내 간편결제`를 체크해 저장한 뒤 점검 쿼리를 다시 실행해 0행을 확인한다. 그 사이 국내 간편결제를 고른 구매자는 좌석을 유지한 채 다른 수단 안내를 받는다.
+
+```sql
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+-- 목록은 1번에서 정한 기준 목록. 국내 간편결제가 켜져 있으면 "SIMPLE_PAY"를 추가한다.
+SELECT p.id, p.title, p.status, bp.id IS NULL AS missing_policy, bp.allowed_payment_methods
+FROM performances p
+LEFT JOIN booking_policies bp ON bp.performance_id = p.id
+WHERE p.publish_state = 'published' AND p.status <> 'ended'
+  AND (bp.id IS NULL
+    OR NOT bp.allowed_payment_methods @> '["CARD", "TRANSFER", "FOREIGN_EASY_PAY"]'::jsonb);
+ROLLBACK;
+```
+
+- 웹은 위젯의 가상계좌·휴대폰 결제 선택을 아직 `CARD`로 분류한다. 이 두 수단을 위젯에 노출하는 동안에는 공연별 제한이 적용되지 않는다. confirm은 Toss 승인 응답의 실제 결제수단을 정책과 대조하지 않는다(통합 후속).
+
+### migration 0039 (#62·#68)
+
+0039는 `reservations`의 admission token 원문을 `sha256:<hex>` digest로 바꾸는 UPDATE를 포함한다. prepare가 그동안 cookie token을 저장했으므로 과거 예약 대부분이 대상이다. drizzle migrator는 대기 중인 migration 전체를 한 transaction에서 실행한다. 그래서 행 잠금이 migrate commit까지 유지되고, 그동안 같은 예약을 갱신하는 confirm·webhook·만료 worker가 기다린다. 0039의 `lock_timeout = '10s'`를 넘는 잠금 대기는 migration을 실패시킨다(전체 rollback).
+
+1. 배포 전에 대상 행 수를 확인한다. `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';`
+2. 0039가 포함된 배포는 판매·대기열 시간 밖에 실행한다. 결제 기한이 남은 `PENDING_PAYMENT` 예약이 없는 시간이 가장 안전하다.
+3. 행 수가 커서 한 번에 다시 쓰기 부담스러우면, 배포 전에 승인된 운영 DB 절차로 같은 변환을 batch로 미리 실행한다. 아래 문장을 갱신 행이 0이 될 때까지 반복한다. 이전 revision은 이 컬럼을 예매 상세 응답에만 싣고, 웹은 그 값을 읽지 않는다. 따라서 미리 변환해도 동작이 바뀌지 않는다. 그러면 migration의 UPDATE는 그 사이 새로 쓰인 행만 다룬다.
+
+   ```sql
+   UPDATE reservations
+   SET admission_token = 'sha256:' || encode(sha256(convert_to(admission_token, 'UTF8')), 'hex')
+   WHERE id IN (
+     SELECT id FROM reservations
+     WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%'
+     LIMIT 5000
+   );
+   ```
+
+4. 롤링 구간에 이전 revision이 원문을 다시 쓸 수 있다. 새 API revision이 트래픽 100%를 받은 뒤, 승인된 운영 DB 절차로 0039의 `UPDATE reservations ...` 문장(또는 3번 batch)을 한 번 더 실행한다. 이미 digest인 값은 바뀌지 않는다. 1번 확인 쿼리의 결과가 0이어야 한다.
+5. 다시 쓴 행의 dead tuple을 정리하도록 승인된 운영 DB 절차로 `VACUUM (ANALYZE) reservations;`를 실행한다. 행 내용은 바뀌지 않는다.
+
+0039는 `idx_users_verified_phone_suffix`도 transaction 안에서 비동시로 만든다. 만드는 동안 `users` 쓰기가 기다리므로 같은 이유로 피크 밖에 배포한다. 같은 휴대폰의 linked 계정 pending 좌석 집계는 0038(감사 #59)이 만드는 `idx_reservation_seats_reservation_id`를 쓰므로, 0038이 같은 배포 또는 그 이전에 적용돼 있어야 한다. 배포 후 `SELECT indexname FROM pg_indexes WHERE indexname IN ('idx_users_verified_phone_suffix', 'idx_reservation_seats_reservation_id');`가 2행인지 확인한다.
+
+### 같은 휴대폰 계정의 결제 대기 (#62)
+
+같은 인증 휴대폰의 다른 계정이 결제 기한 안의 `PENDING_PAYMENT` 좌석을 갖고 있으면 좌석 lock과 prepare가 매수 제한(409)으로 막는다. 결제 기한이 지나거나 그 예매를 취소하면 풀린다. prepare 전의 Redis 좌석 hold는 계정 단위다. 그래서 두 계정이 거의 동시에 prepare를 통과하면, confirm advisory lock 뒤의 결제가 Toss 승인 후 매수 초과 보상 취소된다. CS 안내는 기존 매수 초과 보상 취소와 같다.
 
 ## 기본 베네핏 누락 복구
 

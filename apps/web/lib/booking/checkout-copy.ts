@@ -23,6 +23,7 @@ const copy = {
     quoteReady: '청구 금액을 확인한 후 결제해 주세요.',
     savedMethod: '이 예매의 결제수단', foreignCard: '해외 카드', domesticCard: '국내 카드', transfer: '계좌이체',
     methodLocked: '이 예매의 결제수단이 고정되었습니다. 아래에서 같은 결제수단을 선택해 주세요.',
+    methodNotAllowed: '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해 주세요.', chooseAnotherMethod: '다른 결제수단을 선택해 주세요',
   },
   en: {
     paymentTitle: 'Payment summary', ticketAmount: 'Tickets', seatStep: 'Choose seats', paymentStep: 'Payment', ticketStep: 'Tickets', back: 'Back to seats',
@@ -46,6 +47,7 @@ const copy = {
     quoteReady: 'Review the final charge before paying.',
     savedMethod: 'Payment method for this booking', foreignCard: 'International card', domesticCard: 'Korean card', transfer: 'Bank transfer',
     methodLocked: 'This booking is locked to its existing payment method. Select the same method below.',
+    methodNotAllowed: 'This payment method is not available for this event. Choose another payment method.', chooseAnotherMethod: 'Choose another payment method',
   },
   th: {
     paymentTitle: 'สรุปยอดชำระ', ticketAmount: 'ค่าบัตร', seatStep: 'เลือกที่นั่ง', paymentStep: 'ชำระเงิน', ticketStep: 'บัตร', back: 'กลับไปเลือกที่นั่ง',
@@ -69,6 +71,7 @@ const copy = {
     quoteReady: 'ตรวจสอบยอดเรียกเก็บสุดท้ายก่อนชำระเงิน',
     savedMethod: 'วิธีชำระเงินของการจองนี้', foreignCard: 'บัตรต่างประเทศ', domesticCard: 'บัตรเกาหลี', transfer: 'โอนผ่านธนาคาร',
     methodLocked: 'วิธีชำระเงินของการจองนี้ถูกล็อกแล้ว กรุณาเลือกวิธีเดิมด้านล่าง',
+    methodNotAllowed: 'วิธีชำระเงินนี้ใช้ไม่ได้กับการแสดงนี้ กรุณาเลือกวิธีชำระเงินอื่น', chooseAnotherMethod: 'กรุณาเลือกวิธีชำระเงินอื่น',
   },
   'zh-CN': {
     paymentTitle: '付款明细', ticketAmount: '票价', seatStep: '选择座位', paymentStep: '付款', ticketStep: '门票', back: '返回选座',
@@ -92,6 +95,7 @@ const copy = {
     quoteReady: '请确认最终扣款金额后付款。',
     savedMethod: '此预订的付款方式', foreignCard: '国际银行卡', domesticCard: '韩国银行卡', transfer: '银行转账',
     methodLocked: '此预订已锁定付款方式，请在下方选择原付款方式。',
+    methodNotAllowed: '此演出不支持该付款方式，请选择其他付款方式。', chooseAnotherMethod: '请选择其他付款方式',
   },
 } satisfies Record<SupportedLocale, Record<string, string>>;
 

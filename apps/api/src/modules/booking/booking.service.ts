@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, isNull } from 'drizzle-orm';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -18,6 +18,9 @@ import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
+import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
+import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
+import { assertShowtimeSalesOpen } from './showtime-sales-cutoff.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   decodeSeatRuntimeId,
@@ -53,6 +56,8 @@ type RuntimeSeatIdentity = {
 type BookingActor = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: readonly string[] | null;
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -499,24 +504,12 @@ export class BookingService {
     };
   }
 
+  /** Counts the buyer's verified phone identity, not only this account (see ticket-limit.ts). */
   private async countUserActiveTicketsForPerformance(
     userId: string,
     performanceId: string,
   ): Promise<number> {
-    const result = await this.db.execute(sql`
-      SELECT count(*)::int AS active_ticket_count
-      FROM ticket_items ti
-      INNER JOIN reservations r ON r.id = ti.reservation_id
-      INNER JOIN showtimes s ON s.id = ti.showtime_id
-      WHERE r.user_id = ${userId}
-        AND s.performance_id = ${performanceId}
-        AND r.status = 'CONFIRMED'
-        AND ti.status IN ('active', 'cancellation_pending')
-    `);
-    const count = (result.rows[0] as { active_ticket_count?: unknown } | undefined)
-      ?.active_ticket_count;
-
-    return typeof count === 'number' ? count : Number(count ?? 0);
+    return countBuyerActiveTicketsForPerformance(this.db, userId, performanceId);
   }
 
   private async assertSeatExistsInShowtimeSeatMap(
@@ -666,6 +659,7 @@ export class BookingService {
         performanceStatus: performances.status,
         performancePublishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
+        showtimeDateTime: showtimes.dateTime,
       })
       .from(showtimes)
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
@@ -675,7 +669,11 @@ export class BookingService {
     if (row?.performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
-    if (actor.role === 'admin') {
+    if (row) {
+      // Sales cutoff applies to every actor, including Admin Booking Bypass.
+      assertShowtimeSalesOpen(row.showtimeDateTime);
+    }
+    if (canUseAdminBookingBypass(actor)) {
       return;
     }
     if (row?.performancePublishState !== 'published') {

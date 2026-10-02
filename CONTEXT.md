@@ -365,8 +365,16 @@ A controlled booking and payment run by an authorized admin against a Published 
 _Avoid_: Public open, buyer sale, sandbox-only test, single-method-only smoke.
 
 **Admin Booking Bypass**:
-A limited operator permission for Admin Pre-Open Booking Smoke that lets an authorized admin book while Buyers are still blocked by the Sitewide Booking Gate or Performance Sale Status. It is not buyer access and is not evidence that public sales are open.
+A limited operator permission for Admin Pre-Open Booking Smoke that lets an authorized admin book while Buyers are still blocked by the Sitewide Booking Gate or Performance Sale Status. It is not buyer access and is not evidence that public sales are open. Only a full admin is authorized; restricted admin bundles such as scanner or finance book like Buyers. It never reopens a showtime whose sales have closed.
 _Avoid_: Public booking access, launch approval, general buyer bypass.
+
+**Per-Person Ticket Limit**:
+The performance's maximum ticket count for one person. Grabit identifies the person by a verified phone number (E.164): confirmed tickets of every Buyer Account that verified that phone count together, while a Buyer Account without a verified phone is limited on its own. Before payment, seats another account of that phone holds in an unexpired pending payment also count.
+_Avoid_: Per-account limit, per-order limit.
+
+**Showtime Sales Cutoff**:
+The moment a showtime stops accepting bookings: its scheduled start time. New seat locks, reservation prepares and payment approvals for a started showtime are rejected for every actor; a payment already approved is not rejected by the cutoff.
+_Avoid_: Cancellation Window, performance end.
 
 **Smoke Booking Cleanup**:
 The immediate cancellation, refund, and verified inventory restoration step after an Admin Pre-Open Booking Smoke. If normal cancellation does not return the Seat Identity to sellable inventory, the cleanup uses a controlled reopen path so real Performance inventory, settlement, and entry data stay clean.

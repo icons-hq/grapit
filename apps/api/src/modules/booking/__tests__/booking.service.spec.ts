@@ -27,6 +27,9 @@ import { encodeSeatRuntimeId } from '@grabit/shared';
 import { BookingGateway } from '../booking.gateway.js';
 import type { FeatureFlagsService } from '../../feature-flags/feature-flags.service.js';
 
+// Seat-lock fixtures need a showtime that has not started (sales close at its start time).
+const FUTURE_SHOWTIME_AT = new Date('2099-01-01T10:00:00.000Z');
+
 // Mock Redis client
 function createMockRedis() {
   return {
@@ -118,7 +121,7 @@ describe('BookingService', () => {
     if (includePerformanceStatus) {
       mockDb.select.mockReturnValueOnce(
         chainResult([{
-          performancePublishState: 'published', performanceStatus: options.performanceStatus ?? 'selling',
+          showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: options.performanceStatus ?? 'selling',
           bookingStartsAt: options.bookingStartsAt ?? null,
         }]),
       );
@@ -155,23 +158,105 @@ describe('BookingService', () => {
       mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
       mockNoSoldRecord(4);
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
+      const fullAdmin = {
+        id: userId,
+        role: 'admin',
+        adminCapabilityBundle: 'admin',
+        adminCapabilities: [],
+        isEmailVerified: true,
+        isPhoneVerified: true,
+      };
 
-      await expect(service.lockSeat(
-        { id: userId, role: 'admin', isEmailVerified: true, isPhoneVerified: true },
-        showtimeId,
-        seatId,
-      ))
+      await expect(service.lockSeat(fullAdmin, showtimeId, seatId))
         .resolves
         .toEqual(expect.objectContaining({ success: true, seatId }));
 
-      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
-        id: userId,
-        role: 'admin',
-        isEmailVerified: true,
-        isPhoneVerified: true,
-      });
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith(fullAdmin);
       expect(mockDb.select).toHaveBeenCalled();
       expect(mockRedis.eval).toHaveBeenCalled();
+    });
+
+    it('rejects seat locks once the showtime has started, for every actor (audit #2)', async () => {
+      vi.useFakeTimers();
+      const startsAt = new Date('2026-10-05T10:00:00.000Z');
+      vi.setSystemTime(startsAt);
+      try {
+        for (const actor of [
+          { id: userId, isEmailVerified: true, isPhoneVerified: true },
+          {
+            id: userId,
+            role: 'admin',
+            adminCapabilityBundle: 'admin',
+            adminCapabilities: [],
+            isEmailVerified: true,
+            isPhoneVerified: true,
+          },
+        ]) {
+          mockDb.select.mockReturnValueOnce(chainResult([{
+            showtimeDateTime: startsAt,
+            performancePublishState: 'published',
+            performanceStatus: 'selling',
+            bookingStartsAt: null,
+          }]));
+
+          const promise = service.lockSeat(actor, showtimeId, seatId);
+          await expect(promise).rejects.toThrow(ForbiddenException);
+          await expect(promise).rejects.toThrow('이미 시작된 회차는 예매할 수 없습니다.');
+        }
+
+        expect(mockRedis.eval).not.toHaveBeenCalled();
+        expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('still accepts seat locks one millisecond before the showtime start (audit #2)', async () => {
+      vi.useFakeTimers();
+      const startsAt = new Date('2026-10-05T10:00:00.000Z');
+      vi.setSystemTime(new Date(startsAt.getTime() - 1));
+      try {
+        mockDb.select
+          .mockReturnValueOnce(chainResult([{
+            showtimeDateTime: startsAt,
+            performancePublishState: 'published',
+            performanceStatus: 'selling',
+            bookingStartsAt: null,
+          }]))
+          .mockReturnValueOnce(chainResult([{ seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] } }]))
+          .mockReturnValueOnce(chainResult([]))
+          .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4 }]));
+        mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .resolves.toEqual(expect.objectContaining({ success: true }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not let a restricted scanner admin lock seats before the sale opens (audit #25)', async () => {
+      mockDb.select.mockReturnValueOnce(chainResult([{
+        showtimeDateTime: FUTURE_SHOWTIME_AT,
+        performancePublishState: 'published',
+        performanceStatus: 'upcoming',
+        bookingStartsAt: null,
+      }]));
+
+      await expect(service.lockSeat(
+        {
+          id: userId,
+          role: 'admin',
+          adminCapabilityBundle: 'scanner',
+          adminCapabilities: [],
+          isEmailVerified: true,
+          isPhoneVerified: true,
+        },
+        showtimeId,
+        seatId,
+      )).rejects.toThrow('예매는 추후 오픈 예정입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
     });
 
     it('rejects unverified actors before Redis or seat availability reads', async () => {
@@ -198,7 +283,7 @@ describe('BookingService', () => {
 
     it('rejects public users for upcoming performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performancePublishState: 'published', performanceStatus: 'upcoming', bookingStartsAt: null }]),
+        chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'upcoming', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);
@@ -216,7 +301,7 @@ describe('BookingService', () => {
       try {
         mockDb.select.mockReturnValueOnce(
           chainResult([{
-            performancePublishState: 'published', performanceStatus: 'selling',
+            showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling',
             bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
           }]),
         );
@@ -238,7 +323,7 @@ describe('BookingService', () => {
       vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
       try {
         mockNoSoldRecord(4, {
-          performancePublishState: 'published', performanceStatus: 'upcoming',
+          showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'upcoming',
           bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
         });
         mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
@@ -260,7 +345,7 @@ describe('BookingService', () => {
 
     it('rejects public users for ended performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performancePublishState: 'published', performanceStatus: 'ended', bookingStartsAt: null }]),
+        chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'ended', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);
@@ -274,7 +359,7 @@ describe('BookingService', () => {
 
     it('rejects seats that are not part of the showtime seat map before Redis lock mutation', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([]))
         .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4 }]));
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AZ-999`, '1F%3AZ-999']);
@@ -347,7 +432,7 @@ describe('BookingService', () => {
 
     it('limits additional locks by existing active tickets for the performance', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -370,7 +455,7 @@ describe('BookingService', () => {
 
     it('rejects a new lock when existing active tickets already reach the performance limit', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -392,7 +477,7 @@ describe('BookingService', () => {
 
     it('uses event-configured seatHoldMinutes as the Redis lock TTL', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -414,7 +499,7 @@ describe('BookingService', () => {
 
     it('returns the effective Lua TTL when adding a seat to an existing cart hold', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-2'] }] },
         }]))
@@ -469,7 +554,7 @@ describe('BookingService', () => {
     describe('unavailable seat defense', () => {
       it('should throw ConflictException when seat_inventories has status=sold', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))
@@ -489,7 +574,7 @@ describe('BookingService', () => {
 
       it('should throw ConflictException when seat_inventories has status=held_cancelled', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))
@@ -509,7 +594,7 @@ describe('BookingService', () => {
 
       it('should throw ConflictException when seat_inventories has status=disabled', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ showtimeDateTime: FUTURE_SHOWTIME_AT, performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))

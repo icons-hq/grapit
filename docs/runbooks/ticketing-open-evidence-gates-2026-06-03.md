@@ -244,13 +244,26 @@ Performance while ordinary Buyers remain blocked until public sale opens.
       Performance from the production checkout UI and provider widget.
 - [ ] Cross-check the matrix against API `allowedPaymentMethods` and provider
       admin settings, but do not treat code-supported payment lists as the
-      primary source.
+      primary source. Reservation prepare now rejects (409) any method missing
+      from `allowedPaymentMethods`, so the performance setting must list every
+      method category in the matrix (`CARD` covers domestic and overseas cards,
+      `FOREIGN_EASY_PAY` covers Alipay/PayPal/TrueMoney, `SIMPLE_PAY` covers
+      Toss Pay/Naver Pay/Kakao Pay, `TRANSFER` covers bank transfer). Before the
+      enforcing release, run the deploy-blocking check for every published
+      performance in `show-relaunch-reliability.md` (missing policy rows count
+      as `CARD` only). The admin performance form can save `SIMPLE_PAY` only
+      from that release on; the runbook gives the order when the widget shows
+      domestic easy pay.
 - [ ] Confirm current Toss live configuration for every method/provider path in
       the matrix.
 - [ ] Confirm deployed API/web revisions and environment flag state.
 - [ ] Confirm the target Performance remains `오픈예정` and ordinary Buyers are
       blocked.
 - [ ] Confirm the authorized admin account that can use Admin Booking Bypass.
+      Only a full admin (`admin` bundle, or a legacy admin without bundle and
+      explicit capabilities) bypasses; scanner/finance/operator bundles are
+      treated as Buyers. Verify the shared scanner account gets 403 from
+      `POST /api/v1/queue/performances/:id/enter` while the sale is closed.
 - [ ] Select one low-risk test seat for each method/provider path, or document
       when the same seat will be reused after cleanup verification.
 - [ ] Confirm final settlement, reconciliation, refund/cancel, and controlled

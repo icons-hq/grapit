@@ -246,7 +246,17 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
 - Lock keyspace is showtime-scoped.
 - Lock ownership is per user.
 - Lock and unlock operations use Lua-compatible atomic checks.
-- Max-ticket policy is enforced from performance booking policy.
+- Max-ticket policy is enforced from performance booking policy. Seat lock, prepare and
+  confirm count the confirmed tickets of every Buyer Account that verified the same phone
+  number (E.164 identity via `parseE164`); an account without a verified phone counts alone.
+  SQL narrows candidates through `idx_users_verified_phone_suffix` (last 8 digits) and the
+  confirm-time advisory lock uses the same phone scope (`apps/api/src/database/ticket-limit.ts`).
+  Seat lock and prepare also count seats the other accounts of that phone hold in unexpired
+  `PENDING_PAYMENT` reservations (read through `idx_reservation_seats_reservation_id`), so a
+  second account stops before payment; the buyer's own pending orders and the confirm-time
+  snapshot stay on confirmed tickets.
+- Showtime sales close at `showtimes.date_time`: seat lock and prepare (new and retried
+  orders) reject a started showtime with 403, including Admin Booking Bypass.
 - Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`. The endpoint is public, accepts only UUID showtime IDs, and has its own default-throttler budget of 60 requests per 10 seconds, counted per account when the request carries a valid access token and per trusted client IP otherwise (cookies never select the bucket). Its snapshot is cached for at most 1 second (shared Valkey key `seat-status-cache:{showtimeId}`, a 500 ms per-instance copy, and one in-flight computation per showtime per instance). Every seat change an instance sends (its own lock and unlock, and every `seat-update` it broadcasts for payment, cancellation, release or admin seat operations) is applied on top of any snapshot not read more than 100 ms (clock skew allowance) after that change, so a client re-reading after its own lock or unlock on the same instance sees it without forcing a recomputation; a snapshot read clearly later wins. The response carries `generatedAt`, the server time the underlying snapshot was read. Lock, prepare and confirm decisions never read this snapshot.
 - Snapshot staleness persists on the client: a re-read routed to an instance that has not seen a change (or a re-read during a socket reconnect) can return a snapshot up to 1 second older than a `seat-update` event the client already applied, and replacing the cached map with it shows the older state for that seat until its next event or re-read. Clients should keep `seat-update` events received after the response's `generatedAt` (server time) when replacing their map.
 - The seat status read does not modify `{showtimeId}:locked-seats`. Members whose lock key expired by TTL are removed by an atomic sweep that runs at most once per 10 seconds per showtime across instances, triggered when a snapshot is recomputed.
@@ -275,6 +285,14 @@ The web seat selection page (`BookingPage` + `useSeatLockController`) keeps the 
 - order binding for payment confirm where needed.
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
+Only a full admin (`resolveAdminCapabilitySnapshot(...).superuser`: the `admin` bundle or a
+legacy admin without bundle/capabilities) may bypass the queue, the Sitewide Booking Gate,
+Performance Publication and the sale start time (`apps/api/src/common/admin-booking-bypass.ts`).
+Restricted bundles such as scanner or finance also carry `role=admin` but queue and book
+like Buyers. Callers must forward the capability claims; without them the bypass is denied.
+The admission token is cookie-only: it is not stored on the Reservation and API responses
+return the `cookie-bound` marker instead. Migration 0039 replaced historical raw values with
+`sha256:<hex>` digests (rerun after a rolling cutover, see the relaunch runbook).
 
 Queue time and slot contract:
 
@@ -314,10 +332,26 @@ The confirm step inherits the same earlier deadline and keeps `activeUntilAt` se
 - required consent rows (booking requires `terms` and `privacy` on an active document version; see the [consent document versions runbook](runbooks/consent-document-versions.md)),
 - duplicate seats,
 - showtime booking context,
-- booking policy,
+- booking policy, including `allowedPaymentMethods` for a new order or a changed method
+  (409 `CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE` from `@grabit/shared` before seat TTLs
+  change; an unchanged fixed method is not re-checked; a missing policy row means the
+  platform default `['CARD']`, as in the public performance policy),
+- showtime sales cutoff,
 - active lock ownership,
 - canonical seat/tier/price,
 - queue admission.
+
+Checkout treats that 409 as a payment-method choice, not a seat failure: it keeps the seats
+and order identity and asks for another method. With the performance policy cached, it also
+disables payment for a method outside the policy before prepare. The Toss widget cannot hide
+individual methods, so the widget variant configuration must match the policy. The admin
+performance form offers `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS` from `@grabit/shared`
+(`CARD`, `TRANSFER`, `SIMPLE_PAY`, `FOREIGN_EASY_PAY`): exactly the categories the checkout
+widget mapping can submit, so every method prepare may reject is one an admin can allow.
+
+Reservation numbers are `GRP-<KST date>-<8 base32 CSPRNG chars>`. A unique collision
+regenerates the number (bounded retries); a concurrent prepare that lost the `toss_order_id`
+race answers through the idempotent existing-order path.
 
 The pending reservation stores server-side payment deadline, queue recovery timestamps,
 Checkout Payment Method and Provider Charge Quote. Authenticated order lookup reads the
@@ -363,6 +397,9 @@ they never block newer orphans. Asynchronous wallets are never released or faile
 
 The confirm contract and its operational alerts are detailed in the [show relaunch runbook](runbooks/show-relaunch-reliability.md#결제-승인-확인-계약-2026-09-30-오픈-감사-반영).
 
+`POST /api/v1/payments/confirm?locale=` returns the Reservation detail in the buyer's
+display locale, like reservation lookup.
+
 Only the returning browser holds the paymentKey, so the complete page repeats the confirm
 POST on transient failures (lost request/response, 408/425/429/5xx without a decided
 outcome, and a busy confirm lease) up to three times with 1s/2s/4s backoff, then offers a
@@ -394,6 +431,12 @@ Refund failure handling (2026-10):
 - A quote with nothing refundable (a 0 KRW tier after the booking day) is cancelled locally without a provider call; the captured payment keeps its status and the refund completes with `NO_PROVIDER_REFUND`.
 - The cancellation transaction writes the preallocated release job id onto held seats before the job is sent; if the send fails the seats are marked `JOB_ENQUEUE_FAILED`. Background-processing processes sweep `held_cancelled` seats whose hold expired more than 15 minutes ago and release them with the release worker's guards (no active/pending Ticket Item on the seat, never within 5 minutes of showtime). This covers whole-reservation and single Ticket Item cancellations. A partial index on `seat_inventories.reopen_hold_until` (non-null only for held seats) keeps the sweep off the full table.
 - A provider-cancelled reservation finalizes even when a Ticket Item never received a QR credential; it aborts only if a credential of a cancelled item would stay valid. A quote-less provider cancellation (for example a PG console cancel) cancels only still-valid Ticket Items and leaves earlier seat cancellations, their fees and their seats untouched. The provider amount of that cancellation (cancelled total minus the refunds already recorded) is compared with the remaining items' price + service fee: a single remaining item records the provider amount as its refund, several items keep price + service fee and the difference is stored on the payment as `quotelessCancellationReconciliation` (`UNATTRIBUTED`), and non-KRW or incomplete provider amounts are marked `UNVERIFIED` for finance reconciliation.
+
+When a definitive provider rejection restores rights, Benefit Entitlements revoked as
+`cancellation_pending` are re-validated under the showtime benefit lock: a limited right
+returns only while its run is still the latest completed live run, an included right only
+while the current configuration still includes it for the tier, and included rights added
+meanwhile are created (`apps/api/src/database/benefit-entitlement-restoration.ts`).
 
 Admin refund contract (`POST /api/v1/admin/bookings/:id/refund`):
 

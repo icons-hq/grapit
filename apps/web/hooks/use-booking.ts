@@ -244,6 +244,8 @@ export interface BookingPaymentSnapshot {
   lockExpiresAt: string | null;
   bookingPolicy: BookingPolicy;
   allowedPaymentMethods: PerformanceBookingPolicy['allowedPaymentMethods'];
+  /** False when the performance policy is not cached (e.g. a reload); the list is then only a fallback. */
+  allowedPaymentMethodsKnown: boolean;
   isPaymentDeadlineExpired: boolean;
 }
 
@@ -383,6 +385,7 @@ function buildBookingPaymentSnapshot(
       seatHoldMinutes,
     },
     allowedPaymentMethods: performancePolicy?.allowedPaymentMethods ?? [...DEFAULT_ALLOWED_PAYMENT_METHODS],
+    allowedPaymentMethodsKnown: Boolean(performancePolicy?.allowedPaymentMethods?.length),
     isPaymentDeadlineExpired: paymentDeadlineAt
       ? new Date(paymentDeadlineAt).getTime() <= getServerNowMs()
       : false,
@@ -703,10 +706,13 @@ export function usePrepareReservation() {
 
 export function useConfirmPayment() {
   return useMutation({
+    // The confirm response renders the complete screen, so it needs the display locale too.
     mutationFn: (data: ConfirmPaymentRequest) =>
-      apiClient.post<ReservationDetail>('/api/v1/payments/confirm', data, {
-        showErrorToast: false,
-      }),
+      apiClient.post<ReservationDetail>(
+        `/api/v1/payments/confirm?locale=${encodeURIComponent(getClientLocale())}`,
+        data,
+        { showErrorToast: false },
+      ),
     // Only the browser holds the paymentKey; the server cannot approve on its own.
     // A transient failure must not let the authenticated payment expire unconfirmed.
     retry: (failureCount, error) =>
