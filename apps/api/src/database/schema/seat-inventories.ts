@@ -1,4 +1,5 @@
-import { pgTable, uuid, varchar, timestamp, uniqueIndex, pgEnum } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, varchar, timestamp, index, uniqueIndex, pgEnum } from 'drizzle-orm/pg-core';
 import { showtimes } from './showtimes.js';
 import { venueLayoutSeats } from './venue-layout-seats.js';
 import { performanceSeatAssignments } from './performance-seat-assignments.js';
@@ -38,4 +39,8 @@ export const seatInventories = pgTable('seat_inventories', {
     table.floorKey,
     table.seatKey,
   ),
+  // Held-cancelled seat recovery sweep (migration 0044). Only held seats carry a reopen hold.
+  index('idx_seat_inv_reopen_hold_until')
+    .on(table.reopenHoldUntil)
+    .where(sql`${table.reopenHoldUntil} IS NOT NULL`),
 ]);

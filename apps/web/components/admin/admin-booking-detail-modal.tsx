@@ -233,6 +233,8 @@ export function AdminBookingDetailModal({
     open && showRefundForm && Boolean(bookingId) && canAdminRefund,
   );
   const refundQuote = refundPreviewQuery.data?.cancellationQuote ?? null;
+  // Server-side blockers (provider balance mismatch, closed cancellation window without override).
+  const refundBlockedReason = refundPreviewQuery.data?.blockedReason ?? null;
   const refundPreviewCalculating =
     refundPreviewQuery.isLoading || refundPreviewQuery.isFetching;
   const refundConfirmDisabled =
@@ -240,7 +242,8 @@ export function AdminBookingDetailModal({
     || isRefunding
     || refundPreviewCalculating
     || refundPreviewQuery.isError
-    || refundQuote === null;
+    || refundQuote === null
+    || Boolean(refundBlockedReason);
   const [showManualOpenForm, setShowManualOpenForm] = useState(false);
   const [manualOpenReason, setManualOpenReason] = useState('');
   const manualOpenMutation = useAdminManualOpenSeat();
@@ -551,7 +554,12 @@ export function AdminBookingDetailModal({
                   환불 금액을 계산하지 못했습니다. 잠시 후 다시 시도하세요.
                 </p>
               )}
-              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundQuote === null && (
+              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundBlockedReason && (
+                <p role="alert" className="mt-2 text-xs font-semibold text-[#C62828]">
+                  {refundBlockedReason}
+                </p>
+              )}
+              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundQuote === null && !refundBlockedReason && (
                 <p className="mt-2 text-xs font-semibold text-[#C62828]">
                   서버 환불 견적이 없어 환불을 진행할 수 없습니다.
                 </p>

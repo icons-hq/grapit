@@ -245,7 +245,7 @@ The cancellation-fee amount retained by Grabit when a Reservation or Ticket Item
 _Avoid_: Unrefunded balance, payment processor fee, Ticket Service Fee.
 
 **Administrative Full Refund Override**:
-An operator-authorized refund decision that bypasses the Cancellation Fee Schedule and refunds the full original payment amount, including Ticket Service Fees. It is separate from the default buyer and admin cancellation policy.
+An operator-authorized refund decision that bypasses the Cancellation Fee Schedule and refunds the full original payment amount, including Ticket Service Fees. It is separate from the default buyer and admin cancellation policy. It is the only refund path after the Cancellation Window closes, including on and after the show date.
 _Avoid_: Default refund policy, buyer self-service option, partial cancellation.
 
 **Administrative Entered Ticket Cancellation Override**:
@@ -373,7 +373,7 @@ The immediate cancellation, refund, and verified inventory restoration step afte
 _Avoid_: Optional cleanup, manual note, leaving a paid test reservation.
 
 **Cancellation Fee Schedule**:
-A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only.
+A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only. The booking day is the KST date of the payment approval (`payments.paid_at`), not the seat-selection time; legacy payments without an approval time fall back to the reservation creation time.
 _Avoid_: Flat refund penalty, Reservation-level cancellation fee.
 
 **Cancellation Window**:
