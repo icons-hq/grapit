@@ -257,6 +257,109 @@ describe('scrubSentryEvent free text (#155 via #156 catch-all)', () => {
   });
 });
 
+describe('scrubSentryEvent phone numbers and client addresses (audit D6)', () => {
+  const CLIENT_IPV4 = '203.0.113.7';
+  const CLIENT_IPV6 = '2001:db8::1';
+  // What @opentelemetry/redis-common's default serializer records for the SMS
+  // verified-flag lookup: every argument, including the hash-tagged phone key.
+  const REDIS_STATEMENT = `get {sms:${PHONE}}:verified`;
+  // TwilioVerifyApiError before audit D6 put the provider body in its message.
+  const TWILIO_MESSAGE = `Twilio Verify API 400: Invalid parameter \`To\`: ${PHONE} https://www.twilio.com/docs/errors/60200`;
+
+  function phoneAndAddressEvent(): Event {
+    return {
+      type: 'transaction',
+      transaction: 'POST /api/v1/sms/verify-code',
+      exception: { values: [{ type: 'TwilioVerifyApiError', value: TWILIO_MESSAGE }] },
+      contexts: {
+        trace: {
+          trace_id: 'a'.repeat(32),
+          span_id: 'b'.repeat(16),
+          data: {
+            'http.client_ip': CLIENT_IPV4,
+            'client.address': CLIENT_IPV6,
+            'client.port': 51_234,
+            'net.peer.ip': CLIENT_IPV4,
+            'net.peer.port': 51_234,
+            'network.peer.address': CLIENT_IPV6,
+            'network.peer.port': 51_234,
+            'net.sock.peer.addr': CLIENT_IPV4,
+            'user.ip_address': CLIENT_IPV4,
+            'http.method': 'POST',
+          },
+        },
+      },
+      spans: [
+        {
+          span_id: 'c'.repeat(16),
+          trace_id: 'a'.repeat(32),
+          start_timestamp: 1,
+          description: REDIS_STATEMENT,
+          data: {
+            'db.system': 'redis',
+            'db.statement': REDIS_STATEMENT,
+            'db.query.text': `evalsha 1 {sms:${PHONE}}:verify-count 900`,
+            'network.peer.address': CLIENT_IPV6,
+          },
+        },
+      ],
+      breadcrumbs: [{ category: 'console', message: `sms failed for ${PHONE}` }],
+    };
+  }
+
+  it('masks E.164 numbers in Redis statements, span names, exception values and breadcrumbs', () => {
+    const scrubbed = scrubSentryEvent(phoneAndAddressEvent());
+
+    expect(scrubbed.spans?.[0]?.description).toBe('get {sms:[redacted phone]}:verified');
+    expect(scrubbed.spans?.[0]?.data).toEqual({
+      'db.system': 'redis',
+      'db.statement': 'get {sms:[redacted phone]}:verified',
+      'db.query.text': 'evalsha 1 {sms:[redacted phone]}:verify-count 900',
+      'network.peer.address': SENTRY_FILTERED_VALUE,
+    });
+    expect(scrubbed.exception?.values?.[0]?.value).toBe(
+      'Twilio Verify API 400: Invalid parameter `To`: [redacted phone] https://www.twilio.com/docs/errors/60200',
+    );
+    expect(scrubbed.breadcrumbs?.[0]?.message).toBe('sms failed for [redacted phone]');
+    expect(JSON.stringify(scrubbed)).not.toContain(PHONE);
+  });
+
+  it('filters the client address the HTTP server span records', () => {
+    const scrubbed = scrubSentryEvent(phoneAndAddressEvent());
+
+    expect(scrubbed.contexts?.trace?.data).toEqual({
+      'http.client_ip': SENTRY_FILTERED_VALUE,
+      'client.address': SENTRY_FILTERED_VALUE,
+      'client.port': SENTRY_FILTERED_VALUE,
+      'net.peer.ip': SENTRY_FILTERED_VALUE,
+      'net.peer.port': SENTRY_FILTERED_VALUE,
+      'network.peer.address': SENTRY_FILTERED_VALUE,
+      'network.peer.port': SENTRY_FILTERED_VALUE,
+      'net.sock.peer.addr': SENTRY_FILTERED_VALUE,
+      'user.ip_address': SENTRY_FILTERED_VALUE,
+      'http.method': 'POST',
+    });
+    const serialized = JSON.stringify(scrubbed);
+    expect(serialized).not.toContain(CLIENT_IPV4);
+    expect(serialized).not.toContain(CLIENT_IPV6);
+  });
+
+  it('masks only +-prefixed 6-15 digit numbers', () => {
+    expect(redactSensitiveText(`to ${PHONE}, +14155552671 and +66812345678`))
+      .toBe('to [redacted phone], [redacted phone] and [redacted phone]');
+    // National numbers, short offsets, masked log values and order numbers stay.
+    for (const text of [
+      'phone 01012345678',
+      'offset +0900',
+      'phone +821*******78',
+      'order 20261002123456',
+      'retry +12345',
+    ]) {
+      expect(redactSensitiveText(text)).toBe(text);
+    }
+  });
+});
+
 describe('redactSensitiveText', () => {
   it('keeps ordinary error text unchanged', () => {
     for (const text of [

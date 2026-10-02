@@ -117,6 +117,8 @@ describe('SmsService app-side SMS limits', () => {
     const { HttpException } = await import('@nestjs/common');
     const mockRedis = {
       set: vi.fn().mockResolvedValue('OK'),
+      // send-code left the pending marker, so the verify limit is reached.
+      get: vi.fn().mockResolvedValue('1'),
       eval: vi.fn().mockResolvedValue(11),
     };
 
@@ -140,7 +142,7 @@ describe('SmsService app-side SMS limits', () => {
       pttl: vi.fn().mockResolvedValue(3000),
     };
 
-    const { SmsService } = await import('./sms.service.js');
+    const { SmsService, smsPendingVerificationKey } = await import('./sms.service.js');
     const { TwilioVerifyClient } = await import('./twilio-verify-client.js');
     const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
       .mockResolvedValueOnce({
@@ -155,7 +157,11 @@ describe('SmsService app-side SMS limits', () => {
 
     expect(result.success).toBe(true);
     expect(sendSpy).toHaveBeenCalledWith('+821012345678');
-    expect(mockRedis.set).not.toHaveBeenCalled();
+    // No resend cooldown; only the pending marker verify-code needs.
+    expect(mockRedis.set).toHaveBeenCalledTimes(1);
+    expect(mockRedis.set).toHaveBeenCalledWith(
+      smsPendingVerificationKey('+821012345678'), '1', 'PX', 600_000,
+    );
     expect(mockRedis.eval).toHaveBeenCalledTimes(2);
     expect(mockRedis.eval).toHaveBeenCalledWith(
       expect.stringContaining('INCR'),

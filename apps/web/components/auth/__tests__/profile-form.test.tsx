@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   apiPost: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  nextPhoneToken: vi.fn(() => 'phone-token'),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -48,26 +49,37 @@ vi.mock('@/stores/use-auth-store', () => ({
   }),
 }));
 
-vi.mock('../phone-verification', () => ({
-  PhoneVerification: (props: {
-    phone: string;
-    onPhoneChange: (value: string) => void;
-    onVerified: (token: string) => void;
-    isVerified: boolean;
-  }) => (
-    <div>
-      <input
-        aria-label="전화번호"
-        value={props.phone}
-        onChange={(event) => props.onPhoneChange(event.target.value)}
-      />
-      <button type="button" onClick={() => props.onVerified('phone-token')}>
-        phone verify
-      </button>
-      <span>{props.isVerified ? 'verified' : 'unverified'}</span>
-    </div>
-  ),
-}));
+vi.mock('../phone-verification', async () => {
+  const { useState } = await import('react');
+  return {
+    PhoneVerification: (props: {
+      phone: string;
+      onPhoneChange: (value: string) => void;
+      onVerified: (token: string) => void;
+      isVerified: boolean;
+    }) => {
+      // Stands for the widget's own SMS step state (code sent, timers).
+      const [codeSent, setCodeSent] = useState(false);
+      return (
+        <div>
+          <input
+            aria-label="전화번호"
+            value={props.phone}
+            onChange={(event) => props.onPhoneChange(event.target.value)}
+          />
+          <button type="button" onClick={() => setCodeSent(true)}>
+            send code
+          </button>
+          {codeSent ? <span>code sent</span> : null}
+          <button type="button" onClick={() => props.onVerified(mocks.nextPhoneToken())}>
+            phone verify
+          </button>
+          <span>{props.isVerified ? 'verified' : 'unverified'}</span>
+        </div>
+      );
+    },
+  };
+});
 
 const baseUser: ProfileSettingsUser = {
   id: 'user-1',
@@ -88,6 +100,10 @@ const baseUser: ProfileSettingsUser = {
 describe('ProfileForm settings center', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Drop queued once-values a failed test may leave behind.
+    mocks.apiPatch.mockReset();
+    mocks.nextPhoneToken.mockReset();
+    mocks.nextPhoneToken.mockReturnValue('phone-token');
   });
 
   it('renders account status, preferred language, marketing consent, and session controls', () => {
@@ -136,6 +152,62 @@ describe('ProfileForm settings center', () => {
     await viewer.click(screen.getByRole('button', { name: '변경사항 저장' }));
     await waitFor(() => expect(mocks.apiPatch).toHaveBeenCalledWith('/api/v1/users/me', { phone: baseUser.phone, phoneVerificationToken: 'phone-token' }));
     expect(mocks.routerPush).toHaveBeenCalledWith('/en/booking/show');
+  });
+
+  it('asks for phone verification again when the API reports the token as already used', async () => {
+    const tokenUsedMessage = '이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.';
+    mocks.nextPhoneToken
+      .mockReturnValueOnce('phone-token-1')
+      .mockReturnValueOnce('phone-token-2');
+    mocks.apiPatch
+      .mockRejectedValueOnce(Object.assign(new Error(tokenUsedMessage), {
+        statusCode: 400,
+        data: {
+          statusCode: 400,
+          message: tokenUsedMessage,
+          errorCode: 'PHONE_VERIFICATION_TOKEN_USED',
+        },
+      }))
+      .mockResolvedValueOnce({ ...baseUser, phone: '+821099998888' });
+    const viewer = userEvent.setup();
+    render(<ProfileForm user={baseUser} />);
+
+    await viewer.click(screen.getByRole('button', { name: '전화번호 변경' }));
+    await viewer.clear(screen.getByLabelText('전화번호'));
+    await viewer.type(screen.getByLabelText('전화번호'), '+821099998888');
+    await viewer.click(screen.getByRole('button', { name: 'send code' }));
+    await viewer.click(screen.getByRole('button', { name: 'phone verify' }));
+    expect(screen.getByText('verified')).toBeInTheDocument();
+    await viewer.click(screen.getByRole('button', { name: '변경사항 저장' }));
+
+    await waitFor(() => expect(screen.getByText('unverified')).toBeInTheDocument());
+    expect(mocks.toastError).toHaveBeenCalledWith(tokenUsedMessage);
+    // A fresh widget: the SMS step starts over for the same new number.
+    expect(screen.queryByText('code sent')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('전화번호')).toHaveValue('+821099998888');
+    expect(screen.getByRole('button', { name: '변경사항 저장' })).toBeDisabled();
+
+    await viewer.click(screen.getByRole('button', { name: 'phone verify' }));
+    await viewer.click(screen.getByRole('button', { name: '변경사항 저장' }));
+    await waitFor(() => expect(mocks.apiPatch).toHaveBeenLastCalledWith('/api/v1/users/me', {
+      phone: '+821099998888',
+      phoneVerificationToken: 'phone-token-2',
+    }));
+  });
+
+  it('keeps the phone verification for other save errors', async () => {
+    mocks.apiPatch.mockRejectedValueOnce(Object.assign(new Error('저장하지 못했습니다'), {
+      statusCode: 500,
+      data: { statusCode: 500, message: '저장하지 못했습니다' },
+    }));
+    const viewer = userEvent.setup();
+    render(<ProfileForm user={{ ...baseUser, isPhoneVerified: false }} />);
+
+    await viewer.click(screen.getByRole('button', { name: 'phone verify' }));
+    await viewer.click(screen.getByRole('button', { name: '변경사항 저장' }));
+
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('저장하지 못했습니다'));
+    expect(screen.getByText('verified')).toBeInTheDocument();
   });
 
   it('lets a verified customer start and cancel a phone change without saving it', async () => {

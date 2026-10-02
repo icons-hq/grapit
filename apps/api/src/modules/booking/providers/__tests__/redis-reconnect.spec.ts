@@ -410,9 +410,84 @@ describe('quit() during a Valkey outage', () => {
       await expect(client.quit()).resolves.toBe('OK');
       await ended;
       expect(client.status).toBe('end');
+      // The graceful path leaves the option alone; `end` already fails commands.
+      expect(client.options.enableOfflineQueue).toBe(true);
     } finally {
       client.disconnect();
       await stopRespStub(stub);
+    }
+  });
+
+  // Audit D6: the client never reaches `end` after a link-down quit(), so a
+  // drain cut off by the run deadline that still called Valkey afterwards
+  // waited in the offline queue until the forced exit.
+  it('fails commands issued after quit() at once instead of parking them (standalone)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const client = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'standalone')) as IORedis;
+
+    try {
+      await nextReconnect(client);
+      await expect(client.quit()).resolves.toBe('OK');
+      expect(client.status).not.toBe('end');
+
+      const get = await settleWithin(client.get('seat-status-cache:after-quit'), 200);
+      const publish = await settleWithin(client.publish('socket.io#/booking#', 'payload'), 200);
+
+      expect(get.state).toBe('rejected');
+      expect(publish.state).toBe('rejected');
+      expect(rejectionMessage(get)).toContain('enableOfflineQueue options is false');
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  it('fails commands issued after quit() at once instead of parking them (cluster)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const cluster = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'cluster')) as Cluster;
+
+    try {
+      await nextEvent(cluster, 'reconnecting');
+      await expect(cluster.quit()).resolves.toBe('OK');
+      expect(cluster.status).not.toBe('end');
+
+      const get = await settleWithin(cluster.get('seat-status-cache:after-quit'), 200);
+      const publish = await settleWithin(cluster.publish('socket.io#/booking#', 'payload'), 200);
+
+      expect(get.state).toBe('rejected');
+      expect(publish.state).toBe('rejected');
+      expect(rejectionMessage(get)).toContain('enableOfflineQueue options is false');
+    } finally {
+      cluster.disconnect();
+    }
+  });
+
+  it('turns the offline queue back on once the client is explicitly reconnected', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const client = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'standalone')) as IORedis;
+    let stub: Awaited<ReturnType<typeof startRespStub>> | undefined;
+
+    try {
+      await nextReconnect(client);
+      await client.quit();
+      expect(client.options.enableOfflineQueue).toBe(false);
+
+      stub = await startRespStub(port);
+      await client.connect();
+
+      expect(client.options.enableOfflineQueue).toBe(true);
+      await expect(client.ping()).resolves.toBe('PONG');
+    } finally {
+      client.disconnect();
+      if (stub) await stopRespStub(stub);
     }
   });
 });

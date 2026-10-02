@@ -149,7 +149,7 @@ describe('background worker runtime', () => {
     expect(resolveBackgroundWorkerRunDeadline(1_000)).toBe(
       1_000 + BACKGROUND_WORKER_JOB_TIMEOUT_MS - BACKGROUND_WORKER_CLEANUP_RESERVE_MS,
     );
-    // pg-boss graceful stop (8s) plus Redis/DB close must fit the reserve.
+    // pg-boss graceful stop (7s, checked here with margin) plus Redis/DB close must fit the reserve.
     expect(BACKGROUND_WORKER_CLEANUP_RESERVE_MS).toBeGreaterThanOrEqual(8_000 + 5_000);
 
     const deployScript = readFileSync(

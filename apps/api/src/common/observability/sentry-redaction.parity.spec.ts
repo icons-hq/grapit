@@ -8,6 +8,8 @@ import * as webRedaction from '../../../../web/lib/sentry-redaction.js';
 
 const SECRET = 'secret-value-123';
 const PHONE = '+821012345678';
+const CLIENT_IPV4 = '203.0.113.7';
+const CLIENT_IPV6 = '2001:db8::1';
 
 function eventFixtures(): Event[] {
   return [
@@ -77,6 +79,37 @@ function eventFixtures(): Event[] {
         },
       ],
     },
+    // Audit D6: Redis span statements, the HTTP server span's client address
+    // and a Twilio error body carried the phone number and visitor IP.
+    {
+      type: 'transaction',
+      transaction: 'POST /api/v1/sms/verify-code',
+      exception: {
+        values: [{ type: 'TwilioVerifyApiError', value: `Twilio Verify API 400: Invalid parameter \`To\`: ${PHONE}` }],
+      },
+      contexts: {
+        trace: {
+          trace_id: 'a'.repeat(32),
+          span_id: 'b'.repeat(16),
+          data: {
+            'http.client_ip': CLIENT_IPV4,
+            'client.address': CLIENT_IPV6,
+            'net.peer.ip': CLIENT_IPV4,
+            'network.peer.address': CLIENT_IPV6,
+            'http.method': 'POST',
+          },
+        },
+      },
+      spans: [
+        {
+          span_id: 'd'.repeat(16),
+          trace_id: 'a'.repeat(32),
+          start_timestamp: 1,
+          description: `get {sms:${PHONE}}:verified`,
+          data: { 'db.system': 'redis', 'db.statement': `get {sms:${PHONE}}:verified` },
+        },
+      ],
+    },
   ];
 }
 
@@ -97,6 +130,8 @@ describe('API and web Sentry redaction parity', () => {
     const serialized = JSON.stringify(apiEvents);
     expect(serialized).not.toContain(SECRET);
     expect(serialized).not.toContain(PHONE);
+    expect(serialized).not.toContain(CLIENT_IPV4);
+    expect(serialized).not.toContain(CLIENT_IPV6);
   });
 
   it('scrubs the same breadcrumbs to the same result', () => {
@@ -113,6 +148,8 @@ describe('API and web Sentry redaction parity', () => {
       `GET /x?y=${SECRET}#z`,
       'Connection is closed.',
       '?a/b x?y/z a/b?c/d?e',
+      `get {sms:${PHONE}}:verified`,
+      'phone 01012345678 offset +0900',
     ];
     expect(texts.map(webRedaction.redactSensitiveText))
       .toEqual(texts.map(apiRedaction.redactSensitiveText));

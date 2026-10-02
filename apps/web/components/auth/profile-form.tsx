@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { PhoneVerification } from '@/components/auth/phone-verification';
+import { isPhoneVerificationTokenUsedError } from '@/components/auth/phone-verification-errors';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { buildAuthRoute } from '@/lib/auth-return';
@@ -75,6 +76,8 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
   const [isEditingPhone, setIsEditingPhone] = useState(false);
   const [isPhoneVerified, setIsPhoneVerified] = useState(user.isPhoneVerified);
   const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
+  // Remounts PhoneVerification so a rejected token restarts the SMS step.
+  const [phoneVerificationResetKey, setPhoneVerificationResetKey] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [withdrawReason, setWithdrawReason] = useState('');
@@ -137,6 +140,12 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
       toast.success(copy.saved);
       if (returnTo && updatedUser.isEmailVerified && updatedUser.isPhoneVerified) router.push(returnTo);
     } catch (err) {
+      if (isPhoneVerificationTokenUsedError(err)) {
+        // The token already backed another write: verify the phone again.
+        setPhoneVerificationToken('');
+        setIsPhoneVerified(false);
+        setPhoneVerificationResetKey((key) => key + 1);
+      }
       const message =
         err instanceof Error
           ? err.message
@@ -249,6 +258,7 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
         <Label>{copy.phone}</Label>
         {user.isPhoneVerified && !isEditingPhone ? <Button type="button" variant="outline" onClick={() => setIsEditingPhone(true)}>{copy.changePhone}</Button> : isEditingPhone ? <Button type="button" variant="ghost" onClick={() => { setPhone(user.phone); setPhoneVerificationToken(''); setIsEditingPhone(false); }}>{copy.cancelPhoneChange}</Button> : null}
         <PhoneVerification
+          key={phoneVerificationResetKey}
           phone={phone}
           onPhoneChange={setPhone}
           onVerified={handlePhoneVerified}

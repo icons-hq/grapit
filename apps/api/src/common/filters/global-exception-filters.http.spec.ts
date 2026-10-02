@@ -1,3 +1,4 @@
+import { Agent } from 'node:http';
 import {
   BadRequestException,
   Body,
@@ -120,6 +121,7 @@ class HealthProbeController {
 
 describe('global exception filters (as registered by main.ts)', () => {
   let app: INestApplication;
+  let agent: Agent;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -129,6 +131,12 @@ describe('global exception filters (as registered by main.ts)', () => {
     app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalFilters(...createGlobalExceptionFilters());
     await app.init();
+    // One listening server and one keep-alive socket for the whole file.
+    // Without listen() supertest listens on and closes a new ephemeral port per
+    // request, and a pooled keep-alive socket from a closed server
+    // intermittently fails a request with "socket hang up".
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   beforeEach(() => {
@@ -136,12 +144,21 @@ describe('global exception filters (as registered by main.ts)', () => {
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
+  function http() {
+    return {
+      get: (path: string) => request(app.getHttpServer()).get(path).agent(agent),
+      post: (path: string) => request(app.getHttpServer()).post(path).agent(agent),
+      delete: (path: string) => request(app.getHttpServer()).delete(path).agent(agent),
+    };
+  }
+
   describe('HttpException response fields (#157)', () => {
     it('keeps code and blockers on the 409 the admin user deletion screen reads', async () => {
-      const response = await request(app.getHttpServer()).delete('/probe/user');
+      const response = await http().delete('/probe/user');
 
       expect(response.status).toBe(409);
       expect(response.body).toMatchObject({
@@ -155,7 +172,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('keeps retryAfterMs on SMS rate limit responses', async () => {
-      const response = await request(app.getHttpServer()).post('/probe/sms');
+      const response = await http().post('/probe/sms');
 
       expect(response.status).toBe(429);
       expect(response.body).toMatchObject({
@@ -166,7 +183,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('keeps the Terminus result on a failed public health check (503)', async () => {
-      const response = await request(app.getHttpServer()).get('/health');
+      const response = await http().get('/health');
 
       expect(response.status).toBe(503);
       expect(response.body).toEqual({
@@ -198,7 +215,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('keeps validation errors and the plain message contract', async () => {
-      const validation = await request(app.getHttpServer()).get('/probe/validation');
+      const validation = await http().get('/probe/validation');
       expect(validation.status).toBe(400);
       expect(validation.body).toMatchObject({
         statusCode: 400,
@@ -206,7 +223,7 @@ describe('global exception filters (as registered by main.ts)', () => {
         errors: { phone: ['Required'] },
       });
 
-      const notFound = await request(app.getHttpServer()).get('/probe/plain-message');
+      const notFound = await http().get('/probe/plain-message');
       expect(notFound.status).toBe(404);
       expect(notFound.body).toMatchObject({
         statusCode: 404,
@@ -218,7 +235,7 @@ describe('global exception filters (as registered by main.ts)', () => {
 
   describe('unexpected 500 and gateway failures reach Sentry (#156)', () => {
     it('reports a synchronous non-HTTP error and hides its message', async () => {
-      const response = await request(app.getHttpServer()).get('/probe/redis-down');
+      const response = await http().get('/probe/redis-down');
 
       expect(response.status).toBe(500);
       expect(response.body).toEqual({
@@ -235,7 +252,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('reports a rejected async handler (pg pool timeout)', async () => {
-      const response = await request(app.getHttpServer()).get('/probe/pg-timeout');
+      const response = await http().get('/probe/pg-timeout');
 
       expect(response.status).toBe(500);
       expect(response.body.message).toBe('Internal server error');
@@ -245,7 +262,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('reports a 5xx HttpException but not a 4xx one', async () => {
-      const response = await request(app.getHttpServer()).get('/probe/unavailable');
+      const response = await http().get('/probe/unavailable');
 
       expect(response.status).toBe(503);
       expect(response.body.message).toBe('잠시 후 다시 시도해주세요');
@@ -256,7 +273,7 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('reports a Toss provider failure answered with 502', async () => {
-      const response = await request(app.getHttpServer()).get('/probe/toss/PROVIDER_ERROR');
+      const response = await http().get('/probe/toss/PROVIDER_ERROR');
 
       expect(response.status).toBe(502);
       expect(response.body).toMatchObject({
@@ -274,12 +291,11 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('lets the Toss filter win over the catch-all for client and conflict codes', async () => {
-      const rejected = await request(app.getHttpServer()).get('/probe/toss/REJECT_CARD_PAYMENT');
+      const rejected = await http().get('/probe/toss/REJECT_CARD_PAYMENT');
       expect(rejected.status).toBe(400);
       expect(rejected.body.code).toBe('REJECT_CARD_PAYMENT');
 
-      const duplicated = await request(app.getHttpServer())
-        .get('/probe/toss/ALREADY_PROCESSED_PAYMENT');
+      const duplicated = await http().get('/probe/toss/ALREADY_PROCESSED_PAYMENT');
       expect(duplicated.status).toBe(409);
       expect(duplicated.body.code).toBe('ALREADY_PROCESSED_PAYMENT');
 
@@ -287,14 +303,14 @@ describe('global exception filters (as registered by main.ts)', () => {
     });
 
     it('keeps body-parser client errors as 4xx without reporting them', async () => {
-      const tooLarge = await request(app.getHttpServer())
+      const tooLarge = await http()
         .post('/probe/echo')
         .set('Content-Type', 'application/json')
         .send(JSON.stringify({ filler: 'x'.repeat(200 * 1024) }));
       expect(tooLarge.status).toBe(413);
       expect(tooLarge.body).toMatchObject({ statusCode: 413 });
 
-      const malformed = await request(app.getHttpServer())
+      const malformed = await http()
         .post('/probe/echo')
         .set('Content-Type', 'application/json')
         .send('{"broken":');

@@ -96,6 +96,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - [ ] 첫 Deploy run의 `Guard sitewide booking gate`, `Database preflight`(PGOPTIONS readback, freeze, connection budget), deploy-api·deploy-web의 `Re-check sitewide booking gate before deploy` 결과와 step summary를 확인한다. #60 #64
 - [ ] edge secret을 이번 배포에 넣었거나 IP 신뢰 코드가 처음 나간 경우, 새 API revision이 트래픽을 받자마자 two-network check와 위조 header probe를 실행한다. 실패하면 즉시 `gcloud run services update-traffic grabit-api --to-revisions=<이전 revision>=100`. 이후 회전·rollback 순서는 [Client IP trust](managed-demo-cost-floor.md#phase-4--cloudflare-edge-proxy-and-load-balancer-retirement)를 따른다. Worker rollback이나 LB fallback 전에는 API binding을 먼저 제거한다. #152 #158
 - [ ] API·worker 기동 로그와 Sentry에 QR keyring 경고(1.3의 마지막 네 문자열)가 없는지 확인한다. #109
+- [ ] API 기동 로그와 Sentry에 `CRITICAL: EDGE_PROXY_SHARED_SECRET is not set in production`(Sentry `fatal`)이 없는지 본다. 있으면 API에 edge secret binding이 없어 IP 기준 한도(이메일 인증·가입·로그인·비밀번호 재설정)가 Worker egress 주소 하나로 모일 수 있다. LB fallback·Worker rollback 중이면 의도된 상태다. 실행 중 `Resolved client IP ... is a Cloudflare address` warn(분당 최대 1회)이 보이면 Worker가 secret을 보내지 않거나 API·Worker 값이 다르다. 기동 실패로 막으려면 `EDGE_PROXY_SHARED_SECRET_REQUIRED=true`를 API에 직접 설정한다(rollback 전에는 먼저 해제). [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration). #152 #158
 
 ### 2.2 DB 후속 (승인된 운영 DB 절차)
 

@@ -11,11 +11,13 @@ import { drizzleProvider } from '../src/database/drizzle.provider.js';
 import { seatInventories } from '../src/database/schema/seat-inventories.js';
 import {
   buildPgBossOptions,
+  closePgBossForShutdown,
   initializePgBoss,
   loadPgBossConstructor,
   PG_BOSS_JOB_NAMES,
   PgBossInitializationError,
   stopPgBossForShutdown,
+  stopPgBossWorkersForShutdown,
   type PgBossContract,
   type StartablePgBoss,
 } from '../src/modules/jobs/pgboss.provider.js';
@@ -357,6 +359,37 @@ describe('database runtime hardening (pool errors, pg-boss budget/startup/shutdo
       } finally {
         await stopPgBossForShutdown(producer, 1_000);
       }
+    });
+
+    it('still enqueues between the worker stop and the pool close, as the API does for requests in flight at SIGTERM', async () => {
+      const PgBoss = loadPgBossConstructor();
+      const twoPhase = await initializePgBoss({
+        createBoss: () => new PgBoss(buildPgBossOptions(databaseUrl, true, {
+          max: 1,
+          applicationName: 'grabit-it-two-phase-pgboss',
+        })),
+        processesJobs: true,
+        maxAttempts: 1,
+        required: true,
+      });
+
+      await stopPgBossWorkersForShutdown(twoPhase, 1_000);
+      expect(twoPhase.isAvailable).toBe(true);
+      const jobId = await twoPhase.send(
+        PG_BOSS_JOB_NAMES.refundCancelRetry,
+        { refundId: randomUUID(), attempt: 1 },
+        { startAfter: new Date(Date.now() + 3_600_000) },
+      );
+      expect(jobId).toBeTruthy();
+
+      await closePgBossForShutdown(twoPhase);
+      expect(twoPhase.isAvailable).toBe(false);
+      expect((twoPhase as StartablePgBoss).getDb?.()?.opened).toBe(false);
+      const { rows } = await admin.query<{ state: string }>(
+        'SELECT state FROM pgboss.job WHERE id = $1',
+        [jobId],
+      );
+      expect(rows[0]?.state).toBe('created');
     });
 
     it('fails an in-flight job back to pg-boss on graceful shutdown instead of leaving it active (audit #153)', async () => {

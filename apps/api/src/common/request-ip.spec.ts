@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Logger } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  CLOUDFLARE_CLIENT_IP_WARNING_INTERVAL_MS,
   EDGE_CLIENT_IP_HEADER,
   EDGE_PROXY_SECRET_HEADER,
+  EDGE_PROXY_SECRET_MISSING_MESSAGE,
   EDGE_PROXY_SHARED_SECRET_ENV,
+  checkEdgeProxySecretAtStartup,
   resolveTrustedRequestIp,
 } from './request-ip.js';
 
@@ -199,5 +203,120 @@ describe('resolveTrustedRequestIp', () => {
         }),
       ),
     ).toBe('2001:db8::44');
+  });
+});
+
+describe('checkEdgeProxySecretAtStartup (x3 ops guard)', () => {
+  function reporter() {
+    return { critical: vi.fn(), captureMessage: vi.fn() };
+  }
+
+  it.each<[string, NodeJS.ProcessEnv]>([
+    ['NODE_ENV', { NODE_ENV: 'production' }],
+    ['GRABIT_ENV', { NODE_ENV: 'test', GRABIT_ENV: 'production' }],
+  ])('logs CRITICAL and reports to Sentry when production (%s) has no edge secret', (_label, env) => {
+    const report = reporter();
+
+    expect(checkEdgeProxySecretAtStartup({ ...env, [EDGE_PROXY_SHARED_SECRET_ENV]: ' , ' }, report))
+      .toBe('missing');
+
+    expect(report.critical).toHaveBeenCalledWith(EDGE_PROXY_SECRET_MISSING_MESSAGE);
+    expect(report.captureMessage).toHaveBeenCalledWith(EDGE_PROXY_SECRET_MISSING_MESSAGE);
+    expect(EDGE_PROXY_SECRET_MISSING_MESSAGE).toMatch(/^CRITICAL: /);
+  });
+
+  it('refuses to start only when EDGE_PROXY_SHARED_SECRET_REQUIRED=true', () => {
+    const report = reporter();
+
+    expect(() => checkEdgeProxySecretAtStartup({
+      NODE_ENV: 'production',
+      EDGE_PROXY_SHARED_SECRET_REQUIRED: 'true',
+    }, report)).toThrow(/EDGE_PROXY_SHARED_SECRET_REQUIRED=true, aborting startup/);
+    expect(report.captureMessage).toHaveBeenCalledTimes(1);
+
+    expect(checkEdgeProxySecretAtStartup({
+      NODE_ENV: 'production',
+      EDGE_PROXY_SHARED_SECRET_REQUIRED: 'false',
+    }, reporter())).toBe('missing');
+  });
+
+  it('stays quiet with a secret or outside production', () => {
+    const report = reporter();
+
+    expect(checkEdgeProxySecretAtStartup({
+      NODE_ENV: 'production',
+      [EDGE_PROXY_SHARED_SECRET_ENV]: 'edge-secret-value',
+      EDGE_PROXY_SHARED_SECRET_REQUIRED: 'true',
+    }, report)).toBe('configured');
+    expect(checkEdgeProxySecretAtStartup({ NODE_ENV: 'development' }, report)).toBe('not_production');
+    expect(report.critical).not.toHaveBeenCalled();
+    expect(report.captureMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('Cloudflare address resolved as the client IP (x3 ops guard)', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+  // Later than the real clock (earlier tests warn with it) and an hour apart
+  // per test, so the once-per-minute state never mutes the next test.
+  let baseTimeMs = Date.UTC(2100, 0, 1);
+
+  beforeEach(() => {
+    delete process.env[EDGE_PROXY_SHARED_SECRET_ENV];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    baseTimeMs += 3_600_000;
+    vi.setSystemTime(baseTimeMs);
+    warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    warn.mockRestore();
+  });
+
+  // A Grabit edge Worker subrequest without the secret: cf-connecting-ip is
+  // the Worker's own egress address in 2a06:98c0::/29, the same for everyone.
+  const workerSubrequest = () =>
+    requestWithIp('2a06:98c0:3600::103', '2a06:98c0:3600::103', {
+      'cf-connecting-ip': '2a06:98c0:3600::103',
+    });
+
+  it('warns at most once per minute while every visitor resolves to a Worker egress address', () => {
+    for (let i = 0; i < 5; i++) {
+      expect(resolveTrustedRequestIp(workerSubrequest())).toBe('2a06:98c0:3600::103');
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('2a06:98c0:3600::103');
+    expect(String(warn.mock.calls[0]?.[0])).toContain('EDGE_PROXY_SHARED_SECRET');
+
+    vi.setSystemTime(baseTimeMs + CLOUDFLARE_CLIENT_IP_WARNING_INTERVAL_MS - 1);
+    resolveTrustedRequestIp(workerSubrequest());
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(baseTimeMs + CLOUDFLARE_CLIENT_IP_WARNING_INTERVAL_MS);
+    resolveTrustedRequestIp(workerSubrequest());
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('also warns when a Cloudflare peer itself becomes the client IP', () => {
+    process.env[EDGE_PROXY_SHARED_SECRET_ENV] = 'edge-secret-value';
+    try {
+      // The Worker stopped sending the secret: the peer is used.
+      expect(resolveTrustedRequestIp(requestWithIp('172.70.207.202', '172.70.207.202', {
+        [EDGE_CLIENT_IP_HEADER]: '198.51.100.44',
+      }))).toBe('172.70.207.202');
+    } finally {
+      delete process.env[EDGE_PROXY_SHARED_SECRET_ENV];
+    }
+
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not warn for visitor addresses', () => {
+    resolveTrustedRequestIp(requestWithIp('172.70.207.202', '172.70.207.202', {
+      'cf-connecting-ip': '198.51.100.44',
+    }));
+    resolveTrustedRequestIp(requestWithIp('2001:db8::44', '2001:db8::44'));
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });

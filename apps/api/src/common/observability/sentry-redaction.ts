@@ -70,11 +70,36 @@ const HEADER_ATTRIBUTE_PREFIXES = [
 const QUERY_PARAMETER_KEYS = new Set(['drizzle.query.params']);
 const QUERY_PARAMETER_PREFIXES = ['db.query.parameter.'];
 
+// Attributes holding the statement a database client sent. The Redis
+// instrumentation serializes every argument (`get {sms:+8210...}:verified`);
+// the free-text redaction below removes phone numbers from it.
+const DB_STATEMENT_KEYS = new Set(['db.statement', 'db.query.text']);
+
+// Span attributes that carry the visitor's network address (Sentry
+// `httpServerSpansIntegration`, OpenTelemetry HTTP semantic conventions).
+const CLIENT_ADDRESS_KEYS = new Set([
+  'client.address',
+  'client.port',
+  'http.client_ip',
+  'net.peer.ip',
+  'net.peer.port',
+  'network.peer.address',
+  'network.peer.port',
+  'net.sock.peer.addr',
+  'user.ip_address',
+]);
+
 // drizzle-orm wraps every failed query in `DrizzleQueryError` whose message is
 // `Failed query: <sql>\nparams: <bound values>`. The values carry emails, phone
 // numbers, password hashes, refresh token hashes and paymentKey; keep the SQL
 // text (placeholders only) and drop the values.
 const DRIZZLE_QUERY_PARAMS_PATTERN = /(Failed query: [\s\S]*?\n)params: [\s\S]*$/;
+
+// An E.164 phone number (`+` and 6-15 digits), the same shape the Redis error
+// sanitizer masks. SMS keys (`{sms:+8210...}:otp`) and Twilio error bodies
+// carry it. Digits without the `+` are left alone.
+const E164_PHONE_PATTERN = /\+\d{6,15}\b/g;
+export const REDACTED_PHONE_VALUE = '[redacted phone]';
 
 // A URL or path (`https://host/p?x`, `/p?x`) followed by a query string or
 // fragment inside free text such as an error message or a span name.
@@ -97,13 +122,14 @@ export function stripUrlQuery(url: string): string {
 }
 
 /**
- * Redacts bound SQL parameter values (`DrizzleQueryError` messages) and URL
- * query strings from free text: exception values, messages, span names and
- * log lines.
+ * Redacts bound SQL parameter values (`DrizzleQueryError` messages), E.164
+ * phone numbers and URL query strings from free text: exception values,
+ * messages, span names, database statements and log lines.
  */
 export function redactSensitiveText(text: string): string {
   return text
     .replace(DRIZZLE_QUERY_PARAMS_PATTERN, `$1params: ${SENTRY_FILTERED_VALUE}`)
+    .replace(E164_PHONE_PATTERN, REDACTED_PHONE_VALUE)
     .replace(NON_WHITESPACE_RUN_PATTERN, stripQueryFromTextToken);
 }
 
@@ -151,7 +177,7 @@ function scrubAttributes(data: Record<string, unknown> | undefined): void {
       delete data[key];
       continue;
     }
-    if (isQueryParameterKey(key)) {
+    if (isQueryParameterKey(key) || CLIENT_ADDRESS_KEYS.has(key)) {
       data[key] = SENTRY_FILTERED_VALUE;
       continue;
     }
@@ -159,6 +185,10 @@ function scrubAttributes(data: Record<string, unknown> | undefined): void {
     const value = data[key];
     if (URL_VALUE_KEYS.has(key)) {
       if (typeof value === 'string') data[key] = stripUrlQuery(value);
+      continue;
+    }
+    if (DB_STATEMENT_KEYS.has(key)) {
+      if (typeof value === 'string') data[key] = redactSensitiveText(value);
       continue;
     }
 
@@ -232,9 +262,10 @@ function scrubMessages(event: Event): void {
 }
 
 /**
- * Removes credentials, request payloads, bound SQL parameter values and URL
- * query strings from an error or transaction event before it is sent to
- * Sentry. Mutates and returns the same event.
+ * Removes credentials, request payloads, bound SQL parameter values, phone
+ * numbers, client addresses and URL query strings from an error or
+ * transaction event before it is sent to Sentry. Mutates and returns the same
+ * event.
  */
 export function scrubSentryEvent<T extends Event>(event: T): T {
   scrubRequest(event.request);
