@@ -34,6 +34,8 @@ export interface ScannerOfflineQueueItem {
   deviceAttemptId: string;
   state: 'pending' | 'synced' | 'rejected';
   attemptedAt: string;
+  /** Seat of the scanned ticket, when the device recorded it. */
+  seatLabel?: string | null;
   reason?: string | null;
   /** Server result of a synced/rejected attempt (a ScannerCheckInResult value). */
   result?: string | null;

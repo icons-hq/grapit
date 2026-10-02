@@ -78,6 +78,16 @@ export class BenefitRedemptionService {
             set_config('statement_timeout', ${FIELD_REDEMPTION_STATEMENT_TIMEOUT}, true)
         `);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`benefit:${input.deviceAttemptId}`}, 0))`);
+        // A retry of a recorded attempt answers its first result without waiting
+        // for the showtime lock: the advisory lock serializes this attempt and its
+        // record is never changed, so a payment holding the showtime cannot turn
+        // the re-check of a settled redemption into a 409.
+        const existingAttempt = await this.findExistingAttemptByDeviceId(tx, input.deviceAttemptId);
+        if (existingAttempt) {
+          const recordedEntitlement = await this.findEntitlement(input.benefitEntitlementId, tx);
+          if (!recordedEntitlement) return notEligibleResponse();
+          return responseForMatchingAttempt(existingAttempt, recordedEntitlement, input, context);
+        }
         const entitlement = await this.findEntitlement(input.benefitEntitlementId, tx);
         if (entitlement) {
           // Configuration/live allocation uses the same showtime lock. Record the
@@ -106,26 +116,11 @@ export class BenefitRedemptionService {
     const entitlement = await this.findEntitlement(input.benefitEntitlementId, db);
 
     if (!entitlement) {
-      return {
-        outcome: 'not_eligible',
-        benefitEntitlement: null,
-        rejectionReason: rejectionReasonFor('not_eligible'),
-      };
+      return notEligibleResponse();
     }
 
-    const existingAttempt = await this.findExistingAttemptByDeviceId(
-      db,
-      input.deviceAttemptId,
-    );
-    if (existingAttempt) {
-      if (existingAttempt.benefitEntitlementId !== entitlement.id || existingAttempt.ticketItemId !== entitlement.ticketItemId
-        || existingAttempt.showtimeId !== entitlement.showtimeId || existingAttempt.scannerUserId !== context.scannerUserId
-        || existingAttempt.redactedTokenRef !== redactedTokenRef(input.token)
-        || (existingAttempt.requestedShowtimeId ?? existingAttempt.showtimeId) !== input.showtimeId) {
-        throw new ConflictException('다른 특전 지급에 사용된 요청입니다. 다시 확인해주세요.');
-      }
-      return responseForExistingAttempt(existingAttempt, entitlement);
-    }
+    // redeem() already answered a recorded attempt before taking the showtime
+    // lock, and its advisory lock keeps another request of this attempt out.
 
     let contractShowtimeId: string;
     let contractTicketItemId: string;
@@ -400,6 +395,34 @@ function duplicateResponse(
       redemptionEventId: priorRedemption?.id,
     },
   };
+}
+
+function notEligibleResponse(): BenefitRedemptionResponse {
+  return {
+    outcome: 'not_eligible',
+    benefitEntitlement: null,
+    rejectionReason: rejectionReasonFor('not_eligible'),
+  };
+}
+
+/**
+ * Replays a recorded attempt. The request must repeat the recorded one (same
+ * benefit, Ticket Item, showtimes, scanner and QR); reusing its id for another
+ * redemption is a 409 and never a second hand-over.
+ */
+function responseForMatchingAttempt(
+  existingAttempt: ExistingRedemptionRow,
+  entitlement: BenefitEntitlementRow,
+  input: BenefitRedemptionRequest,
+  context: BenefitRedemptionContext,
+): BenefitRedemptionResponse {
+  if (existingAttempt.benefitEntitlementId !== entitlement.id || existingAttempt.ticketItemId !== entitlement.ticketItemId
+    || existingAttempt.showtimeId !== entitlement.showtimeId || existingAttempt.scannerUserId !== context.scannerUserId
+    || existingAttempt.redactedTokenRef !== redactedTokenRef(input.token)
+    || (existingAttempt.requestedShowtimeId ?? existingAttempt.showtimeId) !== input.showtimeId) {
+    throw new ConflictException('다른 특전 지급에 사용된 요청입니다. 다시 확인해주세요.');
+  }
+  return responseForExistingAttempt(existingAttempt, entitlement);
 }
 
 function responseForExistingAttempt(

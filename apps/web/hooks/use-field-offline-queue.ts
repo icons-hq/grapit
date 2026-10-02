@@ -153,6 +153,7 @@ function toQueueItem(record: PendingScanAttemptRecord): ScannerOfflineQueueItem 
     deviceAttemptId: record.deviceAttemptId,
     state: record.syncState,
     attemptedAt: record.attemptedAt,
+    seatLabel: record.seatLabel ?? null,
     reason: record.resultLabel ?? record.rejectionReason ?? null,
     result: record.result ?? null,
     resultLabel: record.resultLabel ?? null,

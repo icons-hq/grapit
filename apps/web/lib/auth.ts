@@ -29,15 +29,25 @@ let applyingRestoredSession = false;
 
 useAuthStore.subscribe((state, previous) => {
   if (applyingRestoredSession) return;
-  // setInitialized alone is not a session change; clearAuth is, even when the
-  // store was already empty (a logout while restore was still running).
-  const initializedOnly = state.isInitialized !== previous.isInitialized
-    && state.accessToken === previous.accessToken
-    && state.user === previous.user;
-  if (initializedOnly) return;
+  // A flag update (setInitialized, the restore-pending notice) is not a session
+  // change; clearAuth is, even when the store was already empty (a logout while
+  // restore was still running).
+  const flagsOnly = state.accessToken === previous.accessToken
+    && state.user === previous.user
+    && (state.isInitialized !== previous.isInitialized
+      || state.sessionRestorePending !== previous.sessionRestorePending);
+  if (flagsOnly) return;
   sessionGeneration += 1;
   unconfirmedAccessToken = null;
 });
+
+/**
+ * Tells login screens that a background restore is still running, so a user
+ * sent to /auth during an API outage is not asked to sign in again for nothing.
+ */
+function setSessionRestorePending(pending: boolean) {
+  useAuthStore.getState().setSessionRestorePending(pending);
+}
 
 /** Applies a restored session only if nothing changed the session since `generation`. */
 function applyRestoredSession(generation: number, accessToken: string, user: UserProfile): boolean {
@@ -141,16 +151,30 @@ async function fetchProfile(accessToken: string): Promise<ProfileOutcome> {
 
 function scheduleBackgroundRestore(attempt: number) {
   if (typeof window === 'undefined' || backgroundRestoreTimer) return;
+  // Set before restoreSession marks the store initialized, so the login screen
+  // a protected page redirects to already shows the notice. The retries keep
+  // going (every 60 s at most) until the cookie is accepted or rejected.
+  setSessionRestorePending(true);
   const delayMs = BACKGROUND_RESTORE_DELAYS_MS[Math.min(attempt, BACKGROUND_RESTORE_DELAYS_MS.length - 1)]!;
   backgroundRestoreTimer = setTimeout(() => {
     backgroundRestoreTimer = null;
     // A manual login or another restore already produced a session.
     if (useAuthStore.getState().accessToken) {
       unconfirmedAccessToken = null;
+      setSessionRestorePending(false);
       return;
     }
     void restoreSessionOnce().then((outcome) => {
-      if (outcome === 'unavailable') scheduleBackgroundRestore(attempt + 1);
+      if (outcome === 'unavailable') {
+        scheduleBackgroundRestore(attempt + 1);
+        return;
+      }
+      // restored, signed_out or superseded: nothing is pending any more.
+      setSessionRestorePending(false);
+    }, () => {
+      // Not expected (each step maps its failures to an outcome); never leave
+      // the notice on screen without a retry behind it.
+      setSessionRestorePending(false);
     });
   }, delayMs);
 }
@@ -166,4 +190,5 @@ export function resetAuthInitializationForTests() {
   initialization = null;
   unconfirmedAccessToken = null;
   applyingRestoredSession = false;
+  setSessionRestorePending(false);
 }

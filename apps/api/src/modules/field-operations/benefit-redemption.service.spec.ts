@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ConflictException, RequestMethod, ServiceUnavailableException } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import type { SQL } from 'drizzle-orm';
@@ -30,12 +31,14 @@ const input = {
 };
 const context = { scannerUserId: 'scanner-1' };
 
-function redemptionDependencies(failure?: unknown) {
+function redemptionDependencies(failure?: unknown, selectedRows: unknown[][] = []) {
   const dialect = new PgDialect();
   const statements: string[] = [];
   const query: Record<string, unknown> = {};
   for (const method of ['from', 'where', 'orderBy']) query[method] = vi.fn(() => query);
-  query.limit = vi.fn(async () => []);
+  // Each select resolves the next prepared row set, then nothing.
+  const pendingRows = [...selectedRows];
+  query.limit = vi.fn(async () => pendingRows.shift() ?? []);
   const tx = {
     execute: vi.fn(async (statement: SQL) => {
       const rendered = dialect.sqlToQuery(statement);
@@ -48,8 +51,9 @@ function redemptionDependencies(failure?: unknown) {
     update: vi.fn(),
   };
   const db = { transaction: vi.fn(async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx)) };
-  const service = new BenefitRedemptionService(db as never, { verifyTicketForScannerContract: vi.fn() } as never);
-  return { service, statements, tx };
+  const verifyTicketForScannerContract = vi.fn();
+  const service = new BenefitRedemptionService(db as never, { verifyTicketForScannerContract } as never);
+  return { service, statements, tx, verifyTicketForScannerContract };
 }
 
 /** Drizzle wraps the driver error, so the SQLSTATE sits on the cause. */
@@ -93,5 +97,94 @@ describe('Field benefit redemption lock budget', () => {
     const { service } = redemptionDependencies(failure);
 
     await expect(service.redeem(input, context)).rejects.toBe(failure);
+  });
+});
+
+const TICKET_ITEM_ID = '00000000-0000-4000-8000-000000000901';
+const SCANNER_ID = '00000000-0000-4000-8000-000000000501';
+
+function entitlementRow() {
+  const copy = { name: '공식 포스터', description: '공식 포스터 설명' };
+  return {
+    id: input.benefitEntitlementId,
+    ticketItemId: TICKET_ITEM_ID,
+    showtimeId: input.showtimeId,
+    runId: null,
+    source: 'configuration',
+    benefitIdentity: 'benefit_official_poster',
+    benefitKind: 'included',
+    displayCopySnapshot: { ko: copy, en: copy, 'zh-CN': copy, th: copy },
+    state: 'redeemed',
+    redeemedAt: new Date('2026-10-03T10:00:00.000Z'),
+    redeemedByUserId: SCANNER_ID,
+    createdAt: new Date('2026-10-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-10-03T10:00:00.000Z'),
+  };
+}
+
+function recordedAttempt(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '00000000-0000-4000-8000-000000000601',
+    showtimeId: input.showtimeId,
+    requestedShowtimeId: input.showtimeId,
+    ticketItemId: TICKET_ITEM_ID,
+    benefitEntitlementId: input.benefitEntitlementId,
+    scannerUserId: SCANNER_ID,
+    deviceAttemptId: input.deviceAttemptId,
+    result: 'redeemed',
+    redactedTokenRef: `qr:${createHash('sha256').update(input.token).digest('hex').slice(0, 16)}`,
+    rejectionReason: null,
+    createdAt: new Date('2026-10-03T10:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+// A retry of a settled redemption used to queue behind the showtime lock that
+// payment confirmations share-lock, and answered 409 after 3 s (field-ops-12).
+describe('Field benefit redemption retry of a recorded attempt', () => {
+  it('returns the first result without taking the showtime or ticket locks', async () => {
+    const { service, statements, tx, verifyTicketForScannerContract } = redemptionDependencies(undefined, [
+      [recordedAttempt()],
+      [entitlementRow()],
+    ]);
+
+    await expect(service.redeem(input, { scannerUserId: SCANNER_ID })).resolves.toMatchObject({
+      outcome: 'redeemed',
+      redemptionEventId: '00000000-0000-4000-8000-000000000601',
+      redeemedAt: '2026-10-03T10:00:00.000Z',
+    });
+
+    expect(statements).toHaveLength(2);
+    expect(statements[1]).toContain('pg_advisory_xact_lock');
+    expect(statements.join('\n')).not.toContain('FOR NO KEY UPDATE');
+    expect(statements.join('\n')).not.toContain('FOR UPDATE');
+    expect(verifyTicketForScannerContract).not.toHaveBeenCalled();
+    expect(tx.insert).not.toHaveBeenCalled();
+    expect(tx.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps answering 409 when the recorded attempt belongs to another redemption', async () => {
+    const { service, statements, tx } = redemptionDependencies(undefined, [
+      [recordedAttempt({ scannerUserId: '00000000-0000-4000-8000-000000000502' })],
+      [entitlementRow()],
+    ]);
+
+    await expect(service.redeem(input, { scannerUserId: SCANNER_ID })).rejects.toBeInstanceOf(ConflictException);
+
+    expect(statements.join('\n')).not.toContain('FOR NO KEY UPDATE');
+    expect(tx.insert).not.toHaveBeenCalled();
+  });
+
+  it('takes the showtime lock before the first redemption of an attempt', async () => {
+    const { service, statements } = redemptionDependencies(undefined, [
+      [],
+      [{ ...entitlementRow(), state: 'active', redeemedAt: null, redeemedByUserId: null }],
+    ]);
+
+    // The re-read after the locks finds no entitlement here; only the lock order matters.
+    await service.redeem(input, { scannerUserId: SCANNER_ID }).catch(() => undefined);
+
+    expect(statements[2]).toContain('FOR NO KEY UPDATE');
+    expect(statements[3]).toContain('FOR UPDATE OF r, p, ti');
   });
 });

@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { hasAdminCapability, parseFieldCheckInToken } from '@grabit/shared';
-import { AlertTriangle, Loader2, LogOut, ScanLine, WifiOff } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, LogOut, ScanLine, WifiOff } from 'lucide-react';
 import { ScannerCheckIn } from '@/components/field/scanner-check-in';
 import {
   canRedeemBenefitsForVerification,
@@ -38,7 +38,7 @@ import {
   scrubFieldTicketFromLocation,
   searchWithoutFieldTicketParams,
 } from '@/lib/field/ticket-url-redaction';
-import { formatAdminKstDateTime } from '@/lib/admin-datetime';
+import { formatFieldShowtimeKst } from '@/lib/field/showtime-format';
 import { apiClient } from '@/lib/api-client';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -128,11 +128,12 @@ export default function FieldCheckInPage() {
     const timer = window.setTimeout(scrubFieldTicketFromLocation, 0);
     return () => window.clearTimeout(timer);
   }, [routeToken]);
+  // The login route back to this screen, never with the QR credential.
+  const authRoute = `/auth?returnTo=${encodeURIComponent(`/field/check-in${searchWithoutFieldTicketParams(searchParams.toString())}`)}`;
   useEffect(() => {
     if (!isInitialized || accessToken) return;
-    const returnTo = `/field/check-in${searchWithoutFieldTicketParams(searchParams.toString())}`;
-    router.replace(`/auth?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [accessToken, isInitialized, router, searchParams]);
+    router.replace(authRoute);
+  }, [accessToken, authRoute, isInitialized, router]);
   useEffect(() => {
     // A phone camera opens every QR link in a new tab. Restore the scanner's
     // recent choice there instead of asking for the showtime on every scan.
@@ -174,23 +175,37 @@ export default function FieldCheckInPage() {
   const ownPendingCount = queue.devicePending
     .filter((group) => group.scannerUserId === user?.id)
     .reduce((sum, group) => sum + group.count, 0);
-  const handleLogout = async () => {
+  /** Ends this device's session; false when staff kept it for unsynced entries. */
+  const endSession = async (): Promise<boolean> => {
     if (ownPendingCount > 0 && !window.confirm(
       `이 계정으로 저장한 입장 대기 ${ownPendingCount}건이 아직 서버에 동기화되지 않았습니다. 로그아웃하면 같은 계정으로 다시 로그인해야 동기화할 수 있습니다. 그래도 로그아웃할까요?`,
-    )) return;
+    )) return false;
     try { await apiClient.post('/api/v1/auth/logout', undefined, { showErrorToast: false }); } catch { /* Clear this device's session even when offline. */ }
     // Cached verify results are keyed by raw QR tokens; drop them with the session.
     queryClient.clear();
     clearAuth();
+    return true;
+  };
+  const handleLogout = async () => { await endSession(); };
+  // An account without scanner access signs out here and goes straight to the
+  // login form. No extra /auth/refresh: AuthInitializer owns session restore.
+  const handleSwitchAccount = async () => {
+    if (await endSession()) router.replace(authRoute);
   };
 
-  if (!isInitialized || !accessToken) return <ScannerLoading message="검표 세션을 확인하고 있습니다" />;
-  if (!canVerify) return <ScannerCheckIn user={user} onProcessEntry={() => undefined} onSyncOffline={() => undefined} />;
-  return <div className="mx-auto min-h-dvh max-w-xl bg-[#F5F5F7]">
+  if (!isInitialized || !accessToken) return <ScannerLoading variant="page" message="검표 세션을 확인하고 있습니다" />;
+  if (!canVerify) {
+    return <ScannerCheckIn user={user} hasTicket={Boolean(token)} onSwitchAccount={() => { void handleSwitchAccount(); }}
+      onProcessEntry={() => undefined} onSyncOffline={() => undefined} />;
+  }
+  const scanRule = 'QR 한 장은 해당 좌석 한 명의 입장만 처리합니다. 특전은 품목별로 따로 지급합니다.';
+  const inputGuide = '휴대폰 카메라로 QR 링크를 열면 새 탭에서도 이 계정이 최근 12시간 안에 고른 오늘 회차를 다시 불러옵니다. 카메라 이용이 어려우면 위 입력란을 사용하세요.';
+  // The one main landmark of the scanner; scan results and notices render inside it.
+  return <main className="mx-auto min-h-dvh max-w-xl bg-[#F5F5F7]">
     <header className="space-y-4 border-b bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div><p className="text-sm font-semibold text-primary">Grabit · 현장</p><h1 className="mt-1 text-2xl font-semibold">좌석별 검표</h1>
-          <p className="mt-2 text-sm text-gray-600">QR 한 장은 해당 좌석 한 명의 입장만 처리합니다. 특전은 품목별로 따로 지급합니다.</p></div>
+          {!selected && <p className="mt-2 text-sm text-gray-600">{scanRule}</p>}</div>
         <Button type="button" variant="outline" size="sm" className="min-h-11 shrink-0" onClick={() => { void handleLogout(); }}>
           <LogOut className="h-4 w-4" />검표 종료
         </Button>
@@ -198,7 +213,7 @@ export default function FieldCheckInPage() {
       <label className="block space-y-2 text-sm font-semibold">검표할 공연·회차 · 한국 시간
         <select aria-label="검표할 공연·회차" className="min-h-11 w-full rounded-lg border bg-white px-3" value={showtimeId} onChange={(event) => changeShowtime(event.target.value)}>
           <option value="">공연·회차를 선택하세요</option>{showtimes.data?.map((showtime) => <option key={showtime.id} value={showtime.id}>
-            {showtime.title} · {formatShowtimeKst(showtime.dateTime)} KST
+            {showtime.title} · {formatFieldShowtimeKst(showtime.dateTime)}
           </option>)}</select>
       </label>
       {showtimes.isError && <p role="alert" className="text-sm text-red-700">공연·회차를 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도해주세요.</p>}
@@ -215,11 +230,18 @@ export default function FieldCheckInPage() {
         <label className="block space-y-2 text-sm font-semibold">QR 링크 또는 내용
           <Input aria-label="QR 링크 또는 내용" type="password" autoComplete="off" value={input} onChange={(event) => setInput(event.target.value)} placeholder="카메라로 읽은 QR 내용을 붙여넣으세요" />
         </label>
-        <p className="text-xs text-gray-500">휴대폰 카메라로 QR 링크를 열면 새 탭에서도 이 계정이 최근 12시간 안에 고른 오늘 회차를 다시 불러옵니다. 카메라 이용이 어려우면 위 입력란을 사용하세요.</p>
+        {!selected && <p className="text-xs text-gray-500">{inputGuide}</p>}
         {inputError && <p role="alert" className="text-sm text-red-700">{inputError}</p>}
         <div className="flex gap-2"><Button type="submit" disabled={!selected || !input.trim()} className="min-h-11 flex-1">티켓 확인</Button>
           {token && <Button type="button" variant="outline" className="min-h-11" onClick={() => { setScan(null); setInput(''); }}>다음 티켓</Button>}</div>
       </form>
+      {/* Once a showtime is chosen the guide folds away, so a scan result fits the first screen. */}
+      {selected && <details className="group -mt-2 text-sm text-gray-600">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 font-semibold text-gray-700 [&::-webkit-details-marker]:hidden">
+          검표 안내 보기<ChevronDown aria-hidden="true" className="h-4 w-4 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="space-y-1 pb-1"><p>{scanRule}</p><p>{inputGuide}</p></div>
+      </details>}
     </header>
     {queue.error && <p role="alert" className="p-4 text-sm text-red-700">{queue.error}</p>}
     <div className="p-4 pb-0 empty:hidden">
@@ -237,7 +259,7 @@ export default function FieldCheckInPage() {
       recordPending={queue.record} queueItem={scanQueueItem} queueRevision={queue.revision}
       benefitAttemptIdFor={(benefitEntitlementId) => benefitAttemptIdFor(scan.attemptId, benefitEntitlementId)} />
       : <p role="status" className="p-5 text-sm text-gray-600">{scanStatusMessage({ hasToken: Boolean(token), hasSelection: Boolean(selected), loadingShowtimes: Boolean(showtimes.isLoading) })}</p>}
-  </div>;
+  </main>;
 }
 
 function scanStatusMessage({ hasToken, hasSelection, loadingShowtimes }: { hasToken: boolean; hasSelection: boolean; loadingShowtimes: boolean }): string {
@@ -250,17 +272,13 @@ function scanStatusMessage({ hasToken, hasSelection, loadingShowtimes }: { hasTo
   return 'QR을 확인한 뒤 좌석과 상태를 보고 입장 또는 특전 지급을 선택하세요.';
 }
 
-function formatShowtimeKst(value: string): string {
-  return formatAdminKstDateTime(value).replace('T', ' ');
-}
-
 function SelectedShowtimeSummary({ showtime, restored }: { showtime: FieldShowtimeOption; restored: boolean }) {
   return (
     <section aria-label="검표 중인 회차" className="rounded-lg border border-[#D9CCF8] bg-[#F3EFFF] p-3">
       <p className="text-xs font-semibold text-[#6C3CE0]">검표 중인 회차</p>
       <p className="mt-1 break-words text-xl font-semibold leading-[1.3] text-gray-900">{showtime.title}</p>
       <p className="mt-1 text-base font-semibold text-gray-800">
-        {formatShowtimeKst(showtime.dateTime)} KST{showtime.venueName ? ` · ${showtime.venueName}` : ''}
+        {formatFieldShowtimeKst(showtime.dateTime)}{showtime.venueName ? ` · ${showtime.venueName}` : ''}
       </p>
       {restored && (
         <p role="status" className="mt-2 text-sm font-semibold text-[#5730B8]">
@@ -290,10 +308,14 @@ function ActiveScan({
   const [offlineConsumeResult, setOfflineConsumeResult] =
     useState<ScannerCheckInConsumeResult | null>(null);
   const [localPending, setLocalPending] = useState<LocalPendingState>('checking');
+  const localPendingRef = useRef<LocalPendingState>('checking');
+  const [recheckingVerify, setRecheckingVerify] = useState(false);
   const [benefitRedemptionResults, setBenefitRedemptionResults] = useState<
     Record<string, ScannerBenefitRedemptionResult>
   >({});
   const [redeemingBenefitId, setRedeemingBenefitId] = useState<string | null>(null);
+  const regionRef = useRef<HTMLDivElement>(null);
+  const scrolledForAttempt = useRef<string | null>(null);
   const hasScannerAccess = hasAdminCapability(user, 'field.scan.verify');
   const canRedeemFieldBenefit = hasAdminCapability(user, 'field.benefits.redeem');
 
@@ -307,6 +329,21 @@ function ActiveScan({
   const consumeMutation = useFieldCheckInConsume();
   const benefitRedeemMutation = useFieldBenefitRedeem();
   const scannerShowtimeId = showtimeId;
+  // Stable for the query observer's lifetime.
+  const refetchVerify = verifyQuery.refetch;
+
+  const applyLocalPending = useCallback((next: LocalPendingState) => {
+    const previous = localPendingRef.current;
+    localPendingRef.current = next;
+    setLocalPending(next);
+    if (previous !== 'pending' || next !== 'none') return;
+    // The other unsynced entry of this QR left the queue, normally because a
+    // sync admitted it. The cached "processable" result predates that, so ask
+    // the server again before offering entry. Same attempt id, so the server
+    // still records at most one rejected scan for this attempt.
+    setRecheckingVerify(true);
+    void refetchVerify().finally(() => setRecheckingVerify(false));
+  }, [refetchVerify]);
 
   useEffect(() => {
     // A cached "processable" verify result must not admit a second holder of a
@@ -315,206 +352,247 @@ function ActiveScan({
     let cancelled = false;
     findPendingScanAttemptByToken(ticketToken)
       .then((existing) => {
-        if (!cancelled) setLocalPending(existing && existing.deviceAttemptId !== deviceAttemptId ? 'pending' : 'none');
+        if (!cancelled) applyLocalPending(existing && existing.deviceAttemptId !== deviceAttemptId ? 'pending' : 'none');
       })
-      .catch(() => { if (!cancelled) setLocalPending('none'); });
+      .catch(() => { if (!cancelled) applyLocalPending('none'); });
     return () => { cancelled = true; };
-  }, [ticketToken, deviceAttemptId, queueRevision]);
+  }, [applyLocalPending, ticketToken, deviceAttemptId, queueRevision]);
 
-  if (!isInitialized || (!accessToken && isInitialized)) {
-    return <ScannerLoading message="검표 세션을 확인하고 있습니다" />;
-  }
+  const sessionReady = isInitialized && Boolean(accessToken);
+  // TanStack pauses the verify request while offline (fetchStatus 'paused'),
+  // which would otherwise leave "확인하고 있습니다" on screen forever.
+  const offlineUnverified = !verifyQuery.data
+    && (verifyQuery.fetchStatus === 'paused' || !isOnline
+      || (verifyQuery.isError && isNetworkFailure(verifyQuery.error)));
+  const verifying = (verifyQuery.isLoading && !verifyQuery.data) || localPending === 'checking' || recheckingVerify;
+  // The first settled view of this scan: its result, an offline notice or an error.
+  const settled = sessionReady && ticketToken.length > 0 && hasScannerAccess && (offlineUnverified || !verifying);
 
-  if (!ticketToken) {
-    return (
-      <ScannerNotice
-        tone="error"
-        title="확인할 QR 티켓이 없습니다"
-        description="QR 티켓을 다시 스캔하거나 현장 운영자에게 문의하세요."
-      />
-    );
-  }
+  useEffect(() => {
+    // The header, device banner and held scans sit above the result. A camera
+    // tab opens at the top, so bring this scan's result into view once.
+    if (!settled || scrolledForAttempt.current === deviceAttemptId) return;
+    scrolledForAttempt.current = deviceAttemptId;
+    regionRef.current?.scrollIntoView({ block: 'start' });
+  }, [settled, deviceAttemptId]);
 
-  if (!hasScannerAccess) {
+  const renderContent = () => {
+    if (!sessionReady) {
+      return <ScannerLoading variant="inline" message="검표 세션을 확인하고 있습니다" />;
+    }
+
+    if (!ticketToken) {
+      return (
+        <ScannerNotice
+          variant="inline"
+          tone="error"
+          title="확인할 QR 티켓이 없습니다"
+          description="QR 티켓을 다시 스캔하거나 현장 운영자에게 문의하세요."
+        />
+      );
+    }
+
+    if (!hasScannerAccess) {
+      return (
+        <ScannerCheckIn
+          user={user}
+          onProcessEntry={() => undefined}
+          onSyncOffline={() => undefined}
+        />
+      );
+    }
+
+    const retryVerify = () => { void refetchVerify(); };
+
+    if (offlineUnverified) {
+      return (
+        <ScannerNotice
+          variant="inline"
+          tone="offline"
+          title="연결이 끊겨 이 QR을 확인할 수 없습니다"
+          description="연결이 끊긴 뒤 새로 스캔한 QR은 확인·입장 처리할 수 없고 동기화 대기에도 저장되지 않습니다. 현장 책임자의 예외 원장에 예매번호·좌석·시각·담당자를 기록하고, 연결이 복구되면 이 QR을 다시 확인하세요."
+          onRetry={retryVerify}
+        />
+      );
+    }
+
+    if (verifying) {
+      return (
+        <ScannerLoading
+          variant="inline"
+          message={recheckingVerify ? 'QR 티켓 상태를 다시 확인하고 있습니다' : 'QR 티켓을 확인하고 있습니다'}
+        />
+      );
+    }
+
+    if (verifyQuery.isError && !verifyQuery.data) {
+      return (
+        <ScannerNotice
+          variant="inline"
+          tone="error"
+          title="QR 티켓을 확인할 수 없습니다"
+          description="네트워크 상태를 확인한 뒤 다시 스캔하세요."
+          onRetry={retryVerify}
+        />
+      );
+    }
+
+    const savePendingEntry = async () => {
+      if (!user?.id) return;
+      const outcome = await recordPending(
+        createPendingAttempt({
+          deviceAttemptId,
+          scannerUserId: user.id,
+          eventId,
+          showtimeId: scannerShowtimeId,
+          token: ticketToken,
+          attemptedAt: new Date().toISOString(),
+          seatLabel: verifyQuery.data?.seats.join(', '),
+        }),
+      );
+      if (outcome === 'duplicate') {
+        applyLocalPending('pending');
+        return;
+      }
+      setOfflineConsumeResult({
+        result: 'offline-pending',
+        resultLabel:
+          '입장 동기화 대기',
+      });
+    };
+
     return (
       <ScannerCheckIn
         user={user}
-        onProcessEntry={() => undefined}
+        verification={verifyQuery.data}
+        consumeResult={
+          queueItemConsumeResult(queueItem)
+          ?? offlineConsumeResult
+          ?? (localPending === 'pending' ? ALREADY_PENDING_RESULT : null)
+          ?? consumeMutation.data
+        }
+        isOnline={isOnline}
+        actionError={actionError}
+        benefitRedemptionResults={benefitRedemptionResults}
+        isConsuming={consumeMutation.isPending}
+        redeemingBenefitId={redeemingBenefitId}
+        isSyncingOffline={false}
+        onProcessEntry={() => {
+          void (async () => {
+            if (
+              !verifyQuery.data?.processable || !hasAdminCapability(user, 'field.scan.consume')
+              || consumingRef.current || localPending !== 'none'
+            ) return;
+            consumingRef.current = true; setActionError(null);
+            try {
+            // Another tab may have queued the same QR since this screen opened.
+            const queued = await findPendingScanAttemptByToken(ticketToken).catch(() => null);
+            if (queued) {
+              if (queued.deviceAttemptId !== deviceAttemptId) applyLocalPending('pending');
+              return;
+            }
+
+            if (isBrowserOffline() && accessToken && user?.id) {
+              await savePendingEntry();
+              return;
+            }
+
+            try {
+              setOfflineConsumeResult(null);
+              await consumeMutation.mutateAsync({
+                token: ticketToken,
+                showtimeId: scannerShowtimeId,
+                deviceAttemptId,
+                confirmed: true,
+              });
+            } catch (error) {
+              if (!isNetworkFailure(error) || !accessToken || !user?.id) {
+                setActionError('입장 결과를 확인하지 못했습니다. 티켓 상태를 다시 확인한 뒤 재시도해주세요.'); return;
+              }
+
+              await savePendingEntry();
+            }
+            } catch { setActionError('대기 기록을 저장하지 못했습니다. 입장이 확정되지 않았으니 현장 책임자에게 확인해주세요.'); }
+            finally { consumingRef.current = false; }
+          })();
+        }}
+        onRedeemBenefit={
+          canRedeemFieldBenefit
+            ? (benefitEntitlementId) => {
+                void (async () => {
+                  if (
+                    !isOnline || !canRedeemBenefitsForVerification(verifyQuery.data)
+                    || redeemingBenefitId
+                  ) {
+                    return;
+                  }
+
+                  setRedeemingBenefitId(benefitEntitlementId); setActionError(null);
+                  try {
+                    const result = await benefitRedeemMutation.mutateAsync({
+                      token: ticketToken,
+                      showtimeId: scannerShowtimeId,
+                      benefitEntitlementId,
+                      // A retry repeats the same request, so the server returns its first result.
+                      deviceAttemptId: benefitAttemptIdFor(benefitEntitlementId),
+                      confirmed: true,
+                    });
+                    setBenefitRedemptionResults((current) => ({
+                      ...current,
+                      [benefitEntitlementId]: result,
+                    }));
+                  } catch (error) {
+                    setActionError(benefitRedeemErrorMessage(error));
+                  } finally {
+                    setRedeemingBenefitId(null);
+                  }
+                })();
+              }
+            : undefined
+        }
         onSyncOffline={() => undefined}
       />
     );
-  }
-
-  const retryVerify = () => { void verifyQuery.refetch(); };
-
-  // TanStack pauses the verify request while offline (fetchStatus 'paused'),
-  // which would otherwise leave "확인하고 있습니다" on screen forever.
-  if (
-    !verifyQuery.data
-    && (verifyQuery.fetchStatus === 'paused' || !isOnline
-      || (verifyQuery.isError && isNetworkFailure(verifyQuery.error)))
-  ) {
-    return (
-      <ScannerNotice
-        tone="offline"
-        title="연결이 끊겨 이 QR을 확인할 수 없습니다"
-        description="연결이 끊긴 뒤 새로 스캔한 QR은 확인·입장 처리할 수 없고 동기화 대기에도 저장되지 않습니다. 현장 책임자의 예외 원장에 예매번호·좌석·시각·담당자를 기록하고, 연결이 복구되면 이 QR을 다시 확인하세요."
-        onRetry={retryVerify}
-      />
-    );
-  }
-
-  if ((verifyQuery.isLoading && !verifyQuery.data) || localPending === 'checking') {
-    return <ScannerLoading message="QR 티켓을 확인하고 있습니다" />;
-  }
-
-  if (verifyQuery.isError && !verifyQuery.data) {
-    return (
-      <ScannerNotice
-        tone="error"
-        title="QR 티켓을 확인할 수 없습니다"
-        description="네트워크 상태를 확인한 뒤 다시 스캔하세요."
-        onRetry={retryVerify}
-      />
-    );
-  }
-
-  const savePendingEntry = async () => {
-    if (!user?.id) return;
-    const outcome = await recordPending(
-      createPendingAttempt({
-        deviceAttemptId,
-        scannerUserId: user.id,
-        eventId,
-        showtimeId: scannerShowtimeId,
-        token: ticketToken,
-        attemptedAt: new Date().toISOString(),
-      }),
-    );
-    if (outcome === 'duplicate') {
-      setLocalPending('pending');
-      return;
-    }
-    setOfflineConsumeResult({
-      result: 'offline-pending',
-      resultLabel:
-        '입장 동기화 대기',
-    });
   };
 
-  return (
-    <ScannerCheckIn
-      user={user}
-      verification={verifyQuery.data}
-      consumeResult={
-        queueItemConsumeResult(queueItem)
-        ?? offlineConsumeResult
-        ?? (localPending === 'pending' ? ALREADY_PENDING_RESULT : null)
-        ?? consumeMutation.data
-      }
-      isOnline={isOnline}
-      actionError={actionError}
-      benefitRedemptionResults={benefitRedemptionResults}
-      isConsuming={consumeMutation.isPending}
-      redeemingBenefitId={redeemingBenefitId}
-      isSyncingOffline={false}
-      onProcessEntry={() => {
-        void (async () => {
-          if (
-            !verifyQuery.data?.processable || !hasAdminCapability(user, 'field.scan.consume')
-            || consumingRef.current || localPending !== 'none'
-          ) return;
-          consumingRef.current = true; setActionError(null);
-          try {
-          // Another tab may have queued the same QR since this screen opened.
-          const queued = await findPendingScanAttemptByToken(ticketToken).catch(() => null);
-          if (queued) {
-            if (queued.deviceAttemptId !== deviceAttemptId) setLocalPending('pending');
-            return;
-          }
-
-          if (isBrowserOffline() && accessToken && user?.id) {
-            await savePendingEntry();
-            return;
-          }
-
-          try {
-            setOfflineConsumeResult(null);
-            await consumeMutation.mutateAsync({
-              token: ticketToken,
-              showtimeId: scannerShowtimeId,
-              deviceAttemptId,
-              confirmed: true,
-            });
-          } catch (error) {
-            if (!isNetworkFailure(error) || !accessToken || !user?.id) {
-              setActionError('입장 결과를 확인하지 못했습니다. 티켓 상태를 다시 확인한 뒤 재시도해주세요.'); return;
-            }
-
-            await savePendingEntry();
-          }
-          } catch { setActionError('대기 기록을 저장하지 못했습니다. 입장이 확정되지 않았으니 현장 책임자에게 확인해주세요.'); }
-          finally { consumingRef.current = false; }
-        })();
-      }}
-      onRedeemBenefit={
-        canRedeemFieldBenefit
-          ? (benefitEntitlementId) => {
-              void (async () => {
-                if (
-                  !isOnline || !canRedeemBenefitsForVerification(verifyQuery.data)
-                  || redeemingBenefitId
-                ) {
-                  return;
-                }
-
-                setRedeemingBenefitId(benefitEntitlementId); setActionError(null);
-                try {
-                  const result = await benefitRedeemMutation.mutateAsync({
-                    token: ticketToken,
-                    showtimeId: scannerShowtimeId,
-                    benefitEntitlementId,
-                    // A retry repeats the same request, so the server returns its first result.
-                    deviceAttemptId: benefitAttemptIdFor(benefitEntitlementId),
-                    confirmed: true,
-                  });
-                  setBenefitRedemptionResults((current) => ({
-                    ...current,
-                    [benefitEntitlementId]: result,
-                  }));
-                } catch (error) {
-                  setActionError(benefitRedeemErrorMessage(error));
-                } finally {
-                  setRedeemingBenefitId(null);
-                }
-              })();
-            }
-          : undefined
-      }
-      onSyncOffline={() => undefined}
-    />
-  );
+  return <div ref={regionRef} data-testid="field-scan-result" className="scroll-mt-2">{renderContent()}</div>;
 }
 
-function ScannerLoading({ message }: { message: string }) {
+type ScannerViewVariant = 'page' | 'inline';
+
+/**
+ * `page` fills the screen before the scanner header exists (session check).
+ * `inline` is a card in the scan area below the header, without a second
+ * `main` landmark or a full-height box that pushes it out of view.
+ */
+function ScannerViewFrame({ variant, label, children }: { variant: ScannerViewVariant; label: string; children: ReactNode }) {
+  if (variant === 'page') {
+    return <main className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">{children}</main>;
+  }
+  return <section aria-label={label} className="p-4">{children}</section>;
+}
+
+function ScannerLoading({ message, variant }: { message: string; variant: ScannerViewVariant }) {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">
+    <ScannerViewFrame variant={variant} label={message}>
       <Card className="w-full border-gray-200 bg-white shadow-sm">
         <CardContent className="flex items-center gap-3 p-5">
           <Loader2 className="h-5 w-5 animate-spin text-[#6C3CE0]" />
           <p className="text-base font-semibold text-gray-800">{message}</p>
         </CardContent>
       </Card>
-    </main>
+    </ScannerViewFrame>
   );
 }
 
 function ScannerNotice({
+  variant,
   tone,
   title,
   description,
   onRetry,
 }: {
+  variant: ScannerViewVariant;
   tone: 'error' | 'neutral' | 'offline';
   title: string;
   description: string;
@@ -522,15 +600,16 @@ function ScannerNotice({
 }) {
   const iconClass = tone === 'neutral' ? 'text-[#6C3CE0]' : tone === 'offline' ? 'text-[#8B6306]' : 'text-[#C62828]';
   const Icon = tone === 'neutral' ? ScanLine : tone === 'offline' ? WifiOff : AlertTriangle;
+  const Heading = variant === 'page' ? 'h1' : 'h2';
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">
+    <ScannerViewFrame variant={variant} label={title}>
       <Card className="w-full border-gray-200 bg-white shadow-sm">
         <CardContent className="space-y-4 p-5">
           <div role={tone === 'neutral' ? undefined : 'alert'} className="flex items-start gap-3">
             <Icon className={`mt-0.5 h-6 w-6 shrink-0 ${iconClass}`} />
             <div>
-              <h1 className="text-heading font-semibold text-gray-900">{title}</h1>
+              <Heading className="text-heading font-semibold text-gray-900">{title}</Heading>
               <p className="mt-2 text-base leading-[1.5] text-gray-700">
                 {description}
               </p>
@@ -546,7 +625,7 @@ function ScannerNotice({
           </Button>
         </CardContent>
       </Card>
-    </main>
+    </ScannerViewFrame>
   );
 }
 
@@ -594,6 +673,7 @@ function createPendingAttempt({
   showtimeId,
   token,
   attemptedAt,
+  seatLabel,
 }: {
   deviceAttemptId: string;
   scannerUserId: string;
@@ -601,6 +681,7 @@ function createPendingAttempt({
   showtimeId: string;
   token: string;
   attemptedAt: string;
+  seatLabel?: string;
 }): PendingScanAttemptRecord {
   return {
     deviceAttemptId,
@@ -610,6 +691,8 @@ function createPendingAttempt({
     token,
     redactedTokenRef: redactedTokenRef(token),
     attemptedAt,
+    // Shown on the held scan row so staff can tell which seat is waiting.
+    ...(seatLabel ? { seatLabel } : {}),
     syncState: 'pending',
   };
 }

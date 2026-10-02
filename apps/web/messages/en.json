@@ -535,7 +535,8 @@
       "verificationLogin": "Your email is verified. Log in to continue your booking.",
       "continue": "Continue",
       "showPassword": "Show password",
-      "hidePassword": "Hide password"
+      "hidePassword": "Hide password",
+      "sessionRestorePending": "The connection is unstable, so we are checking your sign-in again. You will be taken back automatically in a moment."
     },
     "validation": {
       "email": "Enter a valid email address",

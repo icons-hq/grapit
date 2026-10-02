@@ -26,6 +26,9 @@ type SyncResult = { deviceAttemptId: string; state: 'synced'; result: 'processed
 const mocks = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
   verifyInputs: [] as Array<Record<string, unknown>>,
+  /** When set, verify runs as a real query with this server stand-in (fixed per test). */
+  verifyServer: null as null | ((input: Record<string, unknown>) => Promise<unknown>),
+  verifyRefetch: vi.fn(async () => undefined),
   consumeMutateAsync: vi.fn(),
   benefitRedeemMutateAsync: vi.fn(),
   offlineSyncMutateAsync: vi.fn(),
@@ -55,7 +58,7 @@ vi.mock('@/hooks/use-field-operations', async () => {
   const actual = await vi.importActual<typeof import('@/hooks/use-field-operations')>(
     '@/hooks/use-field-operations',
   );
-  const { useMutation } = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
+  const { useMutation, useQuery } = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
 
   return {
     ...actual,
@@ -68,6 +71,17 @@ vi.mock('@/hooks/use-field-operations', async () => {
     }),
     useFieldCheckInVerify: (input: Record<string, unknown>) => {
       mocks.verifyInputs.push(input);
+      const server = mocks.verifyServer;
+      if (server) {
+        // Same query key as the real hook: one cached result per scan attempt.
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- verifyServer is fixed per test
+        return useQuery({
+          queryKey: ['field', 'check-in', 'verify', input.token, input.showtimeId, input.deviceAttemptId],
+          queryFn: () => server(input),
+          enabled: Boolean(input.enabled),
+          retry: false,
+        });
+      }
       return {
         data: {
           result: 'processable',
@@ -86,6 +100,7 @@ vi.mock('@/hooks/use-field-operations', async () => {
         isFetching: false,
         isError: false,
         fetchStatus: 'idle',
+        refetch: mocks.verifyRefetch,
       };
     },
     // Real mutation state per mounted scan screen: a remount loses its result.
@@ -151,9 +166,13 @@ function verifyAttemptIds() {
 // must carry the same attempt id that the entry action later uses.
 describe('FieldCheckInPage scan attempt identity', () => {
   beforeEach(async () => {
+    // jsdom has no layout; the page brings each new scan result into view.
+    Element.prototype.scrollIntoView = vi.fn();
     await clearPendingScanAttempts(); sessionStorage.clear(); localStorage.clear();
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
     mocks.verifyInputs.length = 0;
+    mocks.verifyServer = null;
+    mocks.verifyRefetch.mockClear();
     mocks.consumeMutateAsync.mockReset().mockResolvedValue({ result: 'processed', resultLabel: ENTERED_LABEL });
     mocks.benefitRedeemMutateAsync.mockReset().mockResolvedValue({ outcome: 'redeemed', outcomeLabel: '혜택 사용 처리 완료' });
     mocks.offlineSyncMutateAsync.mockReset().mockResolvedValue([]);
@@ -314,5 +333,57 @@ describe('FieldCheckInPage scan attempt identity', () => {
     expect(mocks.benefitRedeemMutateAsync.mock.calls[1]?.[0].deviceAttemptId)
       .toBe(mocks.benefitRedeemMutateAsync.mock.calls[0]?.[0].deviceAttemptId);
     expect(await screen.findByText('혜택 사용 처리 완료')).toBeInTheDocument();
+  });
+
+  // #116 guard: another attempt of this QR sat in the queue, so the cached
+  // "processable" result was hidden. When that entry is synced (admitted), the
+  // guard lifts; the cached result must not offer entry again (field-ops-1).
+  it('asks the server again with the same attempt once another attempt of the QR is synced, and shows already used', async () => {
+    const processable = {
+      result: 'processable', resultLabel: '입장 가능 티켓입니다', processable: true,
+      reservationNumber: 'GRP-FIELD-ATTEMPT-001', performanceTitle: 'Attempt Scanner Performance',
+      showtimeAt: '2099-01-01T10:00:00.000Z', showtimeId: SHOWTIME_ID, seats: ['VIP A열 1번'],
+      ticketStatus: 'ACTIVE', offlineQueue: [], benefitEntitlements: [],
+    };
+    const alreadyUsed = {
+      ...processable, result: 'duplicate', resultLabel: '이미 입장 처리된 티켓입니다', processable: false, ticketStatus: 'USED',
+    };
+    let admitted = false;
+    const server = vi.fn(async (_input: Record<string, unknown>) => (admitted ? alreadyUsed : processable));
+    mocks.verifyServer = server;
+    // This tab's own sync fails; another tab on the device syncs the entry.
+    mocks.offlineSyncMutateAsync.mockRejectedValue(new TypeError('Failed to fetch'));
+    await addPendingScanAttempt({
+      deviceAttemptId: 'queued-same-qr', scannerUserId: SCANNER_USER_ID, eventId: 'field-event', showtimeId: SHOWTIME_ID,
+      token: RAW_TICKET_TOKEN, redactedTokenRef: 'tok_raw-ti...empt', attemptedAt: '2099-01-01T09:00:00.000Z', syncState: 'pending',
+    });
+    renderPage();
+
+    expect(await screen.findByText('이 기기에서 이미 입장 동기화 대기 중인 QR입니다')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 좌석 입장 처리' })).not.toBeInTheDocument();
+    expect(server).toHaveBeenCalledTimes(1);
+
+    admitted = true;
+    await updatePendingScanAttempt('queued-same-qr', { syncState: 'synced', result: 'processed', resultLabel: '보류 스캔 동기화 완료' });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+
+    expect(await screen.findByRole('status', { name: '이미 입장 처리된 티켓입니다' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 좌석 입장 처리' })).not.toBeInTheDocument();
+    expect(server).toHaveBeenCalledTimes(2);
+    const [first, recheck] = server.mock.calls.map(([input]) => input);
+    expect(recheck).toMatchObject({ token: RAW_TICKET_TOKEN, showtimeId: SHOWTIME_ID, deviceAttemptId: first!.deviceAttemptId });
+    expect(first!.deviceAttemptId).not.toBe('queued-same-qr');
+    expect(mocks.consumeMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not re-ask the server when the queue changes without lifting the guard', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: '이 좌석 입장 처리' });
+
+    await queueOtherEntry();
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+
+    expect(mocks.verifyRefetch).not.toHaveBeenCalled();
   });
 });

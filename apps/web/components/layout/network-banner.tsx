@@ -1,10 +1,23 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 
+/**
+ * Field screens explain their own offline procedure, and the banner's reload
+ * would drop the scan results that exist only in memory while offline.
+ */
+function isFieldPath(pathname: string | null): boolean {
+  if (!pathname) return false;
+  const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
+  return pathnameWithoutLocale === '/field' || pathnameWithoutLocale.startsWith('/field/');
+}
+
 export function NetworkBanner() {
+  const pathname = usePathname();
   const [isOffline, setIsOffline] = useState(false);
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).network;
@@ -27,7 +40,7 @@ export function NetworkBanner() {
     };
   }, []);
 
-  if (!isOffline) return null;
+  if (!isOffline || isFieldPath(pathname)) return null;
 
   return (
     <div

@@ -15,6 +15,11 @@ export interface PendingScanAttemptRecord {
   token: string;
   redactedTokenRef: string;
   attemptedAt: string;
+  /**
+   * Seat label of the verify result the entry was saved from, so the held scan
+   * list can name its seat. Records saved before this field existed have none.
+   */
+  seatLabel?: string;
   syncState: FieldOfflineSyncState;
   lastSyncAttemptAt?: string | null;
   rejectionReason?: string | null;
@@ -267,6 +272,7 @@ function sanitizePendingAttempt(
     token: attempt.syncState === 'pending' ? attempt.token : '',
     redactedTokenRef: attempt.redactedTokenRef,
     attemptedAt: attempt.attemptedAt,
+    seatLabel: attempt.seatLabel,
     syncState: attempt.syncState,
     lastSyncAttemptAt: attempt.lastSyncAttemptAt,
     rejectionReason: attempt.rejectionReason,
