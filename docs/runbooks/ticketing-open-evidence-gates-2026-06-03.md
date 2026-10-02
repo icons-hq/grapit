@@ -801,6 +801,13 @@ for launch, not merely that fallback code exists.
   locale exists in its translation group (400 `이미 같은 언어의 번역본이
   있습니다`); archive that version first, so a locale never shows two
   versions of one notice.
+- Archived rows cannot be edited in admin (`수정` is disabled with
+  `보관 해제 후 수정하세요`); restore them with `보관 해제` first. An edit sent
+  to an archived row through the API keeps it archived and is recorded as
+  `support.content.update`. Publishing a notice is also refused while another
+  unarchived version of its locale exists in its translation group (400
+  `같은 언어의 게시 중인 번역본이 있습니다` or `같은 언어의 번역본이 이미
+  있습니다`); archive one of them first.
 - Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`); a
   scheduled start or end can appear up to about a minute late for the reasons
   above.
@@ -822,7 +829,9 @@ for launch, not merely that fallback code exists.
   `/admin/audit`.
 - If another operator saved the same row first, save returns 409.
   `최신 내용 다시 불러오기` asks for confirmation because it discards the
-  unsaved edit: copy it first, reload, then reapply the change.
+  unsaved edit: copy it first, reload, then reapply the change. Opening
+  another row, switching the FAQ/공지 tab, or starting a new entry while the
+  form has unsaved input asks the same way before it is discarded.
 
 ### Execution Checklist
 

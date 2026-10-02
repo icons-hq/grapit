@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 
 import { AdminUserManagement } from '../admin-user-management';
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/use-auth-store';
 import type {
   AdminUserDetail,
   AdminUserListItem,
@@ -328,6 +329,7 @@ describe('AdminUserManagement', () => {
   });
 
   beforeEach(() => {
+    useAuthStore.setState({ user: null });
     mocks.apiGet.mockReset();
     mocks.apiPatch.mockReset();
     mocks.apiPost.mockReset();
@@ -764,6 +766,7 @@ describe('AdminUserManagement', () => {
           reason: '보안 담당자 교체로 권한을 회수합니다.',
           confirmed: true,
         }),
+        { showErrorToast: false },
       );
     });
     expect(
@@ -826,6 +829,7 @@ describe('AdminUserManagement', () => {
           ],
           confirmed: true,
         }),
+        { showErrorToast: false },
       );
     });
 
@@ -857,6 +861,103 @@ describe('AdminUserManagement', () => {
     ).toBeInTheDocument();
     expect(within(alert).getByText('Forbidden')).toBeInTheDocument();
     expect(screen.getByText('걸룰스 팬미팅')).toBeInTheDocument();
+  });
+
+  it('reports a rejected permission change once as a toast plus the inline alert', async () => {
+    const user = userEvent.setup();
+    // The API client toasts on its own unless showErrorToast is false; the mock
+    // stands in for it, so the request options are asserted below.
+    mocks.apiPatch.mockRejectedValueOnce(Object.assign(
+      new Error('본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage'),
+      { statusCode: 403 },
+    ));
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
+    await user.type(screen.getByLabelText('권한 변경 사유'), '위임 권한 확인');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage');
+    expect(mocks.apiPatch).toHaveBeenCalledWith(
+      '/api/v1/admin/users/user-fan-1/permissions',
+      expect.anything(),
+      { showErrorToast: false },
+    );
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      '본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage',
+    );
+  });
+
+  describe('delegated security admin (audit #120)', () => {
+    beforeEach(() => {
+      useAuthStore.setState({
+        user: {
+          id: 'actor-delegated-1',
+          role: 'admin',
+          adminCapabilityBundle: null,
+          adminCapabilities: ['security.manage', 'event.write', 'banner.manage'],
+        } as never,
+      });
+    });
+
+    it('locks editing a full admin the actor cannot change', async () => {
+      renderWithClient(<AdminUserManagement />);
+
+      expect(await screen.findByTestId('admin-user-delegation-locked')).toHaveTextContent(
+        '내 권한 밖의 권한(전체 관리자 포함)을 가지고 있어 변경할 수 없습니다',
+      );
+      expect(screen.getByRole('combobox', { name: 'Role' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
+      expect(screen.getByLabelText('권한 변경 사유')).toBeDisabled();
+      expect(screen.getByRole('button', { name: '권한 변경 검토' })).toBeDisabled();
+    });
+
+    it('offers only what the actor holds when granting access to a general member', async () => {
+      const user = userEvent.setup();
+      renderWithClient(<AdminUserManagement />);
+      await user.type(await screen.findByLabelText('회원 검색어'), 'reset');
+      await user.click(screen.getByRole('button', { name: '검색' }));
+      expect(await screen.findByText('secondfan@example.com')).toBeInTheDocument();
+      expect(screen.queryByTestId('admin-user-delegation-locked')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('combobox', { name: 'Role' }));
+      await user.click(await screen.findByRole('option', { name: '관리자' }));
+      await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+      expect(await screen.findByRole('option', { name: '전체 관리자 (위임 불가)' }))
+        .toHaveAttribute('aria-disabled', 'true');
+      await user.click(screen.getByRole('option', { name: '운영자' }));
+
+      // The operator bundle's defaults are narrowed to the actor's own capabilities.
+      expect(screen.getByRole('checkbox', { name: '공연 편집' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '배너 관리' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '좌석 비활성화' })).not.toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '좌석 비활성화' })).toBeDisabled();
+      expect(screen.getAllByText('내 권한 밖이라 위임할 수 없습니다').length).toBeGreaterThan(0);
+
+      await user.type(screen.getByLabelText('권한 변경 사유'), '배너 담당자 지정');
+      await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+      await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+      await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+      await waitFor(() => {
+        expect(mocks.apiPatch).toHaveBeenCalledWith(
+          '/api/v1/admin/users/user-fan-2/permissions',
+          expect.objectContaining({
+            role: 'admin',
+            adminCapabilityBundle: 'operator',
+            adminCapabilities: ['event.write', 'banner.manage'],
+          }),
+          { showErrorToast: false },
+        );
+      });
+    });
   });
 
   it('shows the admin bundle as effective superuser access and locks capability narrowing', async () => {
@@ -916,6 +1017,7 @@ describe('AdminUserManagement', () => {
           adminCapabilityBundle: 'admin',
           adminCapabilities: [],
         }),
+        { showErrorToast: false },
       );
     });
   });
@@ -955,6 +1057,7 @@ describe('AdminUserManagement', () => {
           reason: '계정 탈취 의심으로 긴급 회수',
           confirmed: true,
         },
+        { showErrorToast: false },
       );
     });
   });

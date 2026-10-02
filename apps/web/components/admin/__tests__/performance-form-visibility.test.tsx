@@ -253,7 +253,9 @@ describe('PerformanceForm copy visibility controls', () => {
     await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
     await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
 
-    await waitFor(() => expect(screen.getAllByText(/예매 오픈 시각은 ISO datetime|판매 시작 일시는 2000년부터/).length).toBeGreaterThan(0));
+    // The summary shows operator copy, never the schema's ISO format message.
+    await waitFor(() => expect(screen.getAllByText(/판매 시작 일시를 끝까지 입력하거나 모두 지워주세요|판매 시작 일시는 2000년부터/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/ISO datetime/)).not.toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
   });
 

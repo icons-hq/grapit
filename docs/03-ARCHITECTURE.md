@@ -379,7 +379,13 @@ branch also applies the C1 sales cutoff (403 `이미 시작된 회차는 예매�
 the handoff is recorded) and caps the extended payment deadline and seat-lock TTL at
 `showtimes.date_time`. Removing a method from a performance's policy while it is on sale
 compensates the orders already in that method: their confirm or async DONE is refunded,
-not issued.
+not issued. The admin performance form therefore warns when a method stored on a published
+performance is unchecked (the publish state comes from the preparation read, since
+`GET /admin/performances/:id` does not carry it) and enables `공연 정보에 반영` only after the
+operator confirms the impact. A stored list keeps only the methods the form can show: a
+legacy `VIRTUAL_ACCOUNT`/`MOBILE_PHONE`-only policy opens with no method checked and a note
+that those methods are not stored, so the at-least-one-method validation blocks saving
+instead of the form storing `CARD`. Only a missing policy uses the `['CARD']` default.
 
 Reservation numbers are `GRP-<KST date>-<8 base32 CSPRNG chars>`. A unique collision
 regenerates the number (bounded retries); a concurrent prepare that lost the `toss_order_id`

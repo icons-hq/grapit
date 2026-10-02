@@ -4,6 +4,7 @@ import { useAdminEventContext } from './admin-event-context';
 
 import { useMemo, useState } from 'react';
 import { Download, ShieldAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -123,13 +124,26 @@ export function ReservationExportPanel({
       return;
     }
 
-    exportMutation.mutate(payload);
+    // The export request skips the API client's error toast, so success and failure
+    // are reported here; a failure keeps the dialog (filters and reason) for a retry.
+    exportMutation.mutate(payload, {
+      onSuccess: () => {
+        setConfirmOpen(false);
+        setReason('');
+        toast.success('CSV 파일을 내려받았습니다.');
+      },
+      onError: (error) => {
+        toast.error(exportErrorMessage(error));
+      },
+    });
   }
 
   function openConfirmDialog(kind: ReservationExportKind) {
     if (kind === 'active_ticket_manifest' && !activeManifestContext?.showtimeId) {
       return;
     }
+    // A previous attempt's error belongs to that attempt, not to this dialog.
+    exportMutation.reset();
     setExportKind(kind);
     setConfirmOpen(true);
   }
@@ -351,6 +365,15 @@ export function ReservationExportPanel({
                 placeholder="예: 정산 대조, 고객 지원 확인"
               />
             </label>
+
+            {exportMutation.isError && (
+              <p
+                role="alert"
+                className="rounded-lg bg-[#FEF2F2] px-3 py-2 text-sm font-semibold text-[#C62828]"
+              >
+                {exportErrorMessage(exportMutation.error)}
+              </p>
+            )}
           </div>
 
           <DialogFooter>
@@ -370,6 +393,12 @@ export function ReservationExportPanel({
       </Dialog>
     </section>
   );
+}
+
+function exportErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : 'CSV 내보내기에 실패했습니다. 잠시 후 다시 시도해주세요.';
 }
 
 function buildExportPayload(
