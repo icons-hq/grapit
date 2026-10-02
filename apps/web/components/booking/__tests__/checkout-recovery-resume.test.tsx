@@ -9,6 +9,12 @@ import ConfirmPage from '@/app/booking/[performanceId]/confirm/page';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { PaymentMethodSelection } from '@/components/booking/toss-payment-widget';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import {
+  getQueueAccessClosedCopy,
+  getQueueResumeRefusedCopy,
+  isQueueAccessRejection,
+} from '@/lib/booking/queue-access';
 
 /**
  * Checkout reached from the booking route's payment recovery screen (or the
@@ -20,7 +26,7 @@ import type { PaymentMethodSelection } from '@/components/booking/toss-payment-w
  */
 const boundary = vi.hoisted(() => ({
   prepare: vi.fn(), read: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), requestPayment: vi.fn(),
-  replace: vi.fn(), search: new URLSearchParams(),
+  replace: vi.fn(), search: new URLSearchParams(), locale: 'ko', toastError: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -29,8 +35,11 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => boundary.search,
 }));
 vi.mock('next-intl', () => ({
-  useLocale: () => 'ko',
+  useLocale: () => boundary.locale,
   useTranslations: () => (key: string) => key,
+}));
+vi.mock('sonner', () => ({
+  toast: { error: boundary.toastError, success: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 vi.mock('@/lib/api-client', () => ({
   apiClient: { get: boundary.read },
@@ -116,10 +125,10 @@ function mountPage() {
   return render(<QueryClientProvider client={client}><ConfirmPage /></QueryClientProvider>);
 }
 
-async function agreeAndPay() {
+async function agreeAndPay(locale: 'ko' | 'en' = 'ko') {
   const user = userEvent.setup();
   expect(await screen.findByText('Recovery Test')).toBeInTheDocument();
-  await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+  await user.click(screen.getByRole('checkbox', { name: getCheckoutCopy(locale).allTerms }));
   const pay = screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!;
   await waitFor(() => expect(pay).toBeEnabled());
   await user.click(pay);
@@ -128,6 +137,7 @@ async function agreeAndPay() {
 describe('Checkout resume after the queue access window closed (audit #4, #32)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    boundary.locale = 'ko';
     boundary.read.mockReset().mockResolvedValue(preparedOrder);
     boundary.prepare.mockReset().mockRejectedValue(
       Object.assign(new Error('대기열 입장 시간이 만료되었습니다'), { statusCode: 403 }),
@@ -184,6 +194,35 @@ describe('Checkout resume after the queue access window closed (audit #4, #32)',
     expect(boundary.cancel).not.toHaveBeenCalled();
     expect(boundary.unlock).not.toHaveBeenCalled();
     expect(screen.queryByText('대기열 입장 시간이 끝났습니다')).not.toBeInTheDocument();
+  });
+
+  it('stops a resume refused because this browser is WAITING in the queue again, in the page locale', async () => {
+    // Another tab of this browser re-entered the same performance queue: the admission
+    // cookie now holds a WAITING entry, and the handoff answers that 403 (queue.service).
+    const waitingRefusal = '대기열 입장이 아직 승인되지 않았습니다';
+    expect(isQueueAccessRejection(403, waitingRefusal)).toBe(true);
+    boundary.locale = 'en';
+    boundary.requestPayment.mockReset().mockRejectedValue(
+      Object.assign(new Error(waitingRefusal), { statusCode: 403 }),
+    );
+    const refused = getQueueResumeRefusedCopy('en');
+    mountPage();
+
+    await agreeAndPay('en');
+
+    expect(await screen.findByText(refused.body)).toBeInTheDocument();
+    const pays = screen.getAllByRole('button', { name: refused.title });
+    expect(pays.length).toBeGreaterThan(0);
+    for (const pay of pays) expect(pay).toBeDisabled();
+    expect(screen.getByRole('button', { name: getQueueAccessClosedCopy('en').rejoin })).toBeEnabled();
+    expect(boundary.toastError).toHaveBeenCalledWith(refused.toast);
+    expect(boundary.toastError).not.toHaveBeenCalledWith(waitingRefusal);
+    expect(screen.queryByText(waitingRefusal)).not.toBeInTheDocument();
+    // A disabled button: the same refusal is not sent again.
+    expect(boundary.requestPayment).toHaveBeenCalledTimes(1);
+    expect(boundary.prepare).not.toHaveBeenCalled();
+    expect(boundary.cancel).not.toHaveBeenCalled();
+    expect(boundary.unlock).not.toHaveBeenCalled();
   });
 
   it('is not blocked by the passed queue access deadline of a seat screen in the same tab', async () => {

@@ -338,4 +338,70 @@ describe('Checkout step queue access deadline (audit #32 follow-up)', () => {
       expect(screen.queryByText('대기열 입장 시간이 만료되었습니다')).not.toBeInTheDocument();
     },
   );
+
+  it.each([
+    '대기열 입장 인증이 필요합니다',
+    '대기열 입장 정보가 현재 공연과 일치하지 않습니다',
+    '대기열 입장이 아직 승인되지 않았습니다',
+  ])('shows the queue access copy for every queue 403 of a new order on the English page (%s)', async (serverMessage) => {
+    boundary.locale = 'en';
+    boundary.read.mockResolvedValue(null);
+    boundary.prepare.mockRejectedValueOnce(Object.assign(new Error(serverMessage), { statusCode: 403 }));
+    seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+    mountPage();
+    await agreeToTerms('en');
+    await clickPay();
+
+    expect(screen.getByText(getQueueAccessClosedCopy('en').toast)).toBeInTheDocument();
+    expect(screen.queryByText(serverMessage)).not.toBeInTheDocument();
+    expect(screen.queryByText(getVisibleCopy('en').bookingExtra.confirm.paymentRequestFailed))
+      .not.toBeInTheDocument();
+  });
+
+  it('toasts the locale failure copy, not the Korean server text, for any other rejection on the English page', async () => {
+    boundary.locale = 'en';
+    // The order exists (a lookup that does not return null), so the rejection is toasted.
+    boundary.read.mockResolvedValue({ id: 'reservation-existing' });
+    boundary.prepare.mockRejectedValueOnce(
+      Object.assign(new Error('이미 결제가 진행 중인 예매입니다'), { statusCode: 409 }),
+    );
+    seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+    mountPage();
+    await agreeToTerms('en');
+    await clickPay();
+
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      getVisibleCopy('en').bookingExtra.confirm.paymentRequestFailed,
+    );
+    expect(boundary.toastError).not.toHaveBeenCalledWith('이미 결제가 진행 중인 예매입니다');
+  });
+
+  it('keeps a page-locale message the payment widget raised before the handoff', async () => {
+    boundary.locale = 'en';
+    const methodNotAllowed = getCheckoutCopy('en').methodNotAllowed;
+    boundary.prepare.mockResolvedValueOnce({
+      reservationId: 'reservation-new', orderId: 'order', paymentDeadlineAt: null,
+      paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+    });
+    boundary.requestPayment.mockRejectedValueOnce(new Error(methodNotAllowed));
+    seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+    mountPage();
+    await agreeToTerms('en');
+    await clickPay();
+
+    expect(boundary.toastError).toHaveBeenCalledWith(methodNotAllowed);
+  });
+
+  it('keeps the Korean server text on the Korean page', async () => {
+    boundary.read.mockResolvedValue({ id: 'reservation-existing' });
+    boundary.prepare.mockRejectedValueOnce(
+      Object.assign(new Error('이미 결제가 진행 중인 예매입니다'), { statusCode: 409 }),
+    );
+    seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+    mountPage();
+    await agreeToTerms();
+    await clickPay();
+
+    expect(boundary.toastError).toHaveBeenCalledWith('이미 결제가 진행 중인 예매입니다');
+  });
 });

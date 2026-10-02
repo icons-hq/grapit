@@ -80,6 +80,7 @@ WHERE "key" IN ('privacy', 'pipa_required')
     AND "version" = '2026-04-28';
   ```
 
+- These conditions assume the booking payload of the current web: `consentItems` with exactly `terms` and `privacy`, each at its `CONSENT_DOCUMENT_VERSIONS` value, in the document language of the page (`ko`, otherwise `en`). `apps/web/e2e/booking-checkout-consent.spec.ts` checks it in a browser (ko and en, desktop and 375px): the documents the checkout opens show those versions, and `POST /reservations/prepare` carries them. Run it against the build before relying on these conditions.
 - Seat selection does not block a web rollback: it stays safe through the seat-update compatibility event from booking-web-4.
 - Do not roll back a consent seed migration. Its rows are additive, the previous version stays active, and audit rows may already reference the new rows.
 

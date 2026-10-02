@@ -253,7 +253,7 @@ ORDER BY p.created_at;
 - [ ] 관리자 IP allowlist를 강제할지: guard 또는 edge 규칙, deploy에 `ADMIN_IP_ALLOWLIST_CIDRS` 반영, IP가 바뀌는 현장 scanner 경로(`/field`, `field.scan.*`) 예외 정책을 먼저 정한다. 그 전까지 관리자 계정은 비밀번호와 감사 모니터링으로만 보호되며 MFA는 수용된 위험이다. #43
 - [ ] `run.app` 직접 접근 차단(ingress 제한 또는 edge secret 없는 요청 403). 먼저 OAuth callback(`CLOUD_RUN_API_URL` 기반), Toss webhook URL, Scheduler·prewarm, smoke script가 `run.app`을 쓰지 않는지 확인한다. API startup·liveness probe(`/api/v1/health`)는 edge secret을 보내지 않으므로, 앱 수준 403 차단을 쓰면 이 경로를 예외로 둔다(ingress 제한 방식은 probe에 영향이 없다). #152
 - [ ] Cloud Run·LB 요청 로그가 최초 `GET /field/check-in?ticket=...`의 query를 그대로 남긴다. 로그 보존·접근 범위를 점검하고, QR URL을 fragment(`#ticket=`)로 바꾸는 안을 ADR로 검토한다(기존 `?ticket=` QR은 계속 지원). 단절 중 새 QR까지 검증하려면 공개키 기반 로컬 검증 ADR이 필요하다. #118 #40
-- [ ] 기존 `seat_maps.svg_url`·`venue_layout_floors.svg_url` SVG를 운영 DB·R2에서 모두 받아 `hasUnsafeSvgPayload` 기준(주석, PI, `<`/`>`가 든 CDATA, HTML breakout tag, SMIL, `on*` 속성, 표현 속성의 `image-set()` 같은 외부 이미지 함수)으로 점검하고, 걸리면 교체한다. 렌더 sanitizer가 막지만 변조 파일은 찾아야 한다. `svgUrl`을 `R2_PUBLIC_URL` 도메인으로 제한할지는 기존 행의 host·상대 경로를 확인한 뒤 정한다. #49
+- [ ] 기존 `seat_maps.svg_url`·`venue_layout_floors.svg_url` SVG를 운영 DB·R2에서 모두 받아 `hasUnsafeSvgPayload` 기준(주석, PI, `<`/`>`가 든 CDATA, HTML breakout tag, SMIL, `on*` 속성, 표현 속성의 외부 `url()`과 `image-set()` 같은 외부 이미지 함수)으로 점검하고, 걸리면 교체한다. 렌더 sanitizer가 막지만 변조 파일은 찾아야 한다. 렌더는 표현 속성 값에 CSS 주석(`/*`)이 있어도 그 속성을 지우므로, 점검 때 같은 값도 찾아 좌석 색이 빠지지 않는지 본다. `svgUrl`을 `R2_PUBLIC_URL` 도메인으로 제한할지는 기존 행의 host·상대 경로를 확인한 뒤 정한다. #49
 - [ ] 선택: 판매 중인 공연에서 같은 인증 휴대폰을 쓰는 다계정의 과거 구매를 조회한다. 기존 확정 구매는 소급 취소하지 않고 새 구매부터 합산 제한이 적용된다. #62
 
 ## 5. 운영 조치로 해결되지 않는 잔여 위험

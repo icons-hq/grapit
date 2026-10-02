@@ -11,6 +11,7 @@ import {
   type TossPaymentWidgetRef,
 } from '../toss-payment-widget';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 const {
   apiClientPostMock,
@@ -441,6 +442,76 @@ describe('TossPaymentWidget', () => {
     await expect(ref.current!.requestPayment()).rejects.toThrow(getCheckoutCopy('ko').methodNotAllowed);
     expect(apiClientPostMock).not.toHaveBeenCalled();
     expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+  });
+
+  // Card issuer shortcuts share their codes with bank institution codes; classifying one as
+  // CARD would let a transfer through to a checkout_method_mismatch compensation cancel.
+  it.each(['SHINHAN', 'HYUNDAI', 'KOOKMIN', 'BC', 'IBK_BC'])(
+    'refuses the card issuer shortcut %s as unsupported before any handoff',
+    async (code) => {
+      getSelectedPaymentMethodMock.mockResolvedValue({ code });
+      const onPaymentMethodChange = vi.fn();
+      const ref = createRef<TossPaymentWidgetRef>();
+      render(<TossPaymentWidget {...defaultProps} ref={ref} onPaymentMethodChange={onPaymentMethodChange} />);
+      await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(onPaymentMethodChange).toHaveBeenCalledWith(
+        expect.objectContaining({ code, unsupported: true }),
+      ));
+
+      await expect(ref.current!.requestPayment()).rejects.toThrow(getCheckoutCopy('ko').methodNotAllowed);
+      expect(apiClientPostMock).not.toHaveBeenCalled();
+      expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports a missing client key to checkout as the load error it shows', async () => {
+    delete process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+    const onLoadError = vi.fn();
+    const onReady = vi.fn();
+    const { unmount } = render(
+      <TossPaymentWidget {...defaultProps} onReady={onReady} onLoadError={onLoadError} />,
+    );
+
+    const setupIncomplete = getVisibleCopy('ko').bookingExtra.widget.setupIncomplete;
+    expect(await screen.findByText(setupIncomplete)).toBeInTheDocument();
+    expect(onLoadError).toHaveBeenLastCalledWith(setupIncomplete);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(loadTossPaymentsMock).not.toHaveBeenCalled();
+
+    unmount();
+    expect(onLoadError).toHaveBeenLastCalledWith(null);
+  });
+
+  it('reports an SDK load failure to checkout', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    loadTossPaymentsMock.mockRejectedValueOnce(new Error('sdk blocked'));
+    const onLoadError = vi.fn();
+    render(<TossPaymentWidget {...defaultProps} onLoadError={onLoadError} />);
+
+    const systemLoadFailed = getVisibleCopy('ko').bookingExtra.widget.systemLoadFailed;
+    expect(await screen.findByText(systemLoadFailed)).toBeInTheDocument();
+    expect(onLoadError).toHaveBeenLastCalledWith(systemLoadFailed);
+  });
+
+  it('reports a render failure, and clears it once a later render succeeds', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderPaymentMethodsMock.mockRejectedValueOnce(new Error('iframe failed'));
+    const onLoadError = vi.fn();
+    const onReady = vi.fn();
+    const { rerender } = render(
+      <TossPaymentWidget {...defaultProps} onReady={onReady} onLoadError={onLoadError} />,
+    );
+
+    const widgetLoadFailed = getVisibleCopy('ko').bookingExtra.widget.widgetLoadFailed;
+    expect(await screen.findByText(widgetLoadFailed)).toBeInTheDocument();
+    expect(onLoadError).toHaveBeenLastCalledWith(widgetLoadFailed);
+    expect(onReady).not.toHaveBeenCalled();
+
+    // A new amount renders the widget again.
+    rerender(<TossPaymentWidget {...defaultProps} amount={60000} onReady={onReady} onLoadError={onLoadError} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(onLoadError).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByText(widgetLoadFailed)).not.toBeInTheDocument();
   });
 
   it('does not record a handoff after the buyer withdraws the payment terms agreement', async () => {

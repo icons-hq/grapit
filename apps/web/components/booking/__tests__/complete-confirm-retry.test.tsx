@@ -198,6 +198,30 @@ describe('Payment return confirm delivery', () => {
     expect(boundary.toastError).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['en', 'Could not check payment status.'],
+    ['ko', '결제 정보를 확인할 수 없습니다'],
+  ] as const)('reports a failed async payment return in the page locale (%s)', async (locale, expected) => {
+    boundary.locale = locale;
+    boundary.search = new URLSearchParams(
+      'pending=true&orderId=GRP-return&paymentKey=test-async&provider=ALIPAY_PLUS&amount=52000',
+    );
+    boundary.post.mockRejectedValueOnce(
+      Object.assign(new Error('결제 정보를 확인할 수 없습니다'), { statusCode: 400 }),
+    );
+    boundary.get.mockResolvedValue(handedOff);
+
+    mountPage();
+
+    await waitFor(() => expect(boundary.toastError).toHaveBeenCalledWith(expected));
+    expect(boundary.post).toHaveBeenCalledWith('/api/v1/payments/async-return', expect.objectContaining({
+      orderId: 'GRP-return', provider: 'ALIPAY_PLUS',
+    }), { showErrorToast: false });
+    if (locale !== 'ko') {
+      expect(boundary.toastError).not.toHaveBeenCalledWith('결제 정보를 확인할 수 없습니다');
+    }
+  });
+
   it('shows the seat-hold refusal in the page locale on the checking card (409)', async () => {
     boundary.post.mockRejectedValueOnce(
       Object.assign(new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'), { statusCode: 409 }),

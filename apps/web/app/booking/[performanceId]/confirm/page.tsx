@@ -91,12 +91,14 @@ function isPaymentMethodNotAllowedError(err: unknown): boolean {
     && err.message === CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
 }
 
-/** Admission guard 403 once the queue access window closed (C8: status + message). */
-const QUEUE_ACCESS_EXPIRED_MESSAGE = '대기열 입장 시간이 만료되었습니다';
-
-function isQueueAccessExpiredError(err: unknown): boolean {
-  return err instanceof Error && 'statusCode' in err && Number(err.statusCode) === 403
-    && err.message.trim() === QUEUE_ACCESS_EXPIRED_MESSAGE;
+/**
+ * An error checkout itself raised before the handoff (the payment widget's checks), whose
+ * message is already in the page locale. Server rejections (status code), provider SDK
+ * errors (`code`) and network failures carry Korean or browser text instead.
+ */
+function isPageLocaleCheckoutError(err: unknown): boolean {
+  return err instanceof Error && !(err instanceof TypeError)
+    && !('statusCode' in err) && !('code' in err);
 }
 
 /** Any queue 403 (window ended, admission missing, order bound to another browser session). */
@@ -158,6 +160,9 @@ function ConfirmPageContent() {
   const reselectingRef = useRef(false);
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
+  // The payment widget failed to load and shows this message instead of the methods
+  // and payment terms, so the pay button must not ask for those terms.
+  const [widgetLoadError, setWidgetLoadError] = useState<string | null>(null);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
   const [paymentMethodRejected, setPaymentMethodRejected] = useState(false);
   // The handoff of a resumed order was refused with a queue 403 (order bound to
@@ -416,6 +421,7 @@ function ConfirmPageContent() {
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
     if (paymentMethodNotAllowed) return;
+    if (widgetLoadError) return;
     if (
       !paymentWidgetRef.current
       || !agreed
@@ -534,10 +540,11 @@ function ConfirmPageContent() {
       }
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
-      // Server rejections arrive in Korean; the two checkout closures have locale copy.
+      // Server rejections arrive in Korean; the checkout closures (sales closed, any queue
+      // admission refusal) have locale copy, and other locales never see the raw text.
       const localizedRejection = isShowtimeSalesClosedError(err)
         ? showtimeClosedMessage
-        : isQueueAccessExpiredError(err)
+        : isQueueAccessRejectionError(err)
         ? queueAccessCopy.toast
         : null;
       let uncreatedOrder = false;
@@ -585,7 +592,10 @@ function ConfirmPageContent() {
             : locale === 'ko' ? errorMessage : confirmCopy.paymentRequestFailed));
         return;
       }
-      toast.error(localizedRejection ?? errorMessage);
+      toast.error(localizedRejection
+        ?? ((locale === 'ko' || isPageLocaleCheckoutError(err)) && errorMessage.trim()
+          ? errorMessage
+          : confirmCopy.paymentRequestFailed));
       if (returnOrderId) void refetchRecovery();
     }
   }
@@ -658,6 +668,7 @@ function ConfirmPageContent() {
     || !widgetAgreementAgreed
     || isProcessing
     || !widgetReady
+    || Boolean(widgetLoadError)
     || isPaymentDeadlineExpired
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
   const ctaText = !bookingAvailable
@@ -676,6 +687,8 @@ function ConfirmPageContent() {
     ? confirmCopy.processing
     : paymentMethodNotAllowed
     ? checkoutCopy.chooseAnotherMethod
+    : widgetLoadError
+    ? widgetLoadError
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
@@ -849,6 +862,7 @@ function ConfirmPageContent() {
               onPaymentMethodChange={handlePaymentMethodChange}
               onWidgetAgreementChange={handleWidgetAgreementChange}
               onPaymentDeadlineChange={handlePaymentDeadlineChange}
+              onLoadError={setWidgetLoadError}
             />
           )}
         </section>

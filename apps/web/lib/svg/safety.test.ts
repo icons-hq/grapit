@@ -186,6 +186,57 @@ describe('sanitizeParsedSvg (audit #49 mXSS)', () => {
     expect(rect.getAttribute('stroke')).toBe('#111');
   });
 
+  // 'İ'(U+0130)는 toLowerCase()에서 2 code unit이 된다. 소문자 문자열의 index로 원문을 자르면
+  // 26개 패딩만큼 검사 창이 URL 인자 안쪽 `#a)`로 밀려 외부 url()이 지역 참조처럼 통과했다.
+  const DOTTED_I_PADDING = 'İ'.repeat(26);
+  const PADDED_EXTERNAL_CURSOR = `/*${DOTTED_I_PADDING}*/url(https://evil.example/c.png#a), auto`;
+
+  it.each(['cursor', 'mask', 'fill'])(
+    'removes %s whose external url() hides behind length-changing lowercase padding',
+    (attribute) => {
+      const doc = parseSvg(`
+        <svg xmlns="http://www.w3.org/2000/svg">
+          <defs><linearGradient id="grad"/></defs>
+          <rect data-seat-id="A-1" ${attribute}="${PADDED_EXTERNAL_CURSOR}" stroke="url(#grad)"/>
+        </svg>
+      `);
+
+      expect(sanitizeParsedSvg(doc)).toBe(true);
+      const rect = doc.querySelector('rect')!;
+      expect(rect.hasAttribute(attribute)).toBe(false);
+      expect(rect.getAttribute('stroke')).toBe('url(#grad)');
+      expect(doc.documentElement.outerHTML).not.toMatch(/evil\.example/);
+    },
+  );
+
+  it('scans url() on the original value even without a CSS comment around the padding', () => {
+    const doc = parseSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <rect data-seat-id="A-1" cursor="'${DOTTED_I_PADDING}' url(https://evil.example/c.png#a), auto"
+          fill="url(#grad)" mask="URL( '#grad' )"/>
+      </svg>
+    `);
+
+    expect(sanitizeParsedSvg(doc)).toBe(true);
+    const rect = doc.querySelector('rect')!;
+    expect(rect.hasAttribute('cursor')).toBe(false);
+    expect(rect.getAttribute('fill')).toBe('url(#grad)');
+    expect(rect.getAttribute('mask')).toBe("URL( '#grad' )");
+  });
+
+  it('removes CSS comments from presentation attributes', () => {
+    const doc = parseSvg(`
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <rect data-seat-id="A-1" fill="/* tint */ url(#grad)" stroke="#111"/>
+      </svg>
+    `);
+
+    expect(sanitizeParsedSvg(doc)).toBe(true);
+    const rect = doc.querySelector('rect')!;
+    expect(rect.hasAttribute('fill')).toBe(false);
+    expect(rect.getAttribute('stroke')).toBe('#111');
+  });
+
   it('neutralizes documents whose root is not an SVG <svg> element', () => {
     const doc = parseSvg(
       '<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="x" onerror="alert(1)"/></body></html>',
@@ -235,6 +286,9 @@ describe('hasUnsafeSvgPayload (upload check)', () => {
     ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"><g inkscape:onload="alert(1)"/></svg>'],
     ['<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x"><g x:label="javascript:alert(1)"/></svg>'],
     ['<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>'],
+    ...['cursor', 'mask', 'fill'].map((attribute) => [
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect ${attribute}="/*${'İ'.repeat(26)}*/url(https://evil.example/c.png#a), auto"/></svg>`,
+    ]),
   ])('rejects %s', (markup) => {
     expect(hasUnsafeSvgPayload(parseSvg(markup))).toBe(true);
   });
