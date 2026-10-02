@@ -5,6 +5,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import {
   fieldOfflineSyncRequestSchema,
@@ -19,11 +20,15 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { OfflineSyncService } from './offline-sync.service.js';
 
 @Controller('field/check-in')
 @UseGuards(RolesGuard)
 @Roles('admin')
+// Shared scanner accounts run several gate devices at once; bucket per account
+// and network with gate-peak headroom instead of the 60/min default.
+@Throttle({ default: ROUTE_THROTTLES.fieldOperations })
 export class OfflineSyncController {
   constructor(private readonly offlineSyncService: OfflineSyncService) {}
 

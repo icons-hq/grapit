@@ -139,7 +139,7 @@ Admin screens are dense operational tools. Public pages can be more visual, but 
 ### 4.2 HTTP Prefix And Guards
 
 - `main.ts` sets global prefix `api/v1`.
-- `ThrottlerGuard` is global.
+- `ThrottlerGuard` is global and runs after `JwtAuthGuard`. Its `default` throttler (60/min per route) tracks the JWT-verified user, otherwise the trusted client IP (IPv6 grouped by /64). It never tracks client-chosen cookies, admission tokens or headers, because a fresh value per request would get a fresh bucket. `TrafficDefenseService` adds named policies on top: booking mutations, signup per IP, `login-account` and `email-verification-verify` per email + IP, and `password-reset-email` and `email-verification-send` per email across IPs. Route overrides live in `modules/traffic/route-throttles.ts`. Auth endpoints get per-IP limits with shared-NAT headroom, and cookie-less `POST /auth/refresh` is not counted. Field operations use 600/min per scanner account and client network. The Toss webhook skips IP throttling and relies on its secret guard and event ledger.
 - `JwtAuthGuard` is global; public endpoints use the `@Public` decorator.
 - Admin authorization uses role and capability guards.
 - Global validation uses the Zod validation pipe.
@@ -408,6 +408,7 @@ Production convention:
 - Cloud Run environment variables and Secret Manager bindings provide runtime configuration.
 - API validates production frontend origin and Redis/Valkey pub/sub readiness at bootstrap.
 - Missing production Redis URL or invalid Valkey mode fails startup.
+- Optional `EDGE_PROXY_SHARED_SECRET` (API env and edge Worker secret, same value) switches client-IP trust to the edge-secret check described in 10.1. Provision the Worker secret first, then the API. Unset keeps the Cloudflare-peer `cf-connecting-ip` fallback.
 
 ### 8.5 Object Storage And Uploads
 
@@ -440,7 +441,7 @@ Operational truth order for production incidents:
 - JWT guard protects authenticated endpoints by default.
 - Roles guard and admin capability guard protect admin operations.
 - Throttler guard is global and can use Redis-backed storage when real Redis is configured.
-- Request IP handling is centralized for audit and allowlist features.
+- Request IP handling is centralized in `common/request-ip.ts` for throttling, consent, audit and allowlist features. When `EDGE_PROXY_SHARED_SECRET` is set, the API trusts only `x-grabit-client-ip`, or else `cf-connecting-ip`, on requests whose `x-grabit-edge-secret` matches it (timing-safe). The Grabit edge Worker sets both headers. Every other request, including other Cloudflare Workers calling the public `run.app` origin, is identified by its peer IP. Until the secret is provisioned, a Cloudflare peer may name the client through `cf-connecting-ip` only. `True-Client-IP` and `X-Forwarded-For` are never trusted.
 - Toss payment exceptions are filtered to avoid leaking provider internals.
 
 ### 10.2 Admin Capabilities

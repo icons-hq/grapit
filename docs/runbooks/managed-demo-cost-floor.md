@@ -239,6 +239,31 @@ Required canary checks:
 - a deliberate origin redirect confirming no `run.app` hostname leaks;
 - Worker rollback using the recorded previous version ID.
 
+Client IP trust (edge secret):
+
+The API trusts a forwarded client IP only from a request carrying the shared
+edge secret, once `EDGE_PROXY_SHARED_SECRET` is set on the API. The Worker
+sends that secret in `x-grabit-edge-secret` and sends the visitor's
+`cf-connecting-ip` in `x-grabit-client-ip`. It also drops any visitor-supplied
+copies of both headers. Throttling, consent and audit IPs depend on this.
+Roll it out in this order, so no step ever leaves the API without a usable
+client IP:
+
+1. Deploy the API and Worker code. With the secret unset on both, the API
+   keeps the Cloudflare-peer `cf-connecting-ip` fallback.
+2. Generate one random value of at least 32 bytes. Store it as Worker secret
+   `EDGE_PROXY_SHARED_SECRET` (`wrangler secret put EDGE_PROXY_SHARED_SECRET
+   --env production`). Store the same value in Secret Manager, then bind it
+   to the API service as `EDGE_PROXY_SHARED_SECRET`.
+3. Deploy the API with the binding. Verify the result by sending anonymous
+   `POST /api/v1/auth/refresh` with a dummy refresh cookie from two
+   different networks through `api.heygrabit.com`. The two requests must
+   land in different `default:ip:` throttle buckets, or appear in API logs
+   with different IPs. A direct `run.app` request with forged
+   `x-grabit-client-ip` must land in its peer's bucket.
+
+To roll back, unset the API binding first, then the Worker secret.
+
 Only after at least 24 hours of clean canary evidence may the forwarding rule, HTTPS proxy, URL map, backend services, NEGs, and unused address be deleted. Capture each resource as YAML before deletion. Deletion order and exact resource names are in the baseline ledger.
 
 Worker rollback:

@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
 
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
@@ -17,6 +18,7 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import {
   AdminOperationsService,
   type AdminOperationsInboxFilters,
@@ -163,9 +165,10 @@ export class AdminOperationsController {
 }
 
 function requestContext(request: RequestMeta) {
-  const forwardedFor = firstHeader(request.headers?.['x-forwarded-for']);
   return {
-    ipAddress: forwardedFor?.split(',')[0]?.trim() || request.ip || null,
+    // The first X-Forwarded-For entry is whatever the client sent; use the
+    // shared trust boundary for audit IPs instead.
+    ipAddress: resolveTrustedRequestIp(request as unknown as Request),
     userAgent: firstHeader(request.headers?.['user-agent']) ?? null,
   };
 }

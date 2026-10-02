@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Headers, HttpCode, HttpStatus, Inject, Post, Req, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -113,6 +114,10 @@ export class PaymentWebhookController {
   ) {}
 
   @Public()
+  // Toss sends every webhook from a few fixed IPs, so an IP bucket would 429
+  // (and delay by Toss' retry backoff) legitimate events at ticket-open peaks.
+  // TossWebhookGuard's secret check and the webhook event ledger guard abuse.
+  @SkipThrottle()
   @UseGuards(TossWebhookGuard)
   @Post('webhook')
   @HttpCode(HttpStatus.OK)

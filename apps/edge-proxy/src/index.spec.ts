@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, {
+  EDGE_CLIENT_IP_HEADER,
+  EDGE_SECRET_HEADER,
   buildOriginRequest,
   resolveOrigin,
   rewriteOriginRedirect,
@@ -67,6 +69,75 @@ describe('origin routing', () => {
     expect(proxied.headers.get('x-forwarded-host')).toBe('api.heygrabit.com');
     expect(proxied.headers.get('x-forwarded-proto')).toBe('https');
     expect(await proxied.json()).toEqual({ refundId: 'refund-1' });
+  });
+
+  it('forwards the Cloudflare visitor IP with the shared edge secret', () => {
+    const incoming = new Request('https://api.heygrabit.com/api/v1/auth/login', {
+      method: 'POST',
+      headers: {
+        'cf-connecting-ip': '198.51.100.44',
+        'x-grabit-client-ip': '203.0.113.250',
+        'x-grabit-edge-secret': 'visitor-guess',
+      },
+    });
+
+    const proxied = buildOriginRequest(incoming, env.API_ORIGIN, 'edge-secret-value');
+
+    expect(proxied.headers.get(EDGE_SECRET_HEADER)).toBe('edge-secret-value');
+    expect(proxied.headers.get(EDGE_CLIENT_IP_HEADER)).toBe('198.51.100.44');
+  });
+
+  it('strips visitor-supplied edge identity headers when no secret is provisioned', () => {
+    const incoming = new Request('https://api.heygrabit.com/api/v1/auth/login', {
+      method: 'POST',
+      headers: {
+        'cf-connecting-ip': '198.51.100.44',
+        'x-grabit-client-ip': '203.0.113.250',
+        'x-grabit-edge-secret': 'visitor-guess',
+      },
+    });
+
+    const proxied = buildOriginRequest(incoming, env.API_ORIGIN);
+
+    expect(proxied.headers.get(EDGE_SECRET_HEADER)).toBeNull();
+    expect(proxied.headers.get(EDGE_CLIENT_IP_HEADER)).toBeNull();
+  });
+
+  it('attaches the edge secret from the Worker env on proxied requests', async () => {
+    const fetchMock = vi.fn(async (request: Request) => {
+      expect(request.headers.get(EDGE_SECRET_HEADER)).toBe('edge-secret-value');
+      expect(request.headers.get(EDGE_CLIENT_IP_HEADER)).toBe('198.51.100.44');
+      return new Response('ok');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.fetch(
+      new Request('https://api.heygrabit.com/api/v1/health', {
+        headers: { 'cf-connecting-ip': '198.51.100.44' },
+      }),
+      { ...env, EDGE_PROXY_SHARED_SECRET: 'edge-secret-value' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the edge secret off requests proxied to the Web origin', async () => {
+    const fetchMock = vi.fn(async (request: Request) => {
+      expect(request.url).toBe('https://grabit-web-d3c6wrfdbq-du.a.run.app/');
+      expect(request.headers.get(EDGE_SECRET_HEADER)).toBeNull();
+      expect(request.headers.get(EDGE_CLIENT_IP_HEADER)).toBeNull();
+      return new Response('ok');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.fetch(
+      new Request('https://heygrabit.com/', {
+        headers: { 'cf-connecting-ip': '198.51.100.44' },
+      }),
+      { ...env, EDGE_PROXY_SHARED_SECRET: 'edge-secret-value' },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('streams the origin response and rewrites only same-origin redirects', async () => {

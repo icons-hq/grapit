@@ -13,13 +13,14 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
-import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
 import { registerBodySchema, type RegisterBody } from './dto/register.dto.js';
 import {
@@ -83,7 +84,7 @@ export class AuthController {
 
   @Public()
   @Get('email-availability')
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Throttle({ default: ROUTE_THROTTLES.authEmailAvailability })
   async checkEmailAvailability(
     @Query(new ZodValidationPipe(emailAvailabilityQuerySchema))
     query: z.infer<typeof emailAvailabilityQuerySchema>,
@@ -110,6 +111,8 @@ export class AuthController {
   @Public()
   @UseGuards(AuthGuard('local'))
   @HttpCode(HttpStatus.OK)
+  // Per client IP; the `login-account` traffic policy also caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.authLogin })
   @Post('login')
   async login(
     @Req() req: Request,
@@ -127,6 +130,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  // Per client IP when a refresh cookie is present; cookie-less calls skip throttling.
+  @Throttle({ default: ROUTE_THROTTLES.authRefresh })
   @Post('refresh')
   async refresh(
     @Req() req: Request,
@@ -164,8 +169,9 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
-  // 3 req / 15 min / IP (REVIEWS.md HIGH-04; v6 object signature, ttl = 900_000ms = 15min, NOT 900s)
+  // Per client IP; the `password-reset-email` traffic policy caps each address
+  // at 3 req / 15 min across IPs (REVIEWS.md HIGH-04).
+  @Throttle({ default: ROUTE_THROTTLES.authPasswordResetRequest })
   @Post('password-reset/request')
   async requestReset(
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
@@ -179,8 +185,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
-  // 3 req / 15 min / IP (REVIEWS.md HIGH-04; v6 object signature)
+  // 3 req / 15 min / IP (REVIEWS.md HIGH-04)
+  @Throttle({ default: ROUTE_THROTTLES.authPasswordResetConfirm })
   @Post('password-reset/confirm')
   async confirmReset(
     @Body(new ZodValidationPipe(resetPasswordBodySchema))
@@ -192,9 +198,10 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  // Per client IP; `email-verification-send` caps each address across IPs and
+  // across request/resend. (Hotfix 260517's skip was for the Cloudflare-edge
+  // IP collapse, fixed since by trusted client IP resolution.)
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
   @Post('email-verification/request')
   async requestEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -214,9 +221,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  // Per client IP; `email-verification-send` caps each address across IPs.
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
   @Post('email-verification/resend')
   async resendEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -236,9 +242,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 10, ttl: 900000 } })
+  // Per client IP; `email-verification-verify` caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationVerify })
   @Post('email-verification/verify')
   async verifyEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationVerifySchema))

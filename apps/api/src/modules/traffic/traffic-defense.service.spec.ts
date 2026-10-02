@@ -35,6 +35,10 @@ describe('TrafficDefenseService', () => {
         'prepare-reservation',
         'confirm-payment',
         'signup',
+        'login-account',
+        'password-reset-email',
+        'email-verification-send',
+        'email-verification-verify',
       ]),
     );
   });
@@ -104,52 +108,165 @@ describe('TrafficDefenseService', () => {
     ).toBe(true);
   });
 
-  it('falls back to a hashed session cookie for the global default throttler', () => {
+  it('tracks anonymous default throttling by trusted IP, ignoring client-chosen cookies (audit #5)', () => {
     const service = new TrafficDefenseService();
 
-    const tracker = service.resolveDefaultTracker(
-      createRequest({
-        cookies: { refreshToken: 'refresh-cookie' },
-      }),
+    const trackers = ['session', 'queueSessionId', 'refreshToken'].map((cookieName) =>
+      service.resolveDefaultTracker(
+        createRequest({
+          originalUrl: '/api/v1/auth/login',
+          cookies: { [cookieName]: `random-${cookieName}-${Math.random()}` },
+        }),
+      ),
     );
 
-    expect(tracker).toContain('default:session:');
-    expect(tracker).not.toContain('refresh-cookie');
+    expect(new Set(trackers)).toEqual(new Set(['default:ip:203.0.113.10']));
   });
 
-  it('falls back to session cookie + IP for anonymous queue-entry requests before admission exists', () => {
+  it('tracks anonymous policy requests by trusted IP, ignoring cookies and admission tokens', () => {
     const service = new TrafficDefenseService();
+    const policies = ['queue-entry', 'signup', 'confirm-payment'] as const;
 
-    const tracker = service.resolveTracker(
-      'queue-entry',
-      createRequest({
-        method: 'GET',
-        originalUrl: '/api/v1/queue/entry',
-        cookies: { refreshToken: 'refresh-cookie' },
-        headers: { 'x-queue-admission-token': 'late-admission-token' },
-      }),
-    );
+    for (const policy of policies) {
+      const first = service.resolveTracker(
+        policy,
+        createRequest({
+          cookies: { session: 'random-a', refreshToken: 'random-a' },
+          headers: { 'x-queue-admission-token': 'admission-a' },
+          body: { admissionToken: 'admission-a' },
+        }),
+      );
+      const second = service.resolveTracker(
+        policy,
+        createRequest({
+          cookies: { queueSessionId: 'random-b' },
+          headers: { 'x-queue-admission-token': 'admission-b' },
+          query: { admissionToken: 'admission-b' },
+        }),
+      );
 
-    expect(tracker).toContain('queue-entry');
-    expect(tracker).toContain('session-ip');
-    expect(tracker).toContain('203.0.113.10');
-    expect(tracker).not.toContain('late-admission-token');
+      expect(first).toBe(`${policy}:ip:203.0.113.10`);
+      expect(second).toBe(first);
+    }
   });
 
-  it('uses admission token before plain IP on booking mutation trackers when session identity is unavailable', () => {
+  it('groups IPv6 clients by /64 so address rotation inside one subscriber prefix shares a bucket', () => {
     const service = new TrafficDefenseService();
+    const tracker = (ip: string) =>
+      service.resolveDefaultTracker(createRequest({ ip, socket: { remoteAddress: ip } }));
 
-    const tracker = service.resolveTracker(
-      'confirm-payment',
-      createRequest({
-        originalUrl: '/api/v1/payments/confirm',
-        headers: { 'x-queue-admission-token': 'admission-123' },
-      }),
+    expect(tracker('2001:db8:1:2:aaaa::1')).toBe('default:ip:2001:db8:1:2::/64');
+    expect(tracker('2001:db8:1:2:bbbb:cccc:dddd:eeee')).toBe('default:ip:2001:db8:1:2::/64');
+    expect(tracker('2001:db8:1:3::1')).toBe('default:ip:2001:db8:1:3::/64');
+  });
+
+  it('skips cookie-less POST /auth/refresh, which is a no-op 204 (audit #158)', () => {
+    const service = new TrafficDefenseService();
+    const refresh = (overrides: Record<string, unknown>) =>
+      service.shouldSkipDefaultThrottle(
+        createExecutionContext(createRequest({ originalUrl: '/api/v1/auth/refresh', ...overrides })),
+      );
+
+    expect(refresh({})).toBe(true);
+    expect(refresh({ cookies: { refreshToken: '' } })).toBe(true);
+    expect(refresh({ cookies: { session: 'not-a-refresh-cookie' } })).toBe(true);
+    expect(refresh({ cookies: { refreshToken: 'refresh-cookie' } })).toBe(false);
+    expect(
+      service.shouldSkipDefaultThrottle(
+        createExecutionContext(createRequest({ originalUrl: '/api/v1/auth/login' })),
+      ),
+    ).toBe(false);
+  });
+
+  it('keys login-account and code-verify buckets by normalized email + IP', () => {
+    const service = new TrafficDefenseService();
+    const login = (email: string, ip = '203.0.113.10') =>
+      service.resolveTracker(
+        'login-account',
+        createRequest({
+          originalUrl: '/api/v1/auth/login',
+          body: { email },
+          ip,
+          socket: { remoteAddress: ip },
+        }),
+      );
+
+    expect(login('Victim@Example.com ')).toBe(login('victim@example.com'));
+    expect(login('victim@example.com')).not.toContain('victim@example.com');
+    expect(login('victim@example.com', '198.51.100.9')).not.toBe(login('victim@example.com'));
+    expect(login('victim@example.com')).toMatch(/^login-account:email-ip:[0-9a-f]{32}:203\.0\.113\.10$/);
+  });
+
+  it('keys mail-sending buckets by normalized email across IPs', () => {
+    const service = new TrafficDefenseService();
+    const send = (email: string, ip: string) =>
+      service.resolveTracker(
+        'email-verification-send',
+        createRequest({
+          originalUrl: '/api/v1/auth/email-verification/resend',
+          body: { email },
+          ip,
+          socket: { remoteAddress: ip },
+        }),
+      );
+
+    expect(send('victim@example.com', '203.0.113.10')).toBe(
+      send('VICTIM@example.com', '198.51.100.9'),
     );
+    expect(send('victim@example.com', '203.0.113.10')).toMatch(
+      /^email-verification-send:email:[0-9a-f]{32}$/,
+    );
+  });
 
-    expect(tracker).toContain('confirm-payment');
-    expect(tracker).toContain('admission');
-    expect(tracker).not.toContain('ip:203.0.113.10');
+  it('applies identity policies only to their routes and only when the request names an email', () => {
+    const service = new TrafficDefenseService();
+    const policy = (name: string) =>
+      service.getThrottlerOptions().find((option) => option.name === name);
+    const skip = (name: string, overrides: Record<string, unknown>) =>
+      policy(name)?.skipIf?.(createExecutionContext(createRequest(overrides)));
+
+    expect(skip('login-account', { originalUrl: '/api/v1/auth/login', body: { email: 'a@b.co' } }))
+      .toBe(false);
+    expect(skip('login-account', { originalUrl: '/api/v1/auth/login', body: {} })).toBe(true);
+    expect(skip('login-account', { originalUrl: '/api/v1/auth/register', body: { email: 'a@b.co' } }))
+      .toBe(true);
+    expect(
+      skip('email-verification-send', {
+        originalUrl: '/api/v1/auth/email-verification/request',
+        body: { email: 'a@b.co' },
+      }),
+    ).toBe(false);
+    expect(
+      skip('email-verification-verify', {
+        originalUrl: '/api/v1/auth/email-verification/verify',
+        body: { token: 'link-token-from-email-0123456789abcdef' },
+      }),
+    ).toBe(true);
+    expect(
+      skip('password-reset-email', {
+        originalUrl: '/api/v1/auth/password-reset/request',
+        body: { email: 'a@b.co' },
+      }),
+    ).toBe(false);
+  });
+
+  it('shares the email-verification-send bucket between request and resend', () => {
+    const service = new TrafficDefenseService();
+    const option = service
+      .getThrottlerOptions()
+      .find((policy) => policy.name === 'email-verification-send');
+    const contextFor = (handlerName: string) =>
+      ({
+        getClass: () => ({ name: 'AuthController' }),
+        getHandler: () => ({ name: handlerName }),
+      }) as never;
+
+    expect(option?.generateKey).toBeTypeOf('function');
+    expect(
+      option?.generateKey?.(contextFor('requestEmailVerification'), 'tracker', 'email-verification-send'),
+    ).toBe(
+      option?.generateKey?.(contextFor('resendEmailVerification'), 'tracker', 'email-verification-send'),
+    );
   });
 
   it('returns TRAFFIC_RATE_LIMITED for retryable throttle outcomes', () => {
@@ -206,10 +323,16 @@ describe('TrafficDefenseService', () => {
       resolve(__dirname, '../../app.module.ts'),
       'utf-8',
     );
+    const config = new TrafficDefenseService().getThrottlerModuleConfig();
 
     expect(appModuleSource).toContain('TrafficModule');
     expect(appModuleSource).toContain('TrafficDefenseService');
-    expect(appModuleSource).toContain('resolveDefaultTracker');
+    expect(appModuleSource).toContain('trafficDefense.getThrottlerModuleConfig()');
+    expect(config.errorMessage).toBe(TRAFFIC_RATE_LIMITED);
+    expect(config.throttlers.map((throttler) => throttler.name)).toEqual([
+      'default',
+      ...new TrafficDefenseService().getThrottlerOptions().map((policy) => policy.name),
+    ]);
   });
 });
 

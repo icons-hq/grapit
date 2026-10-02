@@ -1,7 +1,14 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { Request } from 'express';
 
 const FALLBACK_IP = '0.0.0.0';
+/** API env var holding the secret shared with the Grabit Cloudflare edge Worker. */
+export const EDGE_PROXY_SHARED_SECRET_ENV = 'EDGE_PROXY_SHARED_SECRET';
+/** Header the Grabit edge Worker sets to prove a request came through it. */
+export const EDGE_PROXY_SECRET_HEADER = 'x-grabit-edge-secret';
+/** Header the Grabit edge Worker sets to the visitor IP Cloudflare observed. */
+export const EDGE_CLIENT_IP_HEADER = 'x-grabit-client-ip';
 const CLOUDFLARE_IPV4_CIDRS = [
   '173.245.48.0/20',
   '103.21.244.0/22',
@@ -29,20 +36,72 @@ const CLOUDFLARE_IPV6_CIDRS = [
   '2c0f:f248::/32',
 ] as const;
 
+/**
+ * Resolves the client IP used for throttling, consent records and audit logs.
+ *
+ * Trust boundary:
+ * - With `EDGE_PROXY_SHARED_SECRET` configured, only a request carrying the
+ *   matching `x-grabit-edge-secret` header (set by the Grabit edge Worker) may
+ *   name its client, through `x-grabit-client-ip` (or `cf-connecting-ip`).
+ *   Every other request, including one relayed by somebody else's Cloudflare
+ *   Worker straight to the public run.app origin, is identified by its peer.
+ * - Without the secret (rollout fallback), a Cloudflare peer may name its
+ *   client through `cf-connecting-ip` only. Cloudflare sets that header on
+ *   Worker subrequests to non-Cloudflare origins and a Worker cannot change
+ *   it. `True-Client-IP` and `X-Forwarded-For` are never trusted because any
+ *   Worker can set them to arbitrary values.
+ */
 export function resolveTrustedRequestIp(req: Request): string {
   const headers = req.headers ?? {};
-  const proxyPeerIp = normalizedIp(req.ip) ?? normalizedIp(req.socket.remoteAddress);
-  const forwardedIp = isCloudflareProxyIp(proxyPeerIp)
-    ? firstHeaderIp(headers['cf-connecting-ip']) ||
-      firstHeaderIp(headers['true-client-ip']) ||
-      firstForwardedForIp(headers['x-forwarded-for'])
-    : null;
+  const proxyPeerIp = normalizedIp(req.ip) ?? normalizedIp(req.socket?.remoteAddress);
+  const forwardedIp = resolveForwardedClientIp(headers, proxyPeerIp);
   const ip =
     forwardedIp ||
     proxyPeerIp ||
-    req.socket.remoteAddress ||
+    req.socket?.remoteAddress ||
     FALLBACK_IP;
   return isIP(ip) ? ip : FALLBACK_IP;
+}
+
+function resolveForwardedClientIp(
+  headers: Request['headers'],
+  proxyPeerIp: string | null,
+): string | null {
+  const edgeSecret = configuredEdgeSecret();
+  if (edgeSecret) {
+    if (!edgeSecretMatches(headers[EDGE_PROXY_SECRET_HEADER], edgeSecret)) {
+      return null;
+    }
+    return (
+      firstHeaderIp(headers[EDGE_CLIENT_IP_HEADER]) ??
+      firstHeaderIp(headers['cf-connecting-ip'])
+    );
+  }
+
+  return isCloudflareProxyIp(proxyPeerIp)
+    ? firstHeaderIp(headers['cf-connecting-ip'])
+    : null;
+}
+
+function configuredEdgeSecret(): string | null {
+  const secret = process.env[EDGE_PROXY_SHARED_SECRET_ENV]?.trim();
+  return secret ? secret : null;
+}
+
+function edgeSecretMatches(
+  value: string | string[] | undefined,
+  expected: string,
+): boolean {
+  const provided = (Array.isArray(value) ? value[0] : value)?.trim();
+  if (!provided) {
+    return false;
+  }
+  // Compare fixed-length digests so neither content nor length leaks by timing.
+  return timingSafeEqual(sha256(provided), sha256(expected));
+}
+
+function sha256(value: string): Buffer {
+  return createHash('sha256').update(value).digest();
 }
 
 function isCloudflareProxyIp(ip: string | null): boolean {
@@ -69,14 +128,8 @@ function normalizedIp(value: string | undefined): string | null {
 }
 
 function firstHeaderIp(value: string | string[] | undefined): string | null {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return candidate && isIP(candidate) ? candidate : null;
-}
-
-function firstForwardedForIp(value: string | string[] | undefined): string | null {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  const firstIp = candidate?.split(',')[0]?.trim();
-  return firstIp && isIP(firstIp) ? firstIp : null;
+  const candidate = (Array.isArray(value) ? value[0] : value)?.trim();
+  return candidate ? normalizedIp(candidate) : null;
 }
 
 function ipv4InCidr(ip: string, cidr: string): boolean {

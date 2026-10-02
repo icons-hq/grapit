@@ -20,10 +20,7 @@ import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module
 import { TranslationModule } from './modules/translation/translation.module.js';
 import { ConsentModule } from './modules/consent/consent.module.js';
 import { PrewarmModule } from './modules/ops/prewarm.module.js';
-import {
-  TRAFFIC_RATE_LIMITED,
-  TrafficDefenseService,
-} from './modules/traffic/traffic-defense.service.js';
+import { TrafficDefenseService } from './modules/traffic/traffic-defense.service.js';
 import { TrafficModule } from './modules/traffic/traffic.module.js';
 import { QueueModule } from './modules/queue/queue.module.js';
 import { RefundModule } from './modules/refund/refund.module.js';
@@ -49,21 +46,10 @@ import { redisConfig } from './config/redis.config.js';
         // Real ioredis exposes incr() for INCR command — use ThrottlerStorageRedisService
         const isRealRedis = typeof (redis as IORedis).incr === 'function';
         return {
-          // [Review #6] @nestjs/throttler v6 uses ms units: 60_000ms = 1 minute global default
-          throttlers: [
-            {
-              name: 'default',
-              ttl: 60_000,
-              limit: 60,
-              skipIf: (context) => trafficDefense.shouldSkipDefaultThrottle(context),
-              getTracker: (req) =>
-                trafficDefense.resolveDefaultTracker(
-                  req as Parameters<TrafficDefenseService['resolveDefaultTracker']>[0],
-                ),
-            },
-            ...trafficDefense.getThrottlerOptions(),
-          ],
-          errorMessage: TRAFFIC_RATE_LIMITED,
+          // [Review #6] @nestjs/throttler v6 uses ms units (default: 60_000ms = 1 minute).
+          // Global `default` throttler (resolveDefaultTracker: verified user or trusted IP,
+          // never client cookies) plus the named traffic-defense policies.
+          ...trafficDefense.getThrottlerModuleConfig(),
           ...(isRealRedis
             ? { storage: new ThrottlerStorageRedisService(redis) }
             : {}), // dev: in-memory throttler fallback

@@ -68,8 +68,13 @@ describe('AppModule ThrottlerModule configuration', () => {
     const { readFile } = await import('fs/promises');
     const { resolve } = await import('path');
     const source = await readFile(resolve(__dirname, 'app.module.ts'), 'utf-8');
+    const { TrafficDefenseService } = await import(
+      './modules/traffic/traffic-defense.service.js'
+    );
+    const config = new TrafficDefenseService().getThrottlerModuleConfig();
 
-    expect(source).toContain('limit: 60');
+    expect(source).toContain('trafficDefense.getThrottlerModuleConfig()');
+    expect(config.throttlers[0]).toMatchObject({ name: 'default', ttl: 60_000, limit: 60 });
   });
 
   it('should authenticate before throttling so protected routes are tracked by verified user identity', async () => {
