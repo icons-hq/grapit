@@ -98,9 +98,9 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 - 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
 - `SET LOCAL`은 transaction이 끝날 때까지 유지된다. drizzle은 pending migration을 한 transaction으로 적용하므로, `SET LOCAL lock_timeout = '10s'`를 둔 migration 뒤의 모든 migration도 `MIGRATION_LOCK_TIMEOUT`(기본 5s) 대신 10s를 받는다. 이런 migration을 다른 migration과 같은 배포에 묶을 때는 그 뒤의 DDL 전체를 10s 대기 기준으로 검토한다.
 
-### 2026-10 감사 migration batch(0038–0046) 첫 배포
+### 2026-10 감사 migration batch(0038–0047) 첫 배포
 
-감사 수정 브랜치를 처음 배포하면 0038–0046 아홉 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다. 모든 잠금은 batch 전체가 commit될 때까지 유지된다. `ACCESS EXCLUSIVE`는 write뿐 아니라 읽기(`SELECT`)도 막고, `SHARE`·`SHARE ROW EXCLUSIVE`는 읽기는 두고 write를 막는다. 잠금 대기는 batch 전체가 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 이 batch의 migration에는 `SET LOCAL lock_timeout`이 없다.
+감사 수정 브랜치를 처음 배포하면 0038–0047 열 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다. 모든 잠금은 batch 전체가 commit될 때까지 유지된다. `ACCESS EXCLUSIVE`는 write뿐 아니라 읽기(`SELECT`)도 막고, `SHARE`·`SHARE ROW EXCLUSIVE`는 읽기는 두고 write를 막는다. 잠금 대기는 batch 전체가 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 이 batch의 migration에는 `SET LOCAL lock_timeout`이 없다.
 
 | Migration | 잠금 대상 | 영향 |
 | --- | --- | --- |

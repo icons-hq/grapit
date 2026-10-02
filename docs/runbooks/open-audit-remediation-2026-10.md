@@ -10,7 +10,7 @@
 
 ### 1.1 배포 창과 deploy 설정
 
-- [ ] 배포 창을 판매·대기열·현장 입장·결제 피크 밖으로 잡는다. 첫 배포는 migration 0038–0046 아홉 개를 한 transaction으로 적용하며, batch가 commit될 때까지 `reservation_seats`, `payments`, `users`, `reservations`, `seat_inventories` 쓰기와 `admin_audit_logs` INSERT를 막고, `ticket_benefits`, `ticket_benefit_entitlements`, `support_notices`, `ticket_scan_events`는 `ACCESS EXCLUSIVE`로 읽기까지 막는다. 잠금 대기는 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 잠금 영향, 행 수·활성 트랜잭션 확인, `CONCURRENTLY` 선생성 선택지는 [감사 migration batch 첫 배포](show-relaunch-reliability.md#2026-10-감사-migration-batch00380046-첫-배포)를 따른다. #59 #60 #62 #68 #47 #165 #24 #113 #99
+- [ ] 배포 창을 판매·대기열·현장 입장·결제 피크 밖으로 잡는다. 첫 배포는 migration 0038–0047 열 개를 한 transaction으로 적용하며, batch가 commit될 때까지 `reservation_seats`, `payments`, `users`, `reservations`, `seat_inventories` 쓰기와 `admin_audit_logs` INSERT를 막고, `ticket_benefits`, `ticket_benefit_entitlements`, `support_notices`, `ticket_scan_events`는 `ACCESS EXCLUSIVE`로 읽기까지 막는다. 잠금 대기는 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 잠금 영향, 행 수·활성 트랜잭션 확인, `CONCURRENTLY` 선생성 선택지는 [감사 migration batch 첫 배포](show-relaunch-reliability.md#2026-10-감사-migration-batch00380047-첫-배포)를 따른다. #59 #60 #62 #68 #47 #165 #24 #113 #99
 - [ ] repository variable `BOOKING_ENABLED`를 지금 live API·Web 값과 같게 맞춘다. 새 Deploy workflow는 live `false`(또는 읽을 수 없는 값)를 `true`로 바꾸는 배포를 DB 변경 전에 실패시킨다. 변수가 비어 있으면 `true`로 배포한다. #64
 - [ ] 배포 서비스 계정이 `grabit-api`와 `grabit-web`을 읽을 수 있는지(`run.services.get`) 확인한다. booking gate 확인은 두 서비스의 live 값을 읽지 못하면 배포를 실패시킨다. #64
 - [ ] `MIGRATION_FREEZE`가 배포 창에서 `false`인지 확인한다. 창 밖에 main merge가 일어날 수 있으면 `true`로 두어 batch가 자동 적용되지 않게 한다. #60
