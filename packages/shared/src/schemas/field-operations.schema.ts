@@ -119,14 +119,21 @@ export const fieldCheckInTicketContextSchema = z
     maskedJti: z.string().min(1, 'masked JTI가 필요합니다').optional(),
     benefitEntitlements: z.array(fieldBenefitEntitlementSchema).default([]),
     benefitsAvailable: z.boolean().optional(),
+    // Seat cancellation requested but not yet confirmed by the PG: refuse entry and escalate.
+    cancellationPending: z.boolean().optional(),
   })
   .strict();
+
+// Server display label that overrides the client's outcome label (e.g. a pending
+// cancellation, whose outcome stays refunded_cancelled).
+const fieldCheckInResultLabelSchema = z.string().min(1).optional();
 
 export const fieldCheckInVerifyResponseSchema = z
   .object({
     outcome: fieldCheckInOutcomeSchema,
     processable: z.boolean(),
     ticket: fieldCheckInTicketContextSchema.nullable(),
+    resultLabel: fieldCheckInResultLabelSchema,
     rejectionReason: z.string().min(1).nullable().optional(),
     priorScan: z
       .object({
@@ -161,6 +168,7 @@ export const fieldCheckInConsumeResponseSchema = z
     ticket: fieldCheckInTicketContextSchema.nullable(),
     scanEventId: z.string().min(1).nullable().optional(),
     consumedAt: isoDatetime('입장 처리 시각').nullable().optional(),
+    resultLabel: fieldCheckInResultLabelSchema,
     rejectionReason: z.string().min(1).nullable().optional(),
     priorScan: z
       .object({

@@ -91,6 +91,44 @@ describe('EmailService', () => {
     expect(sentryMod.__captureExceptionMock).not.toHaveBeenCalled();
   });
 
+  it('PROD mode: sendQrTicketReminderEmail renders every seat with its own label and token (audit #108)', async () => {
+    const config = makeConfig({
+      RESEND_API_KEY: 're_test_key',
+      RESEND_FROM_EMAIL: 'no-reply@heygrabit.com',
+      NODE_ENV: 'production',
+    });
+    const mod = resendModule as unknown as { __sendMock: ReturnType<typeof vi.fn> };
+    mod.__sendMock.mockResolvedValueOnce({ data: { id: 'mock-id' }, error: null });
+
+    const svc = new EmailService(config);
+    const result = await svc.sendQrTicketReminderEmail('buyer@example.com', {
+      reservationNumber: 'GRP-24001',
+      performanceTitle: 'Girl Rules <Fanmeet>',
+      showDateTime: '2026-07-18T11:00:00.000Z',
+      venue: 'Donghae Arts Center',
+      ticketUrl: 'https://heygrabit.com/mypage/reservations/reservation-1',
+      tickets: [
+        { seatLabel: '1층 · VIP A열 1번', token: 'token-seat-1' },
+        { seatLabel: '1층 · VIP A열 2번', token: 'token-seat-2' },
+        { seatLabel: '1층 · VIP A열 3번', token: 'token-<seat>-3' },
+        { seatLabel: '1층 · VIP A열 4번', token: 'token-seat-4' },
+      ],
+    });
+
+    expect(result).toEqual({ success: true, id: 'mock-id' });
+    const callArg = mod.__sendMock.mock.calls[0]?.[0] as { html: string };
+    expect(callArg.html).toContain('좌석별 QR 토큰 (4매)');
+    for (const number of ['1', '2', '3', '4']) {
+      expect(callArg.html).toContain(`1층 · VIP A열 ${number}번`);
+    }
+    expect(callArg.html).toContain('token-seat-1');
+    expect(callArg.html).toContain('token-seat-4');
+    expect(callArg.html).toContain('token-&lt;seat&gt;-3');
+    expect(callArg.html).not.toContain('<Fanmeet>');
+    expect(callArg.html.indexOf('A열 1번')).toBeLessThan(callArg.html.indexOf('token-seat-1'));
+    expect(callArg.html.indexOf('token-seat-1')).toBeLessThan(callArg.html.indexOf('A열 2번'));
+  });
+
   it('PROD mode: sendEmailVerificationEmail uses localized verification copy and react template', async () => {
     const config = makeConfig({
       RESEND_API_KEY: 're_test_key',
