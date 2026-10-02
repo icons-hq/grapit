@@ -197,6 +197,63 @@ const secondPageDetailUser: AdminUserDetail = {
   ],
 };
 
+/** API-shaped list item + detail for one admin account (as the server sends it). */
+function mockApiAdminAccount(access: {
+  id: string;
+  name: string;
+  adminCapabilityBundle: string | null;
+  adminCapabilities: string[];
+  adminSuperuser?: boolean;
+  effectiveAdminCapabilities?: string[];
+}) {
+  const item = {
+    id: access.id,
+    maskedEmail: 'ad***@example.com',
+    name: access.name,
+    maskedPhone: '+82******5678',
+    role: 'admin',
+    country: 'KR',
+    preferredLocale: 'ko',
+    marketingConsent: false,
+    adminCapabilityBundle: access.adminCapabilityBundle,
+    adminCapabilities: access.adminCapabilities,
+    ...(access.adminSuperuser === undefined
+      ? {}
+      : {
+          adminSuperuser: access.adminSuperuser,
+          effectiveAdminCapabilities: access.effectiveAdminCapabilities ?? [],
+        }),
+    accountStatus: 'active',
+    withdrawnAt: null,
+    withdrawalReason: null,
+    withdrawalSource: null,
+    verificationState: { emailVerified: true, phoneVerified: true },
+    reservationSummary: {
+      total: 0,
+      statuses: { pendingPayment: 0, confirmed: 0, cancelled: 0, failed: 0 },
+      lastReservationAt: null,
+    },
+    lastActivityAt: null,
+    createdAt: '2026-06-29T00:00:00.000Z',
+  };
+  mocks.apiGet.mockImplementation((path: string) => {
+    if (path === '/api/v1/admin/users/stats') return Promise.resolve(userStats);
+    if (path.startsWith('/api/v1/admin/users?')) {
+      return Promise.resolve({ items: [item], total: 1, page: 1, limit: 25, totalPages: 1 });
+    }
+    if (path === `/api/v1/admin/users/${access.id}`) {
+      return Promise.resolve({
+        ...item,
+        account: { birthDate: '1990-01-01', gender: 'unspecified', updatedAt: null },
+        recentReservations: [],
+        supportThreads: { total: 0, open: 0, escalated: 0, recentThreads: [] },
+        recentAuditEvents: [],
+      });
+    }
+    return Promise.reject(new Error(`Unhandled GET ${path}`));
+  });
+}
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -483,6 +540,63 @@ describe('AdminUserManagement', () => {
     });
     expect(within(mergedRow).getByText('병합됨')).toBeInTheDocument();
     expect(await screen.findAllByText('병합됨')).toHaveLength(3);
+  });
+
+  it('shows a legacy role-only superuser as a full admin with its current effective access', async () => {
+    mockApiAdminAccount({
+      id: 'legacy-admin',
+      name: 'Legacy Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      adminSuperuser: true,
+      effectiveAdminCapabilities: ['reservations.read', 'security.manage'],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-access-badge')).toHaveTextContent('전체 관리자(legacy)');
+    expect(screen.getByTestId('admin-user-current-permissions')).toHaveTextContent(
+      '현재 실효 권한: 전체 관리자 (모든 권한, 권한 묶음 없는 legacy 관리자)',
+    );
+    // The edit summary still describes the unsaved selection separately.
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 권한 묶음을 선택하세요',
+    );
+  });
+
+  it('falls back to the legacy superuser rule when the API sends no resolved access', async () => {
+    mockApiAdminAccount({
+      id: 'legacy-admin',
+      name: 'Legacy Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-access-badge')).toHaveTextContent('전체 관리자(legacy)');
+  });
+
+  it('trusts the server when an unknown stored bundle resolves to no access (u12)', async () => {
+    // The API normalises an unknown bundle to null; re-resolving it here would
+    // read as the legacy superuser fallback.
+    mockApiAdminAccount({
+      id: 'unknown-bundle-admin',
+      name: 'Unknown Bundle Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      adminSuperuser: false,
+      effectiveAdminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-user-access-badge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-current-permissions')).toHaveTextContent('현재 실효 권한: 없음');
+    expect(screen.queryByText('전체 관리자(legacy)')).not.toBeInTheDocument();
   });
 
   it('disables permission and withdrawal controls for merged accounts', async () => {

@@ -106,6 +106,88 @@ describe('session restore on page load', () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(1);
   });
 
+  it('keeps retrying instead of signing out when the edge answers 403', async () => {
+    let edgeBlocking = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (edgeBlocking) return new Response('<html>blocked</html>', { status: 403 });
+      if (url.endsWith('/api/v1/auth/refresh')) return json({ accessToken: 'after-edge-block' });
+      return json(buyer);
+    }));
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: null });
+
+    edgeBlocking = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'after-edge-block', user: buyer });
+  });
+
+  it('treats a 403 profile read as temporary and keeps the rotated token', async () => {
+    let profileBlocked = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/refresh')) return json({ accessToken: 'rotated-once' });
+      return profileBlocked ? new Response('blocked', { status: 403 }) : json(buyer);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    expect(useAuthStore.getState().accessToken).toBeNull();
+
+    profileBlocked = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'rotated-once', user: buyer });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(1);
+  });
+
+  it('does not overwrite a manual login that finished while a restore was running', async () => {
+    let releaseRefresh!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/refresh')) {
+        return new Promise<Response>((resolve) => { releaseRefresh = resolve; });
+      }
+      return Promise.resolve(json(buyer));
+    }));
+    const manualUser = { ...buyer, id: 'buyer-2', email: 'manual@example.test' } as UserProfile;
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(0);
+    useAuthStore.getState().setAuth('manual-access', manualUser);
+    releaseRefresh(json({ accessToken: 'stale-restored-access' }));
+    await vi.runAllTimersAsync();
+    await restoring;
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'manual-access', user: manualUser });
+  });
+
+  it('does not sign the buyer back in when they logged out while a restore was running', async () => {
+    let releaseProfile!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/refresh')) return Promise.resolve(json({ accessToken: 'stale-restored-access' }));
+      return new Promise<Response>((resolve) => { releaseProfile = resolve; });
+    }));
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(0);
+    // Logout clears the (still empty) store while /users/me is in flight.
+    useAuthStore.getState().clearAuth();
+    releaseProfile(json(buyer));
+    await vi.runAllTimersAsync();
+    await restoring;
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: null, user: null, isInitialized: true });
+  });
+
   it('does not retry when the refresh session is rejected', async () => {
     const fetchMock = respondByPath({ '/api/v1/auth/refresh': [() => json({}, 401)] });
     vi.stubGlobal('fetch', fetchMock);

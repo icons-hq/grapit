@@ -20,20 +20,72 @@ type RowFilter = Partial<Record<'key' | 'version' | 'locale', Set<string>>>;
 
 const SEED_COLUMNS = '("key", "version", "locale", "title", "body", "is_required", "is_active")';
 const SEED_TUPLE = /\(\s*'([a-z_]+)',\s*'([^']+)',\s*'([A-Za-z-]+)',\s*'(?:[^']|'')*',\s*'(?:[^']|'')*',\s*(true|false),\s*(true|false)\s*\)/g;
-const CONSENT_ITEMS_WRITE = /\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+(?:"public"\.)?"?consent_items"?/i;
+/** Any mention of the table, quoted, unquoted or schema-qualified (not idx_consent_items_*). */
+const CONSENT_ITEMS_IDENTIFIER = /\bconsent_items\b/i;
 
 const rowId = (key: string, version: string, locale: string) => `${key}|${version}|${locale}`;
 
+/**
+ * Splits SQL on `;` outside string literals, dollar-quoted bodies and `--`
+ * comments, so a DO block or function body stays one statement.
+ */
 function statements(source: string): string[] {
-  return source
-    .split('--> statement-breakpoint')
-    .flatMap((chunk) => chunk.split(/;\s*(?:\n|$)/))
-    .map((statement) => statement
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('--'))
-      .join('\n')
-      .trim())
-    .filter(Boolean);
+  const result: string[] = [];
+  let current = '';
+  const push = () => {
+    const statement = current.trim();
+    if (statement) result.push(statement);
+    current = '';
+  };
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index]!;
+    if (char === "'") {
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] === "'" && source[end + 1] === "'") end += 2;
+        else if (source[end] === "'") { end += 1; break; } else end += 1;
+      }
+      current += source.slice(index, end);
+      index = end;
+    } else if (char === '$' && /^\$[A-Za-z_]*\$/.test(source.slice(index))) {
+      const tag = source.slice(index).match(/^\$[A-Za-z_]*\$/)![0];
+      const close = source.indexOf(tag, index + tag.length);
+      const end = close === -1 ? source.length : close + tag.length;
+      current += source.slice(index, end);
+      index = end;
+    } else if (char === '-' && source[index + 1] === '-') {
+      const newline = source.indexOf('\n', index);
+      index = newline === -1 ? source.length : newline;
+    } else if (char === ';') {
+      push();
+      index += 1;
+    } else {
+      current += char;
+      index += 1;
+    }
+  }
+  push();
+  return result;
+}
+
+/**
+ * Statements that mention consent_items without changing its rows: DDL the
+ * migrations already use, a foreign key that references it, and writes to
+ * another table that only read it. Everything else naming the table (DO
+ * blocks, CTEs, TRUNCATE, schema-qualified writes, triggers) is refused.
+ */
+function leavesConsentItemRowsUnchanged(statement: string): boolean {
+  if (/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"consent_items"\s*\(/i.test(statement)) return true;
+  if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"[a-z_]+"\s+ON\s+"consent_items"\s+USING\s+btree\s*\([^)]*\)$/i.test(statement)) return true;
+  const alterColumn = statement.match(/^ALTER\s+TABLE\s+"consent_items"\s+ALTER\s+COLUMN\s+"([a-z_]+)"\s+SET\s+(?:DEFAULT\s+'[^']*'(?:::[\w".]+)?|DATA\s+TYPE\s+[\w".]+(?:\s+USING\s+"([a-z_]+)"::[\w".]+)?)$/i);
+  if (alterColumn) {
+    const [, column, usingColumn] = alterColumn;
+    return column !== 'is_active' && (!usingColumn || usingColumn === column);
+  }
+  if (/^ALTER\s+TABLE\s+"(?!consent_items")[a-z_]+"\s+ADD\s+CONSTRAINT\s+"[a-z_]+"\s+FOREIGN\s+KEY\s*\([^)]*\)\s+REFERENCES\s+"public"\."consent_items"/i.test(statement)) return true;
+  const writeTarget = statement.match(/^(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(?:"?public"?\.)?"?([a-z_]+)"?/i)?.[1];
+  return writeTarget !== undefined && writeTarget.toLowerCase() !== 'consent_items';
 }
 
 function unsupported(statement: string): never {
@@ -132,7 +184,7 @@ function replayConsentItems(sources: readonly string[]): ConsentItemRows {
       if (/^INSERT\s+INTO\s+"consent_items"/i.test(statement)) applyInsert(rows, statement);
       else if (/^UPDATE\s+"consent_items"/i.test(statement)) applyUpdate(rows, statement);
       else if (/^DELETE\s+FROM\s+"consent_items"/i.test(statement)) applyDelete(rows, statement);
-      else if (/^(?:UPDATE|INSERT|DELETE|TRUNCATE|WITH)\b/i.test(statement) && CONSENT_ITEMS_WRITE.test(statement)) {
+      else if (CONSENT_ITEMS_IDENTIFIER.test(statement) && !leavesConsentItemRowsUnchanged(statement)) {
         unsupported(statement);
       }
     }
@@ -197,6 +249,27 @@ describe('consent document seed contract', () => {
     expect(() => replayConsentItems([
       `UPDATE "consent_items" SET "is_active" = false WHERE "version" = '2026-04-28' OR "key" = 'privacy';`,
     ])).toThrow(/not understood/);
+  });
+
+  it('refuses a version-only retirement hidden in a DO block', () => {
+    // Statements that do not start with UPDATE/INSERT/DELETE used to pass
+    // unread, so this would have retired terms and marketing silently.
+    expect(() => replayConsentItems([
+      ...journalMigrationSources(),
+      `DO $$
+BEGIN
+  UPDATE consent_items SET is_active = false WHERE version = '2026-04-28';
+END $$;`,
+    ])).toThrow(/not understood/);
+  });
+
+  it.each([
+    ['a CTE', `WITH retired AS (UPDATE "consent_items" SET "is_active" = false WHERE "version" = '2026-04-28' RETURNING 1) SELECT count(*) FROM retired;`],
+    ['a schema-qualified write', `UPDATE "public"."consent_items" SET "is_active" = false WHERE "version" = '2026-04-28';`],
+    ['TRUNCATE', 'TRUNCATE "consent_items" CASCADE;'],
+    ['an is_active column rewrite', `ALTER TABLE "consent_items" ALTER COLUMN "is_active" SET DATA TYPE boolean USING false;`],
+  ])('refuses %s that touches consent_items', (_label, statement) => {
+    expect(() => replayConsentItems([statement])).toThrow(/not understood/);
   });
 
   it('adds privacy policy v1.2 rows without retiring the version open pages still submit', () => {

@@ -21,6 +21,37 @@ let backgroundRestoreTimer: ReturnType<typeof setTimeout> | null = null;
 // background attempt reads the profile with it first instead of rotating the
 // refresh cookie again.
 let unconfirmedAccessToken: string | null = null;
+// Bumped by every session change made outside restore (login, logout, token
+// renewal, profile update). A restore that started in an older generation must
+// not overwrite the newer session with the one it was restoring.
+let sessionGeneration = 0;
+let applyingRestoredSession = false;
+
+useAuthStore.subscribe((state, previous) => {
+  if (applyingRestoredSession) return;
+  // setInitialized alone is not a session change; clearAuth is, even when the
+  // store was already empty (a logout while restore was still running).
+  const initializedOnly = state.isInitialized !== previous.isInitialized
+    && state.accessToken === previous.accessToken
+    && state.user === previous.user;
+  if (initializedOnly) return;
+  sessionGeneration += 1;
+  unconfirmedAccessToken = null;
+});
+
+/** Applies a restored session only if nothing changed the session since `generation`. */
+function applyRestoredSession(generation: number, accessToken: string, user: UserProfile): boolean {
+  if (generation !== sessionGeneration || useAuthStore.getState().accessToken !== null) {
+    return false;
+  }
+  applyingRestoredSession = true;
+  try {
+    useAuthStore.getState().setAuth(accessToken, user);
+  } finally {
+    applyingRestoredSession = false;
+  }
+  return true;
+}
 
 export function initializeAuth(): Promise<void> {
   if (useAuthStore.getState().isInitialized) return Promise.resolve();
@@ -39,35 +70,42 @@ async function restoreSession(): Promise<void> {
   }
 }
 
-/** Returns whether the session was restored, is absent, or could not be determined. */
-async function restoreSessionOnce(): Promise<'restored' | 'signed_out' | 'unavailable'> {
+/**
+ * Returns whether the session was restored, is absent, could not be determined,
+ * or was superseded by a session change made while this restore was running.
+ */
+async function restoreSessionOnce(): Promise<'restored' | 'signed_out' | 'unavailable' | 'superseded'> {
+  const generation = sessionGeneration;
+  const superseded = () => generation !== sessionGeneration || useAuthStore.getState().accessToken !== null;
+
   if (unconfirmedAccessToken) {
     const accessToken = unconfirmedAccessToken;
     const profile = await fetchProfile(accessToken);
+    if (superseded()) return 'superseded';
     if (profile.status === 'unavailable') return 'unavailable';
     unconfirmedAccessToken = null;
     if (profile.status === 'loaded') {
-      useAuthStore.getState().setAuth(accessToken, profile.user);
-      return 'restored';
+      return applyRestoredSession(generation, accessToken, profile.user) ? 'restored' : 'superseded';
     }
     // The access token expired meanwhile; renew it from the refresh cookie below.
   }
 
   const refresh = await refreshAccessToken({ retryDelaysMs: RESTORE_RETRY_DELAYS_MS });
+  if (superseded()) return 'superseded';
   if (refresh.status === 'signed_out') return 'signed_out';
   if (refresh.status === 'unavailable') return 'unavailable';
 
   // Fetch user profile with new token
   let profile = await fetchProfile(refresh.accessToken);
   for (const delayMs of RESTORE_RETRY_DELAYS_MS) {
-    if (profile.status !== 'unavailable') break;
+    if (profile.status !== 'unavailable' || superseded()) break;
     await sleep(delayMs);
     profile = await fetchProfile(refresh.accessToken);
   }
 
+  if (superseded()) return 'superseded';
   if (profile.status === 'loaded') {
-    useAuthStore.getState().setAuth(refresh.accessToken, profile.user);
-    return 'restored';
+    return applyRestoredSession(generation, refresh.accessToken, profile.user) ? 'restored' : 'superseded';
   }
   if (profile.status === 'unavailable') {
     // The refresh cookie was valid but the profile could not be read yet; keep the
@@ -91,7 +129,9 @@ async function fetchProfile(accessToken: string): Promise<ProfileOutcome> {
     if (userRes.ok) {
       return { status: 'loaded', user: (await userRes.json()) as UserProfile };
     }
-    return userRes.status === 401 || userRes.status === 403
+    // Same rule as the refresh: only the API's 401 rejects the session. A 403
+    // comes from the edge (WAF, edge secret) and says nothing about the token.
+    return userRes.status === 401
       ? { status: 'rejected' }
       : { status: 'unavailable' };
   } catch {
@@ -125,4 +165,5 @@ export function resetAuthInitializationForTests() {
   backgroundRestoreTimer = null;
   initialization = null;
   unconfirmedAccessToken = null;
+  applyingRestoredSession = false;
 }

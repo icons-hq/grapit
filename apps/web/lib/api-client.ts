@@ -36,9 +36,11 @@ class ApiClientError extends Error {
 /**
  * Result of renewing the access token from the httpOnly refresh cookie.
  * - refreshed: a new access token was issued.
- * - signed_out: the server rejected or did not receive a refresh session (401/403/204).
- * - unavailable: the server could not answer (5xx, 429, network error, timeout); the
- *   session may still be valid, so callers must not clear it.
+ * - signed_out: the server rejected or did not receive a refresh session (401/204).
+ * - unavailable: the server could not answer (5xx, 429, network error, timeout) or
+ *   something in front of it refused the request (403 from the edge: WAF block or
+ *   challenge, edge secret). The session may still be valid, so callers must not
+ *   clear it. The API itself answers a bad refresh session only with 401.
  */
 export type RefreshOutcome =
   | { status: 'refreshed'; accessToken: string }
@@ -132,7 +134,9 @@ async function requestRefresh(): Promise<RefreshAttempt> {
 
     // 204: no refresh cookie was sent, so there is no session to keep.
     if (res.status === 204) return { status: 'signed_out' };
-    if (res.status === 401 || res.status === 403) return { status: 'rejected' };
+    if (res.status === 401) return { status: 'rejected' };
+    // Includes 403: the API never answers a refresh with 403, so it came from the
+    // edge and says nothing about the cookie.
     if (!res.ok) return { status: 'unavailable' };
 
     const data = (await res.json()) as { accessToken?: unknown };

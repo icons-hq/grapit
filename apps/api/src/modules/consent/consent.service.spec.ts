@@ -431,6 +431,17 @@ describe('ConsentService', () => {
       expect(rendered().params).toEqual([userId]);
     });
 
+    it('matches the email filter case-insensitively through lower(users.email)', async () => {
+      const { auditService, rendered } = auditQueryDb([]);
+
+      const result = await auditService.queryConsentAudit({ email: 'Fan@Example.COM' }, now);
+
+      // An email lookup is an identity filter, so no default window applies.
+      expect(result.defaultWindowFrom).toBeNull();
+      expect(rendered().sql).toBe('lower("users"."email") = $1');
+      expect(rendered().params).toEqual(['fan@example.com']);
+    });
+
     it('continues strictly after the cursor row using its full precision timestamp', async () => {
       const { auditService, rendered } = auditQueryDb([]);
       const cursor = ConsentService.encodeAuditCursor({

@@ -145,5 +145,13 @@ describe('Consent audit query and document versions on Postgres', () => {
     expect(buyerHistory.defaultWindowFrom).toBeNull();
     expect(buyerHistory.items.map((row) => row.timestamp)).toContain('2026-09-01T00:00:00.000Z');
     expect(JSON.stringify(buyerHistory)).not.toContain('audit-buyer@example.test');
+
+    // An email that differs only by case finds the same rows (accounts store
+    // lower-case addresses, #99); the API schema lower-cases the query too.
+    const byExactEmail = await service.queryConsentAudit({ email: 'audit-buyer@example.test', limit: 500 }, now);
+    const byMixedCaseEmail = await service.queryConsentAudit({ email: 'Audit-Buyer@Example.TEST', limit: 500 }, now);
+    expect(byExactEmail.items.length).toBeGreaterThan(0);
+    expect(byMixedCaseEmail.items.map((row) => row.id)).toEqual(byExactEmail.items.map((row) => row.id));
+    expect(byMixedCaseEmail.items.every((row) => row.maskedUser.id === buyer)).toBe(true);
   });
 });

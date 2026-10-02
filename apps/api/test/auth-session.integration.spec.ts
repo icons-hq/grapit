@@ -67,6 +67,8 @@ describe('Auth session and email identity — PostgreSQL', () => {
         assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
         captureConsent: vi.fn().mockResolvedValue(undefined),
       } as unknown as ConsentService,
+      // Email verification attempt counter (Valkey INCR); this suite covers PostgreSQL only.
+      { eval: vi.fn().mockResolvedValue(1) },
     );
   }, 120000);
 

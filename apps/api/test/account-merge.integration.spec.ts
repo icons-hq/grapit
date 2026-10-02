@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -334,6 +334,49 @@ describe('Historical account merge safety (PostgreSQL)', () => {
     const [sourceRow] = await db.select().from(schema.users).where(eq(schema.users.id, source));
     expect(sourceRow!.accountStatus).toBe('active');
     expect(await db.select().from(schema.accountMergeBatches)).toEqual([]);
+  });
+
+  it('refuses a group whose checkout started after the reviewed dry-run, inside the apply transaction', async () => {
+    // The pre-transaction hash check cannot see this checkout: apply reuses the
+    // dry-run taken before it (as when the checkout lands between apply's own
+    // dry-run and its transaction). Only the locked revalidation can stop it.
+    const { showtimeId } = await showtime();
+    const source = await buyer('Choi', '+821044445555');
+    const target = await buyer('Choi', '+821044445555');
+    await confirmedTicket(target, showtimeId, 'F-1');
+    // A settled card failure is not in flight; it would move to the target.
+    const sourceReservation = await pendingReservation(source, showtimeId, {
+      status: 'FAILED',
+      provider: 'CARD',
+      deadlineInMs: -HOUR_MS,
+      lastChangedHoursAgo: 1,
+    });
+    const reviewedDryRun = await service.dryRun();
+    expect(reviewedDryRun.safeGroups).toEqual([
+      expect.objectContaining({ targetUserId: target, sourceUserIds: [source] }),
+    ]);
+    const dryRunSpy = vi.spyOn(service, 'dryRun').mockResolvedValue(reviewedDryRun);
+    const pendingId = await pendingReservation(target, showtimeId, { deadlineInMs: 10 * 60_000 });
+
+    try {
+      await expect(service.apply(applyOptions(hashAccountMergeDryRun(reviewedDryRun)))).rejects.toThrow(
+        `ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:payment_in_flight:target=${target}`,
+      );
+    } finally {
+      dryRunSpy.mockRestore();
+    }
+
+    expect(await db.select().from(schema.accountMergeBatches)).toEqual([]);
+    const [sourceRow] = await db.select().from(schema.users).where(eq(schema.users.id, source));
+    const [targetRow] = await db.select().from(schema.users).where(eq(schema.users.id, target));
+    expect(sourceRow!.accountStatus).toBe('active');
+    expect(targetRow!.accountStatus).toBe('active');
+    const [sourceOwned] = await db.select().from(schema.reservations)
+      .where(eq(schema.reservations.id, sourceReservation));
+    const [pendingOwned] = await db.select().from(schema.reservations)
+      .where(eq(schema.reservations.id, pendingId));
+    expect(sourceOwned!.userId).toBe(source);
+    expect(pendingOwned!.userId).toBe(target);
   });
 
   it('keeps both purchases on a reviewed manual merge, reports the limit overflow, and verifies', async () => {

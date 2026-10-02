@@ -6,14 +6,17 @@ import {
   GoneException,
   BadRequestException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { createHash, createHmac, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { eq, and, gt, isNull } from 'drizzle-orm';
+import type IORedis from 'ioredis';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
+import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
 import { UserRepository } from '../user/user.repository.js';
 import { SmsService, releasePhoneClaimAndRethrow } from '../sms/sms.service.js';
 import type { PhoneVerificationClaim, SmsVerificationPurpose } from '../sms/sms.service.js';
@@ -94,6 +97,24 @@ const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
 const ACCOUNT_EMAIL_VERIFICATION_PURPOSE = 'account_email';
 const EMAIL_VERIFICATION_CODE_DIGITS = 6;
+/**
+ * Guesses allowed per issued code (audit #12). The route throttle is per email
+ * and IP, so a distributed guesser could otherwise try most of the 10^6 codes
+ * within the 30-minute lifetime. The last allowed wrong guess invalidates the
+ * code; the buyer then requests a new one.
+ */
+export const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
+export const EMAIL_VERIFICATION_ATTEMPTS_EXCEEDED_MESSAGE =
+  '인증번호 입력 횟수를 초과했습니다. 새 인증 메일을 요청해주세요.';
+const EMAIL_VERIFICATION_ATTEMPT_KEY_PREFIX = 'auth:email-verification-attempts:';
+// Atomic INCR; the first attempt sets the TTL to the code's remaining lifetime.
+const EMAIL_VERIFICATION_ATTEMPT_INCR_LUA = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+`;
 const USER_REFRESH_FAMILY_LIMIT = 2;
 /**
  * A rotated refresh token stays usable for this long. Several tabs (or a retry
@@ -126,6 +147,7 @@ export class AuthService {
     private readonly emailService: EmailService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly consentService: ConsentService,
+    @Inject(REDIS_CLIENT) private readonly redis: Pick<IORedis, 'eval'>,
   ) {}
 
   async checkEmailAvailability(email: string): Promise<EmailAvailabilityResponse> {
@@ -602,13 +624,14 @@ export class AuthService {
       throw new GoneException('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
     }
 
+    const attempt = await this.countEmailVerificationAttempt(latestRecord);
     const codeHash = this.hashEmailVerificationCode(
       normalizedEmail,
       code,
       ACCOUNT_EMAIL_VERIFICATION_PURPOSE,
     );
     if (latestRecord.tokenHash !== codeHash) {
-      throw new BadRequestException('인증번호가 일치하지 않습니다');
+      await this.rejectWrongEmailVerificationCode(latestRecord, attempt);
     }
 
     const existingUser = await this.userRepository.findByEmail(normalizedEmail);
@@ -661,9 +684,10 @@ export class AuthService {
       throw new GoneException('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
     }
 
+    const attempt = await this.countEmailVerificationAttempt(latestRecord);
     const codeHash = this.hashEmailVerificationCode(email, code, latestRecord.purpose);
     if (latestRecord.tokenHash !== codeHash) {
-      throw new BadRequestException('인증번호가 일치하지 않습니다');
+      await this.rejectWrongEmailVerificationCode(latestRecord, attempt);
     }
 
     await this.db
@@ -679,6 +703,58 @@ export class AuthService {
     }
 
     return { verified: true };
+  }
+
+  /**
+   * Counts a guess against one issued code before it is compared (audit #12).
+   * Every guess is counted atomically, so parallel requests cannot exceed the
+   * limit. A code that already used its guesses is invalidated and refused
+   * even when the guess is right.
+   */
+  private async countEmailVerificationAttempt(record: { id: string; expiresAt: Date }): Promise<number> {
+    const ttlSeconds = Math.max(1, Math.ceil((record.expiresAt.getTime() - Date.now()) / 1000));
+    let attempt: number;
+    try {
+      attempt = Number(await this.redis.eval(
+        EMAIL_VERIFICATION_ATTEMPT_INCR_LUA,
+        1,
+        `${EMAIL_VERIFICATION_ATTEMPT_KEY_PREFIX}${record.id}`,
+        ttlSeconds,
+      ));
+    } catch (error) {
+      // Fail closed: without the counter the code could be guessed freely.
+      this.logger.error(`Email verification attempt counter unavailable: ${(error as Error).message}`);
+      throw new ServiceUnavailableException('인증번호 확인을 잠시 후 다시 시도해주세요.');
+    }
+    if (attempt > EMAIL_VERIFICATION_MAX_ATTEMPTS) {
+      await this.invalidateEmailVerificationRecord(record.id);
+      throw new GoneException(EMAIL_VERIFICATION_ATTEMPTS_EXCEEDED_MESSAGE);
+    }
+    return attempt;
+  }
+
+  private async rejectWrongEmailVerificationCode(
+    record: { id: string },
+    attempt: number,
+  ): Promise<never> {
+    if (attempt >= EMAIL_VERIFICATION_MAX_ATTEMPTS) {
+      await this.invalidateEmailVerificationRecord(record.id);
+      throw new GoneException(EMAIL_VERIFICATION_ATTEMPTS_EXCEEDED_MESSAGE);
+    }
+    throw new BadRequestException('인증번호가 일치하지 않습니다');
+  }
+
+  /** Expires the code in the database too, so a lost counter cannot revive it. */
+  private async invalidateEmailVerificationRecord(recordId: string): Promise<void> {
+    await this.db
+      .update(schema.emailVerificationTokens)
+      .set({ expiresAt: new Date() })
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.id, recordId),
+          isNull(schema.emailVerificationTokens.consumedAt),
+        ),
+      );
   }
 
   /**

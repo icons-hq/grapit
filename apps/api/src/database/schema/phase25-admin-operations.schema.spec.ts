@@ -31,6 +31,8 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'event.delete',
       'refund.admin_refund',
       'support.escalate',
+      'support.assign',
+      'support.resolve',
       'support.content.create',
       'support.content.update',
       'support.content.review',

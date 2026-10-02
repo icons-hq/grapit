@@ -374,28 +374,37 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('상태 변경 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        status: input.status,
-        resolvedAt: input.status === 'resolved' ? now : null,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId));
+    // The change and its audit row commit together; an unknown thread writes
+    // neither (u12 audit integrity).
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          status: input.status,
+          resolvedAt: input.status === 'resolved' ? now : null,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['status'],
-      before: null,
-      after: { status: input.status },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.resolve',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['status'],
+        before: null,
+        after: { status: input.status },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, status: input.status };
@@ -412,34 +421,40 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('에스컬레이션 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        priority: 'urgent',
-        escalationState: 'manual_escalated',
-        escalatedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId))
-      .returning({ id: supportThreads.id });
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          priority: 'urgent',
+          escalationState: 'manual_escalated',
+          escalatedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['priority', 'escalationState', 'escalatedAt'],
-      before: null,
-      after: {
-        priority: 'urgent',
-        escalationState: 'manual_escalated',
-        escalatedAt: now.toISOString(),
-      },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.escalate',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['priority', 'escalationState', 'escalatedAt'],
+        before: null,
+        after: {
+          priority: 'urgent',
+          escalationState: 'manual_escalated',
+          escalatedAt: now.toISOString(),
+        },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, escalationState: 'manual_escalated' };
@@ -456,27 +471,34 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('담당자 변경 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        assigneeUserId: input.assigneeUserId,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId));
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          assigneeUserId: input.assigneeUserId,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['assigneeUserId'],
-      before: null,
-      after: { assigneeUserId: input.assigneeUserId },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.assign',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['assigneeUserId'],
+        before: null,
+        after: { assigneeUserId: input.assigneeUserId },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, assigneeUserId: input.assigneeUserId };
@@ -667,6 +689,13 @@ function threadRankSql(now: Date): { escalated: SQL; sla: SQL } {
 /** Inlines a constant SLA rank as an integer literal (never user input). */
 function slaRank(state: AdminOperationsSlaState): SQL {
   return sql.raw(String(SLA_SORT_RANK[state]));
+}
+
+/** A malformed id can match no thread; answer 404 before PostgreSQL 22P02. */
+function assertThreadId(threadId: string): void {
+  if (!UUID_PATTERN.test(threadId)) {
+    throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+  }
 }
 
 function priorityPredicate(

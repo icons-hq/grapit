@@ -337,6 +337,13 @@
       "when": 1790067600000,
       "tag": "0046_users_email_lower_index",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790071200000,
+      "tag": "0047_support_thread_audit_actions",
+      "breakpoints": true
     }
   ]
 }

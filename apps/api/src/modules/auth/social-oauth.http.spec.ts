@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Agent } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +18,7 @@ import { NaverStrategy } from './strategies/naver.strategy.js';
 // the start request only redirects, and every callback here must be rejected first.
 describe('Social OAuth state over HTTP', () => {
   let app: INestApplication;
+  let agent: Agent;
   const authService = { findOrCreateSocialUser: vi.fn() };
   const settings: Record<string, string> = {
     FRONTEND_URL: 'http://localhost:3000',
@@ -52,14 +54,24 @@ describe('Social OAuth state over HTTP', () => {
     app.use(cookieParser());
     app.setGlobalPrefix('api/v1');
     await app.init();
+    // One listening server and one keep-alive socket for the whole suite.
+    // Without it supertest listens on and closes a new ephemeral port per
+    // request, and a pooled socket from a closed server can fail with
+    // "socket hang up".
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
-  afterAll(async () => { await app?.close(); });
+  afterAll(async () => {
+    agent?.destroy();
+    await app?.close();
+  });
   beforeEach(() => authService.findOrCreateSocialUser.mockReset());
 
   async function startKakaoLogin() {
     const response = await request(app.getHttpServer())
       .get('/api/v1/auth/social/kakao')
+      .agent(agent)
       .query({ locale: 'en', returnTo: '/en/booking/show-1' });
     const location = new URL(response.headers['location'] as string);
     const setCookie = ([] as string[]).concat(response.headers['set-cookie'] ?? []);
@@ -86,6 +98,7 @@ describe('Social OAuth state over HTTP', () => {
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/auth/social/kakao/callback')
+      .agent(agent)
       .query({ code: 'attacker-authorization-code', state });
 
     expect(response.status).toBe(302);
@@ -109,6 +122,7 @@ describe('Social OAuth state over HTTP', () => {
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/auth/social/naver/callback')
+      .agent(agent)
       .set('Content-Type', 'application/json')
       .send(JSON.stringify({ code: 'attacker-authorization-code' }));
 
@@ -126,6 +140,7 @@ describe('Social OAuth state over HTTP', () => {
 
     const response = await request(app.getHttpServer())
       .get('/api/v1/auth/social/kakao/callback')
+      .agent(agent)
       .set('Cookie', stateCookie.split(';')[0]!)
       .query({ code: 'authorization-code', state: 'ko' });
 

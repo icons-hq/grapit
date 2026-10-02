@@ -277,9 +277,10 @@ function manualReservationCountRows() {
   ];
 }
 
-function safeDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
+// The dry-run hash covers the classified groups only; the allowlist is checked
+// separately (allowlistHash), so it is not part of these inputs.
+function safeDryRunHash() {
   return hashAccountMergeDryRun({
-    generatedAt: new Date(0),
     safeGroups: [
       {
         kind: 'safe',
@@ -296,13 +297,11 @@ function safeDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
         userIds: ['manual-a', 'manual-b'],
       },
     ],
-    manualAllowlist,
   });
 }
 
-function manualDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
+function manualDryRunHash() {
   return hashAccountMergeDryRun({
-    generatedAt: new Date(0),
     safeGroups: [],
     manualReviewGroups: [
       {
@@ -312,7 +311,6 @@ function manualDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
         userIds: ['manual-a', 'manual-b'],
       },
     ],
-    manualAllowlist,
   });
 }
 
@@ -577,7 +575,7 @@ describe('AccountMergeService', () => {
     await expect(
       service.apply(
         applyOptions({
-          dryRunHash: manualDryRunHash(manualAllowlist),
+          dryRunHash: manualDryRunHash(),
           allowlistHash: 'stale-allowlist-hash',
           manualAllowlist,
         }),
@@ -601,7 +599,7 @@ describe('AccountMergeService', () => {
     await expect(
       service.apply(
         applyOptions({
-          dryRunHash: manualDryRunHash(manualAllowlist),
+          dryRunHash: manualDryRunHash(),
           allowlistHash: hashJson(manualAllowlist),
           manualAllowlist,
         }),

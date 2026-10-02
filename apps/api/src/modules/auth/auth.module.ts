@@ -13,6 +13,7 @@ import { UserModule } from '../user/user.module.js';
 import { SmsModule } from '../sms/sms.module.js';
 import { ConsentModule } from '../consent/consent.module.js';
 import { EmailModule } from './email/email.module.js';
+import { RedisModule } from '../booking/providers/redis.module.js';
 import { authConfig } from '../../config/auth.config.js';
 
 // WR-03: AuthModule 은 auth.jwtSecret 네임스페이스를 소비하므로 해당 config 를 명시적으로
@@ -26,6 +27,8 @@ import { authConfig } from '../../config/auth.config.js';
     SmsModule,
     ConsentModule,
     EmailModule,
+    // Email verification attempt counters (shared Valkey client).
+    RedisModule,
     JwtModule.registerAsync({
       imports: [ConfigModule.forFeature(authConfig)],
       inject: [ConfigService],

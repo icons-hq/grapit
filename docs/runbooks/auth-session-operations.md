@@ -17,10 +17,11 @@ Explains how buyer sessions, social logins and login emails behave so operators 
 ### Web client behavior
 
 - Tabs take turns refreshing through the Web Lock `grabit-auth-refresh` (browsers without Web Locks rely on the server grace window).
-- Refresh results are classified. `401/403` (after one recheck about 300 ms later) or `204` (no cookie) signs the buyer out and sends them to `/auth` with `returnTo`. A rejected session therefore shows two `/auth/refresh` requests. `5xx`, `429`, network errors and a 10-second timeout are temporary: the session and in-memory booking state are kept, the refresh is retried with backoff, and the original request fails with a retryable `503` toast.
+- Refresh results are classified. `401` (after one recheck about 300 ms later) or `204` (no cookie) signs the buyer out and sends them to `/auth` with `returnTo`. A rejected session therefore shows two `/auth/refresh` requests. The API answers a bad refresh session only with `401`, so a `403` comes from the edge (WAF block or challenge, missing edge secret) and is temporary like `5xx`, `429`, network errors and a 10-second timeout: the session and in-memory booking state are kept, the refresh is retried with backoff, and the original request fails with a retryable `503` toast. Page-load restore reads `/users/me` with the same rule (`401` signs out, `403` is retried).
 - Retry budget vs. grace window: no refresh attempt is sent more than 20 seconds (`REFRESH_RETRY_BUDGET_MS`) after the first one, which keeps retries inside the API's 30-second rotation grace (`REFRESH_ROTATION_GRACE_MS`) with margin for transit and queueing. If either value changes, keep the client budget well below the server grace; otherwise a retry after a lost response is treated as token reuse and the family is revoked.
 - On page load the store stays uninitialized while refresh/profile retries run (a few seconds), so protected pages show their loading state. If the API is still unavailable the page continues signed out and the session is retried in the background (10 s, 30 s, then every 60 s) until the cookie is accepted or rejected. When the refresh succeeded but `/users/me` did not, the background retry first reads the profile with that new access token and rotates the cookie again only if the token was rejected.
 - A background retry that starts after a long outage can still present a cookie whose rotation committed while every response was lost; that is reuse after the grace window and the buyer has to log in again.
+- A restore never overwrites a session change made while it was running: a manual login, logout or token renewal during a page-load or background restore discards the restore result.
 - Raw CSV exports (`admin/bookings`, `admin/users`, `admin/settlement/ledger`, benefit exports) use the same refresh-and-retry path as JSON requests.
 
 ### Symptoms
@@ -31,6 +32,7 @@ Explains how buyer sessions, social logins and login emails behave so operators 
 | Buyer signed out after reopening an old device | Device limit (2 families) or reuse after grace; check `refresh_tokens.revoked_at` for the family |
 | Toast `ERR-503` during an API brownout without logout | Temporary refresh failure; no action unless it persists |
 | Buyer signed out after a long API outage, logs back in normally | Background retry presented a cookie whose rotation committed more than 30 s earlier (reuse after grace) |
+| `ERR-503` toasts while the edge blocks or challenges `/auth/refresh` (403), buyer stays signed in | Edge 403 is treated as temporary; check the Cloudflare WAF/rate-limit events for the client |
 
 ## Social Login (Kakao, Naver, Google)
 
@@ -73,6 +75,11 @@ WHERE u.account_status = 'active'
 
 - New signups, social sign-ups and email verification codes use the lower-case address. An unused code issued before this change (stored with the address as typed) is still accepted: when no lower-case row exists, the account's own codes are compared case-insensitively. Login, signup duplicate checks, password reset and email verification requests look up `lower(users.email)` (index `idx_users_email_lower`, migration 0046), preferring the exact spelling, then an active account, then the oldest account when legacy rows differ only by case.
 - Existing rows are not rewritten and there is no case-insensitive unique constraint yet.
+
+## Email Verification Codes
+
+- A 6-digit code is valid for 30 minutes. Each issued code accepts at most 5 guesses (signup verification and account email change alike), counted per code in Valkey (`auth:email-verification-attempts:<code id>`, expires with the code). The fifth wrong guess, or any guess after that, expires the code in the database too and answers `410` `인증번호 입력 횟수를 초과했습니다. 새 인증 메일을 요청해주세요.`; the web shows the expired state and the buyer requests a new code. This bounds a distributed guesser regardless of the per email + IP route throttle.
+- If Valkey cannot count the guess, verification fails closed with `503` `인증번호 확인을 잠시 후 다시 시도해주세요.` instead of comparing unlimited guesses.
 
 ### Read-only duplicate check (run before adding a unique constraint)
 

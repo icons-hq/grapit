@@ -66,19 +66,36 @@ export class UserService {
       return this.mapToUserProfile(currentUser);
     }
 
-    const blockers = await this.findActiveReservationBlockers(userId);
-    if (blockers.length > 0) {
-      throw new ConflictException({
-        code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
-        message: '진행 중인 예매가 있어 회원 탈퇴를 처리할 수 없습니다',
-        blockers,
-      });
-    }
-
     const now = new Date();
     let updatedUser = currentUser;
 
     await this.db.transaction(async (tx) => {
+      // Lock the account row first, then re-check status and blockers on the
+      // locked row. Reservation prepare re-reads account_status under FOR KEY
+      // SHARE before inserting, so a prepare either commits before the blocker
+      // query below sees it or waits and is refused as withdrawn (audit #44).
+      const [locked] = await tx
+        .select({ accountStatus: users.accountStatus })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      if (!locked) {
+        throw new NotFoundException('사용자를 찾을 수 없습니다');
+      }
+      if (locked.accountStatus === 'withdrawn' || locked.accountStatus === 'merged') {
+        updatedUser = { ...currentUser, accountStatus: locked.accountStatus };
+        return;
+      }
+
+      const blockers = await this.findActiveReservationBlockers(userId, tx as DrizzleDB);
+      if (blockers.length > 0) {
+        throw new ConflictException({
+          code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+          message: '진행 중인 예매가 있어 회원 탈퇴를 처리할 수 없습니다',
+          blockers,
+        });
+      }
+
       const [row] = await tx
         .update(users)
         .set({
@@ -157,8 +174,11 @@ export class UserService {
     return this.mapToUserProfile(updatedUser);
   }
 
-  private async findActiveReservationBlockers(userId: string) {
-    const rows = await this.db
+  private async findActiveReservationBlockers(
+    userId: string,
+    db: Pick<DrizzleDB, 'select'>,
+  ) {
+    const rows = await db
       .select({
         id: reservations.id,
         reservationNumber: reservations.reservationNumber,

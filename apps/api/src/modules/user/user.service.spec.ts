@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { UserService } from './user.service.js';
 import type { UserRepository } from './user.repository.js';
@@ -32,6 +32,15 @@ describe('UserService preferred locale persistence', () => {
     delete: ReturnType<typeof vi.fn>;
     transaction: ReturnType<typeof vi.fn>;
   };
+  let tx: {
+    select: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+  };
+  // Calls in transaction order: the account row lock, then the blocker read.
+  let txCalls: string[];
+  let lockedAccountStatus: string;
+  let blockerRows: Array<Record<string, unknown>>;
   let auditService: { write: ReturnType<typeof vi.fn> };
   let service: UserService;
 
@@ -44,10 +53,28 @@ describe('UserService preferred locale persistence', () => {
     smsService = {
       claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: releasePhoneClaim }),
     };
-    const reservationWhere = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([]) });
-    const reservationJoin = vi.fn().mockReturnValue({ where: reservationWhere });
-    const reservationFrom = vi.fn().mockReturnValue({ leftJoin: reservationJoin });
-    const select = vi.fn().mockReturnValue({ from: reservationFrom });
+    txCalls = [];
+    lockedAccountStatus = 'active';
+    blockerRows = [];
+    // users ... FOR UPDATE, or reservations LEFT JOIN showtimes ... LIMIT n.
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          for: vi.fn((strength: string) => {
+            txCalls.push(`lock users ${strength}`);
+            return Promise.resolve([{ accountStatus: lockedAccountStatus }]);
+          }),
+        })),
+        leftJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => {
+              txCalls.push('read blockers');
+              return Promise.resolve(blockerRows);
+            }),
+          })),
+        })),
+      })),
+    }));
     const updateWhere = vi.fn().mockResolvedValue([]);
     const updateReturning = vi.fn().mockResolvedValue([
       {
@@ -64,12 +91,12 @@ describe('UserService preferred locale persistence', () => {
     const update = vi.fn().mockReturnValue({ set: updateSet, where: updateWhere });
     const deleteWhere = vi.fn().mockResolvedValue([]);
     const deleteFn = vi.fn().mockReturnValue({ where: deleteWhere });
-    const tx = { update, delete: deleteFn };
+    tx = { select, update, delete: deleteFn };
     db = {
       select,
       update,
       delete: deleteFn,
-      transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) =>
+      transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<unknown>) =>
         callback(tx),
       ),
     };
@@ -269,6 +296,49 @@ describe('UserService preferred locale persistence', () => {
       }),
       expect.anything(),
     );
+  });
+
+  it('checks blockers on the locked account row inside the withdrawal transaction (audit #44)', async () => {
+    await service.withdrawSelf('user-1', { reason: '서비스 이용 종료', confirmed: true });
+
+    // The row lock comes first, then the blocker read, both on the transaction.
+    expect(txCalls).toEqual(['lock users update', 'read blockers']);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses self withdrawal when a payment committed before the lock, without writing anything', async () => {
+    blockerRows = [{
+      id: 'reservation-1',
+      reservationNumber: 'R-1',
+      status: 'PENDING_PAYMENT',
+      showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+    }];
+
+    const error = await service
+      .withdrawSelf('user-1', { reason: '서비스 이용 종료', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      blockers: [expect.objectContaining({ reservationNumber: 'R-1', status: 'PENDING_PAYMENT' })],
+    });
+    expect(txCalls).toEqual(['lock users update', 'read blockers']);
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(tx.delete).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('does not withdraw again when the locked row was withdrawn by a concurrent request', async () => {
+    lockedAccountStatus = 'withdrawn';
+
+    await expect(
+      service.withdrawSelf('user-1', { reason: '서비스 이용 종료', confirmed: true }),
+    ).resolves.toMatchObject({ accountStatus: 'withdrawn' });
+
+    expect(txCalls).toEqual(['lock users update']);
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
   });
 
   it('treats merged account self withdrawal as idempotent without overwriting status', async () => {

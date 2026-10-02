@@ -10,6 +10,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'event.delete',
   'refund.admin_refund',
   'support.escalate',
+  'support.assign',
+  'support.resolve',
   'support.content.create',
   'support.content.update',
   'support.content.review',
@@ -45,6 +47,15 @@ export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];
 export type AdminAuditStatus = (typeof ADMIN_AUDIT_STATUSES)[number];
 
 type AdminAuditDb = Pick<DrizzleDB, 'insert' | 'select'>;
+
+/**
+ * admin_audit_logs column bounds (schema/admin-audit-logs.ts). Request headers
+ * are bounded here once, so a long User-Agent or X-Request-Id can never fail
+ * the insert (22001) and roll back the audited change with it.
+ */
+export const ADMIN_AUDIT_IP_ADDRESS_MAX_LENGTH = 45;
+export const ADMIN_AUDIT_USER_AGENT_MAX_LENGTH = 500;
+export const ADMIN_AUDIT_REQUEST_ID_MAX_LENGTH = 120;
 type AuditSnapshot = Record<string, unknown>;
 
 export interface AdminAuditWriteInput {
@@ -115,9 +126,9 @@ export class AdminAuditService {
         changedFields,
         maskedBeforeSnapshot: maskSnapshot(input.before, changedFields),
         maskedAfterSnapshot: maskSnapshot(input.after, changedFields),
-        ipAddress: input.ipAddress ?? null,
-        userAgent: input.userAgent ?? null,
-        requestId: input.requestId ?? null,
+        ipAddress: boundedText(input.ipAddress, ADMIN_AUDIT_IP_ADDRESS_MAX_LENGTH),
+        userAgent: boundedText(input.userAgent, ADMIN_AUDIT_USER_AGENT_MAX_LENGTH),
+        requestId: boundedText(input.requestId, ADMIN_AUDIT_REQUEST_ID_MAX_LENGTH),
       })
       .returning({ id: adminAuditLogs.id });
 
@@ -193,6 +204,13 @@ export class AdminAuditService {
       createdAt: row.createdAt.toISOString(),
     }));
   }
+}
+
+/** Truncates by code point (varchar counts characters) so a pair is never split. */
+function boundedText(value: string | null | undefined, maxLength: number): string | null {
+  if (value === null || value === undefined) return null;
+  if (value.length <= maxLength) return value;
+  return Array.from(value).slice(0, maxLength).join('');
 }
 
 function resolveChangedFields(input: AdminAuditWriteInput): string[] {

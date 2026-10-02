@@ -172,7 +172,8 @@ export const consentAuditQuerySchema = z
     to: z.string().datetime().optional(),
     ip: z.string().min(1).optional(),
     userId: z.string().uuid().optional(),
-    email: z.string().email().optional(),
+    // Accounts store lower-case addresses (#99); match the same way.
+    email: z.string().trim().toLowerCase().email().optional(),
     limit: z.coerce
       .number()
       .int()

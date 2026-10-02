@@ -287,6 +287,34 @@ function assertPaymentMethodAllowed(
   }
 }
 
+/** Same wording the auth flow uses for withdrawn or merged accounts. */
+export const INACTIVE_BUYER_ACCOUNT_MESSAGE = '탈퇴 처리된 계정입니다';
+
+/**
+ * First statement of the pending-reservation transaction: re-reads the buyer's
+ * account_status under FOR KEY SHARE (audit #44). Withdrawal locks the same
+ * users row FOR UPDATE before it reads blockers, and only that lock conflicts
+ * with KEY SHARE (profile updates take NO KEY UPDATE and are not blocked). So a
+ * prepare either commits first and the withdrawal sees its PENDING_PAYMENT, or
+ * waits for the withdrawal and is refused here. Both sides lock users before
+ * reservations, so the order cannot deadlock.
+ */
+export async function lockActiveBuyerAccount(
+  tx: Pick<DrizzleDB, 'execute'>,
+  userId: string,
+): Promise<void> {
+  const result = await tx.execute(
+    sql`SELECT account_status FROM users WHERE id = ${userId} FOR KEY SHARE`,
+  );
+  const row = result.rows[0] as { account_status?: string | null } | undefined;
+  if (!row) {
+    throw new NotFoundException('사용자를 찾을 수 없습니다');
+  }
+  if ((row.account_status ?? 'active') !== 'active') {
+    throw new ForbiddenException(INACTIVE_BUYER_ACCOUNT_MESSAGE);
+  }
+}
+
 function assertBookingVerificationComplete(actor: BookingActor): void {
   if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
     throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
@@ -1335,6 +1363,7 @@ export class ReservationService {
     });
 
     const insertPendingReservation = (reservationNumber: string) => this.db.transaction(async (tx) => {
+      await lockActiveBuyerAccount(tx as DrizzleDB, userId);
       const [reservation] = await tx
         .insert(reservations)
         .values({

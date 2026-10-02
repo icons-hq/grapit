@@ -56,6 +56,11 @@ function ticketLimitResult({
   };
 }
 
+/** tx.execute for the prepare transaction's FOR KEY SHARE account re-check. */
+function activeBuyerAccountExecute(accountStatus = 'active') {
+  return vi.fn().mockResolvedValue({ rows: [{ account_status: accountStatus }] });
+}
+
 function createMockDb() {
   return {
     select: vi.fn(),
@@ -1294,6 +1299,7 @@ describe('ReservationService', () => {
         setupPrepareBase({ ...dto, paymentWindowMinutes: 10 });
 
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1384,6 +1390,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1477,6 +1484,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1572,6 +1580,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1670,6 +1679,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1770,6 +1780,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn((values: unknown) => {
             insertedValues.push(values);
@@ -1844,6 +1855,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn((values: unknown) => {
             insertedValues.push(values);
@@ -1957,6 +1969,7 @@ describe('ReservationService', () => {
       };
       setupPrepareBase(dto);
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn(() => ({
             returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
@@ -1988,6 +2001,64 @@ describe('ReservationService', () => {
         mockTx,
       );
     });
+
+    it('prepareReservation re-reads the buyer account under FOR KEY SHARE before inserting (audit #44)', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-ACCOUNT-LOCK-ORDER',
+        seats: [seatSelection('A-1')],
+        amount: 52000,
+        consentItems: makeConsentItems(),
+      };
+      setupPrepareBase(dto);
+      const order: string[] = [];
+      const execute = vi.fn(async (query: SQL) => {
+        order.push(new PgDialect().sqlToQuery(query).sql);
+        return { rows: [{ account_status: 'active' }] };
+      });
+      const mockTx = {
+        execute,
+        insert: vi.fn(() => {
+          order.push('insert');
+          return {
+            values: vi.fn(() => ({
+              returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+            })),
+          };
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+      await service.prepareReservation(dto, userId);
+
+      expect(order[0]).toBe('SELECT account_status FROM users WHERE id = $1 FOR KEY SHARE');
+      expect(order.slice(1)).toEqual(['insert', 'insert']);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['withdrawn', 'merged'])(
+      'prepareReservation refuses a buyer whose account became %s while prepare waited for the lock',
+      async (accountStatus) => {
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: `GRP-ACCOUNT-${accountStatus.toUpperCase()}`,
+          seats: [seatSelection('A-1')],
+          amount: 52000,
+          consentItems: makeConsentItems(),
+        };
+        setupPrepareBase(dto);
+        const mockTx = { execute: activeBuyerAccountExecute(accountStatus), insert: vi.fn() };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const error = await service.prepareReservation(dto, randomUUID()).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).message).toBe('탈퇴 처리된 계정입니다');
+        expect(mockTx.insert).not.toHaveBeenCalled();
+        expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
+      },
+    );
 
     it('prepareReservation rejects missing active lock before creating pending reservation', async () => {
       const userId = randomUUID();
@@ -2385,6 +2456,7 @@ describe('ReservationService', () => {
       setupPrepareBase(dto);
       const usedNumbers: string[] = [];
       const txFor = (outcome: () => Promise<unknown>) => ({
+        execute: activeBuyerAccountExecute(),
         insert: () => ({
           values: (values: { reservationNumber?: string }) => {
             if (values.reservationNumber) usedNumbers.push(values.reservationNumber);

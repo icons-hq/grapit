@@ -112,7 +112,7 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 | 0044 | `ticket_scan_events` | 컬럼 추가, `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가가 `ACCESS EXCLUSIVE`다. 검표 기록과 현장 모니터 조회가 멈춘다. |
 | 0046 | `users` | 인덱스 생성. 로그인 조회는 계속되고 write만 기다린다. |
 
-0042(감사 enum 값)와 0045(`consent_items` 행 INSERT)는 hot table을 잠그지 않는다. 그래도 앞 migration이 잡은 잠금은 이들이 끝나 batch가 commit될 때까지 남는다.
+0042(감사 enum 값), 0045(`consent_items` 행 INSERT), 0047(문의 상태·담당자 변경 감사 enum 값)은 hot table을 잠그지 않는다. 그래도 앞 migration이 잡은 잠금은 이들이 끝나 batch가 commit될 때까지 남는다.
 
 - 판매 오픈, 현장 입장, 결제 확정이 몰리는 시간대를 피한 배포 창에서 실행하고, 그 창 밖에서는 `MIGRATION_FREEZE=true`를 유지한다.
 - 실행 전에 `seat_inventories`, `reservations`, `ticket_scan_events` 행 수와 활성 트랜잭션(`pg_stat_activity`의 `state <> 'idle'`)을 확인한다. 잠금 대기로 실패하면 transaction 전체가 rollback되므로 한산한 시간에 다시 실행한다.

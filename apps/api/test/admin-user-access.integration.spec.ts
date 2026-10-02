@@ -1,11 +1,11 @@
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../src/database/schema/index.js';
 import {
@@ -14,11 +14,16 @@ import {
   reservations,
   showtimes,
   socialAccounts,
+  supportThreads,
   users,
   venues,
 } from '../src/database/schema/index.js';
 import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
+import { AdminOperationsService } from '../src/modules/admin/admin-operations.service.js';
 import { AdminUserService } from '../src/modules/admin/admin-user.service.js';
+import { lockActiveBuyerAccount } from '../src/modules/reservation/reservation.service.js';
+import { UserRepository } from '../src/modules/user/user.repository.js';
+import { UserService } from '../src/modules/user/user.service.js';
 
 /**
  * AdminUserService against real Postgres 16 + migrations.
@@ -28,6 +33,9 @@ import { AdminUserService } from '../src/modules/admin/admin-user.service.js';
  *   rollback, not mocks).
  * - audit #122: scanner bundle rows are reported as `scanner`.
  * - audit #42: the admin bundle is persisted canonically.
+ * - audit #44 race: withdrawal locks the users row FOR UPDATE and reservation
+ *   prepare re-reads account_status FOR KEY SHARE, exercised with two real
+ *   connections in both orders.
  *
  * 실행: pnpm --filter @grabit/api exec vitest run --config vitest.integration.config.ts test/admin-user-access.integration.spec.ts
  */
@@ -37,6 +45,7 @@ describe('AdminUserService access and withdrawal (integration)', () => {
   let closePool: (() => Promise<void>) | undefined;
   let db: NodePgDatabase<typeof schema>;
   let service: AdminUserService;
+  let userService: UserService;
 
   beforeAll(async () => {
     pgContainer = await new GenericContainer('postgres:16')
@@ -60,6 +69,12 @@ describe('AdminUserService access and withdrawal (integration)', () => {
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
 
     service = new AdminUserService(db as never, new AdminAuditService(db as never));
+    userService = new UserService(
+      new UserRepository(db as never),
+      {} as never,
+      db as never,
+      new AdminAuditService(db as never),
+    );
   }, 180_000);
 
   afterAll(async () => {
@@ -69,6 +84,7 @@ describe('AdminUserService access and withdrawal (integration)', () => {
 
   beforeEach(async () => {
     await db.delete(adminAuditLogs);
+    await db.delete(supportThreads);
     await db.delete(reservations);
     await db.delete(showtimes);
     await db.delete(performances);
@@ -125,7 +141,7 @@ describe('AdminUserService access and withdrawal (integration)', () => {
       id,
       userId,
       showtimeId,
-      reservationNumber: `R${Date.now()}${Math.floor(Math.random() * 10000)}`,
+      reservationNumber: `R${randomUUID().replace(/-/g, '').slice(0, 24)}`,
       status,
       totalAmount: 50_000,
       cancelDeadline: new Date(Date.now() + 86_400_000),
@@ -204,6 +220,219 @@ describe('AdminUserService access and withdrawal (integration)', () => {
     expect(links).toHaveLength(0);
     const audits = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.resourceId, buyerId));
     expect(audits.map((audit) => audit.action)).toEqual(['user.withdraw']);
+  });
+
+  async function waitForLockWaiters(expected: number) {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const { rows } = await pool.query<{ waiting: number }>(
+        `SELECT count(*)::int AS waiting FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      if ((rows[0]?.waiting ?? 0) >= expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`expected ${expected} session(s) waiting on a lock`);
+  }
+
+  /**
+   * The statements reservation prepare runs inside its transaction, on a
+   * dedicated connection that stays open until the test commits or rolls back.
+   */
+  async function beginPrepare(buyerId: string, showtimeId: string) {
+    const client: PoolClient = await pool.connect();
+    await client.query('BEGIN');
+    const prepareDb = drizzle(client, { schema });
+    const done = (async () => {
+      await lockActiveBuyerAccount(prepareDb as never, buyerId);
+      await prepareDb.insert(reservations).values({
+        userId: buyerId,
+        showtimeId,
+        reservationNumber: `R${randomUUID().replace(/-/g, '').slice(0, 24)}`,
+        status: 'PENDING_PAYMENT',
+        totalAmount: 50_000,
+        cancelDeadline: new Date(Date.now() + 86_400_000),
+        paymentDeadlineAt: new Date(Date.now() + 600_000),
+      });
+    })();
+    // Surface the outcome only when the test awaits it.
+    done.catch(() => undefined);
+    let open = true;
+    const finish = async (statement: 'COMMIT' | 'ROLLBACK') => {
+      if (!open) return;
+      open = false;
+      try {
+        await client.query(statement);
+      } finally {
+        client.release();
+      }
+    };
+    return { done, commit: () => finish('COMMIT'), rollback: () => finish('ROLLBACK') };
+  }
+
+  it('makes a prepare that waited on an in-flight admin withdrawal fail instead of creating a payment', async () => {
+    const actorId = await seedSuperuser();
+    const buyerId = await seedBuyerWithSocialLink();
+    const showtimeId = await seedShowtime(7 * 86_400_000);
+    // Holds the withdrawal transaction open after it locked and updated the
+    // users row: its social_accounts DELETE waits for this row lock.
+    const holder = await pool.connect();
+    let holderOpen = true;
+    const releaseHolder = async () => {
+      if (!holderOpen) return;
+      holderOpen = false;
+      await holder.query('ROLLBACK');
+      holder.release();
+    };
+    await holder.query('BEGIN');
+    await holder.query('SELECT id FROM social_accounts WHERE user_id = $1 FOR UPDATE', [buyerId]);
+
+    const withdrawal = service
+      .withdrawUser(actorId, buyerId, { reason: 'CS request', confirmed: true })
+      .catch((caught: unknown) => caught);
+    let prepare: Awaited<ReturnType<typeof beginPrepare>> | undefined;
+    try {
+      await waitForLockWaiters(1);
+      prepare = await beginPrepare(buyerId, showtimeId);
+      // Prepare waits on the withdrawal's users row lock instead of inserting.
+      await waitForLockWaiters(2);
+
+      await releaseHolder();
+      expect(await withdrawal).not.toBeInstanceOf(Error);
+      const error = await prepare.done.catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect((error as ForbiddenException).message).toBe('탈퇴 처리된 계정입니다');
+    } finally {
+      await releaseHolder();
+      await withdrawal;
+      await prepare?.rollback();
+    }
+
+    const [row] = await db.select().from(users).where(eq(users.id, buyerId));
+    expect(row?.accountStatus).toBe('withdrawn');
+    await expect(db.select().from(reservations).where(eq(reservations.userId, buyerId))).resolves.toHaveLength(0);
+  });
+
+  it('blocks an admin withdrawal that waited for a prepare which committed a pending payment', async () => {
+    const actorId = await seedSuperuser();
+    const buyerId = await seedBuyerWithSocialLink();
+    const showtimeId = await seedShowtime(7 * 86_400_000);
+    const prepare = await beginPrepare(buyerId, showtimeId);
+    let withdrawal: Promise<unknown> | undefined;
+    try {
+      await prepare.done;
+      withdrawal = service
+        .withdrawUser(actorId, buyerId, { reason: 'CS request', confirmed: true })
+        .catch((caught: unknown) => caught);
+      // FOR UPDATE on the users row waits for the prepare's FOR KEY SHARE.
+      await waitForLockWaiters(1);
+      await prepare.commit();
+    } finally {
+      await prepare.rollback();
+    }
+    const error = await withdrawal;
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      blockers: [{ key: 'pending_payment_reservations', count: 1 }],
+    });
+    await expectStillActive(buyerId);
+  });
+
+  it('blocks a self withdrawal that waited for a prepare which committed a pending payment', async () => {
+    const buyerId = await seedBuyerWithSocialLink();
+    const showtimeId = await seedShowtime(7 * 86_400_000);
+    const prepare = await beginPrepare(buyerId, showtimeId);
+    let withdrawal: Promise<unknown> | undefined;
+    try {
+      await prepare.done;
+      withdrawal = userService
+        .withdrawSelf(buyerId, { reason: 'leaving', confirmed: true })
+        .catch((caught: unknown) => caught);
+      await waitForLockWaiters(1);
+      await prepare.commit();
+    } finally {
+      await prepare.rollback();
+    }
+    const error = await withdrawal;
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({ code: 'ACCOUNT_WITHDRAWAL_BLOCKED' });
+    await expectStillActive(buyerId);
+  });
+
+  it('counts every blocking reservation beyond the sample list', async () => {
+    const actorId = await seedSuperuser();
+    const buyerId = await seedBuyerWithSocialLink();
+    const upcoming = await seedShowtime(7 * 86_400_000);
+    for (let index = 0; index < 101; index += 1) {
+      await seedReservation(buyerId, upcoming, 'PENDING_PAYMENT');
+    }
+    for (let index = 0; index < 3; index += 1) {
+      await seedReservation(buyerId, upcoming, 'CONFIRMED');
+    }
+
+    const error = await service
+      .withdrawUser(actorId, buyerId, { reason: 'CS request', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    const response = (error as ConflictException).getResponse() as { reservations: unknown[] };
+    expect(response).toMatchObject({
+      blockers: [
+        { key: 'pending_payment_reservations', count: 101 },
+        { key: 'upcoming_confirmed_reservations', count: 3 },
+      ],
+    });
+    expect(response.reservations).toHaveLength(10);
+    expect((error as ConflictException).message).toContain('결제 진행 중 예매 101건');
+  });
+
+  it('stores an audit row when request headers exceed the audit columns (u12)', async () => {
+    const actorId = await seedSuperuser();
+
+    const written = await new AdminAuditService(db as never).write({
+      actorUserId: actorId,
+      action: 'security.permission.update',
+      resourceType: 'user',
+      resourceId: actorId,
+      status: 'success',
+      userAgent: 'U'.repeat(600),
+      requestId: 'r'.repeat(200),
+      ipAddress: `2001:db8::${'f'.repeat(80)}`,
+    });
+
+    const [row] = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.id, written.id));
+    expect(row?.userAgent).toHaveLength(500);
+    expect(row?.requestId).toHaveLength(120);
+    expect(row?.ipAddress).toHaveLength(45);
+  });
+
+  it('audits support thread status and assignee changes with their own actions, atomically (u12)', async () => {
+    const actorId = await seedSuperuser();
+    const [thread] = await db.insert(supportThreads).values({
+      category: 'general',
+      title: 'Seat question',
+      slaDueAt: new Date(Date.now() + 86_400_000),
+    }).returning({ id: supportThreads.id });
+    const operations = new AdminOperationsService(db as never, new AdminAuditService(db as never));
+
+    await operations.updateThreadStatus(thread!.id, actorId, { status: 'resolved', reason: 'answered' });
+    await operations.reassignThread(thread!.id, actorId, { assigneeUserId: actorId, reason: 'owner' });
+    await operations.escalateThread(thread!.id, actorId, { reason: 'refund dispute' });
+    await expect(
+      operations.updateThreadStatus(randomUUID(), actorId, { status: 'closed', reason: 'missing thread' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    const audits = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.actorUserId, actorId));
+    expect(audits.map((audit) => audit.action).sort()).toEqual([
+      'support.assign',
+      'support.escalate',
+      'support.resolve',
+    ]);
+    expect(audits.every((audit) => audit.resourceId === thread!.id)).toBe(true);
   });
 
   it('reports scanner bundle accounts as scanner, not as a missing bundle', async () => {
