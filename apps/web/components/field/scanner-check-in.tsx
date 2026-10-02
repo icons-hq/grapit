@@ -147,7 +147,7 @@ export function ScannerCheckIn({
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-[#F5F5F7]">
       <main className="flex-1 space-y-4 p-4 pb-6">
         {actionError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{actionError}</p>}
-        {!isOnline && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">연결이 끊겼습니다. 입장 요청은 동기화 대기로 저장되며, 특전 지급은 연결 복구 후 가능합니다.</p>}
+        {!isOnline && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">연결이 끊겼습니다. 연결이 끊기기 전에 서버 확인을 마친 이 티켓만 입장 동기화 대기로 저장할 수 있습니다. 끊긴 뒤 새로 스캔한 QR은 확인·입장 처리할 수 없으니 현장 책임자의 예외 원장 절차를 따르세요. 특전 지급은 연결 복구 후 가능합니다.</p>}
         <ResultBand
           result={activeResult}
           label={activeLabel}

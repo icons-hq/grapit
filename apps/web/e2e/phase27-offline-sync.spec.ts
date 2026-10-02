@@ -85,7 +85,7 @@ test.describe('phase27 offline sync browser contracts', () => {
     await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
 
-    await page.context().setOffline(false);
+    // Recovered connectivity syncs automatically, so the server mock must exist first.
     await page.route('**/api/v1/field/check-in/offline-sync**', async (route: Route) => {
       await route.fulfill({
         status: 200,
@@ -102,12 +102,13 @@ test.describe('phase27 offline sync browser contracts', () => {
         }),
       });
     });
-
-    await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
+    await page.context().setOffline(false);
 
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '보류 스캔 동기화 완료',
     );
+    await expect(page.getByRole('button', { name: '보류 스캔 동기화' })).toBeDisabled();
+    expect(page.url()).not.toContain(rawQrToken);
     await expect(page.getByTestId('offline-sync-status')).toContainText('서버 확정');
     await expectNoRawSecrets(page);
   });
@@ -142,7 +143,6 @@ test.describe('phase27 offline sync browser contracts', () => {
     await page.getByRole('button', { name: '이 좌석 입장 처리' }).click();
     await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
     await page.context().setOffline(false);
-    await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
 
     await expect(page.getByTestId('offline-sync-status')).toContainText('충돌 확인 필요');
     await expect(page.getByTestId('offline-sync-status')).toContainText(
