@@ -329,8 +329,9 @@ export function evaluateMigrationFreeze({ freeze, pending }) {
 /**
  * Worst-case PostgreSQL connection demand of the deployed posture.
  * Each API instance and the single worker task own one app pool (DB_POOL_MAX)
- * plus one pg-boss pool (PGBOSS_POOL_MAX, pg-boss default 10 unless the API
- * code sets a smaller max).
+ * plus one pg-boss pool (PGBOSS_POOL_MAX). The API code always caps the pg-boss
+ * pool (default 3 with background processing, 1 producer-only), so the workflow
+ * default 3 is the per-process worst case unless a runtime override raises it.
  *
  * The count covers one revision's instances. While a deploy rolls out, old
  * and new revision instances overlap briefly; that headroom must come from

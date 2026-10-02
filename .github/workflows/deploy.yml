@@ -46,9 +46,10 @@ env:
   MIGRATION_STATEMENT_TIMEOUT: ${{ vars.MIGRATION_STATEMENT_TIMEOUT || '60s' }}
   # Set to true for the ticket-opening/entry window: any pending migration fails the deploy.
   MIGRATION_FREEZE: ${{ vars.MIGRATION_FREEZE || 'false' }}
-  # Worst-case PostgreSQL connection budget inputs. PGBOSS_POOL_MAX must match the
-  # pg-boss pool size used by the API image (pg-boss default 10).
-  PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX || '10' }}
+  # Worst-case PostgreSQL connection budget inputs. PGBOSS_POOL_MAX is the per-process
+  # pg-boss pool counted by the budget. It must be at least the cap the API and worker
+  # actually use: the code default is 3 with background processing, 1 producer-only.
+  PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX || '3' }}
   DB_CONNECTION_RESERVE: ${{ vars.DB_CONNECTION_RESERVE || '5' }}
   DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'false' }}
   DEPLOY_SHA: ${{ github.sha }}

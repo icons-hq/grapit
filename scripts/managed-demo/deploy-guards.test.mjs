@@ -33,7 +33,7 @@ const workflowDefaults = {
   API_MAX_INSTANCES: '40',
   API_CONCURRENCY: '250',
   DB_POOL_MAX: '4',
-  PGBOSS_POOL_MAX: '10',
+  PGBOSS_POOL_MAX: '3',
   DB_CONNECTION_RESERVE: '5',
   DB_CONNECTION_BUDGET_ENFORCE: 'false',
   PREWARM_SCALING_SCOPE: 'service',
@@ -220,7 +220,8 @@ function preflightInput(overrides = {}) {
   return {
     config,
     settings: {
-      max_connections: 400,
+      // Workflow defaults need 40 * (4 + 3) + (4 + 3) + 5 = 292 > 247 available.
+      max_connections: 250,
       superuser_reserved: 3,
       reserved: 0,
       lock_timeout: '5s',
@@ -451,4 +452,8 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   assert.match(workflow, /PREWARM_MAX_MIN_INSTANCES=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
   assert.match(workflow, /PREWARM_SCALING_SCOPE: \$\{\{ vars\.PREWARM_SCALING_SCOPE \|\| 'service' \}\}/);
   assert.match(workflow, /PREWARM_SCALING_SCOPE=\$\{\{ env\.PREWARM_SCALING_SCOPE \}\}/);
+
+  // #54/#58: the budget default matches the pg-boss pool cap the API code sets
+  // (3 with background processing, 1 producer-only), not the pg-boss library default 10.
+  assert.match(workflow, /PGBOSS_POOL_MAX: \$\{\{ vars\.PGBOSS_POOL_MAX \|\| '3' \}\}/);
 });
