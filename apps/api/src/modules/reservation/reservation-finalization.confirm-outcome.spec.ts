@@ -1550,7 +1550,12 @@ describe('ReservationFinalizationService client-independent reconcile scheduling
       .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
     expect(deps.rootInserts).toContainEqual({
       table: payments,
-      values: expect.objectContaining({ status: 'DONE', asyncStatus: 'cancel_pending' }),
+      values: expect.objectContaining({
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+        // Owned by the reconcile job; the async DONE recovery sweep must not adopt it (u01 x u02).
+        providerMetadata: expect.objectContaining({ confirmCompensationClaim: true }),
+      }),
     });
     expect(record.updates).toEqual([]);
     expect(reconcileJobs(deps)).toEqual([expect.objectContaining({

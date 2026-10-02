@@ -1,3 +1,4 @@
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -684,6 +685,21 @@ describe('PaymentService async DONE safety and recovery', () => {
       // The sweep and every order share the confirm lease keyspace.
       expect(bookingService.acquirePaymentConfirmLock).toHaveBeenCalledWith('async-done-compensation-sweep', expect.any(String));
       expect(bookingService.acquirePaymentConfirmLock).toHaveBeenCalledWith('GRP-COMP-1', expect.any(String));
+    });
+
+    it('leaves a payment-confirm compensation claim to its reconcile job (u01 x u02)', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      const candidates = selectChain<{ id: string; tossOrderId: string }>([]);
+      db.select.mockImplementationOnce(() => candidates);
+
+      await service.recoverAsyncDoneCompensations(now);
+
+      const where = candidates.where.mock.calls[0]?.[0];
+      const query = new PgDialect().sqlToQuery(where);
+      // The legacy-adoption branch excludes rows confirm claimed for its reconcile job.
+      expect(query.sql).toMatch(/coalesce\("payments"\."provider_metadata"->>\$(\d+), 'false'\) <> 'true'/);
+      const markerParam = Number(/coalesce\("payments"\."provider_metadata"->>\$(\d+)/.exec(query.sql)?.[1]);
+      expect(query.params[markerParam - 1]).toBe('confirmCompensationClaim');
     });
 
     it('starts no further order once the worker asks the sweep to stop (bounded shutdown)', async () => {

@@ -75,6 +75,7 @@ import {
   ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS,
   ASYNC_DONE_COMPENSATION_REASONS,
   DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY,
+  CONFIRM_COMPENSATION_CLAIM_METADATA_KEY,
   REJECTED_DONE_ASYNC_STATUSES,
   buildCompensationRecord,
   buildDuplicateCancelRequestSeed,
@@ -3440,10 +3441,12 @@ export class PaymentService {
           .where(or(
             sql`${payments.providerMetadata}->>${ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY} = 'true'`,
             // Compensations from before the record existed are adopted once.
+            // A claim made by payment confirm belongs to its reconcile job.
             and(
               eq(payments.status, 'DONE'),
               eq(payments.asyncStatus, 'cancel_pending'),
               sql`${payments.providerMetadata}->${ASYNC_DONE_COMPENSATION_METADATA_KEY} IS NULL`,
+              sql`coalesce(${payments.providerMetadata}->>${CONFIRM_COMPENSATION_CLAIM_METADATA_KEY}, 'false') <> 'true'`,
               notInArray(reservations.status, ['CONFIRMED', 'CANCELLED']),
             ),
           ))

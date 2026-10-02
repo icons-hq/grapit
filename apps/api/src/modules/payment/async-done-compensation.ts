@@ -81,6 +81,14 @@ export const ASYNC_DONE_COMPENSATION_METADATA_KEY = 'asyncDoneCompensation';
 export const DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY = 'duplicatePaymentCompensations';
 /** True while any compensation on the row still needs the recovery sweep. */
 export const ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY = 'asyncDoneCompensationOpen';
+/**
+ * Set on the DONE/cancel_pending row that payment confirm (or its reconcile
+ * job) claims for an approval it could not issue. The `payment-confirm-reconcile`
+ * job owns that cancel, so the async DONE recovery sweep never adopts the row
+ * as a pre-record legacy compensation (two owners would re-query, re-cancel
+ * and raise attention for the same order).
+ */
+export const CONFIRM_COMPENSATION_CLAIM_METADATA_KEY = 'confirmCompensationClaim';
 
 export const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
 export const ASYNC_DONE_COMPENSATION_REASONS: Record<AsyncDoneCompensationKind, string> = {

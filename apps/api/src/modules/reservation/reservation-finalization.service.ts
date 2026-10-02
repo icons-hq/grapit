@@ -1,4 +1,5 @@
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
+import { CONFIRM_COMPENSATION_CLAIM_METADATA_KEY } from '../payment/async-done-compensation.js';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
 import {
   BadRequestException,
@@ -2065,7 +2066,11 @@ export class ReservationFinalizationService {
         paidAt: toValidDate(snapshot.approvedAt) ?? new Date(),
         cancelReason: input.reason,
         ...this.toPaymentProviderChargeValues(snapshot),
-        ...this.toPaymentProviderMetadataValues(snapshot),
+        // The reconcile job owns this cancel; the async DONE recovery sweep skips it.
+        providerMetadata: {
+          ...(snapshot.providerMetadata ?? {}),
+          [CONFIRM_COMPENSATION_CLAIM_METADATA_KEY]: true,
+        },
       })
       .onConflictDoNothing()
       .returning({ id: payments.id });
