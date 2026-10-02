@@ -2593,6 +2593,8 @@ describe('AuthService', () => {
 
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockDb.insert).not.toHaveBeenCalled();
+      // The refusal happens before the single-use phone token is claimed (u08 x u09b).
+      expect(mockSmsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
     });
 
     it('stores the provider email in lower case and keeps the social sign-up verified policy', async () => {
