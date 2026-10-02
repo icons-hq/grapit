@@ -7,6 +7,7 @@ function createService() {
   const cacheService = {
     invalidate: vi.fn().mockResolvedValue(undefined),
     invalidatePattern: vi.fn().mockResolvedValue(undefined),
+    bumpGeneration: vi.fn().mockResolvedValue(undefined),
   } as unknown as CacheService;
 
   return {
@@ -51,5 +52,25 @@ describe('CatalogFreshnessService', () => {
     await service.invalidateBanners();
 
     expect(cacheService.invalidate).toHaveBeenCalledWith('cache:home:banners');
+  });
+
+  it('bumps list, home and detail generations so a racing read cannot republish pre-commit data', async () => {
+    const { service, cacheService } = createService();
+
+    await service.invalidatePerformance('performance-1');
+
+    expect(cacheService.bumpGeneration).toHaveBeenCalledWith('catalog:list');
+    expect(cacheService.bumpGeneration).toHaveBeenCalledWith('catalog:home');
+    expect(cacheService.bumpGeneration).toHaveBeenCalledWith('catalog:detail:performance-1');
+    expect(cacheService.bumpGeneration).not.toHaveBeenCalledWith('catalog:banner');
+  });
+
+  it('bumps only the banner generation after banner mutations', async () => {
+    const { service, cacheService } = createService();
+
+    await service.invalidateBanners();
+
+    expect(cacheService.bumpGeneration).toHaveBeenCalledTimes(1);
+    expect(cacheService.bumpGeneration).toHaveBeenCalledWith('catalog:banner');
   });
 });

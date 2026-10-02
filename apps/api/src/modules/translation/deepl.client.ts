@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { TranslationTargetLocale } from './translation.service.js';
 
@@ -17,6 +17,9 @@ interface DeepLTranslateResponse {
   }>;
 }
 
+/** Admin draft generation must not hang on a stalled provider connection. */
+export const DEEPL_REQUEST_TIMEOUT_MS = 10_000;
+
 const DEEPL_TARGET_LOCALE: Record<TranslationTargetLocale, DeepLTargetLang> = {
   en: 'EN-US',
   th: 'TH',
@@ -32,7 +35,7 @@ export class DeepLClient {
   private readonly authKey: string;
   private readonly baseUrl = 'https://api-free.deepl.com';
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(@Inject(ConfigService) private readonly configService: ConfigService) {
     this.authKey = this.configService.get<string>('DEEPL_AUTH_KEY', '');
   }
 
@@ -61,6 +64,7 @@ export class DeepLClient {
         source_lang: 'KO',
         target_lang: targetLang,
       }),
+      signal: AbortSignal.timeout(DEEPL_REQUEST_TIMEOUT_MS),
     });
 
     const responseText = await response.text();

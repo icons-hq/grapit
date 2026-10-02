@@ -30,11 +30,21 @@ export const bannerPlacementSchema = z.enum(BANNER_PLACEMENTS);
 export const bannerDeviceTargetSchema = z.enum(BANNER_DEVICE_TARGETS);
 export const bannerStatusSchema = z.enum(BANNER_STATUSES);
 
+/** Public catalog list pages beyond this are rejected (cache key bound). */
+export const PERFORMANCE_QUERY_MAX_PAGE = 1000;
+/** Matches `performances.subcategory` varchar(100); longer input never matches. */
+export const PERFORMANCE_QUERY_SUB_MAX_LENGTH = 100;
+
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
-  sub: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  // Public, unthrottled catalog input that reaches a cache key: keep it
+  // bounded. An empty value still means "no subcategory filter".
+  sub: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().max(PERFORMANCE_QUERY_SUB_MAX_LENGTH).optional(),
+  ),
+  page: z.coerce.number().int().min(1).max(PERFORMANCE_QUERY_MAX_PAGE).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   sort: z.enum(['latest', 'popular']).default('latest'),
   ended: booleanQueryParam,

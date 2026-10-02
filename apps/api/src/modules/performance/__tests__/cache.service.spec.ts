@@ -265,4 +265,111 @@ describe('CacheService', () => {
       expect(result).toEqual(data);
     });
   });
+
+  describe('getOrLoad()', () => {
+    it('returns a cached value without running the loader', async () => {
+      mockRedis.get.mockResolvedValueOnce(JSON.stringify({ id: 'cached' }));
+      const loader = vi.fn();
+
+      await expect(service.getOrLoad('cache:test:key', loader)).resolves.toEqual({ id: 'cached' });
+
+      expect(loader).not.toHaveBeenCalled();
+    });
+
+    it('coalesces concurrent misses for one key into a single loader call', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.set.mockResolvedValue('OK');
+      let release!: (value: { value: { id: string }; ttlSeconds: number }) => void;
+      const loader = vi.fn(() => new Promise<{ value: { id: string }; ttlSeconds: number }>((resolve) => {
+        release = resolve;
+      }));
+
+      const callers = Array.from({ length: 50 }, () => service.getOrLoad('cache:test:hot', loader));
+      await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(1));
+      release({ value: { id: 'fresh' }, ttlSeconds: 30 });
+
+      const results = await Promise.all(callers);
+      expect(results.every((result) => result.id === 'fresh')).toBe(true);
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(mockRedis.set).toHaveBeenCalledTimes(1);
+      expect(mockRedis.set).toHaveBeenCalledWith('cache:test:hot', JSON.stringify({ id: 'fresh' }), 'EX', 30);
+    });
+
+    it('releases the in-flight slot after a failure so the next request retries', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      const loader = vi.fn()
+        .mockRejectedValueOnce(new Error('pool timeout'))
+        .mockResolvedValueOnce({ value: 'ok', ttlSeconds: 10 });
+
+      await expect(service.getOrLoad('cache:test:retry', loader)).rejects.toThrow('pool timeout');
+      await expect(service.getOrLoad('cache:test:retry', loader)).resolves.toBe('ok');
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache values returned with a null TTL', async () => {
+      mockRedis.get.mockResolvedValue(null);
+
+      await expect(service.getOrLoad('cache:test:missing', async () => ({ value: null, ttlSeconds: null })))
+        .resolves.toBeNull();
+
+      expect(mockRedis.set).not.toHaveBeenCalled();
+    });
+
+    it('skips Redis entirely when readThrough is false', async () => {
+      await expect(service.getOrLoad(
+        'cache:test:bypass',
+        async () => ({ value: 'db', ttlSeconds: 300 }),
+        { readThrough: false },
+      )).resolves.toBe('db');
+
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generations', () => {
+    it('reads the initial generation when a scope was never bumped', async () => {
+      mockRedis.get.mockResolvedValueOnce(null);
+
+      await expect(service.getGeneration('catalog:list')).resolves.toBe('0');
+      expect(mockRedis.get).toHaveBeenCalledWith('cache:generation:catalog:list');
+    });
+
+    it('bumps to a fresh token with a TTL longer than any cached payload', async () => {
+      mockRedis.set.mockResolvedValue('OK');
+
+      await service.bumpGeneration('catalog:detail:perf-1');
+      await service.bumpGeneration('catalog:detail:perf-1');
+
+      const [first, second] = mockRedis.set.mock.calls;
+      expect(first?.[0]).toBe('cache:generation:catalog:detail:perf-1');
+      expect(first?.[2]).toBe('EX');
+      expect(first?.[3]).toBeGreaterThan(300);
+      expect(first?.[1]).not.toBe(second?.[1]);
+    });
+
+    it('returns null instead of a guessed generation when Redis fails', async () => {
+      mockRedis.get.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await expect(service.getGeneration('catalog:list')).resolves.toBeNull();
+    });
+
+    it('swallows bump failures after the DB commit', async () => {
+      mockRedis.set.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await expect(service.bumpGeneration('catalog:list')).resolves.toBeUndefined();
+    });
+
+    it('keeps generation keys outside every catalog invalidation pattern', () => {
+      for (const pattern of [
+        /^cache:performances:list:/,
+        /^cache:home:/,
+        /^cache:performances:detail:/,
+      ]) {
+        expect(pattern.test('cache:generation:catalog:list')).toBe(false);
+      }
+    });
+  });
 });

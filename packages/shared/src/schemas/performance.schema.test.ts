@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PERFORMANCE_QUERY_MAX_PAGE,
+  PERFORMANCE_QUERY_SUB_MAX_LENGTH,
   createPerformanceSchema,
   performanceQuerySchema,
   searchQuerySchema,
@@ -13,6 +15,23 @@ describe('performance query schema', () => {
     expect(performanceQuerySchema.parse({}).ended).toBe(false);
     expect(performanceQuerySchema.parse({ ended: '' }).ended).toBe(false);
     expect(() => performanceQuerySchema.parse({ ended: 'yes' })).toThrow();
+  });
+
+  it('bounds the unthrottled catalog inputs that reach the list cache key', () => {
+    expect(performanceQuerySchema.parse({ sub: '팬미팅' }).sub).toBe('팬미팅');
+    expect(performanceQuerySchema.parse({ sub: '' }).sub).toBeUndefined();
+    expect(performanceQuerySchema.parse({ sub: 'x'.repeat(PERFORMANCE_QUERY_SUB_MAX_LENGTH) }).sub)
+      .toHaveLength(PERFORMANCE_QUERY_SUB_MAX_LENGTH);
+    expect(() => performanceQuerySchema.parse({
+      sub: 'x'.repeat(PERFORMANCE_QUERY_SUB_MAX_LENGTH + 1),
+    })).toThrow();
+    expect(() => performanceQuerySchema.parse({ sub: 'x'.repeat(8_000) })).toThrow();
+
+    expect(performanceQuerySchema.parse({ page: String(PERFORMANCE_QUERY_MAX_PAGE) }).page)
+      .toBe(PERFORMANCE_QUERY_MAX_PAGE);
+    expect(() => performanceQuerySchema.parse({ page: String(PERFORMANCE_QUERY_MAX_PAGE + 1) }))
+      .toThrow();
+    expect(() => performanceQuerySchema.parse({ page: '987654321' })).toThrow();
   });
 });
 

@@ -215,6 +215,17 @@ Use shared schemas for request/response validation and UI contract tests wheneve
 - CI and deploy workflows run Drizzle migration steps before production deploy.
 - Production migration should run through the workflow/runbook, not through ad hoc local mutation.
 
+### 5.4 Public Catalog Cache And View Counts
+
+`PerformanceService` serves public list, detail, home hot/new, and home banner reads through `CacheService.getOrLoad` (read-through Valkey cache, TTL up to 300 seconds and capped at the next booking start or banner schedule boundary).
+
+- Every cache key embeds a generation token (`cache:generation:catalog:{list|home|banner|detail:<id>}`). Readers fetch the token before reading PostgreSQL; `CatalogFreshnessService` replaces it after each committed admin mutation, translation publish, or translation source edit, then deletes the old keys. A read that raced the commit can only fill the superseded key, so stale data is not republished after invalidation. If the token cannot be read, the request bypasses the shared cache.
+- Concurrent misses for one key share one in-process load (single-flight), so a TTL expiry at a booking opening rebuilds each key once per API instance.
+- Public detail reads do not write to PostgreSQL. Views are counted in process by `PerformanceViewCounter` and folded into `performances.view_count` every 10 seconds with one batched `UPDATE` per instance (`lock_timeout` 1s, `statement_timeout` 3s; deltas are kept and retried after a failure). Views not yet flushed are lost if an instance dies without a graceful shutdown. Guarded admin detail reads are neither cached nor counted, and return the stored `status` rather than the derived public status.
+- List query input is bounded by `performanceQuerySchema` (`sub` ≤ 100 characters, `page` ≤ 1000). `sub` is hashed into the key, and empty pages are cached for at most 10 seconds.
+- `GET /api/v1/home/banners` returns only banners with `isActive=true`, a home placement (`home_hero`, `home_secondary`), and status `active` or `scheduled`, whose `startsAt`/`endsAt` window contains the current time. A `scheduled` banner without `startsAt` stays hidden. `paused`, `draft`, and `expired` banners are never public.
+- Visibility changes made directly in SQL bypass these invalidations and can stay cached for up to 300 seconds. After such a change, save the performance or banner once in the admin UI to invalidate the cache.
+
 ## 6. Booking And Concurrency
 
 ### 6.1 Seat Locks
@@ -408,6 +419,7 @@ Production convention:
 - Cloud Run environment variables and Secret Manager bindings provide runtime configuration.
 - API validates production frontend origin and Redis/Valkey pub/sub readiness at bootstrap.
 - Missing production Redis URL or invalid Valkey mode fails startup.
+- `DEEPL_AUTH_KEY` is optional. With a DeepL Free API key, admin translation draft generation calls `api-free.deepl.com` (10-second timeout; a provider failure returns 503 without creating partial drafts). Without it, drafts are created with a `[manual-review:deepl-unavailable]` prefix for manual translation.
 
 ### 8.5 Object Storage And Uploads
 
