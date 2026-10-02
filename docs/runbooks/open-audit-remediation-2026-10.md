@@ -43,6 +43,7 @@
 | overlay 배정 누락 | 공연별 `performance_seat_assignments` 수와 `seat_maps.seat_config`의 seatIds 합계 비교 | 미보호 공연은 좌석맵을 다시 저장해 overlay 재구성 | #124 |
 | 판매 시작이 지난 미게시 공연 | 미게시 공연 중 `booking_policies.booking_starts_at < now()` | 새 공개 승인 게이트가 막으므로 판매 시작을 다시 정한다 | #135 |
 | 판매 시작 전인 판매 중 공연 | published이고 `status IN ('selling','closing_soon')`이며 `booking_starts_at > now()` | 배포 후 목록·검색·상세에서 `오픈예정`으로 보인다. 의도한 설정인지 운영자 확인 | #170 |
+| 회차가 모두 시작된 판매 중 공연 | `SELECT p.id, p.title, p.status, max(s.date_time) AS last_showtime FROM performances p JOIN showtimes s ON s.performance_id = p.id WHERE p.publish_state = 'published' AND p.status <> 'ended' GROUP BY p.id, p.title, p.status HAVING max(s.date_time) <= now();` | 배포 후 목록·검색·홈·상세에서 `판매종료`로 보이고, 종료 공연을 숨기는 기본 목록·검색·홈 신규 목록에서 빠진다(회차가 없는 공연은 그대로). 운영자가 확인하고 관리자 공연 편집에서 판매 상태를 `판매 종료`로 맞춘다 | #2 #170 |
 | 편집으로 바뀐 판매 상태 | `SELECT p.id, p.title, p.status, bp.booking_starts_at FROM performances p JOIN booking_policies bp ON bp.performance_id = p.id WHERE p.status = 'selling' AND bp.booking_starts_at IS NOT NULL;`. 배포 전 폼이 파생 상태 `selling`으로 저장한 미반영 초안도 찾는다: `SELECT d.id, d.performance_id, d.owner_user_id FROM performance_drafts d JOIN performances p ON p.id = d.performance_id WHERE d.applied_at IS NULL AND d.data->>'status' = 'selling' AND p.status = 'upcoming';` | `admin_audit_logs`의 `event.update`와 대조해 의도치 않은 것은 `판매 예정`으로 되돌림. 찾은 초안은 반영하면 `upcoming`이 `selling`으로 바뀌므로, 반영 전에 작성자가 판매 상태를 `판매 예정`으로 고치거나 초안을 폐기한다 | #145 |
 | 배너 노출 집합 | `SELECT id, placement, status, starts_at, ends_at, is_active FROM banners ORDER BY sort_order;` | 배포 후 paused/draft/expired·기간 밖·홈 외 placement는 사라지고, 시작 시각이 지난 `scheduled`는 새로 보인다. 운영자 확인 | #51 |
 | 원문 복사 번역 초안 | 아래 SQL | `published` 원문 복사본(marker 없음)을 먼저 다시 번역해 게시. marker 초안은 공개 화면에서 무시되고 한국어가 보인다 | #149 |
@@ -162,6 +163,7 @@ ORDER BY p.created_at;
 - [ ] 정책에 없는 결제수단을 고르면 좌석을 유지한 채 결제 단계 안내가 나오고 다른 수단으로 결제할 수 있다. 위젯에 켜진 가상계좌·휴대폰·PAYCO 등 미지원 수단도 정책과 관계없이 같은 안내가 나온다. 관리자 공연 편집에 결제수단 체크박스가 4개(국내 간편결제 포함)다. #70
 - [ ] 같은 인증 휴대폰의 두 번째 계정은 첫 계정이 결제 진행 중일 때 lock이 409다. #62
 - [ ] `/th` 경로 confirm 결과 화면에 번역된 공연명이 보인다. #88
+- [ ] 회차가 모두 시작된 공연이 홈·검색·상세에서 `판매종료`이고 예매 버튼이 닫혀 있다. 판매 시작 전 공연의 상세 일정 카드에는 공연 기간과 홈 목록과 같은 `YYYY.MM.DD HH:mm KST 오픈 예정`이 함께 보인다. #2 #170 #35
 - [ ] 판매 전 공용 scanner 계정의 `POST /api/v1/queue/performances/:id/enter`가 403이다. Admin Pre-Open Booking Smoke 계정은 `admin` 번들이거나 번들·명시 capability가 없는 legacy admin이다. #25
 - [ ] `curl -sSI https://heygrabit.com/api/runtime-flags`가 `cache-control: no-store`이고 본문에 `serverNow`가 있다. #67 #97
 - [ ] 관리자 Sentry 테스트 endpoint(`GET /api/v1/admin/_sentry-test`)로 이벤트를 보내 Sentry UI에서 `Authorization`·`Cookie`가 `[Filtered]`이고 DB 오류 이벤트 값이 `params: [Filtered]`로 끝나는지 확인한다. #155 #156
