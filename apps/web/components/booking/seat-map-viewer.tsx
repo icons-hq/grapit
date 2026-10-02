@@ -324,6 +324,23 @@ function normalizeSeatLabelOverlays(doc: Document, floorKey?: string) {
   });
 }
 
+/**
+ * Labels drawn on top of seats (row letters, seat numbers in their own <g>, the
+ * stage badge) must not take the click or tap: a label over a seat would make
+ * closest(SEAT_TARGET_SELECTOR) miss and the seat would not toggle. Every text
+ * that is not itself a seat (or inside one) lets the pointer through to the
+ * seat underneath. Applied to the in-memory document only; the stored SVG is
+ * unchanged.
+ */
+function passPointerThroughNonSeatText(doc: Document) {
+  doc.querySelectorAll('text, tspan').forEach((textEl) => {
+    if (textEl.closest(SEAT_SELECTOR)) {
+      return;
+    }
+    textEl.setAttribute('pointer-events', 'none');
+  });
+}
+
 function appendStageBadge(doc: Document, svgEl: Element, seatCopy: SeatSelectionCopy) {
   // reviews revision HIGH #2 + W-1: unified parsing contract — descendant [data-stage] + VALID_STAGES enum
   // ⚠ in-memory `doc`에만 적용 — R2 원본 SVG 파일은 변경하지 않음 (D-19 호환)
@@ -468,6 +485,7 @@ function buildSeatMapBase(
 
   appendStageBadge(doc, svgEl, seatCopy);
   normalizeSeatLabelOverlays(doc, floorKey);
+  passPointerThroughNonSeatText(doc);
 
   // Remove fixed dimensions and make responsive
   svgEl.removeAttribute('width');
