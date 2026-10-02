@@ -431,12 +431,38 @@ describe('ReservationFinalizationService showtime cutoff before approval (#2)', 
     expect(deps.db.transaction).not.toHaveBeenCalled();
   });
 
-  it('rejects with 403 when the provider lookup for a started showtime fails', async () => {
+  it('answers a retryable 503 instead of a final 403 when the provider lookup for a started showtime fails', async () => {
     const deps = createDependencies({ reservation: domesticReservation(), showtimeStartsAt: PAST() });
     deps.tossClient.queryPayment.mockRejectedValue(new Error('fetch failed'));
 
+    const result = deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1');
+    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(result).rejects.toThrow(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a 5xx lookup', new TossPaymentError('PROVIDER_ERROR', 'gateway', 502)],
+    ['a rate-limited lookup', new TossPaymentError('TOO_MANY_REQUESTS', 'slow down', 429)],
+  ])('answers 503 for %s on a started showtime', async (_label, lookupError) => {
+    const deps = createDependencies({ reservation: domesticReservation(), showtimeStartsAt: PAST() });
+    deps.tossClient.queryPayment.mockRejectedValue(lookupError);
+
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
-      .rejects.toBeInstanceOf(ForbiddenException);
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+  });
+
+  it('keeps the 403 when the provider proves no payment exists under the key', async () => {
+    const deps = createDependencies({ reservation: domesticReservation(), showtimeStartsAt: PAST() });
+    deps.tossClient.queryPayment.mockRejectedValue(
+      new TossPaymentError('NOT_FOUND_PAYMENT', '존재하지 않는 결제 정보 입니다.', 404),
+    );
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(SHOWTIME_SALES_CLOSED_MESSAGE);
     expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
   });
 
@@ -462,6 +488,10 @@ describe('ReservationFinalizationService showtime cutoff before approval (#2)', 
         reservation: domesticReservation({ admissionActiveUntilAt: new Date('2026-10-05T10:05:00.000Z') }),
         showtimeStartsAt: startsAt,
       });
+      deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({
+        status: 'IN_PROGRESS',
+        approvedAt: null,
+      }));
 
       await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
         .rejects.toThrow(SHOWTIME_SALES_CLOSED_MESSAGE);
@@ -712,6 +742,7 @@ describe('ReservationFinalizationService transient DB failure after approval (#1
       .mockReturnValueOnce(chainResult([{
         id: 'payment-committed',
         reservationId: 'reservation-1',
+        paymentKey: 'payment-key-1',
         tossOrderId: 'order-1',
         status: 'DONE',
         asyncStatus: 'sync',
@@ -783,6 +814,7 @@ describe('ReservationFinalizationService confirm lease (#72)', () => {
       .mockReturnValueOnce(chainResult([{
         id: 'payment-webhook',
         reservationId: 'reservation-1',
+        paymentKey: 'payment-key-1',
         tossOrderId: 'order-1',
         status: 'DONE',
         asyncStatus: 'payment_status_changed:done',
@@ -821,6 +853,7 @@ describe('ReservationFinalizationService confirm lease (#72)', () => {
       .mockReturnValueOnce(chainResult([{
         id: 'payment-webhook',
         reservationId: 'reservation-1',
+        paymentKey: 'payment-key-1',
         tossOrderId: 'order-1',
         status: 'DONE',
         asyncStatus: 'payment_status_changed:done',
@@ -873,5 +906,375 @@ describe('ReservationFinalizationService post-commit side effects (#19)', () => 
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .resolves.toEqual({ reservationId: 'reservation-1' });
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+});
+
+function paypalApproval(overrides: Record<string, unknown> = {}) {
+  return domesticApproval({
+    currency: 'USD',
+    method: '해외간편결제',
+    totalAmount: 108,
+    ...overrides,
+  });
+}
+
+const HOLD_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
+
+type GateCase = {
+  gate: string;
+  reservation: () => ReservationRow;
+  arrange: (deps: ReturnType<typeof createDependencies>) => void;
+  message: string;
+  cancelReason: string;
+};
+
+const GATE_CASES: GateCase[] = [
+  {
+    gate: 'admission window',
+    reservation: () => paypalReservation({ admissionActiveUntilAt: PAST() }),
+    arrange: () => {},
+    message: HOLD_EXPIRED_MESSAGE,
+    cancelReason: '결제 유효 시간 초과로 인한 자동 취소',
+  },
+  {
+    gate: 'ticket limit',
+    reservation: () => paypalReservation(),
+    arrange: (deps) => {
+      deps.db.execute.mockResolvedValue({
+        rows: [{
+          performance_id: 'performance-1',
+          max_tickets_per_user: 2,
+          active_ticket_count: 1,
+          date_time: FUTURE(),
+        }],
+      });
+    },
+    message: '1인 최대 2매',
+    cancelReason: '예매 매수 제한 초과로 인한 자동 취소',
+  },
+  {
+    gate: 'seat hold',
+    reservation: () => paypalReservation(),
+    arrange: (deps) => {
+      deps.bookingService.extendOwnedSeatLocks.mockRejectedValue(
+        new ConflictException(HOLD_EXPIRED_MESSAGE),
+      );
+    },
+    message: HOLD_EXPIRED_MESSAGE,
+    cancelReason: '좌석 점유 만료로 인한 자동 취소',
+  },
+];
+
+describe('ReservationFinalizationService pre-approval gates after an unrecorded approval (#18, #72)', () => {
+  it('compensates a PayPal approval left by a 503 when the retry finds the seat hold expired', async () => {
+    const deps = createDependencies({ reservation: paypalReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(paypalApproval());
+    // First attempt: Toss approved, then the confirm lease went to another holder.
+    deps.bookingService.refreshPaymentConfirmLock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    deps.bookingService.acquirePaymentConfirmLock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    const first = deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1');
+    await expect(first).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+
+    // Retry after the hold expired: no payment row exists, the gate must not
+    // strand the USD charge.
+    deps.db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([paypalReservation({ admissionActiveUntilAt: PAST() })]))
+      .mockReturnValueOnce(chainResult(SEATS));
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
+
+    const retry = deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1');
+    await expect(retry).rejects.toBeInstanceOf(ConflictException);
+    await expect(retry).rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+
+    expect(deps.tossClient.confirmPayment).toHaveBeenCalledOnce();
+    expect(deps.tossClient.queryPayment).toHaveBeenCalledWith('payment-key-1', {});
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-1',
+      '결제 유효 시간 초과로 인한 자동 취소',
+      expect.objectContaining({ idempotencyKey: 'reservation-finalization-cancel:order-1' }),
+    );
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(GATE_CASES)('cancels an earlier approval found at the $gate gate and keeps its rejection', async ({
+    reservation,
+    arrange,
+    message,
+    cancelReason,
+  }) => {
+    const deps = createDependencies({ reservation: reservation() });
+    arrange(deps);
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
+
+    const result = deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1');
+    await expect(result).rejects.toBeInstanceOf(ConflictException);
+    await expect(result).rejects.toThrow(message);
+
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-1',
+      cancelReason,
+      expect.anything(),
+    );
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(GATE_CASES)('keeps the $gate rejection without cancelling while the payment is unapproved', async ({
+    reservation,
+    arrange,
+    message,
+  }) => {
+    const deps = createDependencies({ reservation: reservation() });
+    arrange(deps);
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval({
+      status: 'IN_PROGRESS',
+      approvedAt: null,
+    }));
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toThrow(message);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(GATE_CASES)('answers 503 without cancelling when the provider lookup at the $gate gate fails', async ({
+    reservation,
+    arrange,
+  }) => {
+    const deps = createDependencies({ reservation: reservation() });
+    arrange(deps);
+    deps.tossClient.queryPayment.mockRejectedValue(new Error('fetch failed'));
+
+    const result = deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1');
+    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(result).rejects.toThrow(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no payment under the key', () => Promise.reject(
+      new TossPaymentError('NOT_FOUND_PAYMENT', '존재하지 않는 결제 정보 입니다.', 404),
+    )],
+    ['a payment of another order', () => Promise.resolve(paypalApproval({ orderId: 'someone-elses-order' }))],
+  ])('keeps the gate rejection without cancelling for %s', async (_label, lookup) => {
+    const deps = createDependencies({
+      reservation: paypalReservation({ admissionActiveUntilAt: PAST() }),
+    });
+    deps.tossClient.queryPayment.mockImplementation(lookup);
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('records a provider-expired payment found at a gate like the terminal webhook', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation({ admissionActiveUntilAt: PAST() }),
+    });
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({
+      status: 'EXPIRED',
+      approvedAt: null,
+    }));
+    const failureInserts: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const failureUpdates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const tx = {
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn((values: Record<string, unknown>) => {
+          failureInserts.push({ table, values });
+          return {
+            onConflictDoNothing: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 'payment-expired-1' }]),
+            }),
+          };
+        }),
+      })),
+      update: vi.fn((table: unknown) => ({
+        set: vi.fn((values: Record<string, unknown>) => {
+          failureUpdates.push({ table, values });
+          return { where: vi.fn().mockResolvedValue(undefined) };
+        }),
+      })),
+    };
+    deps.db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+
+    expect(failureInserts).toEqual([{
+      table: payments,
+      values: expect.objectContaining({
+        tossOrderId: 'order-1',
+        status: 'EXPIRED',
+        asyncStatus: 'confirm_rejected',
+        paidAt: null,
+      }),
+    }]);
+    expect(failureUpdates).toEqual([{ table: reservations, values: expect.objectContaining({ status: 'FAILED' }) }]);
+    expect(deps.rootInserts).toContainEqual({
+      table: reservationPaymentFailureDiagnostics,
+      values: expect.objectContaining({
+        paymentId: 'payment-expired-1',
+        diagnosticCode: 'PAYMENT_EXPIRED',
+        diagnosticSource: 'payment_confirm',
+      }),
+    });
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not query the provider for a Redis outage at the seat hold gate', async () => {
+    const deps = createDependencies({ reservation: paypalReservation() });
+    const outage = new Error('Connection is closed.');
+    deps.bookingService.extendOwnedSeatLocks.mockRejectedValue(outage);
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBe(outage);
+    expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not query the provider when the order already has a provider-terminal payment row', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation({ admissionActiveUntilAt: PAST() }),
+      existingPayment: {
+        id: 'payment-aborted',
+        reservationId: 'reservation-1',
+        paymentKey: 'payment-key-1',
+        tossOrderId: 'order-1',
+        status: 'ABORTED',
+        asyncStatus: 'confirm_rejected',
+      },
+    });
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+    expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReservationFinalizationService unverifiable commit (#17)', () => {
+  const unreadableState = () => {
+    throw Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' });
+  };
+
+  it('answers 503 without cancelling when a connection died and the committed state cannot be read', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.db.select.mockImplementation(unreadableState);
+    deps.db.transaction.mockRejectedValue(
+      Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' }),
+    );
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+
+    const result = deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1');
+    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(result).rejects.toThrow(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+
+    expect(deps.db.transaction).toHaveBeenCalledTimes(3);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 for a seat conflict that follows a dropped commit when the state cannot be read', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.db.select.mockImplementation(unreadableState);
+    deps.db.transaction
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' }),
+      )
+      // The retry conflicts with the seats the dropped commit may have sold.
+      .mockRejectedValueOnce(new ConflictException('판매 불가능한 좌석입니다'));
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.db.transaction).toHaveBeenCalledTimes(2);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('still cancels when no attempt could have committed even if the state cannot be read', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.db.select.mockImplementation(unreadableState);
+    deps.db.transaction.mockRejectedValue(new Error('timeout exceeded when trying to connect'));
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(deps.db.transaction).toHaveBeenCalledTimes(3);
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ReservationFinalizationService order committed with another payment', () => {
+  const committedWithAnotherPayment = () => chainResult([{
+    id: 'payment-other',
+    reservationId: 'reservation-1',
+    paymentKey: 'payment-key-other',
+    tossOrderId: 'order-1',
+    status: 'DONE',
+    asyncStatus: 'sync',
+  }]);
+
+  it('cancels this approval as a duplicate after a commit conflict', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.db.transaction.mockRejectedValueOnce(new ConflictException('판매 불가능한 좌석입니다'));
+    deps.db.select
+      .mockReturnValueOnce(committedWithAnotherPayment())
+      .mockReturnValueOnce(chainResult([{ status: 'CONFIRMED' }]));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .resolves.toEqual({ reservationId: 'reservation-1' });
+
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-1',
+      '중복 결제로 인한 자동 취소',
+      expect.objectContaining({
+        idempotencyKey: 'reservation-finalization-duplicate-cancel:payment-key-1',
+      }),
+    );
+    // The committed payment row is not touched.
+    expect(deps.db.update).not.toHaveBeenCalled();
+    expect(deps.qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-other',
+    });
+  });
+
+  it('cancels this approval as a duplicate when the lease holder committed another payment', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.bookingService.refreshPaymentConfirmLock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    deps.bookingService.acquirePaymentConfirmLock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    deps.db.select
+      .mockReturnValueOnce(committedWithAnotherPayment())
+      .mockReturnValueOnce(chainResult([{ status: 'CONFIRMED' }]));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .resolves.toEqual({ reservationId: 'reservation-1' });
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-1',
+      '중복 결제로 인한 자동 취소',
+      expect.anything(),
+    );
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expect(deps.db.update).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,7 @@ import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import type { PaymentMethod } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
@@ -18,7 +18,7 @@ const {
   reservationPaymentFailureDiagnostics,
 } = schema;
 
-// Audit #1, #2, #17, #73: the confirm core against real PostgreSQL. Never reads
+// Audit #1, #2, #17, #18, #73: the confirm core against real PostgreSQL. Never reads
 // DATABASE_URL; every test uses the disposable container created below.
 describe('Payment confirm core — PostgreSQL', () => {
   let container: StartedTestContainer;
@@ -43,6 +43,7 @@ describe('Payment confirm core — PostgreSQL', () => {
     showtimeAt: Date;
     checkoutPaymentMethod?: PaymentMethod;
     providerChargeAmountMinor?: number;
+    admissionActiveUntilAt?: Date;
   }) {
     const id = randomUUID();
     const [user] = await db.insert(users).values({ email: `${id}@example.test`, name: 'Fixture',
@@ -59,7 +60,7 @@ describe('Payment confirm core — PostgreSQL', () => {
       reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status: 'PENDING_PAYMENT',
       totalAmount: 52000, cancelDeadline: new Date('2098-12-31'),
       paymentDeadlineAt: new Date(Date.now() + 600000),
-      admissionActiveUntilAt: new Date(Date.now() + 600000),
+      admissionActiveUntilAt: options.admissionActiveUntilAt ?? new Date(Date.now() + 600000),
       checkoutPaymentMethod: options.checkoutPaymentMethod ?? { method: 'CARD', provider: 'CARD', currency: 'KRW' },
       checkoutStartedAt: new Date(),
       ...(options.providerChargeAmountMinor
@@ -94,10 +95,17 @@ describe('Payment confirm core — PostgreSQL', () => {
 
   it('rejects a started showtime before calling Toss confirm', async () => {
     const { userId, reservation } = await pendingOrder({ showtimeAt: new Date(Date.now() - 60_000) });
-    const toss = { confirmPayment: vi.fn(), queryPayment: vi.fn().mockResolvedValue(null), cancelPayment: vi.fn() };
+    const paymentKey = `pay-${randomUUID()}`;
+    // Authenticated but never confirmed: the provider proves it is unapproved.
+    const toss = {
+      confirmPayment: vi.fn(),
+      queryPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
+        status: 'IN_PROGRESS', currency: 'KRW', method: '카드', totalAmount: 52000 }),
+      cancelPayment: vi.fn(),
+    };
 
     await expect(finalization(toss).confirmAndCreateReservation(
-      { paymentKey: `pay-${randomUUID()}`, orderId: reservation.tossOrderId!, amount: 52000 }, userId,
+      { paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId,
     )).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(toss.confirmPayment).not.toHaveBeenCalled();
@@ -174,6 +182,63 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(await db.select().from(reservationPaymentFailureDiagnostics)
       .where(eq(reservationPaymentFailureDiagnostics.reservationId, reservation.id)))
       .toMatchObject([{ diagnosticCode: 'PAYMENT_ABORTED', diagnosticSource: 'payment_confirm' }]);
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('cancels an earlier PayPal approval found when a retry hits an expired hold, writing nothing', async () => {
+    const { userId, reservation } = await pendingOrder({
+      showtimeAt: new Date('2099-01-01'),
+      checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' },
+      providerChargeAmountMinor: 3536,
+      admissionActiveUntilAt: new Date(Date.now() - 60_000),
+    });
+    const paymentKey = `pay-${randomUUID()}`;
+    // An earlier attempt was approved and ended in a 503 before recording anything.
+    const toss = {
+      confirmPayment: vi.fn(),
+      queryPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId, status: 'DONE',
+        currency: 'USD', method: '해외간편결제', totalAmount: 35.36, approvedAt: new Date().toISOString() }),
+      cancelPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
+        status: 'CANCELED', totalAmount: 35.36, cancels: [{ cancelStatus: 'DONE' }] }),
+    };
+
+    await expect(finalization(toss).confirmAndCreateReservation(
+      { paymentKey, orderId: reservation.tossOrderId!, provider: 'PAYPAL', providerChargeAmount: '35.36' }, userId,
+    )).rejects.toBeInstanceOf(ConflictException);
+
+    expect(toss.confirmPayment).not.toHaveBeenCalled();
+    expect(toss.cancelPayment).toHaveBeenCalledOnce();
+    expect(toss.cancelPayment).toHaveBeenCalledWith(paymentKey, '결제 유효 시간 초과로 인한 자동 취소',
+      expect.anything());
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id))).toHaveLength(0);
+    expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id))).toHaveLength(0);
+  });
+
+  it('records a provider-expired payment found at an expired hold like the terminal webhook', async () => {
+    const { userId, reservation } = await pendingOrder({
+      showtimeAt: new Date('2099-01-01'),
+      admissionActiveUntilAt: new Date(Date.now() - 60_000),
+    });
+    const paymentKey = `pay-${randomUUID()}`;
+    const toss = {
+      confirmPayment: vi.fn(),
+      queryPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId, status: 'EXPIRED',
+        currency: 'KRW', method: '카드', totalAmount: 52000 }),
+      cancelPayment: vi.fn(),
+    };
+
+    await expect(finalization(toss).confirmAndCreateReservation(
+      { paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId,
+    )).rejects.toBeInstanceOf(ConflictException);
+
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id)))
+      .toMatchObject([{ status: 'EXPIRED', asyncStatus: 'confirm_rejected', paidAt: null, paymentKey }]);
+    const [stored] = await db.select().from(reservations).where(eq(reservations.id, reservation.id));
+    expect(stored!.status).toBe('FAILED');
+    expect(await db.select().from(reservationPaymentFailureDiagnostics)
+      .where(eq(reservationPaymentFailureDiagnostics.reservationId, reservation.id)))
+      .toMatchObject([{ diagnosticCode: 'PAYMENT_EXPIRED', diagnosticSource: 'payment_confirm' }]);
+    expect(toss.confirmPayment).not.toHaveBeenCalled();
     expect(toss.cancelPayment).not.toHaveBeenCalled();
   });
 });

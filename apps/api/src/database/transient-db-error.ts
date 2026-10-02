@@ -37,24 +37,75 @@ const TRANSIENT_MESSAGE_FRAGMENTS = [
   'client has encountered a connection error and is not queryable',
 ];
 
+/**
+ * Failures of an established connection. The server may have received and
+ * applied a COMMIT before the connection died, so the transaction outcome is
+ * unknown until the committed state is read back. Failures to obtain a
+ * connection (pool acquire timeout, refused, too many connections) and
+ * server-side rollbacks (deadlock, serialization, statement timeout) are not
+ * included: those transactions never committed.
+ */
+const CONNECTION_LOSS_SQLSTATES = new Set([
+  '57P01', // admin_shutdown
+  '57P02', // crash_shutdown
+  '08000', // connection_exception
+  '08003', // connection_does_not_exist
+  '08006', // connection_failure
+]);
+
+const CONNECTION_LOSS_NODE_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+]);
+
+const CONNECTION_LOSS_MESSAGE_FRAGMENTS = [
+  'connection terminated unexpectedly',
+  'client has encountered a connection error and is not queryable',
+];
+
 const MAX_CAUSE_DEPTH = 4;
 
-export function isTransientDatabaseError(error: unknown): boolean {
+function matchesErrorChain(
+  error: unknown,
+  codes: ReadonlySet<string>,
+  messageFragments: readonly string[],
+): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && current; depth += 1) {
     const candidate = current as { code?: unknown; message?: unknown; cause?: unknown };
-    if (typeof candidate.code === 'string') {
-      if (TRANSIENT_SQLSTATES.has(candidate.code) || TRANSIENT_NODE_ERROR_CODES.has(candidate.code)) {
-        return true;
-      }
+    if (typeof candidate.code === 'string' && codes.has(candidate.code)) {
+      return true;
     }
     if (typeof candidate.message === 'string') {
       const message = candidate.message.toLowerCase();
-      if (TRANSIENT_MESSAGE_FRAGMENTS.some((fragment) => message.includes(fragment))) {
+      if (messageFragments.some((fragment) => message.includes(fragment))) {
         return true;
       }
     }
     current = candidate.cause;
   }
   return false;
+}
+
+const TRANSIENT_ERROR_CODES = new Set([...TRANSIENT_SQLSTATES, ...TRANSIENT_NODE_ERROR_CODES]);
+const CONNECTION_LOSS_ERROR_CODES = new Set([
+  ...CONNECTION_LOSS_SQLSTATES,
+  ...CONNECTION_LOSS_NODE_ERROR_CODES,
+]);
+
+export function isTransientDatabaseError(error: unknown): boolean {
+  return matchesErrorChain(error, TRANSIENT_ERROR_CODES, TRANSIENT_MESSAGE_FRAGMENTS);
+}
+
+/**
+ * True when an established connection died, so a transaction that was
+ * committing may have committed even though the client saw an error.
+ */
+export function isConnectionLossDatabaseError(error: unknown): boolean {
+  return matchesErrorChain(
+    error,
+    CONNECTION_LOSS_ERROR_CODES,
+    CONNECTION_LOSS_MESSAGE_FRAGMENTS,
+  );
 }

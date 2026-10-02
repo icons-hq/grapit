@@ -24,7 +24,10 @@ import {
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
-import { isTransientDatabaseError } from '../../database/transient-db-error.js';
+import {
+  isConnectionLossDatabaseError,
+  isTransientDatabaseError,
+} from '../../database/transient-db-error.js';
 import {
   payments,
   reservationSeats,
@@ -40,6 +43,7 @@ import {
   buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
 import {
+  TossPaymentError,
   TossPaymentsClient,
   isTossConfirmOutcomeUnknown,
   type TossPaymentResponse,
@@ -95,11 +99,21 @@ interface ProviderApprovalExpectation {
 }
 type ProviderApprovalMismatch = 'identity' | 'status' | 'currency' | 'amount' | 'method';
 type FinalizationState =
-  | { kind: 'committed'; paymentId: string }
+  | { kind: 'committed'; paymentId: string; paymentKey: string }
   | { kind: 'cancelled' }
   | { kind: 'not_committed' }
   | { kind: 'unknown' };
 type ConfirmLeaseState = 'owned' | 'reacquired' | 'lost' | 'unknown';
+/**
+ * What a provider lookup of the requested paymentKey proves about this order.
+ * `not_approved` carries this order's payment when the provider returned it.
+ */
+type ProviderPaymentLookup =
+  | { kind: 'approved'; payment: TossPaymentResponse }
+  | { kind: 'not_approved'; payment: TossPaymentResponse | null }
+  | { kind: 'unknown' };
+/** Deterministic rejections taken before the provider confirm call. */
+type PreApprovalGate = 'admission_window' | 'ticket_limit' | 'seat_hold';
 
 export const PAYMENT_CONFIRM_IN_PROGRESS_MESSAGE = '결제 확인이 이미 진행 중입니다.';
 export const PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE =
@@ -185,6 +199,16 @@ function toValidDate(value: unknown): Date | null {
       ? new Date(value)
       : null;
   return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+/**
+ * The provider answered that it has no payment under this paymentKey, which
+ * proves nothing was approved with it. Any other lookup failure (timeout,
+ * network, 5xx, rate limit, malformed body, key configuration) proves nothing.
+ */
+function isProviderPaymentNotFound(error: unknown): boolean {
+  return error instanceof TossPaymentError
+    && (error.httpStatus === 404 || error.code === 'NOT_FOUND_PAYMENT' || error.code === 'NOT_FOUND');
 }
 
 function delay(ms: number): Promise<void> {
@@ -348,6 +372,7 @@ export class ReservationFinalizationService {
   private async cancelApprovedPaymentOrThrow(
     approvedPayment: ApprovedPaymentSnapshot,
     reason: string,
+    options: { idempotencyKey?: string } = {},
   ): Promise<boolean> {
     const command = buildFullPaymentCancelRequest({
       payment: {
@@ -362,7 +387,8 @@ export class ReservationFinalizationService {
         providerChargeAmountMinor: approvedPayment.providerChargeAmountMinor,
       },
       reason,
-      idempotencyKey: `reservation-finalization-cancel:${approvedPayment.orderId}`,
+      idempotencyKey: options.idempotencyKey
+        ?? `reservation-finalization-cancel:${approvedPayment.orderId}`,
       cancelRequestIdSeed: approvedPayment.existingPaymentId ?? approvedPayment.orderId,
     });
 
@@ -529,16 +555,43 @@ export class ReservationFinalizationService {
       return { reservationId: reservation.id };
     }
 
+    const approvalExpectation = this.buildProviderApprovalExpectation({
+      isPaypal: paypalProviderCharge !== null,
+      isOverseasCard: isOverseasCardConfirm,
+      providerCharge,
+      confirmAmount,
+    });
+    // Without a local payment row, a gate below cannot tell whether an earlier
+    // attempt was approved and then ended in a 503 before recording anything,
+    // so the provider state of this paymentKey decides what the rejection does.
+    const rejectBeforeApproval = (
+      gate: PreApprovalGate,
+      rejection: HttpException,
+      cancelReason: string,
+    ): Promise<never> => this.rejectBeforeApprovalWithoutLocalPayment({
+      dto,
+      reservation,
+      providerCharge,
+      expectation: approvalExpectation,
+      gate,
+      rejection,
+      cancelReason,
+    });
+
     if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
+      const rejection = new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+      const cancelReason = '결제 유효 시간 초과로 인한 자동 취소';
       if (existingPayment?.status === 'DONE') {
         await this.cancelExistingDonePaymentAfterFailure({
           payment: this.toApprovedPaymentSnapshot(existingPayment),
           reservationId: reservation.id,
-          reason: '결제 유효 시간 초과로 인한 자동 취소',
+          reason: cancelReason,
         });
+      } else if (!existingPayment) {
+        await rejectBeforeApproval('admission_window', rejection, cancelReason);
       }
 
-      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+      throw rejection;
     }
 
     if (
@@ -566,17 +619,21 @@ export class ReservationFinalizationService {
       reservation.showtimeId,
     );
     if (ticketLimit.activeTicketCount + pendingSeats.length > ticketLimit.maxTicketsPerUser) {
+      const rejection = new ConflictException(
+        buildMaxTicketsPerUserExceededMessage(ticketLimit.maxTicketsPerUser),
+      );
+      const cancelReason = '예매 매수 제한 초과로 인한 자동 취소';
       if (existingPayment?.status === 'DONE') {
         await this.cancelExistingDonePaymentAfterFailure({
           payment: this.toApprovedPaymentSnapshot(existingPayment),
           reservationId: reservation.id,
-          reason: '예매 매수 제한 초과로 인한 자동 취소',
+          reason: cancelReason,
         });
+      } else if (!existingPayment) {
+        await rejectBeforeApproval('ticket_limit', rejection, cancelReason);
       }
 
-      throw new ConflictException(
-        buildMaxTicketsPerUserExceededMessage(ticketLimit.maxTicketsPerUser),
-      );
+      throw rejection;
     }
 
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
@@ -588,16 +645,20 @@ export class ReservationFinalizationService {
         PAYMENT_CONFIRM_LOCK_TTL,
       );
     } catch (lockError) {
+      const reason = lockError instanceof ConflictException
+        && lockError.message.includes('비활성화')
+        ? '판매 불가능 좌석으로 인한 자동 취소'
+        : '좌석 점유 만료로 인한 자동 취소';
       if (existingPayment?.status === 'DONE') {
-        const reason = lockError instanceof ConflictException
-          && lockError.message.includes('비활성화')
-          ? '판매 불가능 좌석으로 인한 자동 취소'
-          : '좌석 점유 만료로 인한 자동 취소';
         await this.cancelExistingDonePaymentAfterFailure({
           payment: this.toApprovedPaymentSnapshot(existingPayment),
           reservationId: reservation.id,
           reason,
         });
+      } else if (!existingPayment && lockError instanceof HttpException) {
+        // Only a definitive hold rejection; a Redis outage proves nothing and
+        // stays a retryable failure without a provider call.
+        await rejectBeforeApproval('seat_hold', lockError, reason);
       }
       throw lockError;
     }
@@ -649,12 +710,7 @@ export class ReservationFinalizationService {
           reservation,
           confirmAmount,
           providerCharge,
-          expectation: this.buildProviderApprovalExpectation({
-            isPaypal: paypalProviderCharge !== null,
-            isOverseasCard: isOverseasCardConfirm,
-            providerCharge,
-            confirmAmount,
-          }),
+          expectation: approvalExpectation,
         });
       }
 
@@ -670,6 +726,7 @@ export class ReservationFinalizationService {
       if (leaseState !== 'owned') {
         const state = await this.readFinalizationState(reservation.id, dto.orderId);
         if (state.kind === 'committed') {
+          await this.cancelApprovalIfCommittedWithAnotherPayment(approvedPayment, state);
           return { reservationId: reservation.id };
         }
         if (state.kind === 'cancelled') {
@@ -844,13 +901,21 @@ export class ReservationFinalizationService {
     let providerPayment: TossPaymentResponse;
     // C1 sales cutoff, checked at the last moment before anything is charged.
     // A payment an earlier attempt already approved is not a new sale: it is
-    // looked up and finalized (or compensated) like any approved payment.
+    // looked up and finalized (or compensated) like any approved payment. A
+    // failed lookup proves nothing, so it is a retryable 503, not a final 403.
     if (await this.isShowtimeSalesClosed(input.reservation.showtimeId)) {
-      const earlierApproval = await this.findEarlierProviderApproval(dto, expectation);
-      if (!earlierApproval) {
+      const lookup = await this.lookupProviderPayment(dto, expectation);
+      if (lookup.kind === 'unknown') {
+        this.logger.error(
+          `PAYMENT_CONFIRM_OUTCOME_UNKNOWN reason=closed_showtime_lookup_failed. orderId=${dto.orderId}`,
+        );
+        throw new ServiceUnavailableException(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+      }
+      if (lookup.kind === 'not_approved') {
+        await this.recordProviderNotApprovedPaymentIfTerminal(input, lookup.payment);
         throw new ForbiddenException(SHOWTIME_SALES_CLOSED_MESSAGE);
       }
-      providerPayment = earlierApproval;
+      providerPayment = lookup.payment;
     } else {
       try {
         providerPayment = await this.tossClient.confirmPayment({
@@ -1116,31 +1181,124 @@ export class ReservationFinalizationService {
   }
 
   /**
-   * Returns this order's payment if Toss already approved it (an earlier
-   * confirm whose response was lost). Any lookup failure means "not proven".
+   * Looks up the requested paymentKey with the order's secret key scope to
+   * learn whether an earlier attempt already got this order approved (a
+   * confirm whose response or local record was lost).
    */
-  private async findEarlierProviderApproval(
+  private async lookupProviderPayment(
     dto: ConfirmPaymentRequest,
     expectation: ProviderApprovalExpectation,
-  ): Promise<TossPaymentResponse | null> {
+  ): Promise<ProviderPaymentLookup> {
+    let queried: TossPaymentResponse | null | undefined;
     try {
-      const queried = await this.tossClient.queryPayment(
+      queried = await this.tossClient.queryPayment(
         dto.paymentKey,
         expectation.secretKeyScope ? { secretKeyScope: expectation.secretKeyScope } : {},
       );
-      return queried
-        && queried.paymentKey === dto.paymentKey
-        && queried.orderId === dto.orderId
-        && PROVIDER_APPROVED_STATUSES.has(queried.status)
-        ? queried
-        : null;
     } catch (queryError) {
+      if (isProviderPaymentNotFound(queryError)) {
+        return { kind: 'not_approved', payment: null };
+      }
       this.logger.warn(
-        `Provider lookup for a closed showtime failed. orderId=${dto.orderId}`,
+        `Provider payment lookup failed. orderId=${dto.orderId}`,
         queryError instanceof Error ? queryError.stack : String(queryError),
       );
-      return null;
+      return { kind: 'unknown' };
     }
+
+    if (!queried || typeof queried.status !== 'string') {
+      return { kind: 'unknown' };
+    }
+    // Toss binds a paymentKey to one order: a key of another order means this
+    // order has no payment under it. Never act on another order's payment.
+    if (queried.paymentKey !== dto.paymentKey || queried.orderId !== dto.orderId) {
+      return { kind: 'not_approved', payment: null };
+    }
+    return PROVIDER_APPROVED_STATUSES.has(queried.status)
+      ? { kind: 'approved', payment: queried }
+      : { kind: 'not_approved', payment: queried };
+  }
+
+  /**
+   * A pre-approval gate rejected an order that has no local payment row. An
+   * earlier confirm attempt may have been approved and then ended in a 503
+   * before anything was recorded (unknown provider outcome, confirm lease
+   * loss, unverifiable seat hold or commit). Rejecting without looking would
+   * strand that charge, so the provider state of this paymentKey decides:
+   * approved means a compensation cancel and then the original rejection;
+   * not approved means the original rejection; a failed lookup is a 503
+   * without cancelling so that a retry converges. The confirm lease is held,
+   * so no other finalizer of this order runs concurrently.
+   */
+  private async rejectBeforeApprovalWithoutLocalPayment(input: {
+    dto: ConfirmPaymentRequest;
+    reservation: { id: string; totalAmount: number };
+    providerCharge: PaypalResolvedProviderCharge | null;
+    expectation: ProviderApprovalExpectation;
+    gate: PreApprovalGate;
+    rejection: HttpException;
+    cancelReason: string;
+  }): Promise<never> {
+    const lookup = await this.lookupProviderPayment(input.dto, input.expectation);
+    if (lookup.kind === 'unknown') {
+      this.logger.error(
+        `PAYMENT_CONFIRM_OUTCOME_UNKNOWN reason=pre_approval_${input.gate}_lookup_failed. orderId=${input.dto.orderId}`,
+      );
+      throw new ServiceUnavailableException(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+    }
+
+    if (lookup.kind === 'approved') {
+      this.logger.error(
+        `Earlier provider approval found at a pre-approval rejection; cancelling it. gate=${input.gate}, orderId=${input.dto.orderId}, providerStatus=${lookup.payment.status}`,
+      );
+      await this.cancelApprovedPaymentAfterFailure(
+        this.toNewApprovedPaymentSnapshot({ ...input, providerPayment: lookup.payment }),
+        input.reservation.id,
+        input.cancelReason,
+      );
+      throw input.rejection;
+    }
+
+    await this.recordProviderNotApprovedPaymentIfTerminal(input, lookup.payment);
+    throw input.rejection;
+  }
+
+  private async recordProviderNotApprovedPaymentIfTerminal(
+    input: {
+      dto: ConfirmPaymentRequest;
+      reservation: { id: string; totalAmount: number };
+      providerCharge: PaypalResolvedProviderCharge | null;
+      expectation: ProviderApprovalExpectation;
+    },
+    providerPayment: TossPaymentResponse | null,
+  ): Promise<void> {
+    if (providerPayment && PROVIDER_NOT_APPROVED_STATUSES.has(providerPayment.status)) {
+      await this.recordProviderNotApprovedPayment({ ...input, providerPayment });
+    }
+  }
+
+  /**
+   * The order is already committed. If it was committed with another payment
+   * than the one approved in this request, this approval is a duplicate
+   * charge: it is cancelled at the provider only, and the committed payment
+   * row is left untouched.
+   */
+  private async cancelApprovalIfCommittedWithAnotherPayment(
+    approvedPayment: ApprovedPaymentSnapshot,
+    committed: { paymentId: string; paymentKey: string },
+  ): Promise<void> {
+    if (committed.paymentKey === approvedPayment.paymentKey) {
+      return;
+    }
+
+    this.logger.error(
+      `CRITICAL: order committed with another payment; cancelling this approval. orderId=${approvedPayment.orderId}, committedPaymentId=${committed.paymentId}, paymentKey=${approvedPayment.paymentKey}`,
+    );
+    await this.cancelApprovedPaymentOrThrow(
+      { ...approvedPayment, existingPaymentId: undefined },
+      '중복 결제로 인한 자동 취소',
+      { idempotencyKey: `reservation-finalization-duplicate-cancel:${approvedPayment.paymentKey}` },
+    );
   }
 
   private assertCheckoutMethodMatchesProviderChargeRequest(
@@ -1229,7 +1387,7 @@ export class ReservationFinalizationService {
         .from(reservations)
         .where(eq(reservations.id, reservationId));
       return current?.status === 'CONFIRMED'
-        ? { kind: 'committed', paymentId: payment.id }
+        ? { kind: 'committed', paymentId: payment.id, paymentKey: payment.paymentKey }
         : { kind: 'not_committed' };
     } catch (lookupError) {
       this.logger.error(
@@ -1246,6 +1404,10 @@ export class ReservationFinalizationService {
    * while the confirm lease and seat locks stay refreshed; the committed state
    * is re-read first because a lost COMMIT acknowledgement may have committed.
    * Only a definitive failure, or one that persists, cancels the payment.
+   * When a connection died during an attempt (so a COMMIT may have applied)
+   * and the committed state cannot be read back, the outcome is unknown: it
+   * is answered with a 503 instead of a cancel that could refund issued
+   * tickets. A retry then converges on the committed or uncommitted order.
    */
   private async commitFinalizationWithRetry(input: {
     dto: ConfirmPaymentRequest;
@@ -1256,10 +1418,24 @@ export class ReservationFinalizationService {
     approvedPayment: ApprovedPaymentSnapshot;
   }): Promise<string | null> {
     const { dto, reservation, approvedPayment } = input;
+    let mayHaveCommitted = false;
+    const throwIfCommitUnverifiable = (state: FinalizationState, dbError: unknown): void => {
+      if (state.kind !== 'unknown' || !mayHaveCommitted) {
+        return;
+      }
+      this.logger.error(
+        `PAYMENT_CONFIRM_OUTCOME_UNKNOWN reason=finalization_commit_unverified. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
+        dbError instanceof Error ? dbError.stack : String(dbError),
+      );
+      throw new ServiceUnavailableException(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
+    };
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await this.db.transaction((tx) => this.commitFinalization(tx, input));
       } catch (dbError) {
+        if (isConnectionLossDatabaseError(dbError)) {
+          mayHaveCommitted = true;
+        }
         // Checked before any compensation: a seat conflict or duplicate row can
         // be this order's own earlier commit (lost acknowledgement) or another
         // finalizer's commit of the same order, which must never be refunded.
@@ -1268,6 +1444,7 @@ export class ReservationFinalizationService {
           this.logger.warn(
             `Finalization already committed after transaction failure. orderId=${dto.orderId}, reservationId=${reservation.id}`,
           );
+          await this.cancelApprovalIfCommittedWithAnotherPayment(approvedPayment, state);
           return state.paymentId;
         }
         if (state.kind === 'cancelled') {
@@ -1275,6 +1452,9 @@ export class ReservationFinalizationService {
         }
 
         if (dbError instanceof ConflictException) {
+          // A conflict after an attempt that may have committed can be that
+          // commit itself (the same seats are already sold to this order).
+          throwIfCommitUnverifiable(state, dbError);
           this.logger.error(
             `Seat finalization failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
             dbError.stack,
@@ -1299,6 +1479,7 @@ export class ReservationFinalizationService {
           continue;
         }
 
+        throwIfCommitUnverifiable(state, dbError);
         this.logger.error(
           `DB transaction failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}, attempts=${attempt}`,
           dbError instanceof Error ? dbError.stack : String(dbError),

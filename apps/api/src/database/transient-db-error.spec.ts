@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { isTransientDatabaseError } from './transient-db-error.js';
+import {
+  isConnectionLossDatabaseError,
+  isTransientDatabaseError,
+} from './transient-db-error.js';
 
 describe('isTransientDatabaseError', () => {
   it.each([
@@ -30,5 +33,31 @@ describe('isTransientDatabaseError', () => {
     ['undefined', undefined],
   ])('does not retry %s', (_label, error) => {
     expect(isTransientDatabaseError(error)).toBe(false);
+  });
+});
+
+describe('isConnectionLossDatabaseError', () => {
+  it.each([
+    ['connection reset', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })],
+    ['dropped connection', new Error('Connection terminated unexpectedly')],
+    ['admin shutdown (failover)', Object.assign(new Error('terminating connection'), { code: '57P01' })],
+    ['connection failure', Object.assign(new Error('connection failure'), { code: '08006' })],
+    [
+      'drizzle-wrapped dropped connection',
+      new Error('Failed query: commit', { cause: new Error('Connection terminated unexpectedly') }),
+    ],
+  ])('treats %s as a possibly committed transaction', (_label, error) => {
+    expect(isConnectionLossDatabaseError(error)).toBe(true);
+  });
+
+  it.each([
+    ['pool acquire timeout', new Error('timeout exceeded when trying to connect')],
+    ['connect timeout', new Error('Connection terminated due to connection timeout')],
+    ['refused connection', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })],
+    ['too many connections', Object.assign(new Error('too many clients'), { code: '53300' })],
+    ['deadlock', Object.assign(new Error('deadlock detected'), { code: '40P01' })],
+    ['plain error', new Error('db write failed')],
+  ])('treats %s as never committed', (_label, error) => {
+    expect(isConnectionLossDatabaseError(error)).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   InternalServerErrorException,
   Logger,
   NotFoundException,
@@ -1379,6 +1380,11 @@ export class ReservationService {
     try {
       return await this.getReservationDetail(result.reservationId, userId);
     } catch (detailError) {
+      // A 4xx answer (not found, not the owner) is a definitive result of the
+      // read and is not evidence of a completed payment for this caller.
+      if (detailError instanceof HttpException && detailError.getStatus() < 500) {
+        throw detailError;
+      }
       // The payment is already committed; a failed read must not be shown as
       // a failed payment. The buyer recovers the booking from its order ID.
       this.logger.warn(

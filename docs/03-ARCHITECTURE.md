@@ -270,11 +270,12 @@ window. A fail URL alone never cancels or replaces an order. See
 - payment confirm lock by order ID (contention or loss is a retryable 503, never a compensation cancel),
 - amount, payment identity and frozen checkout method checks,
 - lock extension before provider confirmation,
-- showtime sales cutoff (`now >= showtimes.date_time`) right before provider confirmation; an already approved payment is not rejected by it,
+- pre-approval rejections (expired hold, ticket limit, lost seat hold) on an order without a payment row first look up the same paymentKey; an approval left by an earlier attempt is compensated before the rejection, and a failed lookup is a 503,
+- showtime sales cutoff (`now >= showtimes.date_time`) right before provider confirmation; an already approved payment is not rejected by it, and a failed provider lookup is a 503 rather than a 403,
 - provider approval validation (paymentKey/orderId, `DONE`, currency, amount in KRW or USD cents, allowed method) with immediate compensation cancel on mismatch,
 - bounded Toss timeouts; an unknown outcome is resolved by a provider lookup of the same paymentKey, otherwise answered with 503 without cancelling,
-- conditional sold transition in PostgreSQL, retried on transient DB failures after re-reading the committed state,
-- compensation cancellation if provider confirmation succeeds but finalization definitively fails,
+- conditional sold transition in PostgreSQL, retried on transient DB failures after re-reading the committed state; a dropped connection whose commit cannot be read back is a 503, not a cancel,
+- compensation cancellation if provider confirmation succeeds but finalization definitively fails, or if the order was already committed with another payment,
 - best-effort QR ticket issuance after the commit (failures self-heal on the next read).
 
 The confirm contract and its operational alerts are detailed in the [show relaunch runbook](runbooks/show-relaunch-reliability.md#결제-승인-확인-계약-2026-09-30-오픈-감사-반영).

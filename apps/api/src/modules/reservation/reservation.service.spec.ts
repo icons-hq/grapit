@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   InternalServerErrorException,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -3163,6 +3164,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{
           id: 'payment-race-winner',
           reservationId,
+          paymentKey: 'pk_test_123',
           tossOrderId: orderId,
           status: 'DONE',
           asyncStatus: 'sync',
@@ -3653,6 +3655,25 @@ describe('ReservationService', () => {
       );
       await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
       await expect(result).rejects.toThrow('결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.');
+    });
+
+    it('does not report a payment as completed when the post-confirm detail read answers 404', async () => {
+      Object.assign(service, {
+        reservationFinalizationService: {
+          confirmAndCreateReservation: vi.fn().mockResolvedValue({
+            reservationId: randomUUID(),
+          }),
+        },
+      });
+      // Not this caller's reservation (for example the legacy payment row path).
+      mockDb.select.mockImplementationOnce(() => chainResult([]));
+
+      const result = service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId: 'GRP-DETAIL-NOT-OWNER', amount: 150000 },
+        userId,
+      );
+      await expect(result).rejects.toBeInstanceOf(NotFoundException);
+      await expect(result).rejects.not.toBeInstanceOf(ServiceUnavailableException);
     });
 
     it('marks social placeholder emails as verification-required for ticket email delivery', async () => {

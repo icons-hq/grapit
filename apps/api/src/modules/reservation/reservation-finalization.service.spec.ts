@@ -80,6 +80,7 @@ function createDependencies() {
   const tossClient = {
     confirmPayment: vi.fn(),
     cancelPayment: vi.fn(),
+    queryPayment: vi.fn(),
   };
   const bookingService = {
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
@@ -167,6 +168,13 @@ describe('ReservationFinalizationService', () => {
       maxTicketsPerUser: 4,
       activeTicketCount: 2,
     }));
+    // The gate asks the provider whether an earlier attempt was approved.
+    tossClient.queryPayment.mockResolvedValue({
+      paymentKey: 'payment-key-1',
+      orderId: 'order-cumulative-limit-1',
+      status: 'IN_PROGRESS',
+      totalAmount: 156000,
+    });
 
     await expect(
       service.confirmAndCreateReservation(
@@ -176,6 +184,7 @@ describe('ReservationFinalizationService', () => {
     ).rejects.toThrow('이 공연은 1인 최대 4매까지 예매할 수 있습니다');
 
     expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(tossClient.cancelPayment).not.toHaveBeenCalled();
     expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
     expect(db.transaction).not.toHaveBeenCalled();
   });
