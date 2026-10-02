@@ -275,7 +275,10 @@ export class AuthService {
 
     // 6. Derive the child token deterministically so a concurrent or retried
     //    rotation of the same parent converges on the same child.
-    const newRawToken = this.deriveRotatedRefreshToken(oldRawToken);
+    const derivedRawToken = this.deriveRotatedRefreshToken(oldRawToken);
+    // Without a server secret the child cannot be private, so fall back to a random
+    // child (rotation still works, the grace window does not apply).
+    const newRawToken = derivedRawToken ?? randomBytes(32).toString('hex');
     const newTokenHash = hashRefreshToken(newRawToken);
     const now = new Date();
     const newTokenExpiresAt = new Date(
@@ -319,6 +322,11 @@ export class AuthService {
     });
 
     if (!rotated) {
+      if (!derivedRawToken) {
+        // A random child cannot be found again, so the grace decision would revoke the
+        // winner's family. Reject only this request, as before deterministic children.
+        throw new UnauthorizedException('유효하지 않은 리프레시 토큰입니다');
+      }
       // The conditional UPDATE waited for the winning transaction, so its revoke and
       // child row are committed now. Re-read and apply the same grace decision.
       const committedRecord = await this.findRefreshTokenByHash(tokenHash);
@@ -383,6 +391,7 @@ export class AuthService {
 
     for (let depth = 0; depth < REFRESH_ROTATION_MAX_DESCENDANT_DEPTH; depth += 1) {
       const childRawToken = this.deriveRotatedRefreshToken(currentRawToken);
+      if (!childRawToken) return null;
       const child = await this.findRefreshTokenByHash(hashRefreshToken(childRawToken));
       if (!child || child.family !== tokenRecord.family || child.userId !== tokenRecord.userId) {
         // No rotation child: the token was revoked by logout, password reset,
@@ -410,15 +419,11 @@ export class AuthService {
    * Child refresh token = HMAC(server secret, parent). Only the server can derive
    * it, and only from the parent's raw value, which the database never stores.
    */
-  private deriveRotatedRefreshToken(parentRawToken: string): string {
+  private deriveRotatedRefreshToken(parentRawToken: string): string | null {
     const secret =
       this.configService.get<string>('auth.jwtRefreshSecret') ??
       this.configService.get<string>('auth.jwtSecret');
-    if (!secret) {
-      // Without a server secret the child cannot be private, so fall back to a
-      // random child (rotation still works, the grace window does not apply).
-      return randomBytes(32).toString('hex');
-    }
+    if (!secret) return null;
 
     return createHmac('sha256', secret)
       .update(`refresh-rotation:v1:${parentRawToken}`)
@@ -459,13 +464,17 @@ export class AuthService {
       );
   }
 
+  /**
+   * Logout ends the device session the cookie belongs to: every active token of its
+   * family is revoked. Rows that were already revoked keep their revoked_at, so a
+   * stale (just-rotated) cookie presented here neither reopens its rotation grace
+   * window nor leaves the active child signed in.
+   */
   async revokeRefreshToken(rawToken: string): Promise<void> {
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const tokenRecord = await this.findRefreshTokenByHash(hashRefreshToken(rawToken));
+    if (!tokenRecord) return;
 
-    await this.db
-      .update(schema.refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(eq(schema.refreshTokens.tokenHash, tokenHash));
+    await this.revokeRefreshTokenFamily(tokenRecord.family);
   }
 
   async requestPasswordReset(
@@ -631,18 +640,7 @@ export class AuthService {
   ): Promise<{ verified: true }> {
     // Codes are issued against the canonical lower-case address.
     const email = normalizeAuthEmail(rawEmail);
-    const latestRows = await this.db
-      .select()
-      .from(schema.emailVerificationTokens)
-      .where(
-        and(
-          eq(schema.emailVerificationTokens.email, email),
-          eq(schema.emailVerificationTokens.purpose, EMAIL_VERIFICATION_PURPOSE),
-        ),
-      );
-    const latestRecord = [...latestRows].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    )[0];
+    const latestRecord = await this.findLatestSignupVerificationRecord(email);
 
     if (!latestRecord) {
       throw new BadRequestException('인증번호가 일치하지 않습니다');
@@ -674,6 +672,42 @@ export class AuthService {
     }
 
     return { verified: true };
+  }
+
+  /**
+   * Latest signup verification code for an address. Codes are stored against the
+   * lower-case address; codes issued before that change kept the address as typed.
+   * When no lower-case row exists, the account's own codes are compared
+   * case-insensitively so an unused code from before the change still works.
+   */
+  private async findLatestSignupVerificationRecord(email: string) {
+    let rows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.email, email),
+          eq(schema.emailVerificationTokens.purpose, EMAIL_VERIFICATION_PURPOSE),
+        ),
+      );
+
+    if (rows.length === 0) {
+      const user = await this.userRepository.findByEmail(email);
+      if (user) {
+        const userRows = await this.db
+          .select()
+          .from(schema.emailVerificationTokens)
+          .where(
+            and(
+              eq(schema.emailVerificationTokens.userId, user.id),
+              eq(schema.emailVerificationTokens.purpose, EMAIL_VERIFICATION_PURPOSE),
+            ),
+          );
+        rows = userRows.filter((row) => isSameAuthEmail(row.email, email));
+      }
+    }
+
+    return [...rows].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
   }
 
   async verifyEmailVerificationToken(token: string): Promise<{ verified: true }> {
@@ -882,12 +916,12 @@ export class AuthService {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
-      // A social login proves the provider address only. users.email becomes verified
-      // here only when the provider vouches for that exact address; otherwise the
-      // normal /auth/verify-email flow must verify it before tickets are emailed.
-      const effectiveUser = user.isEmailVerified || !isProviderVerifiedEmailFor(profile, user.email)
-        ? user
-        : await this.markSocialEmailVerified(user);
+      // Social-only accounts keep the 2026-05-17 policy (verified on login), but an
+      // address that did not come from this provider login, such as a linked local
+      // account's never-verified signup email, needs the provider's own assertion.
+      const effectiveUser = shouldMarkEmailVerifiedOnSocialLogin(user, socialAccount, profile)
+        ? await this.markSocialEmailVerified(user)
+        : user;
 
       const tokens = await this.generateTokenPair(
         effectiveUser.id,
@@ -913,7 +947,6 @@ export class AuthService {
         provider: profile.provider,
         providerId: profile.providerId,
         email: profile.email,
-        emailVerified: profile.emailVerified === true,
         name: profile.name,
         purpose: 'social-registration',
         // Only the browser holding the matching httpOnly binding cookie can complete it.
@@ -956,7 +989,6 @@ export class AuthService {
       provider: string;
       providerId: string;
       email?: string;
-      emailVerified?: boolean;
       name?: string;
       purpose: string;
       binding?: string;
@@ -1091,9 +1123,10 @@ export class AuthService {
         birthDate: dto.birthDate,
         marketingConsent: dto.marketingConsent,
         isPhoneVerified: true,
-        // A provider address counts as verified only when the provider asserted it.
-        // Placeholder addresses are never mailed (ticket delivery skips them).
-        isEmailVerified: providerEmail ? payload.emailVerified === true : true,
+        // 2026-05-17 product policy: a social-only account completes sign-up with the
+        // provider (or placeholder) address marked verified. Placeholder addresses are
+        // never mailed (ticket delivery skips them).
+        isEmailVerified: true,
       }, tx);
 
       // 4. Create social account link
@@ -1372,12 +1405,26 @@ export class AuthService {
   }
 }
 
-function isProviderVerifiedEmailFor(profile: SocialProfile, storedEmail: string): boolean {
-  return (
-    profile.emailVerified === true &&
-    !isSocialPlaceholderEmail(storedEmail) &&
-    isSameAuthEmail(profile.email, storedEmail)
-  );
+/**
+ * Decides whether an existing social login may mark users.email verified.
+ *
+ * - Placeholder addresses (`@social.grabit.com`) are never mailed, so marking them
+ *   verified cannot misdirect a ticket and keeps legacy social accounts bookable.
+ * - A social-only account (no password) whose stored address is the address this
+ *   provider link was created with follows the 2026-05-17 social sign-up policy.
+ * - Any other address (for example the never-verified signup email of a linked
+ *   local account) is verified only when the provider asserts it verified that
+ *   same address.
+ */
+function shouldMarkEmailVerifiedOnSocialLogin(
+  user: { email: string; isEmailVerified: boolean; passwordHash?: string | null },
+  socialAccount: { providerEmail: string | null },
+  profile: SocialProfile,
+): boolean {
+  if (user.isEmailVerified) return false;
+  if (isSocialPlaceholderEmail(user.email)) return true;
+  if (!user.passwordHash && isSameAuthEmail(socialAccount.providerEmail, user.email)) return true;
+  return profile.emailVerified === true && isSameAuthEmail(profile.email, user.email);
 }
 
 function hasAdminAuthority(user: {

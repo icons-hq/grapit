@@ -149,10 +149,21 @@ export function verifySignedSocialOAuthState(
   };
 }
 
-/** passport-oauth2 exchanges a code (or reports an error) whenever either query key is present. */
-export function isSocialProviderCallbackRequest(req: Pick<Request, 'query'>): boolean {
+/**
+ * passport-oauth2 reports an error for `query.error` and exchanges a code from
+ * `query.code`; version 1.8 (used by the Google and Naver strategies) also reads
+ * `body.code`. Any of them makes the request a callback whose state must be
+ * verified first.
+ */
+export function isSocialProviderCallbackRequest(req: Pick<Request, 'query'> & { body?: unknown }): boolean {
   const query = (req.query ?? {}) as Record<string, unknown>;
-  return query['code'] !== undefined || query['error'] !== undefined;
+  const body = (req.body !== null && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  return (
+    query['code'] !== undefined ||
+    query['error'] !== undefined ||
+    body['code'] !== undefined ||
+    body['error'] !== undefined
+  );
 }
 
 export function createSocialRegistrationBinding(): string {

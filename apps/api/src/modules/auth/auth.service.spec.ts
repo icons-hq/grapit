@@ -649,6 +649,22 @@ describe('AuthService', () => {
       expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
     });
 
+    it('without a refresh secret a race loser gets a 401 but does not revoke the winner family', async () => {
+      mockConfigService.get.mockImplementation(() => undefined);
+      const rawToken = 'raced-without-secret';
+      const family = randomUUID();
+      mockSelectSequence([refreshRow(rawToken, family)]);
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      const conditionalRevoke = makeMockUpdateChain([]);
+      mockDb.update.mockReturnValueOnce({ set: conditionalRevoke.set });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow('유효하지 않은 리프레시 토큰입니다');
+
+      // Only the losing conditional UPDATE ran; no family revoke.
+      expect(mockDb.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
+    });
+
     it('replaying a just-rotated parent inside the grace window returns the same active child without revoking the family', async () => {
       const rawToken = 'tab-b-stale-cookie';
       const family = randomUUID();
@@ -976,20 +992,40 @@ describe('AuthService', () => {
     });
   });
 
-  describe('revokeRefreshToken', () => {
-    it('should mark token as revoked in DB', async () => {
+  describe('revokeRefreshToken (logout)', () => {
+    it('revokes every active token of the presented token family', async () => {
       const rawToken = 'token-to-revoke';
-
+      const family = randomUUID();
+      mockDb.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+            family,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            revokedAt: null,
+          }]),
+        }),
+      });
       const updateWhereMock = vi.fn().mockResolvedValue([]);
       const updateSetMock = vi.fn().mockReturnValue({ where: updateWhereMock });
       mockDb.update.mockReturnValue({ set: updateSetMock });
 
       await authService.revokeRefreshToken(rawToken);
 
-      expect(mockDb.update).toHaveBeenCalled();
       expect(updateSetMock).toHaveBeenCalledWith(
         expect.objectContaining({ revokedAt: expect.any(Date) }),
       );
+      // The family (device session) is revoked, not just the presented row.
+      expect(containsPrimitiveValue(updateWhereMock.mock.calls, family)).toBe(true);
+    });
+
+    it('does nothing for an unknown refresh token', async () => {
+      await authService.revokeRefreshToken('unknown-token');
+
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
   });
 
@@ -1329,6 +1365,45 @@ describe('AuthService', () => {
       ).rejects.toThrow(/인증번호가 만료되었습니다/);
     });
 
+    it('accepts an unused code that was issued to a mixed-case address before emails were lower-cased', async () => {
+      const storedEmail = 'Hong.Legacy@Naver.com';
+      const code = '246810';
+      const legacyRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email: storedEmail,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(storedEmail, code),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date(),
+      };
+      // A newer code for the account's previous address must not be picked.
+      const otherAddressRecord = {
+        ...legacyRecord,
+        id: randomUUID(),
+        email: 'previous@naver.com',
+        tokenHash: hashEmailCode('previous@naver.com', '000000'),
+        createdAt: new Date(Date.now() + 1_000),
+      };
+      const selectWhere = vi
+        .fn()
+        .mockResolvedValueOnce([]) // no row stored under the lower-case address
+        .mockResolvedValueOnce([legacyRecord, otherAddressRecord]); // the account's own codes
+      mockDb.select.mockReturnValue({ from: vi.fn().mockReturnValue({ where: selectWhere }) });
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: storedEmail });
+      const userUpdate = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(userUpdate);
+
+      await expect(
+        authEmailVerificationApi().verifyEmailVerificationCode('hong.legacy@naver.com', code),
+      ).resolves.toEqual({ verified: true });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('hong.legacy@naver.com');
+      expect(containsPrimitiveValue(selectWhere.mock.calls[1], mockUser.id)).toBe(true);
+      expect(userUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+    });
+
     it('rejects consumed, expired, and superseded verification tokens with distinct messages', async () => {
       const token = 'opaque-email-verification-token';
       const tokenHash = createHash('sha256').update(token).digest('hex');
@@ -1537,6 +1612,18 @@ describe('AuthService', () => {
       expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
 
+    function mockLinkedSocialAccount(userId: string, provider: string, providerId: string, providerEmail: string | null) {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: randomUUID(), userId, provider, providerId, providerEmail, createdAt: new Date() },
+          ]),
+        }),
+      });
+    }
+
+    // Audit #100: a local account linked by verified identity must not have its
+    // never-verified signup address marked verified by a social login.
     it.each([
       {
         scenario: 'the linked account stores a different (typo) address',
@@ -1553,26 +1640,14 @@ describe('AuthService', () => {
         storedEmail: 'hong@naver.com',
         profile: { email: undefined, emailVerified: false },
       },
-    ])('keeps users.email unverified when $scenario', async ({ storedEmail, profile }) => {
+    ])('keeps a linked local account email unverified when $scenario', async ({ storedEmail, profile }) => {
       const existingUser = {
         ...createMockUser(),
         email: storedEmail,
         isEmailVerified: false,
       };
-      mockDb.select.mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            {
-              id: randomUUID(),
-              userId: existingUser.id,
-              provider: 'kakao',
-              providerId: 'kakao-linked',
-              providerEmail: profile.email ?? null,
-              createdAt: new Date(),
-            },
-          ]),
-        }),
-      });
+      // Linked through identity matching: the provider address was recorded on the link.
+      mockLinkedSocialAccount(existingUser.id, 'kakao', 'kakao-linked', profile.email ?? null);
       mockUserRepo.findById.mockResolvedValue(existingUser);
 
       const result = await authService.findOrCreateSocialUser({
@@ -1588,7 +1663,100 @@ describe('AuthService', () => {
       expect(mockDb.update).not.toHaveBeenCalled();
     });
 
-    it('binds a new registrationToken to the browser and carries the provider email verification flag', async () => {
+    it('keeps a linked local account unverified even when the provider address equals the stored one but is unverified', async () => {
+      const existingUser = { ...createMockUser(), email: 'Hong@Naver.com', isEmailVerified: false };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-linked', 'hong@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-linked',
+        email: 'hong@naver.com',
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(false);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    // 2026-05-17 hotfix (78387887): social accounts created before social sign-up
+    // was marked verified are repaired on their next login, or they could never book.
+    it('repairs a legacy unverified placeholder social account on login so it can book', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'kakao_4411@social.grabit.com',
+        passwordHash: null,
+        isEmailVerified: false,
+        isPhoneVerified: true,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'kakao', '4411', null);
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+      const updateChain = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(updateChain);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'kakao',
+        providerId: '4411',
+        email: undefined,
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.status).toBe('authenticated');
+      expect(result.user).toMatchObject({ email: 'kakao_4411@social.grabit.com', isEmailVerified: true });
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+    });
+
+    it('repairs a legacy unverified social-only account whose address came from this provider link', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'Fan.Legacy@naver.com',
+        passwordHash: null,
+        isEmailVerified: false,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-legacy', 'fan.legacy@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+      const updateChain = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(updateChain);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-legacy',
+        email: 'fan.legacy@naver.com',
+        // Naver never asserts verification; the hotfix policy still applies.
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(true);
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+    });
+
+    it('does not repair a social-only account whose stored address differs from the provider link address', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'other@example.com',
+        passwordHash: null,
+        isEmailVerified: false,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-second-link', 'fan@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-second-link',
+        email: 'fan@naver.com',
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(false);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('binds a new registrationToken to the browser', async () => {
       mockDb.select.mockReturnValue({
         from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
       });
@@ -1601,7 +1769,6 @@ describe('AuthService', () => {
       expect(mockJwtService.signAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           purpose: 'social-registration',
-          emailVerified: true,
           binding: SOCIAL_REGISTRATION_BINDING_HASH,
         }),
         { expiresIn: '30m' },
@@ -1664,7 +1831,6 @@ describe('AuthService', () => {
         provider: 'kakao',
         providerId: '12345',
         email: 'kakao@test.com',
-        emailVerified: true,
         name: 'Kakao User',
         purpose: 'social-registration',
         binding: SOCIAL_REGISTRATION_BINDING_HASH,
@@ -2227,7 +2393,6 @@ describe('AuthService', () => {
         provider: 'kakao',
         providerId: '12345',
         email: 'kakao@test.com',
-        emailVerified: true,
         name: 'Kakao User',
         purpose: 'social-registration',
         binding: SOCIAL_REGISTRATION_BINDING_HASH,
@@ -2363,12 +2528,11 @@ describe('AuthService', () => {
       expect(mockDb.insert).not.toHaveBeenCalled();
     });
 
-    it('stores the provider email in lower case and leaves it unverified when the provider did not verify it', async () => {
+    it('stores the provider email in lower case and keeps the social sign-up verified policy', async () => {
       mockJwtService.verifyAsync.mockResolvedValue({
         provider: 'naver',
         providerId: 'naver-new',
         email: 'Fan.User@Example.COM',
-        emailVerified: false,
         name: 'Fan',
         purpose: 'social-registration',
         binding: SOCIAL_REGISTRATION_BINDING_HASH,
@@ -2394,11 +2558,13 @@ describe('AuthService', () => {
       });
 
       expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('fan.user@example.com');
+      // 2026-05-17 product policy: social-only sign-up completes without email OTP.
       expect(mockUserRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'fan.user@example.com', isEmailVerified: false }),
+        expect.objectContaining({ email: 'fan.user@example.com', isEmailVerified: true }),
         expect.anything(),
       );
-      expect(result.user).toMatchObject({ email: 'fan.user@example.com', isEmailVerified: false });
+      expect(result.user).toMatchObject({ email: 'fan.user@example.com', isEmailVerified: true });
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('invalid phone verification token이면 social registration을 거부한다', async () => {

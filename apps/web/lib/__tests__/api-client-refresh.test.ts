@@ -7,7 +7,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 const navigation = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock('@/lib/i18n/locale-navigation', () => ({ navigateToLocalizedPath: navigation.navigate }));
 
-import { ApiClientError, apiClient, refreshAccessToken } from '@/lib/api-client';
+import { ApiClientError, REFRESH_RETRY_BUDGET_MS, apiClient, refreshAccessToken } from '@/lib/api-client';
 
 const buyer = { id: 'buyer-1', email: 'buyer@example.test' } as UserProfile;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -82,6 +82,44 @@ describe('session refresh on 401', () => {
     expect((result as { reason: ApiClientError }).reason.statusCode).toBe(503);
     expect(useAuthStore.getState().accessToken).toBe('expired-access');
     expect(navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  it('sends no refresh retry after the budget that keeps retries inside the server grace window', async () => {
+    const sentAt: number[] = [];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith('/auth/refresh')) return Promise.resolve(json({}, 401));
+      sentAt.push(Date.now());
+      // The API never answers (brownout); the client aborts each attempt after 10 s.
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    }));
+
+    const result = await settle(refreshAccessToken({ retryDelaysMs: [500, 1_500, 4_000] }));
+
+    expect(result).toEqual({ status: 'fulfilled', value: { status: 'unavailable' } });
+    expect(sentAt.length).toBeGreaterThan(1);
+    // Every attempt reaches the API within 30 s of the first one (server rotation grace).
+    expect(sentAt.at(-1)! - sentAt[0]!).toBeLessThanOrEqual(REFRESH_RETRY_BUDGET_MS);
+    expect(REFRESH_RETRY_BUDGET_MS).toBeLessThan(30_000);
+  });
+
+  it('does not send a retry whose turn on the cross-tab lock came after the budget', async () => {
+    let lockCalls = 0;
+    const request = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
+      lockCalls += 1;
+      // Another tab holds the lock for 25 s before this tab's first retry.
+      if (lockCalls === 2) await new Promise((resolve) => setTimeout(resolve, 25_000));
+      return callback();
+    });
+    vi.stubGlobal('navigator', { ...window.navigator, locks: { request } });
+    const fetchMock = respondByPath({ '/api/v1/auth/refresh': [() => json({}, 503)] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await settle(refreshAccessToken());
+
+    expect(result).toEqual({ status: 'fulfilled', value: { status: 'unavailable' } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('recovers when the API comes back during the refresh backoff', async () => {

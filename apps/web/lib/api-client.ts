@@ -52,6 +52,14 @@ const REFRESH_LOCK_WAIT_MS = 20_000;
 const REFRESH_REQUEST_TIMEOUT_MS = 10_000;
 const REJECTED_REFRESH_RECHECK_DELAY_MS = 300;
 export const DEFAULT_REFRESH_RETRY_DELAYS_MS: readonly number[] = [500, 1_500];
+/**
+ * No refresh attempt is sent later than this after the first one. The API accepts a
+ * just-rotated cookie again for 30 seconds (REFRESH_ROTATION_GRACE_MS); if the first
+ * rotation committed but its response was lost, every retry must reach the API inside
+ * that window or it is treated as token reuse and the session is revoked. The margin
+ * covers request transit and server queueing.
+ */
+export const REFRESH_RETRY_BUDGET_MS = 20_000;
 
 let refreshPromise: Promise<RefreshOutcome> | null = null;
 
@@ -79,20 +87,33 @@ export function refreshAccessToken(
 }
 
 async function refreshWithRetries(retryDelaysMs: readonly number[]): Promise<RefreshOutcome> {
-  let attempt = await withCrossTabRefreshLock(requestRefresh);
+  let firstSentAt: number | null = null;
+  const budgetLeftMs = () =>
+    firstSentAt === null ? REFRESH_RETRY_BUDGET_MS : REFRESH_RETRY_BUDGET_MS - (Date.now() - firstSentAt);
+  // Each attempt re-checks the budget after waiting for the cross-tab lock.
+  const attemptRefresh = () => withCrossTabRefreshLock(async (): Promise<RefreshAttempt> => {
+    if (budgetLeftMs() < 0) return { status: 'unavailable' };
+    firstSentAt ??= Date.now();
+    return requestRefresh();
+  });
+
+  let attempt = await attemptRefresh();
 
   if (attempt.status === 'rejected') {
     // Another tab may have rotated the shared cookie while this request was in
     // flight; give the cookie jar a moment and check once more before signing out.
     await sleep(REJECTED_REFRESH_RECHECK_DELAY_MS);
-    attempt = await withCrossTabRefreshLock(requestRefresh);
+    attempt = await attemptRefresh();
     if (attempt.status === 'rejected') return { status: 'signed_out' };
   }
 
   for (const delayMs of retryDelaysMs) {
     if (attempt.status !== 'unavailable') break;
-    await sleep(withJitter(delayMs));
-    attempt = await withCrossTabRefreshLock(requestRefresh);
+    const waitMs = withJitter(delayMs);
+    // A retry that could only start after the server grace window is not sent.
+    if (waitMs > budgetLeftMs()) break;
+    await sleep(waitMs);
+    attempt = await attemptRefresh();
   }
 
   return attempt.status === 'rejected' ? { status: 'signed_out' } : attempt;

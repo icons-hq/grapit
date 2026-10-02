@@ -83,6 +83,29 @@ describe('session restore on page load', () => {
     expect(useAuthStore.getState()).toMatchObject({ accessToken: 'recovered-access', user: buyer });
   });
 
+  it('reads the profile with the already rotated access token before rotating the cookie again', async () => {
+    let profileDown = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/refresh')) return json({ accessToken: 'rotated-once' });
+      if (profileDown) return json({}, 503);
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer rotated-once');
+      return json(buyer);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const restoring = initializeAuth();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await restoring;
+    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: null });
+
+    profileDown = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'rotated-once', user: buyer });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(1);
+  });
+
   it('does not retry when the refresh session is rejected', async () => {
     const fetchMock = respondByPath({ '/api/v1/auth/refresh': [() => json({}, 401)] });
     vi.stubGlobal('fetch', fetchMock);

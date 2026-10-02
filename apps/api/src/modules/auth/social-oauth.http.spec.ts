@@ -24,6 +24,9 @@ describe('Social OAuth state over HTTP', () => {
     KAKAO_CLIENT_ID: 'kakao-client',
     KAKAO_CLIENT_SECRET: 'kakao-secret',
     KAKAO_CALLBACK_URL: 'http://localhost:8080/api/v1/auth/social/kakao/callback',
+    NAVER_CLIENT_ID: 'naver-client',
+    NAVER_CLIENT_SECRET: 'naver-secret',
+    NAVER_CALLBACK_URL: 'http://localhost:8080/api/v1/auth/social/naver/callback',
   };
   const config = {
     get: (key: string, fallback?: unknown) => settings[key] ?? fallback,
@@ -90,6 +93,32 @@ describe('Social OAuth state over HTTP', () => {
       'http://localhost:3000/en/auth/callback?error=oauth_failed&provider=kakao&returnTo=%2Fen%2Fbooking%2Fshow-1',
     );
     expect(authService.findOrCreateSocialUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects an authorization code sent in a JSON body before passport-oauth2 1.8 exchanges it', async () => {
+    // Naver uses passport-oauth2 1.8, which also reads body.code. Stub the token
+    // exchange so a regression would be visible without contacting Naver.
+    const naver = app.get(NaverStrategy) as unknown as {
+      _oauth2: { getOAuthAccessToken: (...args: unknown[]) => void };
+    };
+    const exchange = vi
+      .spyOn(naver._oauth2, 'getOAuthAccessToken')
+      .mockImplementation((...args: unknown[]) => {
+        (args.at(-1) as (error: Error) => void)(new Error('stubbed token exchange'));
+      });
+
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/auth/social/naver/callback')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({ code: 'attacker-authorization-code' }));
+
+    expect(response.status).toBe(302);
+    expect(response.headers['location']).toBe(
+      'http://localhost:3000/auth/callback?error=oauth_failed&provider=naver',
+    );
+    expect(exchange).not.toHaveBeenCalled();
+    expect(authService.findOrCreateSocialUser).not.toHaveBeenCalled();
+    exchange.mockRestore();
   });
 
   it('rejects a legacy unsigned state even when a nonce cookie is present', async () => {

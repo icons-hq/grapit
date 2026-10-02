@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -151,6 +151,67 @@ describe('Auth session and email identity — PostgreSQL', () => {
 
       await expect(auth.refreshTokens(session.refreshToken)).rejects.toThrow(UnauthorizedException);
     });
+
+    it('logs out the active child when logout arrives with a just-rotated cookie, without reopening its grace window', async () => {
+      await createBuyer('stale.logout@example.test');
+      const { session, family } = await loginFamily('stale.logout@example.test');
+      const child = await auth.refreshTokens(session.refreshToken);
+      const parentRevokedAt = (await familyRows(family)).find((row) => row.revokedAt !== null)!.revokedAt!;
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await auth.revokeRefreshToken(session.refreshToken);
+
+      const rows = await familyRows(family);
+      expect(rows.filter((row) => row.revokedAt === null)).toHaveLength(0);
+      // The stale parent keeps its rotation time; logout does not restart its 30 s window.
+      expect(rows.find((row) => row.revokedAt!.getTime() === parentRevokedAt.getTime())).toBeDefined();
+      await expect(auth.refreshTokens(child.refreshToken)).rejects.toThrow(UnauthorizedException);
+      await expect(auth.refreshTokens(session.refreshToken)).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('social login email verification (#100 and the 2026-05-17 social policy)', () => {
+    async function linkSocial(userId: string, provider: string, providerId: string, providerEmail: string | null) {
+      await db.insert(schema.socialAccounts).values({ userId, provider, providerId, providerEmail });
+    }
+
+    it('repairs a legacy unverified placeholder social account on login so it can book', async () => {
+      const [legacy] = await db.insert(schema.users).values({
+        email: 'kakao_legacy001@social.grabit.com',
+        passwordHash: null,
+        name: 'Legacy Kakao',
+        phone: '01090000001',
+        gender: 'unspecified',
+        birthDate: '1990-01-01',
+        isPhoneVerified: true,
+        isEmailVerified: false,
+      }).returning();
+      await linkSocial(legacy!.id, 'kakao', 'legacy001', null);
+
+      const result = await auth.findOrCreateSocialUser({ provider: 'kakao', providerId: 'legacy001', name: 'Legacy Kakao' });
+
+      expect(result.user).toMatchObject({ id: legacy!.id, isEmailVerified: true });
+      const [stored] = await db.select().from(schema.users).where(eq(schema.users.id, legacy!.id));
+      expect(stored!.isEmailVerified).toBe(true);
+    });
+
+    it('does not verify the never-verified signup email of a linked local account', async () => {
+      const local = await createBuyer('typo.local@naver.co');
+      await db.update(schema.users).set({ isEmailVerified: false }).where(eq(schema.users.id, local.id));
+      await linkSocial(local.id, 'kakao', 'linked002', 'typo.local@kakao.com');
+
+      const result = await auth.findOrCreateSocialUser({
+        provider: 'kakao',
+        providerId: 'linked002',
+        email: 'typo.local@kakao.com',
+        emailVerified: true,
+        name: 'Integration Buyer',
+      });
+
+      expect(result.user).toMatchObject({ id: local.id, isEmailVerified: false });
+      const [stored] = await db.select().from(schema.users).where(eq(schema.users.id, local.id));
+      expect(stored!.isEmailVerified).toBe(false);
+    }, 30000);
   });
 
   describe('case-insensitive login email (#99)', () => {
@@ -196,6 +257,26 @@ describe('Auth session and email identity — PostgreSQL', () => {
 
       await expect(auth.validateUser('Twin@Example.test', 'Upper1234!')).resolves.toMatchObject({ id: upper.id });
       await expect(users.findByEmail('TWIN@example.test')).resolves.toMatchObject({ id: upper.id });
+    }, 30000);
+
+    it('accepts an unused verification code issued to the mixed-case address before the change', async () => {
+      const legacy = await createBuyer('Code.Legacy@Naver.com');
+      await db.update(schema.users).set({ isEmailVerified: false }).where(eq(schema.users.id, legacy.id));
+      const code = '135790';
+      await db.insert(schema.emailVerificationTokens).values({
+        userId: legacy.id,
+        email: 'Code.Legacy@Naver.com',
+        purpose: 'signup',
+        tokenHash: createHmac('sha256', 'integration-jwt-secret')
+          .update(`signup:code.legacy@naver.com:${code}`)
+          .digest('hex'),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      });
+
+      await expect(auth.verifyEmailVerificationCode('code.legacy@naver.com', code)).resolves.toEqual({ verified: true });
+
+      const [stored] = await db.select().from(schema.users).where(eq(schema.users.id, legacy.id));
+      expect(stored!.isEmailVerified).toBe(true);
     }, 30000);
 
     it('serves lower(email) lookups from the expression index', async () => {

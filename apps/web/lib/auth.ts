@@ -17,6 +17,10 @@ type ProfileOutcome =
 
 let initialization: Promise<void> | null = null;
 let backgroundRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+// Access token from a refresh that succeeded while /users/me did not. The next
+// background attempt reads the profile with it first instead of rotating the
+// refresh cookie again.
+let unconfirmedAccessToken: string | null = null;
 
 export function initializeAuth(): Promise<void> {
   if (useAuthStore.getState().isInitialized) return Promise.resolve();
@@ -37,6 +41,18 @@ async function restoreSession(): Promise<void> {
 
 /** Returns whether the session was restored, is absent, or could not be determined. */
 async function restoreSessionOnce(): Promise<'restored' | 'signed_out' | 'unavailable'> {
+  if (unconfirmedAccessToken) {
+    const accessToken = unconfirmedAccessToken;
+    const profile = await fetchProfile(accessToken);
+    if (profile.status === 'unavailable') return 'unavailable';
+    unconfirmedAccessToken = null;
+    if (profile.status === 'loaded') {
+      useAuthStore.getState().setAuth(accessToken, profile.user);
+      return 'restored';
+    }
+    // The access token expired meanwhile; renew it from the refresh cookie below.
+  }
+
   const refresh = await refreshAccessToken({ retryDelaysMs: RESTORE_RETRY_DELAYS_MS });
   if (refresh.status === 'signed_out') return 'signed_out';
   if (refresh.status === 'unavailable') return 'unavailable';
@@ -53,8 +69,13 @@ async function restoreSessionOnce(): Promise<'restored' | 'signed_out' | 'unavai
     useAuthStore.getState().setAuth(refresh.accessToken, profile.user);
     return 'restored';
   }
-  // The refresh cookie was valid but the profile could not be read yet; keep trying.
-  return profile.status === 'unavailable' ? 'unavailable' : 'signed_out';
+  if (profile.status === 'unavailable') {
+    // The refresh cookie was valid but the profile could not be read yet; keep the
+    // new access token for the background retry.
+    unconfirmedAccessToken = refresh.accessToken;
+    return 'unavailable';
+  }
+  return 'signed_out';
 }
 
 async function fetchProfile(accessToken: string): Promise<ProfileOutcome> {
@@ -84,7 +105,10 @@ function scheduleBackgroundRestore(attempt: number) {
   backgroundRestoreTimer = setTimeout(() => {
     backgroundRestoreTimer = null;
     // A manual login or another restore already produced a session.
-    if (useAuthStore.getState().accessToken) return;
+    if (useAuthStore.getState().accessToken) {
+      unconfirmedAccessToken = null;
+      return;
+    }
     void restoreSessionOnce().then((outcome) => {
       if (outcome === 'unavailable') scheduleBackgroundRestore(attempt + 1);
     });
@@ -100,4 +124,5 @@ export function resetAuthInitializationForTests() {
   if (backgroundRestoreTimer) clearTimeout(backgroundRestoreTimer);
   backgroundRestoreTimer = null;
   initialization = null;
+  unconfirmedAccessToken = null;
 }

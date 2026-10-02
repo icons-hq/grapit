@@ -80,6 +80,11 @@ describe('social OAuth state', () => {
     expect(isSocialProviderCallbackRequest({ query: { code: 'x' } } as never)).toBe(true);
     expect(isSocialProviderCallbackRequest({ query: { error: 'access_denied' } } as never)).toBe(true);
     expect(isSocialProviderCallbackRequest({ query: { locale: 'ko' } } as never)).toBe(false);
+    // passport-oauth2 1.8 (Google, Naver) also exchanges a code sent in the body.
+    expect(isSocialProviderCallbackRequest({ query: {}, body: { code: 'x' } } as never)).toBe(true);
+    expect(isSocialProviderCallbackRequest({ query: {}, body: { error: 'x' } } as never)).toBe(true);
+    expect(isSocialProviderCallbackRequest({ query: {}, body: {} } as never)).toBe(false);
+    expect(isSocialProviderCallbackRequest({ query: {}, body: 'code=x' } as never)).toBe(false);
   });
 
   it('validates the registration binding cookie against the hash carried in the token', () => {
