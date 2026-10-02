@@ -21,13 +21,18 @@
  * ARGV[2] = op: admit | touch | recovery | expire | release
  *
  * admit    ARGV[3..7] = admittedAt, activeUntilAt, reentryGraceUntilAt, expiresAt, ttlMs
- *          ARGV[8]    = admission capacity ('' = admit unconditionally). With a
- *                       capacity the session is admitted only when every waiting
- *                       session ahead of it also fits into the free active slots.
+ *          ARGV[8]    = admission capacity ('' = admit unconditionally, Admin
+ *                       Booking Bypass only). With a capacity the session is
+ *                       admitted only when every waiting session ahead of it
+ *                       also fits into the free active slots, counted when the
+ *                       script runs (direct entry and reconcile batches alike).
  * touch    ARGV[3]    = replacement admission token hash ('' = keep)
  *          ARGV[4..5] = sliding WAITING expiresAt, ttlMs ('' = keep the current TTL)
  *          ARGV[6]    = original enteredAt score used to restore a WAITING
  *                       session that lost its waiting-line membership
+ *          ARGV[7]    = '1' also rotates the token of a retained EXPIRED
+ *                       session (payment recovery of a pending order); its
+ *                       state, windows and TTL stay unchanged
  * recovery ARGV[3..6] = expected admittedAt, paymentRecoveryUntilAt, expiresAt, ttlMs
  * expire   ARGV[3]    = expected "state|activeUntilAt|paymentRecoveryUntilAt" ('' = any)
  *          ARGV[4..5] = expiresAt, ttlMs
@@ -110,7 +115,14 @@ end
 
 if op == 'touch' then
   if record.state == 'EXPIRED' then
-    return {0, 'EXPIRED', raw, tokenHash, 0}
+    if ARGV[7] ~= '1' then
+      return {0, 'EXPIRED', raw, tokenHash, 0}
+    end
+    if ARGV[3] ~= '' then
+      record.admissionTokenHash = ARGV[3]
+    end
+    local encoded, ttl = save(currentTtlMs())
+    return {1, 'EXPIRED', encoded, tokenHash, ttl}
   end
   if ARGV[3] ~= '' then
     record.admissionTokenHash = ARGV[3]
@@ -245,6 +257,9 @@ const QUEUE_SCRIPT_MARKERS = [
   'CREATE_QUEUE_SESSION_LUA',
   'PURGE_QUEUE_SESSION_LUA',
   'COUNT_VALID_LOCKED_SEATS_LUA',
+  // Defined in queue.service.ts; listed here so the local-development
+  // InMemoryRedis releases the reconcile lock instead of keeping it for 30 s.
+  'RELEASE_QUEUE_RECONCILE_LOCK_LUA',
 ] as const;
 
 /** Minimal command surface used by the local-development emulation below. */
@@ -312,6 +327,16 @@ async function runQueueScriptInMemory(
       }
     }
     return alive;
+  }
+
+  if (script.includes('RELEASE_QUEUE_RECONCILE_LOCK_LUA')) {
+    // Compare-and-delete: only the owner token releases the lock.
+    const [lockKey] = keys as [string];
+    const [lockToken] = args as [string];
+    if ((await store.get(lockKey)) === lockToken) {
+      return store.del(lockKey);
+    }
+    return 0;
   }
 
   if (script.includes('CREATE_QUEUE_SESSION_LUA')) {
@@ -417,7 +442,15 @@ async function evalTransitionInMemory(
 
   if (op === 'touch') {
     if (record['state'] === 'EXPIRED') {
-      return [0, 'EXPIRED', raw, tokenHash, 0];
+      if (arg(7) !== '1') {
+        return [0, 'EXPIRED', raw, tokenHash, 0];
+      }
+      if (arg(3) !== '') {
+        record['admissionTokenHash'] = arg(3);
+      }
+      const pttl = await store.pttl(sessionKey);
+      const [encoded, ttl] = await save(pttl < 1 ? 1000 : pttl);
+      return [1, 'EXPIRED', encoded, tokenHash, ttl];
     }
     if (arg(3) !== '') {
       record['admissionTokenHash'] = arg(3);

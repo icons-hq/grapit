@@ -8,7 +8,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type IORedis from 'ioredis';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
@@ -34,6 +34,7 @@ import {
 } from './queue-redis-scripts.js';
 
 export const QUEUE_ADMISSION_COOKIE_NAME = 'grabit_queue_admission';
+// Admitted sessions: active window + re-entry grace.
 export const QUEUE_ADMISSION_COOKIE_MAX_AGE_MS = 780_000;
 export const QUEUE_ACTIVE_WINDOW_SECONDS = 600;
 export const QUEUE_REENTRY_GRACE_SECONDS = 180;
@@ -41,6 +42,9 @@ export const QUEUE_REENTRY_GRACE_SECONDS = 180;
 // WAITING sessions are idle-timed: every status poll or re-entry slides the
 // expiry forward, so only sessions whose heartbeat stopped are dropped.
 export const QUEUE_WAIT_SESSION_SECONDS = 1_800;
+// A WAITING session's cookie lives as long as the idle window, so a buyer who
+// comes back to a backgrounded tab within it still finds the position.
+export const QUEUE_WAITING_COOKIE_MAX_AGE_MS = QUEUE_WAIT_SESSION_SECONDS * 1000;
 const QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS = 60;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
@@ -50,14 +54,20 @@ const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
 const QUEUE_RECONCILE_MAX_FILL_ROUNDS = 5;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
+// Cached instead of a seat count when no showtime of the performance is on sale
+// any more (C1). Older releases read it as 0 remaining seats.
+const QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME = 'no-bookable-showtime';
 const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
+const QUEUE_ENTER_MAX_PASSES = 2;
 // Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
 // min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active. A slot is
 // returned when that session's authority window ends (expireStaleSessions), at
 // most the active window plus the payment-recovery grace (resolveAuthorityExpiry).
 // A successful payment confirm returns the slot right away
-// (releaseAdmissionAfterPurchase), so a slot has no guaranteed minimum hold and
-// the estimate never promises a minimum wait.
+// (releaseAdmissionForOrder), so a slot has no guaranteed minimum hold and
+// the estimate never promises a minimum wait. Every bound holds only at the
+// remaining seats of the snapshot: seats sold or locked later shrink the cycle
+// capacity, and the next snapshot reports a longer range.
 export const QUEUE_SLOT_MIN_HOLD_SECONDS = 0;
 export const QUEUE_SLOT_MAX_HOLD_SECONDS =
   QUEUE_ACTIVE_WINDOW_SECONDS + QUEUE_REENTRY_GRACE_SECONDS;
@@ -98,7 +108,8 @@ function isBookingStartReached(value: Date | null | undefined, now: Date = new D
 }
 
 export type QueueWaitEstimate = {
-  // Upper bound of the wait in seconds (also what older clients display).
+  // Upper bound of the wait in seconds at the current remaining seats (also
+  // what older clients display). Fewer remaining seats later raise it.
   etaSeconds: number;
   // Lower bound of the wait in seconds.
   etaMinSeconds: number;
@@ -117,6 +128,8 @@ const NO_WAIT_ESTIMATE: QueueWaitEstimate = {
  * Deterministic wait range for the current admission algorithm. The waiting
  * line moves in cycles of `min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS)`
  * admissions, and every cycle takes between the minimum and maximum slot hold.
+ * The range assumes the remaining seats stay as they are now; when they shrink
+ * the cycles shrink too and a later snapshot reports a longer range.
  * Position p is admitted in cycle ceil(p / cycleCapacity): no earlier than
  * (cycles - 1) minimum holds and no later than `cycles` maximum holds (plus
  * the reconcile latency of each cycle).
@@ -185,6 +198,9 @@ type QueueSessionRecord = {
 export type QueueSessionLease = QueueIdentity & {
   queueSessionId: string;
   admissionToken: string;
+  // Set when the session's active window has ended and only payment recovery
+  // of this pending order (its toss order id) remains.
+  recoveryOrderId?: string;
 };
 
 export type QueueSessionSnapshot = {
@@ -200,6 +216,9 @@ export type QueueSessionSnapshot = {
   admittedAt: string | null;
   activeUntilAt: string | null;
   reentryGraceUntilAt: string | null;
+  // Only on a PAYMENT_RECOVERY snapshot: the pending order (toss order id) the
+  // buyer can still pay for. The admission itself is over (autoEnter false).
+  recoveryOrderId?: string;
 };
 
 type QueueEnterResult = QueueSessionSnapshot & {
@@ -244,8 +263,13 @@ type QueueSnapshotContext = {
   remainingSeats: number;
 };
 
+type RemainingSeatsState = {
+  remainingSeats: number;
+  // false once no showtime of the performance is on sale (C1)
+  hasBookableShowtime: boolean;
+};
+
 type OrderAdmissionBinding = {
-  performanceId: string;
   status: string;
   queueSessionId: string | null;
   refreshFamilyId: string | null;
@@ -260,6 +284,9 @@ type OrderAdmissionBinding = {
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
   private readonly reconcileInFlight = new Set<string>();
+  // One fresh remaining-seat computation per performance per instance at a
+  // time; concurrent cache misses share it.
+  private readonly remainingSeatsInFlight = new Map<string, Promise<RemainingSeatsState>>();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
@@ -317,8 +344,35 @@ export class QueueService {
       const existingSessionId = await this.redis.get(identityKey);
 
       if (existingSessionId) {
-        const record = await this.readQueueSessionRecord(performanceId, existingSessionId);
-        if (record && this.isReusable(record, now)) {
+        let record = await this.readQueueSessionRecord(performanceId, existingSessionId);
+
+        // An admission whose active window has ended is never handed out as an
+        // admission again: seat lock and prepare would refuse it anyway. Only a
+        // pending order bound to it keeps it, for payment recovery; otherwise it
+        // is expired and the browser takes a new waiting position below.
+        if (record && this.isAdmissionWindowClosed(record, now.getTime())) {
+          const recoveryOrderId = await this.findRecoveryOrderId(record, now.getTime());
+          if (recoveryOrderId) {
+            const recovery = await this.reuseQueueSession(
+              record,
+              params.presentedAdmissionToken,
+              now,
+              { allowExpired: true },
+            );
+            if (recovery) {
+              return { ...recovery, recoveryOrderId };
+            }
+            continue;
+          }
+
+          if (record.state !== EXPIRED) {
+            const expired = await this.expireQueueSession(record);
+            if (expired.state !== EXPIRED) {
+              continue;
+            }
+            record = expired;
+          }
+        } else if (record && this.isReusable(record, now)) {
           const reused = await this.reuseQueueSession(
             record,
             params.presentedAdmissionToken,
@@ -352,6 +406,7 @@ export class QueueService {
     record: QueueSessionRecord,
     presentedAdmissionToken: string | undefined,
     now: Date,
+    options: { allowExpired?: boolean } = {},
   ): Promise<QueueSessionLease | null> {
     // Re-entry from the browser that already holds the current token keeps it,
     // so several tabs sharing one cookie jar do not invalidate each other.
@@ -366,6 +421,8 @@ export class QueueService {
     const result = await this.transitionQueueSession(record, 'touch', [
       keepPresentedToken ? '' : this.hashAdmissionToken(admissionToken),
       ...this.buildWaitingRenewalArgs(record, now),
+      // A retained EXPIRED session only gets a new token (payment recovery).
+      options.allowExpired ? '1' : '',
     ]);
     if (!result.applied || !result.record) {
       return null;
@@ -437,26 +494,37 @@ export class QueueService {
     presentedAdmissionToken?: string;
   }): Promise<QueueEnterResult> {
     await this.assertPerformanceBookingOpen(params.performanceId, params.actorRole);
-    const lease = await this.ensureQueueSession(params);
-    if (params.bypassQueue) {
-      await this.admitQueueSession(params.performanceId, lease.queueSessionId);
-    } else {
-      await this.reconcilePerformanceQueueIfDue(params.performanceId);
-      // The reconcile above is throttled; admit this session directly when every
-      // session ahead of it also fits into the free slots.
-      await this.admitQueueSessionWithinCapacity(params.performanceId, lease.queueSessionId);
+
+    // Entry never answers with an expired session: when the session it found
+    // ended while this request ran (a reconcile expired it, or its recovery
+    // order was paid or cancelled), the second pass replaces it with a new
+    // waiting position.
+    for (let attempt = 1; ; attempt += 1) {
+      const lease = await this.ensureQueueSession(params);
+      if (!lease.recoveryOrderId) {
+        if (params.bypassQueue) {
+          await this.admitQueueSession(params.performanceId, lease.queueSessionId);
+        } else {
+          await this.reconcilePerformanceQueueIfDue(params.performanceId);
+          // The reconcile above is throttled; admit this session directly when every
+          // session ahead of it also fits into the free slots.
+          await this.admitQueueSessionWithinCapacity(params.performanceId, lease.queueSessionId);
+        }
+      }
+
+      const snapshot = await this.getQueueSessionStatus({
+        queueSessionId: lease.queueSessionId,
+        identity: lease,
+        admissionToken: lease.admissionToken,
+      });
+
+      if (snapshot.state !== EXPIRED || attempt >= QUEUE_ENTER_MAX_PASSES) {
+        return {
+          ...snapshot,
+          admissionToken: lease.admissionToken,
+        };
+      }
     }
-
-    const snapshot = await this.getQueueSessionStatus({
-      queueSessionId: lease.queueSessionId,
-      identity: lease,
-      admissionToken: lease.admissionToken,
-    });
-
-    return {
-      ...snapshot,
-      admissionToken: lease.admissionToken,
-    };
   }
 
   /**
@@ -589,7 +657,103 @@ export class QueueService {
     this.assertRecordMatchesIdentity(record, params.identity);
     this.assertAdmissionTokenMatches(record, params.admissionToken);
 
+    // Same sales cutoff (C1) as queue entry: once every showtime has started
+    // nobody is admitted any more, so the waiting line is closed.
+    const seats = await this.readRemainingSeatsState(performanceId);
+    if (!seats.hasBookableShowtime) {
+      throw new ForbiddenException({
+        message: SHOWTIME_STARTED_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.noBookableShowtime,
+      });
+    }
+
+    const now = Date.now();
+    if (this.isAdmissionWindowClosed(record, now)) {
+      const recoveryOrderId = await this.findRecoveryOrderId(record, now);
+      if (recoveryOrderId) {
+        return this.buildSnapshot(record, undefined, recoveryOrderId);
+      }
+      return this.buildSnapshot(
+        record.state === EXPIRED ? record : await this.expireQueueSession(record),
+      );
+    }
+
     return this.buildSnapshot(await this.renewWaitingSession(record));
+  }
+
+  /**
+   * ADMITTED past its active window, or EXPIRED. Seat lock and prepare need the
+   * active window, so such a session is no longer an admission.
+   */
+  private isAdmissionWindowClosed(record: QueueSessionRecord, now: number): boolean {
+    if (record.state === EXPIRED) {
+      return true;
+    }
+    if (record.state !== ADMITTED) {
+      return false;
+    }
+
+    const activeUntilAt = record.activeUntilAt ? Date.parse(record.activeUntilAt) : Number.NaN;
+    return !Number.isFinite(activeUntilAt) || now > activeUntilAt;
+  }
+
+  /**
+   * The pending order prepared under this queue session that payment confirm
+   * would still accept through the order binding (same user, refresh family and
+   * device slot, before max(paymentDeadlineAt, admissionActiveUntilAt)). Its
+   * toss order id, or null. Uses idx_reservations_queue_session_id.
+   */
+  private async findRecoveryOrderId(
+    record: QueueSessionRecord,
+    now: number,
+  ): Promise<string | null> {
+    const nowDate = new Date(now);
+    const rows = await this.db
+      .select({
+        tossOrderId: reservations.tossOrderId,
+        status: reservations.status,
+        queueSessionId: reservations.queueSessionId,
+        refreshFamilyId: reservations.refreshFamilyId,
+        deviceSlotKey: reservations.deviceSlotKey,
+        admittedAt: reservations.admittedAt,
+        admissionActiveUntilAt: reservations.admissionActiveUntilAt,
+        reentryGraceUntilAt: reservations.reentryGraceUntilAt,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
+      })
+      .from(reservations)
+      .where(
+        and(
+          eq(reservations.queueSessionId, record.queueSessionId),
+          eq(reservations.userId, record.userId),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          // greatest(payment_deadline_at, admission_active_until_at) >= now
+          or(
+            gte(reservations.paymentDeadlineAt, nowDate),
+            gte(reservations.admissionActiveUntilAt, nowDate),
+          ),
+        ),
+      );
+
+    let best: { orderId: string; endsAt: number } | null = null;
+    for (const row of rows) {
+      if (!row.tossOrderId || row.queueSessionId !== record.queueSessionId) {
+        continue;
+      }
+      const admission = this.resolveOrderBoundAdmission(row, record, record.userId, now);
+      if (!admission || row.status !== 'PENDING_PAYMENT') {
+        continue;
+      }
+      const endsAt = Math.max(
+        ...[row.paymentDeadlineAt, row.admissionActiveUntilAt]
+          .filter((value): value is Date => this.isValidDate(value))
+          .map((value) => value.getTime()),
+      );
+      if (!best || endsAt > best.endsAt) {
+        best = { orderId: row.tossOrderId, endsAt };
+      }
+    }
+
+    return best?.orderId ?? null;
   }
 
   /**
@@ -755,6 +919,42 @@ export class QueueService {
   }
 
   /**
+   * Returns the queue slot of the confirmed order: the queue session the order
+   * was prepared under (reservations.queue_session_id), never the session of
+   * the browser that sent the confirm, which differs when confirm was allowed
+   * through the Redis fallback. Never throws, like releaseAdmissionAfterPurchase.
+   */
+  async releaseAdmissionForOrder(orderId: string, userId: string): Promise<boolean> {
+    try {
+      const [reservation] = await this.db
+        .select({
+          queueSessionId: reservations.queueSessionId,
+          status: reservations.status,
+        })
+        .from(reservations)
+        .where(
+          and(
+            eq(reservations.tossOrderId, orderId),
+            eq(reservations.userId, userId),
+            eq(reservations.status, 'CONFIRMED'),
+          ),
+        );
+
+      if (!reservation || reservation.status !== 'CONFIRMED') {
+        return false;
+      }
+
+      return await this.releaseAdmissionAfterPurchase(reservation.queueSessionId);
+    } catch (error) {
+      this.logger.warn(
+        `Queue admission release for a confirmed order failed. orderId=${orderId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    }
+  }
+
+  /**
    * Returns the queue slot of a completed purchase to the waiting line right
    * away instead of holding it until the active/recovery window ends. Never
    * throws: a confirmed purchase must not fail because the slot release did.
@@ -868,22 +1068,21 @@ export class QueueService {
   private async reconcilePerformanceQueue(performanceId: string): Promise<void> {
     await this.expireStaleSessions(performanceId);
 
+    // No showtime on sale (C1) reads as 0 remaining seats: nobody is admitted.
     const remainingSeats = await this.calculateRemainingSeats(performanceId);
     if (remainingSeats <= 0) {
       return;
     }
 
+    const capacity = Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS);
     const activeCount = await this.redis.scard(this.activeAdmissionsKey(performanceId));
-    const slotsToFill = Math.max(
-      0,
-      Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) - activeCount,
-    );
+    const slotsToFill = Math.max(0, capacity - activeCount);
 
     if (slotsToFill <= 0) {
       return;
     }
 
-    const admittedRecords = await this.admitWaitingSessions(performanceId, slotsToFill);
+    const admittedRecords = await this.admitWaitingSessions(performanceId, slotsToFill, capacity);
     if (admittedRecords.length === 0) {
       return;
     }
@@ -904,11 +1103,14 @@ export class QueueService {
    * atomic script (state + waiting + active), issued concurrently so a batch
    * costs a few round trips instead of several per session. Members whose
    * record already expired are dropped and the freed slots are refilled from
-   * the next sessions in line.
+   * the next sessions in line. Every script re-checks the active set against
+   * `capacity` when it runs, so direct admissions on other instances between
+   * the SCARD above and this batch never push the active set past it.
    */
   private async admitWaitingSessions(
     performanceId: string,
     slotsToFill: number,
+    capacity: number,
   ): Promise<QueueSessionRecord[]> {
     const admitted: QueueSessionRecord[] = [];
     let remainingSlots = slotsToFill;
@@ -928,7 +1130,7 @@ export class QueueService {
       }
 
       const records = await this.readQueueSessionRecords(performanceId, waitingIds);
-      const admissionArgs = [...this.buildAdmissionArgs(new Date()), ''];
+      const admissionArgs = [...this.buildAdmissionArgs(new Date()), String(capacity)];
       const results = await Promise.all(
         waitingIds.map((queueSessionId, index) => {
           const record = records[index];
@@ -948,6 +1150,11 @@ export class QueueService {
       await Promise.all(applied.map((result) => this.syncQueueSessionIndexes(result)));
       admitted.push(...applied.map((result) => result.record));
       remainingSlots -= applied.length;
+
+      if (results.some((result) => result?.status === 'NO_CAPACITY')) {
+        // The active set is full: another instance admitted in the meantime.
+        break;
+      }
     }
 
     return admitted;
@@ -1136,13 +1343,19 @@ export class QueueService {
     ].join('|');
   }
 
+  /**
+   * `recoveryOrderId` is the pending order found by findRecoveryOrderId; with
+   * it a session whose active window ended reports PAYMENT_RECOVERY (payment
+   * of that order only, autoEnter false, no new window).
+   */
   private async buildSnapshot(
     record: QueueSessionRecord,
     context?: QueueSnapshotContext,
+    recoveryOrderId?: string,
   ): Promise<QueueSessionSnapshot> {
     const { waitingCount, rank, remainingSeats } =
       context ?? (await this.readSnapshotContext(record));
-    const state = this.resolveVisibleState(record);
+    const state = this.resolveVisibleState(record, recoveryOrderId);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
     const estimate =
       state === WAITING ? estimateQueueWait({ position, remainingSeats }) : NO_WAIT_ESTIMATE;
@@ -1160,6 +1373,7 @@ export class QueueService {
       admittedAt: record.admittedAt,
       activeUntilAt: record.activeUntilAt,
       reentryGraceUntilAt: record.reentryGraceUntilAt,
+      ...(state === PAYMENT_RECOVERY && recoveryOrderId ? { recoveryOrderId } : {}),
     };
   }
 
@@ -1173,21 +1387,20 @@ export class QueueService {
     return { waitingCount, rank, remainingSeats };
   }
 
-  private resolveVisibleState(record: QueueSessionRecord): QueueSessionState {
-    if (record.state !== ADMITTED) {
+  /**
+   * An admission whose active window has ended is never reported as ADMITTED:
+   * it is PAYMENT_RECOVERY while a bound pending order can still be paid
+   * (`recoveryOrderId`), otherwise EXPIRED.
+   */
+  private resolveVisibleState(
+    record: QueueSessionRecord,
+    recoveryOrderId?: string,
+  ): QueueSessionState {
+    if (record.state === WAITING || !this.isAdmissionWindowClosed(record, Date.now())) {
       return record.state;
     }
 
-    if (
-      record.activeUntilAt &&
-      Date.now() > Date.parse(record.activeUntilAt) &&
-      record.paymentRecoveryUntilAt &&
-      Date.now() <= Date.parse(record.paymentRecoveryUntilAt)
-    ) {
-      return PAYMENT_RECOVERY;
-    }
-
-    return record.state;
+    return recoveryOrderId ? PAYMENT_RECOVERY : EXPIRED;
   }
 
   private resolveAuthorityExpiry(record: QueueSessionRecord): number | null {
@@ -1421,23 +1634,72 @@ export class QueueService {
   }
 
   private async calculateRemainingSeats(performanceId: string): Promise<number> {
-    const cached = await this.redis.get(this.remainingSeatsCacheKey(performanceId));
-    if (cached !== null) {
-      return Math.max(Number(cached) || 0, 0);
-    }
-
-    const remainingSeats = await this.calculateRemainingSeatsFresh(performanceId);
-    await this.redis.set(
-      this.remainingSeatsCacheKey(performanceId),
-      String(remainingSeats),
-      'EX',
-      QUEUE_REMAINING_SEATS_CACHE_SECONDS,
-    );
-
-    return remainingSeats;
+    return (await this.readRemainingSeatsState(performanceId)).remainingSeats;
   }
 
-  private async calculateRemainingSeatsFresh(performanceId: string): Promise<number> {
+  /**
+   * Remaining seats with a 2-second cache. A cache miss is computed once per
+   * performance per instance: status polls, entries, broadcasts and reconcile
+   * that miss at the same time share the in-flight computation.
+   */
+  private async readRemainingSeatsState(performanceId: string): Promise<RemainingSeatsState> {
+    const inFlight = this.remainingSeatsInFlight.get(performanceId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const cached = await this.redis.get(this.remainingSeatsCacheKey(performanceId));
+    if (cached !== null) {
+      return this.parseRemainingSeatsCache(cached);
+    }
+
+    const joined = this.remainingSeatsInFlight.get(performanceId);
+    if (joined) {
+      return joined;
+    }
+
+    const computation = (async (): Promise<RemainingSeatsState> => {
+      const state = await this.calculateRemainingSeatsFresh(performanceId);
+      await this.redis.set(
+        this.remainingSeatsCacheKey(performanceId),
+        state.hasBookableShowtime
+          ? String(state.remainingSeats)
+          : QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME,
+        'EX',
+        QUEUE_REMAINING_SEATS_CACHE_SECONDS,
+      );
+      return state;
+    })().finally(() => {
+      this.remainingSeatsInFlight.delete(performanceId);
+    });
+    this.remainingSeatsInFlight.set(performanceId, computation);
+    return computation;
+  }
+
+  private parseRemainingSeatsCache(cached: string): RemainingSeatsState {
+    if (cached === QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME) {
+      return { remainingSeats: 0, hasBookableShowtime: false };
+    }
+    return { remainingSeats: Math.max(Number(cached) || 0, 0), hasBookableShowtime: true };
+  }
+
+  /**
+   * Capacity and occupancy of the showtimes still on sale (C1, the same
+   * showtimeOnSaleCondition as the queue entry gate): a showtime that has
+   * started can never sell again, so its seats are not waited for. Capacity,
+   * sold seats and live locks are all counted over that one showtime set.
+   */
+  private async calculateRemainingSeatsFresh(performanceId: string): Promise<RemainingSeatsState> {
+    const now = new Date();
+    const showtimeRows = await this.db
+      .select({ id: showtimes.id })
+      .from(showtimes)
+      .where(and(eq(showtimes.performanceId, performanceId), showtimeOnSaleCondition(now)));
+
+    if (showtimeRows.length === 0) {
+      return { remainingSeats: 0, hasBookableShowtime: false };
+    }
+
     const [seatCapacity] = await this.db
       .select({
         totalSeats: sql<number>`coalesce(sum(${seatMaps.totalSeats}), 0)`,
@@ -1445,13 +1707,8 @@ export class QueueService {
       .from(seatMaps)
       .where(eq(seatMaps.performanceId, performanceId));
 
-    const showtimeRows = await this.db
-      .select({ id: showtimes.id })
-      .from(showtimes)
-      .where(eq(showtimes.performanceId, performanceId));
-
-    if (!seatCapacity || showtimeRows.length === 0) {
-      return 0;
+    if (!seatCapacity) {
+      return { remainingSeats: 0, hasBookableShowtime: true };
     }
 
     const [soldCount] = await this.db
@@ -1463,6 +1720,7 @@ export class QueueService {
       .where(
         and(
           eq(showtimes.performanceId, performanceId),
+          showtimeOnSaleCondition(now),
           inArray(seatInventories.status, ['sold', 'held_cancelled', 'disabled']),
         ),
       );
@@ -1485,8 +1743,11 @@ export class QueueService {
       0,
     );
 
-    const performanceCapacity = seatCapacity.totalSeats * showtimeRows.length;
-    return Math.max(performanceCapacity - Number(soldCount?.total ?? 0) - lockedCount, 0);
+    const onSaleCapacity = Number(seatCapacity.totalSeats) * showtimeRows.length;
+    return {
+      remainingSeats: Math.max(onSaleCapacity - Number(soldCount?.total ?? 0) - lockedCount, 0),
+      hasBookableShowtime: true,
+    };
   }
 
   private waitingQueueKey(performanceId: string): string {

@@ -12,10 +12,14 @@ import type { Request, Response } from 'express';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import {
   QUEUE_ACTIVE_WINDOW_SECONDS,
+  QUEUE_ADMISSION_COOKIE_MAX_AGE_MS,
   QUEUE_ADMISSION_COOKIE_NAME,
+  QUEUE_WAITING_COOKIE_MAX_AGE_MS,
   QueueService,
+  WAITING,
   readQueueAdmissionCookie,
   readRefreshCookie,
+  type QueueSessionState,
 } from './queue.service.js';
 
 type AuthenticatedRequest = Request & {
@@ -62,7 +66,7 @@ export class QueueController {
       ),
     });
 
-    this.setAdmissionCookie(res, result.admissionToken);
+    this.setAdmissionCookie(res, result.admissionToken, result.state);
 
     return {
       queueSessionId: result.queueSessionId,
@@ -77,6 +81,7 @@ export class QueueController {
       admittedAt: result.admittedAt,
       activeUntilAt: result.activeUntilAt,
       reentryGraceUntilAt: result.reentryGraceUntilAt,
+      ...(result.recoveryOrderId ? { recoveryOrderId: result.recoveryOrderId } : {}),
       queueActiveWindowSeconds: QUEUE_ACTIVE_WINDOW_SECONDS,
     };
   }
@@ -123,23 +128,41 @@ export class QueueController {
     if (result.state === 'EXPIRED') {
       res.clearCookie(QUEUE_ADMISSION_COOKIE_NAME, this.cookieOptions());
     } else {
-      this.setAdmissionCookie(res, admissionToken);
+      this.setAdmissionCookie(res, admissionToken, result.state);
     }
 
     return result;
   }
 
-  private setAdmissionCookie(res: Response, admissionToken: string): void {
-    res.cookie(QUEUE_ADMISSION_COOKIE_NAME, admissionToken, this.cookieOptions());
+  private setAdmissionCookie(
+    res: Response,
+    admissionToken: string,
+    state: QueueSessionState,
+  ): void {
+    res.cookie(
+      QUEUE_ADMISSION_COOKIE_NAME,
+      admissionToken,
+      this.cookieOptions(this.resolveCookieMaxAge(state)),
+    );
   }
 
-  private cookieOptions() {
+  /**
+   * A WAITING session lives for its idle window (30 minutes since the last
+   * heartbeat), so its cookie must too: a buyer back from a backgrounded tab
+   * after 13+ minutes would otherwise lose a still-live position. An admission
+   * keeps the 13-minute cookie (active window + re-entry grace).
+   */
+  private resolveCookieMaxAge(state: QueueSessionState): number {
+    return state === WAITING ? QUEUE_WAITING_COOKIE_MAX_AGE_MS : QUEUE_ADMISSION_COOKIE_MAX_AGE_MS;
+  }
+
+  private cookieOptions(maxAge: number = QUEUE_ADMISSION_COOKIE_MAX_AGE_MS) {
     return {
       httpOnly: true,
       secure: process.env['NODE_ENV'] === 'production',
       sameSite: 'lax' as const,
       path: '/api/v1',
-      maxAge: 780000,
+      maxAge,
     };
   }
 }

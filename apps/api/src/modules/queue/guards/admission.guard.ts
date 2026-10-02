@@ -8,6 +8,7 @@ import {
 import type { Request } from 'express';
 import { z } from 'zod';
 import { canUseAdminBookingBypass } from '../../../common/admin-booking-bypass.js';
+import { resolveRoutePath } from '../../traffic/route-path.js';
 import {
   QueueService,
   readQueueAdmissionCookie,
@@ -40,6 +41,11 @@ type AuthenticatedRequest = Request & {
 // Placeholder stored on the request when payment confirm was authorised by the
 // order binding without an admission cookie; it is never a valid token.
 const ORDER_BOUND_ADMISSION_TOKEN = 'order-bound';
+
+// Matched against the normalised route path (lower-case, no query or trailing
+// slash), so every spelling Express routes to these handlers is recognised.
+const PAYMENT_CONFIRM_PATH_SUFFIX = '/payments/confirm';
+const RESERVATION_PREPARE_PATH_SUFFIX = '/reservations/prepare';
 
 @Injectable()
 export class AdmissionGuard implements CanActivate {
@@ -110,8 +116,6 @@ export class AdmissionGuard implements CanActivate {
     admissionToken: string | undefined,
     userId: string,
   ) {
-    const path = this.resolvePath(request);
-
     if (this.isPaymentConfirmPath(request)) {
       const orderId = this.readString(request.body, 'orderId');
       if (!orderId) {
@@ -138,7 +142,7 @@ export class AdmissionGuard implements CanActivate {
       showtimeId,
       identity,
       admissionToken,
-      action: path.includes('/reservations/prepare')
+      action: resolveRoutePath(request).endsWith(RESERVATION_PREPARE_PATH_SUFFIX)
         ? 'prepare-reservation'
         : 'lock-seat',
     });
@@ -153,12 +157,7 @@ export class AdmissionGuard implements CanActivate {
   }
 
   private isPaymentConfirmPath(request: AuthenticatedRequest): boolean {
-    return this.resolvePath(request).includes('/payments/confirm');
-  }
-
-  private resolvePath(request: AuthenticatedRequest): string {
-    const originalUrl = request.originalUrl ?? request.url ?? '';
-    return originalUrl.split('?')[0] ?? originalUrl;
+    return resolveRoutePath(request).endsWith(PAYMENT_CONFIRM_PATH_SUFFIX);
   }
 
   private createAdminBypassAdmission(userId: string): NonNullable<

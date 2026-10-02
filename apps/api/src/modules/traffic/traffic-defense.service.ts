@@ -5,6 +5,7 @@ import { Reflector } from '@nestjs/core';
 import type { ThrottlerModuleOptions, ThrottlerOptions } from '@nestjs/throttler';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { Request } from 'express';
+import { resolveRoutePath } from './route-path.js';
 import {
   hashThrottleIdentity,
   resolveThrottleEmail,
@@ -398,7 +399,7 @@ export class TrafficDefenseService {
     // each other.
     return (
       method === 'POST' &&
-      REFRESH_ROUTE_PATTERN.test(this.resolveRoutePath(request)) &&
+      REFRESH_ROUTE_PATTERN.test(resolveRoutePath(request)) &&
       !request.cookies?.[AUTH_COOKIE_NAME]
     );
   }
@@ -504,7 +505,7 @@ export class TrafficDefenseService {
     }
 
     const request = context.switchToHttp().getRequest<RequestLike>();
-    const path = this.resolveRoutePath(request);
+    const path = resolveRoutePath(request);
     const method = this.resolveRouteMethod(request);
 
     return TRAFFIC_POLICIES[policy].matchers.some((matcher) => {
@@ -516,35 +517,9 @@ export class TrafficDefenseService {
     });
   }
 
-  /**
-   * The path a policy is matched against. The Express router accepts several
-   * spellings for one handler: it matches case-insensitively by default
-   * (Express 5 `case sensitive routing` off) and ignores a trailing slash. The
-   * raw URL would let `/auth/LOGIN` skip every policy the handler relies on,
-   * so match the template of the route that dispatched the request. Outside a
-   * routed request, fall back to the URL with the same folding.
-   */
-  private resolveRoutePath(request: RequestLike): string {
-    const routePath = request.route?.path;
-    return this.normalizePath(
-      typeof routePath === 'string' && routePath.length > 0
-        ? routePath
-        : (request.originalUrl ?? request.url ?? ''),
-    );
-  }
-
   /** Express serves HEAD with the GET handler, so it is the same route. */
   private resolveRouteMethod(request: RequestLike): string {
     const method = (request.method ?? 'GET').toUpperCase();
     return method === 'HEAD' ? 'GET' : method;
-  }
-
-  private normalizePath(path: string): string {
-    const withoutQuery = (path.split('?')[0] ?? path).toLowerCase();
-    if (!withoutQuery) {
-      return '/';
-    }
-
-    return withoutQuery.replace(/\/+$/, '') || '/';
   }
 }
