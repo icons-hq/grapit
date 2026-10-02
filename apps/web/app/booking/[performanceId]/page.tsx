@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useRef } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { buildAuthRoute } from '@/lib/auth-return';
 import { parseServerDeadline } from '@/lib/booking/queue-access';
+import { getServerNowMs } from '@/lib/server-clock';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -20,6 +21,16 @@ import {
 
 /** Warn this long before the queue access window closes. */
 const QUEUE_ACCESS_WARNING_LEAD_MS = 2 * 60_000;
+
+/**
+ * How the access window looked when the queue last handed the route a ready
+ * admission. `ready` mirrors the last seen `queue.isReady` so each new arrival
+ * (first entry, rejoin) is judged once.
+ */
+type QueueArrival = {
+  ready: boolean;
+  windowClosedOnArrival: boolean;
+};
 
 export default function BookingRoute({
   params,
@@ -54,10 +65,70 @@ export default function BookingRoute({
   // Seat locks and prepare both require the queue access window (activeUntilAt)
   // on the server; payment recovery only extends payment confirmation. The seat
   // screen therefore counts down to it, warns ahead and leaves when it closes.
-  const queueAccessExpiresAtMs = queue.isReady
-    ? parseServerDeadline(queue.activeUntilAt)
-    : null;
+  const activeUntilAtMs = parseServerDeadline(queue.activeUntilAt);
+  const [queueArrival, setQueueArrival] = useState<QueueArrival>({
+    ready: false,
+    windowClosedOnArrival: false,
+  });
+  let currentArrival = queueArrival;
+  if (queueArrival.ready !== queue.isReady) {
+    // Judged once per arrival (derived state, not an effect) so the decision
+    // does not flip while the user stays on the seat screen.
+    currentArrival = {
+      ready: queue.isReady,
+      windowClosedOnArrival:
+        queue.isReady &&
+        activeUntilAtMs !== null &&
+        getServerNowMs() >= activeUntilAtMs,
+    };
+    setQueueArrival(currentArrival);
+  }
+  // An admission whose window had already closed when it arrived (the server
+  // still reports it, e.g. PAYMENT_RECOVERY after an abandoned payment) cannot
+  // be replaced by rejoining until the server expires it, which happens on the
+  // first seat lock attempt. Trapping it on the expired screen would loop for up
+  // to the recovery grace, so the seat screen keeps the pre-existing path and
+  // only a window that was open on arrival is counted down and closed here.
+  const queueAccessExpiresAtMs =
+    queue.isReady && !currentArrival.windowClosedOnArrival
+      ? activeUntilAtMs
+      : null;
   const queueAccessExpired = useServerTimeReached(queueAccessExpiresAtMs);
+
+  // A rejoin the user asked for stays pending until a new position is issued:
+  // when the server answers with the expired old admission (expired by the
+  // reconcile on that request or by a rejected seat lock), enter once more
+  // instead of asking for a second click.
+  const rejoinPendingRef = useRef(false);
+  const { retry: retryQueue, status: queueStatus } = queue;
+  const rejoinQueue = useCallback(() => {
+    rejoinPendingRef.current = true;
+    void retryQueue();
+  }, [retryQueue]);
+
+  useEffect(() => {
+    if (!rejoinPendingRef.current) {
+      return;
+    }
+    if (
+      queueStatus === 'waiting' ||
+      (queue.isReady && queueAccessExpiresAtMs !== null && !queueAccessExpired)
+    ) {
+      rejoinPendingRef.current = false;
+      return;
+    }
+    if (queueStatus === 'expired' && !queue.isReady) {
+      rejoinPendingRef.current = false;
+      void retryQueue();
+    }
+  }, [
+    queue.isReady,
+    queueAccessExpired,
+    queueAccessExpiresAtMs,
+    queueStatus,
+    retryQueue,
+  ]);
+
   const queueAccessEndingSoon = useServerTimeReached(
     queueAccessExpiresAtMs === null
       ? null
@@ -171,9 +242,7 @@ export default function BookingRoute({
           etaSeconds={0}
           remainingSeats={queue.remainingSeats}
           autoEnter={false}
-          onRetry={() => {
-            void queue.retry();
-          }}
+          onRetry={rejoinQueue}
         />
       );
     }
@@ -197,9 +266,7 @@ export default function BookingRoute({
       etaSeconds={queue.etaSeconds}
       remainingSeats={queue.remainingSeats}
       autoEnter={queue.autoEnter}
-      onRetry={() => {
-        void queue.retry();
-      }}
+      onRetry={rejoinQueue}
       onEnterNow={queue.enterNow}
     />
   );

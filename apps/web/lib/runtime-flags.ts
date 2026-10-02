@@ -48,10 +48,35 @@ export const BOOKING_AVAILABILITY_UNAVAILABLE_COPY: Record<RuntimeLocale, string
 };
 
 export class RuntimeFlagsUnavailableError extends Error {
-  constructor(message = 'Runtime flags are unavailable') {
+  /** Server-requested wait (Retry-After on 429/503), when one was sent. */
+  readonly retryAfterMs: number | null;
+
+  constructor(
+    message = 'Runtime flags are unavailable',
+    options: { retryAfterMs?: number | null } = {},
+  ) {
     super(message);
     this.name = 'RuntimeFlagsUnavailableError';
+    this.retryAfterMs = options.retryAfterMs ?? null;
   }
+}
+
+/** Reads a Retry-After header (delta seconds or HTTP date) as milliseconds. */
+export function parseRetryAfterMs(
+  value: string | null | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+
+  const dateMs = Date.parse(trimmed);
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : null;
 }
 
 export class BookingDisabledError extends Error {
@@ -152,6 +177,7 @@ export async function fetchRuntimeFlags(
   if (!response.ok) {
     throw new RuntimeFlagsUnavailableError(
       `Runtime flags request failed with status ${response.status}`,
+      { retryAfterMs: parseRetryAfterMs(response.headers?.get('retry-after')) },
     );
   }
 

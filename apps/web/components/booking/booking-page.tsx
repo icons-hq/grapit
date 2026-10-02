@@ -704,6 +704,7 @@ export function BookingPage({
       venue: performance.venue?.name ?? null,
       posterUrl: performance.posterUrl ?? null,
       expiresAt: bookingDeadlineAt,
+      queueAccessExpiresAt,
     });
 
     router.push(
@@ -717,6 +718,7 @@ export function BookingPage({
     bookingAvailable,
     performance,
     performanceId,
+    queueAccessExpiresAt,
     router,
     selectedSeats,
     selectedShowtimeId,

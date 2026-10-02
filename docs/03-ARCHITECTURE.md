@@ -91,8 +91,8 @@ Current App Router files:
 | Forms | React Hook Form + Zod | signup, profile, booking terms, admin event forms |
 | Realtime | Socket.IO client | seat status updates by showtime room |
 | Locale | next-intl routing + shared locale constants | `ko`, `en`, `th`, `zh-CN` |
-| Runtime flags | TanStack Query (`useRuntimeFlags`) | A failed `/api/runtime-flags` read is retried and keeps the last good value; until a value loads, booking stays closed with a "checking" message, never "opens later" |
-| Server clock | `lib/server-clock.ts` | Offset measured from `serverNow` in `/api/runtime-flags`; booking open, seat-lock, queue-access and payment countdowns compare server instants with `getServerNowMs()` instead of the device clock |
+| Runtime flags | TanStack Query (`useRuntimeFlags`) | A failed `/api/runtime-flags` read is retried (full-jitter backoff, at least any `Retry-After`) and keeps the last good value; until a value loads, booking stays closed with a "checking" message, never "opens later", and the read is repeated on a jittered interval growing from 10s to 60s |
+| Server clock | `lib/server-clock.ts` | Offset measured from `serverNow` in `/api/runtime-flags`; booking open, seat-lock, queue-access and payment countdowns, and the My Page resume-payment and cancel deadlines compare server instants with `getServerNowMs()` instead of the device clock (device clock until a sample exists) |
 
 ### 3.3 Component Boundaries
 
@@ -243,7 +243,11 @@ Local development can use an in-memory Redis-compatible mock when Redis URL is a
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
 
-Seat lock and prepare both require the admission activity window (`activeUntilAt`, 10 minutes after admission); payment recovery only extends payment confirm. The seat screen therefore counts down to whichever ends first, the seat lock or `activeUntilAt`, warns two minutes ahead, and switches to the queue-expired screen when the window closes. Rejoining from there issues a new queue position. The confirm step inherits the same earlier deadline.
+Seat lock and prepare both require the admission activity window (`activeUntilAt`, 10 minutes after admission); payment recovery only extends payment confirm. The seat screen therefore counts down to whichever ends first, the seat lock or `activeUntilAt`, warns two minutes ahead, and switches to the queue-expired screen when the window closes. Rejoining from there issues a new queue position; when the rejoin request finds the old admission already expired by the server, the route enters once more on its own so one click is enough.
+
+The server keeps reusing an admission whose window has closed until it expires it: a reconcile does so after `max(activeUntilAt, paymentRecoveryUntilAt)`, and a seat lock or prepare does so at once. A `PAYMENT_RECOVERY` admission (prepare ran, then payment was abandoned) therefore comes back from `enter` for up to the 3-minute reentry grace. When the route receives an admission whose window had already closed on arrival, it does not count it down or trap it on the expired screen; it keeps the pre-existing seat screen, where the first seat lock is rejected and expires the session, and a pending rejoin then takes the new position automatically.
+
+The confirm step inherits the same earlier deadline and keeps `activeUntilAt` separately (`queueAccessExpiresAt` in the booking store). When that window ends before the seat lock, the pay button is blocked with an access-ended notice and a rejoin action (which cancels any pending order, releases the seats and returns to the booking route) instead of the seat-lock message; a seat-lock or payment deadline that passes while the page is open also blocks the pay button on time.
 
 ### 6.3 Reservation Prepare
 

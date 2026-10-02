@@ -7,6 +7,7 @@ import { ReservationDetailView } from '@/components/reservation/reservation-deta
 import { apiClient } from '@/lib/api-client';
 import type { BenefitEntitlement, ReservationDetail } from '@grabit/shared';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -548,6 +549,46 @@ describe('ReservationDetailView QR ticket card', () => {
       reservationNumber: 'GRP-27-DETAIL-QR',
       tossOrderId: 'GRP-20260604-7O7YM',
     }));
+  });
+
+  it('judges the resume-payment deadline on the server clock, not a fast device clock', () => {
+    vi.useFakeTimers();
+    // The device runs 3 minutes fast; the server is at 06:06, deadline 06:08.
+    setSystemTime('2026-05-22T06:09:00.000Z');
+    resetServerClockForTests();
+    recordServerTimeSample({
+      serverNowMs: Date.parse('2026-05-22T06:06:00.000Z'),
+      requestStartedAtMs: Date.now() - 50,
+      responseReceivedAtMs: Date.now() + 50,
+    });
+
+    try {
+      render(
+        <ReservationDetailView
+          reservation={createReservation({
+            status: 'PENDING_PAYMENT',
+            paidAt: null,
+            paymentInfo: {
+              paymentKey: rawPaymentKey,
+              method: 'CARD',
+              amount: 160000,
+              status: 'READY',
+              paidAt: null,
+              paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+            },
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+            ticketItems: [],
+          })}
+          onCancel={vi.fn()}
+          isCancelling={false}
+          onResumePayment={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: '결제 계속하기' })).toBeInTheDocument();
+    } finally {
+      resetServerClockForTests();
+    }
   });
 
   it('keeps a handed-off payment without a callback in status review after its local deadline', () => {

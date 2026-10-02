@@ -3,6 +3,7 @@ import {
   RuntimeFlagsUnavailableError,
   buildRuntimeFlagsPayload,
   fetchRuntimeFlags,
+  parseRetryAfterMs,
 } from '@/lib/runtime-flags';
 import {
   getServerClockOffsetMs,
@@ -42,6 +43,17 @@ describe('fetchRuntimeFlags', () => {
       );
     },
   );
+
+  it('carries the server Retry-After so retries can honour it', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse({ message: 'busy' }, { status: 429, headers: { 'Retry-After': '12' } }),
+    );
+
+    const error = await fetchRuntimeFlags(fetcher).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RuntimeFlagsUnavailableError);
+    expect((error as RuntimeFlagsUnavailableError).retryAfterMs).toBe(12_000);
+  });
 
   it('propagates network failures so the query can retry', async () => {
     const fetcher = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
@@ -92,6 +104,18 @@ describe('fetchRuntimeFlags', () => {
 
     await expect(fetchRuntimeFlags(fetcher)).resolves.toEqual({ bookingEnabled: true });
     expect(getServerClockOffsetMs()).toBe(0);
+  });
+});
+
+describe('parseRetryAfterMs', () => {
+  it('reads delta seconds and HTTP dates and ignores anything else', () => {
+    const now = Date.parse('2026-10-02T11:00:00.000Z');
+
+    expect(parseRetryAfterMs('30', now)).toBe(30_000);
+    expect(parseRetryAfterMs('Fri, 02 Oct 2026 11:00:45 GMT', now)).toBe(45_000);
+    expect(parseRetryAfterMs('Fri, 02 Oct 2026 10:59:00 GMT', now)).toBe(0);
+    expect(parseRetryAfterMs('soon', now)).toBeNull();
+    expect(parseRetryAfterMs(null, now)).toBeNull();
   });
 });
 

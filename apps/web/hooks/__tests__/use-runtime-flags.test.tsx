@@ -8,8 +8,13 @@ import {
 import { act, renderHook } from '@testing-library/react';
 import {
   RUNTIME_FLAGS_ERROR_REFETCH_INTERVAL_MS,
+  RUNTIME_FLAGS_ERROR_REFETCH_MAX_INTERVAL_MS,
+  RUNTIME_FLAGS_MAX_RETRY_AFTER_MS,
+  getRuntimeFlagsErrorRefetchIntervalMs,
+  getRuntimeFlagsRetryDelayMs,
   useRuntimeFlags,
 } from '@/hooks/use-runtime-flags';
+import { RuntimeFlagsUnavailableError } from '@/lib/runtime-flags';
 import { resetServerClockForTests } from '@/lib/server-clock';
 
 vi.mock('next-intl', () => ({
@@ -61,6 +66,9 @@ async function flush(ms = 0) {
 describe('useRuntimeFlags', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Upper end of the jitter: delays match the plain 1s/2s/4s backoff and the
+    // 10s re-check. The jitter itself is covered below.
+    vi.spyOn(Math, 'random').mockReturnValue(1);
     // Deliver observer updates synchronously so only retry timers need ticking.
     notifyManager.setScheduler((callback) => callback());
     fetchMock.mockReset();
@@ -71,6 +79,7 @@ describe('useRuntimeFlags', () => {
   afterEach(() => {
     notifyManager.setScheduler((callback) => setTimeout(callback, 0));
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -130,5 +139,66 @@ describe('useRuntimeFlags', () => {
     expect(result.current.isResolved).toBe(true);
     expect(result.current.isError).toBe(false);
     expect(result.current.bookingEnabled).toBe(true);
+  });
+
+  it('keeps one jittered re-check interval per failed round across re-renders', async () => {
+    // A different random value on every call: re-planning on each render would
+    // restart the interval timer and starve the re-check.
+    let draws = 0;
+    vi.mocked(Math.random).mockImplementation(() => {
+      draws += 1;
+      return (draws % 10) / 10;
+    });
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    const { rerender } = renderRuntimeFlags();
+
+    // First round: 1 + 3 retries, each delay below its 1s/2s/4s ceiling.
+    await flush(7_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    for (let step = 0; step < 24; step += 1) {
+      rerender();
+      await flush(500);
+    }
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(4);
+  });
+});
+
+describe('runtime flag retry spacing', () => {
+  it('spreads retries over a full-jitter window instead of a fixed backoff', () => {
+    const error = new RuntimeFlagsUnavailableError('503');
+
+    expect(getRuntimeFlagsRetryDelayMs(0, error, () => 0.2)).toBe(200);
+    expect(getRuntimeFlagsRetryDelayMs(0, error, () => 0.9)).toBe(900);
+    expect(getRuntimeFlagsRetryDelayMs(2, error, () => 0.5)).toBe(2_000);
+    expect(getRuntimeFlagsRetryDelayMs(10, error, () => 1)).toBe(30_000);
+  });
+
+  it('spreads and grows the background re-check while no value is known', () => {
+    const error = new RuntimeFlagsUnavailableError('503');
+
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(1, error, () => 0)).toBe(5_000);
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(1, error, () => 1)).toBe(
+      RUNTIME_FLAGS_ERROR_REFETCH_INTERVAL_MS,
+    );
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(2, error, () => 1)).toBe(20_000);
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(3, error, () => 1)).toBe(40_000);
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(6, error, () => 1)).toBe(
+      RUNTIME_FLAGS_ERROR_REFETCH_MAX_INTERVAL_MS,
+    );
+  });
+
+  it('waits at least the server Retry-After, up to a cap', () => {
+    const throttled = new RuntimeFlagsUnavailableError('429', { retryAfterMs: 20_000 });
+    const tooLong = new RuntimeFlagsUnavailableError('503', { retryAfterMs: 600_000 });
+
+    expect(getRuntimeFlagsRetryDelayMs(0, throttled, () => 0)).toBe(20_000);
+    expect(getRuntimeFlagsErrorRefetchIntervalMs(1, throttled, () => 0)).toBe(20_000);
+    expect(getRuntimeFlagsRetryDelayMs(0, tooLong, () => 0)).toBe(
+      RUNTIME_FLAGS_MAX_RETRY_AFTER_MS,
+    );
+    // Network errors carry no Retry-After.
+    expect(getRuntimeFlagsRetryDelayMs(0, new TypeError('Failed to fetch'), () => 0)).toBe(0);
   });
 });

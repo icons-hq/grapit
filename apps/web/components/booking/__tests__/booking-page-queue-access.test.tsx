@@ -245,6 +245,9 @@ describe('BookingPage queue access window (audit #32)', () => {
     fireEvent.click(screen.getByRole('button', { name: '다음' }));
 
     expect(useBookingStore.getState().expiresAt).toBe(queueAccessExpiresAt);
+    // Kept separately so the confirm step can tell an access-window end apart
+    // from a seat-lock end.
+    expect(useBookingStore.getState().queueAccessExpiresAt).toBe(queueAccessExpiresAt);
     expect(routerPushMock).toHaveBeenCalledWith('/booking/performance-queue/confirm');
   });
 });

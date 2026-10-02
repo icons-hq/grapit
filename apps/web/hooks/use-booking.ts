@@ -5,6 +5,7 @@ import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
 import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
@@ -225,7 +226,7 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
   const lockExpiresAtMs = useBookingStore((state) => state.expiresAt);
   const serverPaymentDeadlineAtMs = useBookingStore((state) => state.paymentDeadlineAt);
 
-  return useMemo(() => {
+  const snapshot = useMemo(() => {
     const cachedPerformance = getCachedPerformanceDetail(queryClient, performanceId);
     return buildBookingPaymentSnapshot(
       lockExpiresAtMs,
@@ -233,6 +234,18 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
       cachedPerformance?.bookingPolicy,
     );
   }, [lockExpiresAtMs, performanceId, queryClient, serverPaymentDeadlineAtMs]);
+  // The snapshot is built once per deadline; expiry must still flip on time.
+  const paymentDeadlineAtMs = snapshot.paymentDeadlineAt
+    ? Date.parse(snapshot.paymentDeadlineAt)
+    : Number.NaN;
+  const isPaymentDeadlineExpired = useServerTimeReached(
+    Number.isFinite(paymentDeadlineAtMs) ? paymentDeadlineAtMs : null,
+  );
+
+  return useMemo(
+    () => ({ ...snapshot, isPaymentDeadlineExpired }),
+    [isPaymentDeadlineExpired, snapshot],
+  );
 }
 
 export function useLockSeat() {

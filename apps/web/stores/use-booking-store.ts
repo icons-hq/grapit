@@ -38,6 +38,8 @@ interface BookingState {
   posterUrl: string | null;
   expiresAt: number | null;
   paymentDeadlineAt: number | null;
+  /** Queue access window end (epoch ms); prepare is rejected after it. */
+  queueAccessExpiresAt: number | null;
 
   setDate: (date: Date | null) => void;
   setShowtime: (id: string | null) => void;
@@ -57,6 +59,7 @@ interface BookingState {
     venue: string | null;
     posterUrl: string | null;
     expiresAt: number | null;
+    queueAccessExpiresAt?: number | null;
   }) => void;
   clearBooking: () => void;
   resetBooking: () => void;
@@ -76,6 +79,7 @@ const initialState = {
   posterUrl: null,
   expiresAt: null,
   paymentDeadlineAt: null,
+  queueAccessExpiresAt: null,
 };
 
 export const useBookingStore = create<BookingState>((set) => ({
@@ -144,6 +148,7 @@ export const useBookingStore = create<BookingState>((set) => ({
       posterUrl: data.posterUrl,
       expiresAt: data.expiresAt,
       paymentDeadlineAt: null,
+      queueAccessExpiresAt: data.queueAccessExpiresAt ?? null,
     }),
 
   clearBooking: () => set(initialState),

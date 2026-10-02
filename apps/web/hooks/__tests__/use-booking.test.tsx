@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import {
   useBookingPaymentSnapshot,
   useCancelPendingReservation,
@@ -815,6 +815,37 @@ describe('use-booking payment mutations', () => {
     expect(result.current.lockExpiresAt).toBe('2026-06-09T03:33:00.000Z');
     expect(result.current.paymentDeadlineAt).toBe('2026-06-09T03:33:00.000Z');
     expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it('useBookingPaymentSnapshot() flips isPaymentDeadlineExpired when the deadline passes while mounted', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T03:25:00.000Z'));
+
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-payment-expiry',
+      performanceId: 'performance-1',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2026-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: new Date('2026-06-09T03:26:00.000Z').getTime(),
+    });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), {
+      wrapper: Wrapper,
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(60_000 + 100);
+    });
+
+    // A mount-time snapshot used to keep the pay button enabled after this.
+    expect(result.current.isPaymentDeadlineExpired).toBe(true);
 
     vi.useRealTimers();
   });

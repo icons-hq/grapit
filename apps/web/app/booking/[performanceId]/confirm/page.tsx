@@ -28,6 +28,11 @@ import {
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
+import {
+  getQueueAccessClosedCopy,
+  isQueueAccessDeadline,
+} from '@/lib/booking/queue-access';
 import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
@@ -101,6 +106,11 @@ function ConfirmPageContent() {
   const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
     useBookingStore();
   const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
+  // Prepare needs the queue access window on the server, whatever the seat
+  // lock or payment countdown says (audit #32).
+  const queueAccessExpiresAt = useBookingStore((s) => s.queueAccessExpiresAt);
+  const queueAccessClosed = useServerTimeReached(queueAccessExpiresAt);
+  const queueAccessCopy = getQueueAccessClosedCopy(locale);
   const user = useAuthStore((s) => s.user);
   const {
     paymentDeadlineAt,
@@ -250,9 +260,14 @@ function ConfirmPageContent() {
   }, [bookingPath, cancelPending, refetchRecovery, returnOrderId, router, unlockAll]);
 
   const handleExpire = useCallback(() => {
-    toast.error(confirmCopy.lockExpiredRedirect);
+    const { expiresAt, queueAccessExpiresAt: accessEndsAt } = useBookingStore.getState();
+    toast.error(
+      isQueueAccessDeadline(expiresAt, accessEndsAt)
+        ? queueAccessCopy.toast
+        : confirmCopy.lockExpiredRedirect,
+    );
     if (returnOrderId) void refetchRecovery();
-  }, [confirmCopy, refetchRecovery, returnOrderId]);
+  }, [confirmCopy, queueAccessCopy, refetchRecovery, returnOrderId]);
 
   const handleWidgetReady = useCallback(() => {
     setWidgetReady(true);
@@ -322,6 +337,7 @@ function ConfirmPageContent() {
   async function handlePayment() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
+    if (queueAccessClosed) return;
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
@@ -515,6 +531,7 @@ function ConfirmPageContent() {
     || lockedMethodMismatch
     || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
+    || queueAccessClosed
     || !agreed
     || !widgetAgreementAgreed
     || isProcessing
@@ -523,6 +540,8 @@ function ConfirmPageContent() {
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
   const ctaText = !bookingAvailable
     ? bookingDisabledMessage
+    : queueAccessClosed
+    ? queueAccessCopy.title
     : lockFailureMessage
     ? t('paymentRecovery.reselectPrompt')
     : isPaymentDeadlineExpired
@@ -591,7 +610,23 @@ function ConfirmPageContent() {
           </section>
         )}
 
-        {isPaymentDeadlineExpired && (
+        {queueAccessClosed && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{queueAccessCopy.title}</p>
+            <p className="mt-1 text-sm text-red-700">{queueAccessCopy.body}</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting}
+            >
+              {queueAccessCopy.rejoin}
+            </Button>
+          </section>
+        )}
+
+        {isPaymentDeadlineExpired && !queueAccessClosed && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-red-700">
               {t('paymentRecovery.expiredTitle')}
