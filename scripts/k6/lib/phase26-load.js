@@ -30,8 +30,9 @@ export const CONFIRM_MODES = ['off', 'pg-stub'];
 
 // Per-buyer API throttles: the global `default` throttler in app.module.ts and
 // TRAFFIC_POLICIES in traffic-defense.service.ts (asserted by the unit test).
-// Authenticated requests count per user; the public browse requests count per
-// refresh cookie, which is per buyer too.
+// Every request carries the buyer's access token, so each limit counts per buyer
+// account. The public browse budget is stricter than the API: catalog reads are
+// not throttled and the seat map read allows 60 per 10 s (SEAT_STATUS_THROTTLE).
 export const BUYER_THROTTLES = {
   default: { limit: 60, ttlSeconds: 60 },
   'queue-entry': { limit: 20, ttlSeconds: 60 },

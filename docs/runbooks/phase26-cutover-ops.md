@@ -561,7 +561,7 @@ journeys per minute) and refuse to start when it exceeds one of these limits:
 
 | API throttle (per buyer) | Limit | Requests per journey |
 | --- | --- | --- |
-| `default`, public browse (keyed by the refresh cookie) | 60 / 60 s | 2 (detail + seat map) |
+| `default`, public browse (per buyer account through its access token) | 60 / 60 s (script budget) | 2 (detail + seat map) |
 | `default`, authenticated | 60 / 60 s | enter, lock + unlock, prepare + cancel, confirm; a `WAITING` buyer adds 60 / poll-interval status polls |
 | `queue-entry` | 20 / 60 s | 1 per queue or booking journey |
 | `lock-seat` | 12 / 15 s | 1 per booking journey |
@@ -572,7 +572,10 @@ With the default 3 s think time, booking share × 20 must stay at or below 8 for
 prepare and 6 for confirm, so a booking share above about 30% (`pg-stub`) or
 40% needs a longer think time. A think time below 2 s or a poll interval of 1 s
 always exceeds the `default` limit. The limits mirror `app.module.ts` and
-`traffic-defense.service.ts`; the unit test fails when they drift.
+`traffic-defense.service.ts`; the unit test fails when they drift. The public
+browse row is stricter than the API: catalog reads are not throttled, and the
+seat map read has its own budget of 60 per 10 s per account
+(`SEAT_STATUS_THROTTLE`). No throttle selects its bucket by cookie.
 
 ### Synthetic buyer pool
 

@@ -169,11 +169,11 @@ The following table summarizes actual controller groups. It is intentionally gro
 | Support content | `GET /api/v1/support-content?locale=` (public; Valkey cache 30s per locale cleared by admin mutations, 120 req/min per client, scheduled/ended notices filtered, urgent/maintenance/payment notices fall back en → ko by translation group) |
 | Queue | `POST /api/v1/queue/performances/:performanceId/enter`, `GET /api/v1/queue/sessions/:queueSessionId` |
 | Booking | `POST /api/v1/booking/seats/lock`, `DELETE /api/v1/booking/seats/lock/:showtimeId/:seatId`, `GET /api/v1/booking/my-locks/:showtimeId`, `DELETE /api/v1/booking/seats/lock-all/:showtimeId`, `GET /api/v1/booking/schedules/:showtimeId/seats` |
-| Reservation/payment confirm | `POST /api/v1/reservations/prepare`, `POST /api/v1/payments/confirm`, `GET /api/v1/users/me/reservations`, `GET /api/v1/reservations`, `GET /api/v1/reservations/:id`, `PUT /api/v1/reservations/:id/cancel`, `PUT /api/v1/reservations/:id/cancel-pending` |
+| Reservation/payment confirm | `POST /api/v1/reservations/prepare`, `POST /api/v1/payments/confirm`, `GET /api/v1/users/me/reservations`, `GET /api/v1/reservations`, `GET /api/v1/reservations/:id`, `PUT /api/v1/reservations/:id/cancel`, `PUT /api/v1/reservations/:id/ticket-items/:ticketItemId/cancel`, `GET /api/v1/reservations/:id/ticket-items/:ticketItemId/refund-preview`, `PUT /api/v1/reservations/:id/cancel-pending` |
 | Payment | `POST /api/v1/payments/branch`, `POST /api/v1/payments/branch/release`, `POST /api/v1/payments/async-return`, `POST /api/v1/payments/toss/webhook` |
 | Refund | `GET /api/v1/reservations/:id/refund-preview`, `POST /api/v1/reservations/:id/refund` |
-| Ticket | `GET /api/v1/tickets/reservations/:id` |
-| Field | `POST /api/v1/field/check-in/verify`, `POST /api/v1/field/check-in/consume`, `POST /api/v1/field/check-in/offline-sync`, `GET /api/v1/field/monitor/summary`, `GET /api/v1/field/monitor/logs` |
+| Ticket | `GET /api/v1/tickets/reservations/:id`, `POST /api/v1/tickets/reservations/:id/email` |
+| Field | `GET /api/v1/field/check-in/showtimes`, `POST /api/v1/field/check-in/verify`, `POST /api/v1/field/check-in/consume`, `POST /api/v1/field/check-in/offline-sync`, `POST /api/v1/field/benefits/redeem`, `GET /api/v1/field/monitor/summary`, `GET /api/v1/field/monitor/logs` |
 | Prewarm | `POST /api/v1/internal/prewarm/services/:serviceName`, `POST /api/v1/internal/prewarm/services/:serviceName/step-down` |
 | Admin performance/content | `GET/POST /api/v1/admin/performances`, `GET/PUT/DELETE /api/v1/admin/performances/:id`, `POST /api/v1/admin/performances/:id/publish`, `POST /api/v1/admin/performances/:id/seat-map`, upload endpoints, banner endpoints, support-content endpoints, translation endpoints |
 | Admin operations | dashboard summary/revenue/genre/payment/top-performances, bookings list/detail/export/refund/manual-open, operations inbox, signup failures, seat operations, field monitor, settlement, security, audit, users, cutover gates |
@@ -192,10 +192,11 @@ Current schema groups:
 | --- | --- |
 | Identity | `users.ts`, `social-accounts.ts`, `refresh-tokens.ts`, `email-verification-tokens.ts` |
 | Consent/legal | `consent-items.ts`, `consent-audit-logs.ts`, `terms-agreements.ts`, `legal-content.ts` |
-| Catalog | `performances.ts`, `venues.ts`, `showtimes.ts`, `castings.ts`, `price-tiers.ts`, `banners.ts` |
+| Catalog | `performances.ts`, `performance-drafts.ts`, `venues.ts`, `showtimes.ts`, `castings.ts`, `price-tiers.ts`, `banners.ts` |
 | Layout/seats | `venue-layouts.ts`, `venue-layout-floors.ts`, `venue-layout-sections.ts`, `venue-layout-seats.ts`, `seat-maps.ts`, `performance-seat-tiers.ts`, `performance-seat-assignments.ts`, `seat-inventories.ts` |
-| Booking/payment | `booking-policies.ts`, `reservations.ts`, `reservation-seats.ts`, `payments.ts`, `payment-webhook-events.ts`, `refunds.ts` |
-| QR/entry | `tickets.ts`, `ticket-scan-events.ts` |
+| Booking/payment | `booking-policies.ts`, `reservations.ts`, `reservation-seats.ts`, `reservation-payment-failure-diagnostics.ts`, `payments.ts`, `payment-webhook-events.ts`, `refunds.ts` |
+| QR/entry | `ticket-items.ts`, `tickets.ts`, `ticket-scan-events.ts` |
+| Benefits | `ticket-benefits.ts` |
 | Admin/audit | `admin-audit-logs.ts`, `booking-operation-audit-logs.ts`, `admin-access-allowlist.ts`, `seat-operation-history.ts`, `account-merge.ts` |
 | Support/translation | `support-threads.ts`, `support-messages.ts`, `support-faqs.ts`, `support-notices.ts`, `translation-sources.ts`, `translation-drafts.ts` |
 
@@ -211,6 +212,8 @@ Current schema groups:
 - `schemas/field-operations.schema.ts`
 - `schemas/admin-operations.schema.ts`
 - `schemas/admin-dashboard.schema.ts`
+- `schemas/benefit.schema.ts`, `schemas/finance-ledger.schema.ts`, `schemas/performance-preparation.schema.ts`, `schemas/ticket-item.schema.ts`
+- `checkout-payment-method.ts`, `auth-return.ts`, `catalog-freshness.ts`, `field-check-in-ingress.ts`, `seat-identity.ts`
 - related `types/*`, `constants/*`, and `flags.ts`
 
 Use shared schemas for request/response validation and UI contract tests whenever the payload crosses web/API boundaries.
@@ -573,8 +576,8 @@ Important non-sensitive production invariants:
 - worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window; the async DONE compensation recovery sweep also runs once at the start of each window (`ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS`, default 60000, `0` disables it); a sweep failure does not skip the window, and both a sweep failure and a pg-boss that is not processing jobs end the execution with a non-zero exit code; if handles still hold the process 5 seconds after cleanup (for example timers of a pg-boss instance discarded after a failed start), the Job exits with that status instead of running until the task timeout
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
 - API, Web and worker `BOOKING_ENABLED` come from one repository variable (unset deploys `true`); a deploy never writes `true` over a live closed API/Web without `allow_booking_reopen=true`; see the kill switch in `docs/runbooks/managed-demo-cost-floor.md`
-- API request timeout is `3600s` for Socket.IO; startup and liveness probes use `/api/v1/health`, which checks only Valkey so database blips do not restart instances
-- prewarm changes the service-level minimum (no new revision; `PREWARM_SCALING_SCOPE=template` is the revision-template fallback), is capped by `API_MAX_INSTANCES`, and confirms completion by reading the service back (`run.services.get`), not the operation
+- API request timeout is `3600s` for Socket.IO; startup and liveness probes (liveness every 10 s, 6 failures) use `/api/v1/health`, which checks only Valkey so database blips do not restart instances
+- prewarm changes the service-level minimum (no new revision; `PREWARM_SCALING_SCOPE=template` is the revision-template fallback), is capped by `API_MAX_INSTANCES`, and confirms completion by reading the service back (`run.services.get`), not the operation; a readback that has not settled within `PREWARM_OPERATION_WAIT_MS` (default 45000) answers `202` with `state: pending`
 
 ### 8.4 Runtime Configuration
 
@@ -599,6 +602,8 @@ Production convention:
 - Commands issued while the shared client is disconnected wait in its offline queue and fail every `maxRetriesPerRequest + 1` (4) reconnect attempts instead of waiting for the outage to end and then running late (for example seat locks for requests that already timed out). Standalone ioredis does this itself; in cluster mode, whose offline queue has no per-request limit, the provider's `clusterRetryStrategy` drops the queue at the same cadence. Each standalone connect attempt is bounded by a 3 second connect timeout and each cluster attempt by the 1 second slot refresh timeout, so a queued request fails within about 4 seconds when connections are refused, and within about 16 seconds (standalone, 4 × (3 s + 1 s backoff)) or 8 seconds (cluster) when packets are dropped. The Socket.IO subscriber never drops queued commands. Subscriptions it already had are re-sent by ioredis after a reconnect (`autoResubscribe`, and the cluster subscriber in cluster mode), but a `SUBSCRIBE`/`PSUBSCRIBE` issued while it is disconnected, such as the adapter's own on an instance that starts during an outage, exists only in that queue until it succeeds. `quit()` on a disconnected provider client fails queued commands and stops reconnecting, so the bounded worker can exit during an outage.
 - `DEEPL_AUTH_KEY` is optional. With a DeepL Free API key, admin translation draft generation calls `api-free.deepl.com` (10-second timeout; a provider failure returns 503 without creating partial drafts). Without it, drafts contain the Korean source behind a `[manual-review:deepl-unavailable]` prefix. The API rejects review and publish while the text still starts with `[manual-review:`, so an operator must enter the translation by hand. Public pages also ignore already published drafts that carry the prefix and show the Korean source instead.
 - Optional `EDGE_PROXY_SHARED_SECRET` (API env and edge Worker secret, same value) switches client-IP trust to the edge-secret check described in 10.1. Provision the Worker secret first, then the API. Unset keeps the Cloudflare-peer `cf-connecting-ip` fallback. The API accepts a comma-separated list for rotation; the Worker holds one value. Remove the API binding before any Worker rollback or load-balancer fallback that would not send the secret (managed-demo runbook, Phase 4).
+- The Deploy workflow reads repository variables for the deploy posture and its safety checks (`BOOKING_ENABLED`, `MIGRATION_LOCK_TIMEOUT`, `MIGRATION_STATEMENT_TIMEOUT`, `MIGRATION_FREEZE`, `API_CONCURRENCY`, the connection-budget inputs `PGBOSS_POOL_MAX`, `DB_CONNECTION_RESERVE` and `DB_CONNECTION_BUDGET_ENFORCE`, `CUTOVER_GATE_LEDGER_PATH`, `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS`, `PREWARM_SCALING_SCOPE`). It passes `PGBOSS_POOL_MAX`, `PGBOSS_START_MAX_ATTEMPTS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` and `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` to the API and worker, and the `SMS_*` limits (section 10.4) to the API, only when the variable of the same name is set. Defaults are in the managed-demo runbook ("Deploy safety settings", "Optional runtime settings").
+- `ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS`, `PREWARM_OPERATION_WAIT_MS`, `DEEPL_AUTH_KEY` and `EDGE_PROXY_SHARED_SECRET` are not wired into the Deploy workflow. Set them on the API service by hand when needed: deploys keep service env vars and secret bindings they do not set, but rebuild the worker Job, so a value set by hand on the Job lasts only until the next deploy.
 
 ### 8.5 Object Storage And Uploads
 

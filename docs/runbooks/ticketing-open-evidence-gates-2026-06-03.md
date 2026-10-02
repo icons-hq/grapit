@@ -655,9 +655,10 @@ during the first 24 hours.
 - [ ] Confirm alert routing for Sentry, Cloud Run, Cloud SQL, Valkey,
       Cloudflare, payment provider, SMS provider, and business metrics.
 - [ ] Confirm the Sentry API and web projects keep Data Scrubber and Use
-      Default Scrubbers on, with `phone`, `paymentKey`, `refreshToken` and
-      `tossWebhookSecret` in Additional Sensitive Fields (second layer behind
-      the code redaction in `docs/03-ARCHITECTURE.md` section 9).
+      Default Scrubbers on, with `phone`, `paymentKey`, `refreshToken`,
+      `tossWebhookSecret` and `ticket` (the field QR link parameter) in
+      Additional Sensitive Fields (second layer behind the code redaction in
+      `docs/03-ARCHITECTURE.md` section 9).
 - [ ] Create and dry-run Sentry alert rules for new API events tagged
       `http.status_code:500` and for spikes of events tagged `toss.code`
       (Toss failures answered with `502`); check spike protection and rate
