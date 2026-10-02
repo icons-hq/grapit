@@ -14,6 +14,19 @@ const ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDER_SET = new Set<PaymentProvider>(
 );
 
 /**
+ * The single list of asynchronously approved foreign wallets: checkout branching,
+ * webhook method resolution, secret key scope, Provider Handoff release and the
+ * abandoned handoff review all read it.
+ */
+export function isAsyncApprovalForeignEasyPayProvider(
+  provider: PaymentProvider | null | undefined,
+): boolean {
+  return provider !== null
+    && provider !== undefined
+    && ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDER_SET.has(provider);
+}
+
+/**
  * A browser may release its own Provider Handoff only right after the provider SDK
  * rejected before opening checkout, which happens within seconds of the handoff.
  *
@@ -44,6 +57,6 @@ export const PAYMENT_HANDOFF_UNKNOWN_MESSAGE =
 export function isMerchantConfirmedCheckoutMethod(paymentMethod: PaymentMethod): boolean {
   return !(
     paymentMethod.method === 'FOREIGN_EASY_PAY'
-    && ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDER_SET.has(paymentMethod.provider)
+    && isAsyncApprovalForeignEasyPayProvider(paymentMethod.provider)
   );
 }

@@ -97,6 +97,7 @@ import {
 import {
   PAYMENT_HANDOFF_RELEASE_WINDOW_MS,
   PAYMENT_HANDOFF_UNKNOWN_MESSAGE,
+  isAsyncApprovalForeignEasyPayProvider,
   isMerchantConfirmedCheckoutMethod,
 } from './payment-handoff-policy.js';
 
@@ -132,11 +133,6 @@ const ASYNC_DONE_COMPENSATION_SWEEP_LIMIT = 100;
  */
 const UNSUPPORTED_TOSS_CHECKOUT_PROVIDERS = new Set<PaymentProvider>(['TRUEMONEY']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
-  'ALIPAY_PLUS',
-  'TRUEMONEY',
-]);
 
 const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
@@ -3942,14 +3938,14 @@ export class PaymentService {
   private requiresAsyncWebhookBranch(paymentMethod: PaymentMethod): boolean {
     return (
       paymentMethod.method === 'FOREIGN_EASY_PAY'
-      && ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(paymentMethod.provider)
+      && isAsyncApprovalForeignEasyPayProvider(paymentMethod.provider)
     );
   }
 
   private usesForeignEasyPaySecret(
     provider: TossPaymentAsyncReturnRequest['provider'],
   ): boolean {
-    return provider !== undefined && ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(provider);
+    return isAsyncApprovalForeignEasyPayProvider(provider);
   }
 
   private usesProviderChargeQuote(provider: PaymentProvider): boolean {
@@ -4166,7 +4162,7 @@ export class PaymentService {
       return 'FOREIGN_EASY_PAY';
     }
 
-    if (ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(provider)) {
+    if (isAsyncApprovalForeignEasyPayProvider(provider)) {
       return 'FOREIGN_EASY_PAY';
     }
 
