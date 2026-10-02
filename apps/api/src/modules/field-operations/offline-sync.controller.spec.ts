@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Agent } from 'node:http';
 import { type ExecutionContext, type INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
@@ -31,6 +32,7 @@ function syncBody() {
 // not bypass field.scan.consume (audit #111).
 describe('OfflineSyncController permissions', () => {
   let app: INestApplication;
+  let agent: Agent;
   let user: Record<string, unknown>;
   const service = { syncPendingAttempts: vi.fn() };
 
@@ -52,6 +54,10 @@ describe('OfflineSyncController permissions', () => {
       .compile();
     app = moduleRef.createNestApplication();
     await app.init();
+    // One listening server and one keep-alive socket for the suite. Without it
+    // supertest listens on and closes a new ephemeral port per request.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   beforeEach(() => {
@@ -59,6 +65,7 @@ describe('OfflineSyncController permissions', () => {
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
@@ -70,6 +77,7 @@ describe('OfflineSyncController permissions', () => {
 
     const response = await request(app.getHttpServer())
       .post('/field/check-in/offline-sync')
+      .agent(agent)
       .send(syncBody());
 
     expect(response.status).toBe(403);
@@ -84,6 +92,7 @@ describe('OfflineSyncController permissions', () => {
 
     const response = await request(app.getHttpServer())
       .post('/field/check-in/offline-sync')
+      .agent(agent)
       .send(syncBody());
 
     expect(response.status).toBe(201);

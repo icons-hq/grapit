@@ -1022,13 +1022,27 @@ export class QrTicketService implements OnModuleInit {
     const logRef = `reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}, claimedAt=${claimedAt.toISOString()}`;
     this.logger.log(`QR reminder claimed. ${logRef}, ticketCount=${claimed.length}`);
 
+    // The claim is the authority on what this job may send. A seat cancelled or
+    // already emailed after the context read was not claimed, so its token must
+    // not go out with this reminder.
+    const claimedIds = new Set(claimed.map((row) => row.id));
+    const claimedTickets = context.tickets.filter((ticket) => claimedIds.has(ticket.id));
+    if (claimedTickets.length !== context.tickets.length) {
+      this.logger.warn(
+        `QR reminder partial claim. ${logRef}, readTicketCount=${context.tickets.length}, claimedTicketCount=${claimedTickets.length}`,
+      );
+    }
+
     try {
-      await this.sendTicketEmail(context);
+      await this.sendTicketEmail({ ...context, tickets: claimedTickets });
     } catch (error) {
       // Release the claim so the pg-boss retry can send. A crash before this
       // point leaves the claim in place (at-most-once reminder, never duplicate).
-      if (await this.releaseReminderClaim(claimed.map((row) => row.id), claimedAt)) {
-        this.logger.warn(`QR reminder claim released after send failure. ${logRef}`);
+      const releasedCount = await this.releaseReminderClaim([...claimedIds], claimedAt);
+      if (releasedCount !== null && releasedCount > 0) {
+        this.logger.warn(`QR reminder claim released after send failure. ${logRef}, releasedCount=${releasedCount}`);
+      } else if (releasedCount === 0) {
+        this.logger.warn(`QR reminder claim already superseded after send failure. ${logRef}, releasedCount=0`);
       }
       throw error;
     }
@@ -1036,9 +1050,10 @@ export class QrTicketService implements OnModuleInit {
     this.logger.log(`QR reminder sent. ${logRef}`);
   }
 
-  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<boolean> {
+  /** Returns how many claimed rows were released, or null when the release itself failed. */
+  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<number | null> {
     try {
-      await this.db
+      const released = await this.db
         .update(tickets)
         .set({
           emailSentAt: null,
@@ -1049,14 +1064,15 @@ export class QrTicketService implements OnModuleInit {
             inArray(tickets.id, ticketIds),
             eq(tickets.emailSentAt, claimedAt),
           ),
-        );
-      return true;
+        )
+        .returning({ id: tickets.id });
+      return released.length;
     } catch (error) {
       this.logger.error(
         `QR reminder claim release failed; email_sent_at keeps an unsent claim. ticketIds=${ticketIds.join(',')}`,
         error instanceof Error ? error.stack : String(error),
       );
-      return false;
+      return null;
     }
   }
 

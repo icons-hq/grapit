@@ -13,6 +13,7 @@ import {
 const SYNC_BATCH_SIZE = 100;
 const SYNC_LOCK_NAME = 'grabit-field-offline-sync';
 export const RESOLVED_SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const SYNC_BUSY_MESSAGE = '다른 탭에서 동기화 중입니다. 잠시 뒤 다시 시도하세요.';
 
 function subscribeNetwork(update: () => void) {
   window.addEventListener('online', update); window.addEventListener('offline', update);
@@ -47,24 +48,38 @@ export function useFieldOfflineQueue(
   const [snapshot, setSnapshot] = useState<{ scope: string; items: ScannerOfflineQueueItem[] }>({ scope, items: [] });
   const items = snapshot.scope === scope ? snapshot.items : [];
   const [devicePending, setDevicePending] = useState<FieldDevicePendingGroup[]>([]);
+  // Bumped on every reload of the device queue, including changes written by
+  // other tabs, so a screen can re-check its QR against the queue.
+  const [revision, setRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const { mutateAsync, isPending: isSyncing } = useFieldOfflineSync();
   const syncing = useRef(false);
+  // A sync started before the showtime was restored or changed finishes with a
+  // refresh. It must reload the showtime on screen now, not the one it started for.
+  const latestScope = useRef({ scannerUserId, showtimeId });
+  useEffect(() => { latestScope.current = { scannerUserId, showtimeId }; }, [scannerUserId, showtimeId]);
 
   const refresh = useCallback(async () => {
+    const target = latestScope.current;
     // Every unsynced record on this device stays visible, whichever account or
     // showtime saved it, so switching showtime or account cannot hide it.
-    setDevicePending(groupDevicePending(await listPendingScanAttempts({ syncState: 'pending' })));
-    if (!scannerUserId || !showtimeId) { setSnapshot({ scope, items: [] }); return; }
-    const records = await listPendingScanAttempts({ scannerUserId, showtimeId });
-    setSnapshot({ scope, items: records.map((record) => ({ deviceAttemptId: record.deviceAttemptId, state: record.syncState,
-      attemptedAt: record.attemptedAt, reason: record.resultLabel ?? record.rejectionReason ?? null })) });
-  }, [scannerUserId, showtimeId, scope]);
+    const devicePendingRecords = await listPendingScanAttempts({ syncState: 'pending' });
+    const records = target.scannerUserId && target.showtimeId
+      ? await listPendingScanAttempts({ scannerUserId: target.scannerUserId, showtimeId: target.showtimeId })
+      : [];
+    // The showtime or account changed meanwhile; the refresh started for it wins.
+    if (latestScope.current !== target) return;
+    setDevicePending(groupDevicePending(devicePendingRecords));
+    setSnapshot({ scope: `${target.scannerUserId ?? ''}:${target.showtimeId}`, items: records.map(toQueueItem) });
+    setRevision((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     void pruneResolvedScanAttempts(new Date(Date.now() - RESOLVED_SCAN_RETENTION_MS)).catch(() => undefined);
   }, []);
-  useEffect(() => { void refresh().catch(() => setError('이 기기의 대기 기록을 불러오지 못했습니다. 현장 책임자에게 확인해주세요.')); }, [refresh]);
+  useEffect(() => {
+    void refresh().catch(() => setError('이 기기의 대기 기록을 불러오지 못했습니다. 현장 책임자에게 확인해주세요.'));
+  }, [refresh, scope]);
   useEffect(() => {
     // Other tabs (each OS camera scan opens one) write to the same IndexedDB.
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh().catch(() => undefined); };
@@ -79,12 +94,12 @@ export function useFieldOfflineQueue(
     return result.status;
   };
 
-  const sync = useCallback(async () => {
+  const sync = useCallback(async ({ reportBusy = true }: { reportBusy?: boolean } = {}) => {
     if (!scannerUserId || syncing.current) return;
     syncing.current = true;
     setError(null);
     try {
-      await withDeviceSyncLock(async () => {
+      const ran = await withDeviceSyncLock(async () => {
         // The server rejects another account's records permanently, so only
         // this scanner's records are sent; every showtime is included.
         const pending = await listPendingScanAttempts({ scannerUserId, syncState: 'pending' });
@@ -108,6 +123,9 @@ export function useFieldOfflineQueue(
         }
         if (failed) setError('동기화를 완료하지 못했습니다. 대기 기록은 유지되며 다시 시도할 수 있습니다.');
       });
+      // A staff-initiated sync must not end silently while another tab, possibly
+      // a frozen background tab, holds the device lock.
+      if (!ran && reportBusy) setError(SYNC_BUSY_MESSAGE);
     } catch {
       setError('동기화를 완료하지 못했습니다. 대기 기록은 유지되며 다시 시도할 수 있습니다.');
     } finally {
@@ -119,7 +137,7 @@ export function useFieldOfflineQueue(
   useEffect(() => {
     if (!autoSync || !scannerUserId) return;
     const syncWhenOnline = () => {
-      if (navigator.onLine) void sync();
+      if (navigator.onLine) void sync({ reportBusy: false });
     };
     // Covers a page opened after recovery as well as recovery while open.
     syncWhenOnline();
@@ -127,7 +145,19 @@ export function useFieldOfflineQueue(
     return () => window.removeEventListener('online', syncWhenOnline);
   }, [autoSync, scannerUserId, sync]);
 
-  return { items, devicePending, error, record, sync, refresh, isSyncing };
+  return { items, devicePending, revision, error, record, sync, refresh, isSyncing };
+}
+
+function toQueueItem(record: PendingScanAttemptRecord): ScannerOfflineQueueItem {
+  return {
+    deviceAttemptId: record.deviceAttemptId,
+    state: record.syncState,
+    attemptedAt: record.attemptedAt,
+    reason: record.resultLabel ?? record.rejectionReason ?? null,
+    result: record.result ?? null,
+    resultLabel: record.resultLabel ?? null,
+    rejectionReason: record.rejectionReason ?? null,
+  };
 }
 
 function groupDevicePending(records: readonly PendingScanAttemptRecord[]): FieldDevicePendingGroup[] {
@@ -147,15 +177,22 @@ function groupDevicePending(records: readonly PendingScanAttemptRecord[]): Field
   return [...groups.values()].sort((a, b) => a.oldestAttemptedAt.localeCompare(b.oldestAttemptedAt));
 }
 
-async function withDeviceSyncLock(task: () => Promise<void>): Promise<void> {
-  // Tabs on one device share the queue. When another tab already holds the
-  // lock it is syncing the same records, so this tab skips instead of waiting.
+/**
+ * Runs the task under the device-wide sync lock and reports whether it ran.
+ * Tabs on one device share the queue. When another tab already holds the lock
+ * it is syncing the same records, so this tab skips instead of waiting.
+ */
+async function withDeviceSyncLock(task: () => Promise<void>): Promise<boolean> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
   if (!locks?.request) {
     await task();
-    return;
+    return true;
   }
+  let ran = false;
   await locks.request(SYNC_LOCK_NAME, { ifAvailable: true }, async (lock) => {
-    if (lock) await task();
+    if (!lock) return;
+    ran = true;
+    await task();
   });
+  return ran;
 }

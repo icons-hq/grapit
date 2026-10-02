@@ -100,6 +100,26 @@ describe('resolveRestorableFieldShowtime', () => {
     )).toBe(lateNight);
   });
 
+  it('does not restore last night\'s show in a tab opened the next morning', () => {
+    // Chosen 2026-10-02 19:30 KST for the 20:00 KST show, camera tab opened 2026-10-03 07:00 KST:
+    // the choice is still inside its 12 hour TTL and the show started 11 hours ago.
+    const lastNight = { id: 'last-night', dateTime: '2026-10-02T11:00:00.000Z' };
+    const nextMorning = new Date('2026-10-02T22:00:00.000Z');
+    expect(resolveRestorableFieldShowtime(
+      { showtimeId: lastNight.id, showtimeDateTime: lastNight.dateTime, selectedAt: '2026-10-02T10:30:00.000Z' },
+      [lastNight],
+      nextMorning,
+    )).toBeNull();
+  });
+
+  it('keeps a show that started before midnight KST for six hours after its start', () => {
+    // 2026-10-02 23:00 KST show, restored the next KST day.
+    const late = { id: 'late', dateTime: '2026-10-02T14:00:00.000Z' };
+    const selection = { showtimeId: late.id, showtimeDateTime: late.dateTime, selectedAt: '2026-10-02T13:30:00.000Z' };
+    expect(resolveRestorableFieldShowtime(selection, [late], new Date('2026-10-02T19:59:00.000Z'))).toBe(late);
+    expect(resolveRestorableFieldShowtime(selection, [late], new Date('2026-10-02T20:01:00.000Z'))).toBeNull();
+  });
+
   it('rejects a choice whose selectedAt is in the future', () => {
     expect(resolveRestorableFieldShowtime(
       selection({ selectedAt: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString() }), [EVENING], NOW,

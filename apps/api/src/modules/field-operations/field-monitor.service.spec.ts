@@ -311,4 +311,26 @@ describe('FieldMonitorService RED contract', () => {
     expect(where).toContain('"gate_showtimes"."performance_id" = $');
     expect(where).toContain('"ticket_scan_events"."requested_showtime_id" = $');
   });
+
+  it.each([
+    // The duplicate KPI and duplicate_spike count both results; verify records already_used.
+    ['duplicate', ['duplicate', 'already_used']],
+    ['tampered', ['tampered']],
+    ['wrong_showtime', ['wrong_showtime']],
+    ['expired', ['expired']],
+    ['entered', ['success', 'offline_synced']],
+  ] as const)('filters the %s outcome by the scan results the KPIs count', async (outcome, results) => {
+    const { service, db } = createDependencies();
+    const calls: ChainCall[] = [];
+    db.select.mockReturnValueOnce(chainResult([], calls));
+
+    await service.listScanLogs({ eventId: 'event-girl-rules-20260704', showtimeId: VALID_SHOWTIME_ID, outcome });
+
+    const where = dialect.sqlToQuery(calls.find((call) => call.method === 'where')!.args[0] as SQL);
+    // A bound array inside any() rendered as a row constructor that PostgreSQL rejects.
+    expect(where.sql).not.toContain('any(');
+    const inList = where.sql.match(/"ticket_scan_events"\."result" in \(([^)]*)\)/);
+    const placeholders = inList?.[1]?.split(', ') ?? [];
+    expect(placeholders.map((placeholder) => where.params[Number(placeholder.slice(1)) - 1])).toEqual(results);
+  });
 });

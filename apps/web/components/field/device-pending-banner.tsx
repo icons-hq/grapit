@@ -13,6 +13,11 @@ interface DevicePendingBannerProps {
   groups: readonly FieldDevicePendingGroup[];
   currentUserId: string | undefined;
   currentShowtimeId: string;
+  /**
+   * Every unsynced entry of the signed-in account, current showtime included.
+   * The sync button sends all of them, so its count must not leave any out.
+   */
+  ownPendingCount: number;
   canSync: boolean;
   isSyncing: boolean;
   describeShowtime: (showtimeId: string) => ShowtimeLabel | null;
@@ -29,6 +34,7 @@ export function DevicePendingBanner({
   groups,
   currentUserId,
   currentShowtimeId,
+  ownPendingCount,
   canSync,
   isSyncing,
   describeShowtime,
@@ -45,7 +51,6 @@ export function DevicePendingBanner({
     .filter((group) => group.scannerUserId !== currentUserId)
     .reduce((sum, group) => sum + group.count, 0);
   const total = elsewhere.reduce((sum, group) => sum + group.count, 0);
-  const ownCount = own.reduce((sum, group) => sum + group.count, 0);
 
   return (
     <section
@@ -105,7 +110,7 @@ export function DevicePendingBanner({
         </p>
       )}
 
-      {ownCount > 0 && (
+      {ownPendingCount > 0 && (
         <Button
           type="button"
           variant="outline"
@@ -114,7 +119,7 @@ export function DevicePendingBanner({
           onClick={onSync}
         >
           <RefreshCcw className="h-4 w-4" />
-          {isSyncing ? '동기화 중' : `내 대기 ${ownCount}건 동기화`}
+          {isSyncing ? '동기화 중' : `이 계정 대기 전체 ${ownPendingCount}건 동기화`}
         </Button>
       )}
     </section>

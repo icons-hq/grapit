@@ -140,13 +140,17 @@ const KPI_DEFINITIONS = [
   },
 ] as const;
 
+// Each option matches the results the server records. '중복' covers both
+// duplicate and already_used, like the duplicate KPI and alert. Offline pending
+// is never recorded on the server, so it is not offered.
 const OUTCOME_OPTIONS = [
   { value: 'all', label: '전체 결과' },
   { value: 'entered', label: '입장 처리' },
   { value: 'duplicate', label: '중복' },
-  { value: 'tampered', label: '위조/거절' },
+  { value: 'tampered', label: '위조/확인 불가' },
+  { value: 'wrong_showtime', label: '다른 회차' },
+  { value: 'expired', label: '만료' },
   { value: 'refunded_cancelled', label: '환불/취소' },
-  { value: 'offline_pending', label: '오프라인 보류' },
 ] as const;
 
 const OFFLINE_STATE_OPTIONS = [
@@ -680,8 +684,11 @@ function labelOutcome(outcome: string): string {
     case 'offline_pending':
       return '오프라인 보류';
     case 'tampered':
-    case 'expired':
+      return '위조/확인 불가';
     case 'wrong_showtime':
+      return '다른 회차';
+    case 'expired':
+      return '만료';
     case 'rejected':
     default:
       return '거절';

@@ -165,6 +165,34 @@ describe('FieldMonitor', () => {
     expect(screen.getByRole('option', { name: '동기화 완료' })).toBeInTheDocument();
   });
 
+  it('offers only recorded outcomes and filters duplicates the way the duplicate KPI counts them (audit #113, #114)', async () => {
+    for (const method of ['hasPointerCapture', 'setPointerCapture', 'releasePointerCapture']) {
+      Object.defineProperty(HTMLElement.prototype, method, { value: () => false, configurable: true });
+    }
+    Element.prototype.scrollIntoView = function scrollIntoView() {};
+    const user = userEvent.setup();
+    const alreadyUsed = { ...scanLogs[0], id: 'scan-log-2', outcome: 'already_used', result: 'already_used' };
+    const wrongShowtime = { ...scanLogs[0], id: 'scan-log-3', outcome: 'wrong_showtime', result: 'wrong_showtime' };
+    render(<FieldMonitor summary={monitorSummary} scanLogs={[alreadyUsed, wrongShowtime]} initialFilters={{ eventId: 'phase27-event' }} />);
+
+    // A rescan of a used seat is recorded as already_used; the table labels it as a duplicate.
+    const rows = within(screen.getByRole('table', { name: '스캔 로그' })).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('중복');
+    expect(rows[2]).toHaveTextContent('다른 회차');
+
+    await user.click(screen.getByRole('combobox', { name: '스캔 결과 필터' }));
+    expect(screen.queryByRole('option', { name: '오프라인 보류' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '다른 회차' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '만료' })).toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: '중복' }));
+
+    // The server maps outcome=duplicate to duplicate + already_used rows.
+    const logKeys = (useQueryMock.mock.calls as unknown as Array<[{ queryKey: unknown[] }]>)
+      .map(([options]) => options.queryKey)
+      .filter((key) => key[2] === 'logs');
+    expect(logKeys.at(-1)?.[3]).toEqual(expect.objectContaining({ outcome: 'duplicate' }));
+  });
+
   it('surfaces all D-26 abnormal alerts before drill-down logs', () => {
     render(<FieldMonitor summary={monitorSummary} scanLogs={scanLogs} />);
 

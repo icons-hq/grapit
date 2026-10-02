@@ -20,7 +20,9 @@ function dependencies() {
   const query: Record<string, unknown> = {};
   for (const method of ['from', 'where', 'orderBy']) query[method] = vi.fn(() => query);
   query.limit = vi.fn(async () => []);
-  const db = { select: vi.fn(() => query), update: vi.fn(), insert: vi.fn(), transaction: vi.fn() };
+  const db: Record<string, ReturnType<typeof vi.fn>> = { select: vi.fn(() => query), update: vi.fn(), insert: vi.fn(),
+    execute: vi.fn(async () => []) };
+  db.transaction = vi.fn(async (run: (tx: typeof db) => Promise<unknown>) => run(db));
   const qr = { verifyTicketForScannerContract: vi.fn(async () => contract()) };
   const audit = { write: vi.fn() };
   return { db, qr, audit, service: new FieldCheckInService(db as never, qr as never, audit as never) };
@@ -39,7 +41,7 @@ describe('Field verification boundaries', () => {
   it('redacts invalid credentials from audit and never mutates ticket rights', async () => {
     const { service, qr, db, audit } = dependencies(); qr.verifyTicketForScannerContract.mockRejectedValue(new UnauthorizedException());
     const result = await service.consume({ token, showtimeId: contract().showtimeId, deviceAttemptId: 'attempt-1', confirmed: true }, context);
-    expect(result.outcome).toBe('tampered'); expect(db.transaction).not.toHaveBeenCalled();
+    expect(result.outcome).toBe('tampered'); expect(db.update).not.toHaveBeenCalled();
     expect(JSON.stringify(audit.write.mock.calls)).not.toContain(token);
   });
   it('propagates infrastructure failures instead of labelling a valid customer QR forged', async () => {
@@ -76,7 +78,9 @@ function recordingDependencies(options: {
     query.limit = vi.fn(async () => (isReceiptLookup && options.consumedReceipt ? [{ id: 'consume-receipt' }] : []));
     return query;
   });
-  const db = { select, update: vi.fn(), insert: vi.fn(() => insertBuilder), transaction: vi.fn() };
+  const db: Record<string, ReturnType<typeof vi.fn>> = { select, update: vi.fn(), insert: vi.fn(() => insertBuilder),
+    execute: vi.fn(async () => []) };
+  db.transaction = vi.fn(async (run: (tx: typeof db) => Promise<unknown>) => run(db));
   const qr = { verifyTicketForScannerContract: vi.fn(async () => ({
     ...contract(),
     ticketStatus: options.ticketStatus ?? 'REVOKED',
@@ -224,7 +228,7 @@ describe('Verify-stage rejection ledger (audit #113, #114)', () => {
   });
 
   it('records an unverifiable QR at consume once per attempt and returns its receipt', async () => {
-    const { service, qr, inserted, statement, db } = recordingDependencies();
+    const { service, qr, inserted, statement } = recordingDependencies();
     qr.verifyTicketForScannerContract.mockRejectedValue(new UnauthorizedException());
 
     const result = await service.consume({ token, showtimeId: REQUESTED_SHOWTIME_ID, deviceAttemptId: 'attempt-1', confirmed: true },
@@ -236,6 +240,24 @@ describe('Verify-stage rejection ledger (audit #113, #114)', () => {
       source: 'offline_sync', syncState: 'rejected', deviceAttemptId: 'attempt-1',
     })]);
     expect(statement.onConflictDoNothing).toHaveBeenCalled();
-    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('serializes an unverifiable consume with the attempt lock that a valid consume of the same attempt takes', async () => {
+    const { service, qr, db, audit } = recordingDependencies();
+    qr.verifyTicketForScannerContract.mockRejectedValue(new UnauthorizedException());
+
+    await service.consume({ token, showtimeId: REQUESTED_SHOWTIME_ID, deviceAttemptId: 'attempt-1', confirmed: true }, context);
+
+    // Without the lock a concurrent valid consume of the same attempt hit the
+    // attempt's unique receipt index and failed with 500 (audit #113).
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    const lock = new PgDialect().sqlToQuery(db.execute!.mock.calls[0]![0] as SQL);
+    expect(lock.sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 0))');
+    expect(lock.params).toEqual(['attempt-1']);
+    const lockOrder = db.execute!.mock.invocationCallOrder[0]!;
+    expect(lockOrder).toBeLessThan(db.insert!.mock.invocationCallOrder[0]!);
+    expect(lockOrder).toBeLessThan(audit.write.mock.invocationCallOrder[0]!);
+    // The audit row joins the same transaction as the scan receipt.
+    expect(audit.write.mock.calls[0]?.[1]).toBe(db);
   });
 });

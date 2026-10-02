@@ -128,7 +128,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - [ ] `<provider> OAuth callback rejected: <reason>` warn 로그를 reason별로 본다. 모바일에서 `missing_nonce_cookie` 비중이 계속 높으면 인앱 브라우저 전환이 로그인을 깨는 것이다. #37
 - [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. API warn 로그 `Admin booking read hit statement_timeout`의 `aggregateKey`(필터 해시, 검색어 원문 없음)·`page`·경과 시간으로 같은 범위가 반복해서 5초를 넘는지 센다. 조건 없는 조회가 자주 503이면 운영자에게 공연·회차나 예매·결제 상태를 먼저 고르도록 안내한다. #127
 - [ ] Valkey active set 크기와 confirm 403 비율이 줄었는지, 이전 build의 `{queue:*}:eta-origin:*` 키가 남지 않았는지 본다(남아도 2시간 안에 만료). #4 #26 #91
-- [ ] worker 로그에서 같은 jobId의 `QR reminder claimed` 뒤에 `QR reminder sent`가 없는 건(유실된 reminder)을 본다. `superseded job`, `claimed by another worker` skip은 무해하다. #107
+- [ ] worker 로그에서 같은 jobId의 `QR reminder claimed` 뒤에 `QR reminder sent`가 없는 건(유실된 reminder)을 본다. `superseded job`, `claimed by another worker` skip과, 읽은 뒤 취소·발송된 좌석을 뺀 `partial claim` warn은 무해하다. #107
 - [ ] Valkey 메모리: `{payment-confirm-attempt}:*`(confirm마다 30분), `{payment-handoff-review}:*`, `cache:admin:bookings:aggregates:v1:*`(30초), `seat-status-cache:*`(1초) 키와 seat-status 재계산 빈도(인스턴스·회차당 초당 1회 이하)를 지표에 넣는다. #9 #127 #8
 
 ## 3. 오픈 리허설

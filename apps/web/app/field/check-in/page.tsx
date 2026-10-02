@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { hasAdminCapability, parseFieldCheckInToken } from '@grabit/shared';
@@ -8,6 +8,7 @@ import { AlertTriangle, Loader2, LogOut, ScanLine, WifiOff } from 'lucide-react'
 import { ScannerCheckIn } from '@/components/field/scanner-check-in';
 import {
   canRedeemBenefitsForVerification,
+  labelForResult,
   useFieldBenefitRedeem,
   useFieldCheckInConsume,
   useFieldCheckInVerify,
@@ -15,6 +16,8 @@ import {
   type FieldShowtimeOption,
   type ScannerBenefitRedemptionResult,
   type ScannerCheckInConsumeResult,
+  type ScannerCheckInResult,
+  type ScannerOfflineQueueItem,
 } from '@/hooks/use-field-operations';
 import {
   useFieldOfflineQueue,
@@ -48,6 +51,23 @@ const ALREADY_PENDING_RESULT: ScannerCheckInConsumeResult = {
   rejectionReason: '같은 QR로 다시 입장 처리하지 마세요. 연결이 복구되면 보류 스캔을 동기화해 서버 판정을 확인하세요.',
 };
 
+/**
+ * One scan of one QR. The page owns its device attempt id so that the verify,
+ * consume and offline-sync receipts of a scan share one id however often the
+ * scan screen re-renders or remounts. A new id is issued only for a new scan:
+ * a QR read again (even the same QR), another showtime or another account.
+ */
+interface ScanAttempt {
+  token: string;
+  attemptId: string;
+  /** Showtime and account the attempt was issued for. */
+  scope: string;
+}
+
+function newScanAttempt(token: string, scope: string): ScanAttempt {
+  return { token, attemptId: createDeviceAttemptId(), scope };
+}
+
 export default function FieldCheckInPage() {
   const searchParams = useSearchParams();
   const { isInitialized, accessToken, user, clearAuth } = useAuthStore();
@@ -56,15 +76,39 @@ export default function FieldCheckInPage() {
   // The QR credential moves from the URL into memory and is scrubbed from the
   // address bar, so history, the /auth returnTo and telemetry never keep it.
   const routeToken = readFieldTicketParam(searchParams);
-  const [scanToken, setScanToken] = useState(routeToken);
+  const [showtimeId, setShowtimeId] = useState(searchParams.get('showtimeId') ?? '');
+  const scanScope = `${showtimeId}:${user?.id ?? ''}`;
+  const [scan, setScan] = useState<ScanAttempt | null>(() => (routeToken ? newScanAttempt(routeToken, scanScope) : null));
   const [adoptedRouteToken, setAdoptedRouteToken] = useState(routeToken);
-  if (routeToken && routeToken !== adoptedRouteToken) {
+  if (routeToken !== adoptedRouteToken) {
+    // The scrubbed URL clears the adopted token, so the same QR link opened
+    // again in this tab is a new scan.
     setAdoptedRouteToken(routeToken);
-    setScanToken(routeToken);
+    if (routeToken) setScan(newScanAttempt(routeToken, scanScope));
+  } else if (scan && scan.scope !== scanScope) {
+    // The server binds an attempt's receipt to its showtime and scanner, so a
+    // new showtime or account starts a new attempt for the same QR.
+    setScan(newScanAttempt(scan.token, scanScope));
   }
+  // Benefit attempt ids per scan attempt, so a retried redemption reuses its
+  // first id even if the scan screen remounts.
+  const benefitAttempts = useRef(new Map<string, Map<string, string>>());
+  const benefitAttemptIdFor = useCallback((scanAttemptId: string, benefitEntitlementId: string) => {
+    let attempts = benefitAttempts.current.get(scanAttemptId);
+    if (!attempts) {
+      benefitAttempts.current.clear();
+      attempts = new Map();
+      benefitAttempts.current.set(scanAttemptId, attempts);
+    }
+    let attemptId = attempts.get(benefitEntitlementId);
+    if (!attemptId) {
+      attemptId = createDeviceAttemptId();
+      attempts.set(benefitEntitlementId, attemptId);
+    }
+    return attemptId;
+  }, []);
   const [input, setInput] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
-  const [showtimeId, setShowtimeId] = useState(searchParams.get('showtimeId') ?? '');
   const [restoredShowtimeId, setRestoredShowtimeId] = useState<string | null>(null);
   const [restoreCheckedFor, setRestoreCheckedFor] = useState<string | null>(null);
   const canVerify = hasAdminCapability(user, 'field.scan.verify');
@@ -74,7 +118,8 @@ export default function FieldCheckInPage() {
   const queue = useFieldOfflineQueue(canVerify ? user?.id : undefined, showtimeId, { autoSync: canVerify && canSync });
   const showtimes = useFieldShowtimes(isInitialized && Boolean(accessToken) && canVerify);
   const selected = showtimes.data?.find((showtime) => showtime.id === showtimeId);
-  const token = scanToken;
+  const token = scan?.token ?? '';
+  const scanQueueItem = scan ? queue.items.find((item) => item.deviceAttemptId === scan.attemptId) ?? null : null;
   useEffect(() => {
     if (!routeToken) return;
     // On first hydration the App Router installs its history.replaceState bridge
@@ -94,12 +139,19 @@ export default function FieldCheckInPage() {
     const userId = user?.id;
     if (!userId || !showtimes.data || restoreCheckedFor === userId) return;
     setRestoreCheckedFor(userId);
-    if (showtimeId) return;
+    if (showtimeId) {
+      // A showtime given in the link is this scanner's choice once the server lists it.
+      const listed = showtimes.data.find((showtime) => showtime.id === showtimeId);
+      if (listed) saveFieldShowtimeSelection(userId, listed);
+      return;
+    }
     const selection = readFieldShowtimeSelection(userId);
     const restorable = resolveRestorableFieldShowtime(selection, showtimes.data);
     if (restorable) {
       setShowtimeId(restorable.id);
       setRestoredShowtimeId(restorable.id);
+      // Each tab that keeps scanning with the choice renews its 12 hour window.
+      saveFieldShowtimeSelection(userId, restorable);
     } else if (selection) {
       clearFieldShowtimeSelection(userId);
     }
@@ -157,7 +209,7 @@ export default function FieldCheckInPage() {
           const value = input.trim();
           const nextToken = value.startsWith('http') ? parseFieldCheckInToken({ qrUrl: value }) : value;
           if (!nextToken) throw new Error('empty');
-          setScanToken(nextToken); setInput('');
+          setScan(newScanAttempt(nextToken, scanScope)); setInput('');
         } catch { setInputError('QR 링크 또는 QR 내용을 확인해주세요.'); }
       }}>
         <label className="block space-y-2 text-sm font-semibold">QR 링크 또는 내용
@@ -166,18 +218,24 @@ export default function FieldCheckInPage() {
         <p className="text-xs text-gray-500">휴대폰 카메라로 QR 링크를 열면 새 탭에서도 이 계정이 최근 12시간 안에 고른 오늘 회차를 다시 불러옵니다. 카메라 이용이 어려우면 위 입력란을 사용하세요.</p>
         {inputError && <p role="alert" className="text-sm text-red-700">{inputError}</p>}
         <div className="flex gap-2"><Button type="submit" disabled={!selected || !input.trim()} className="min-h-11 flex-1">티켓 확인</Button>
-          {token && <Button type="button" variant="outline" className="min-h-11" onClick={() => { setScanToken(''); setInput(''); }}>다음 티켓</Button>}</div>
+          {token && <Button type="button" variant="outline" className="min-h-11" onClick={() => { setScan(null); setInput(''); }}>다음 티켓</Button>}</div>
       </form>
     </header>
     {queue.error && <p role="alert" className="p-4 text-sm text-red-700">{queue.error}</p>}
     <div className="p-4 pb-0 empty:hidden">
       <DevicePendingBanner groups={queue.devicePending} currentUserId={user?.id} currentShowtimeId={selected?.id ?? ''}
-        canSync={isOnline && canSync} isSyncing={queue.isSyncing} describeShowtime={describeShowtime}
+        ownPendingCount={ownPendingCount} canSync={isOnline && canSync} isSyncing={queue.isSyncing} describeShowtime={describeShowtime}
         onSelectShowtime={changeShowtime} onSync={() => { void queue.sync(); }} />
     </div>
     {queue.items.length > 0 && <div className="p-4 pb-0"><OfflineSyncStatus queue={queue.items} isSyncing={queue.isSyncing}
       canSync={isOnline && canSync} onSyncOffline={() => { void queue.sync(); }} /></div>}
-    {token && selected ? <ActiveScan key={`${token}:${selected.id}:${user?.id}:${queue.items.filter((item) => item.state !== 'pending').map((item) => `${item.deviceAttemptId}:${item.state}`).join(',')}`} ticketToken={token} showtimeId={selected.id} eventId={selected.eventId} recordPending={queue.record} />
+    {scan && selected ? <ActiveScan
+      // Queue changes (auto sync, another tab's sync) arrive as props. A remount
+      // would drop this scan's entry result card.
+      key={`${scan.token}:${selected.id}:${user?.id}:${scan.attemptId}`}
+      ticketToken={scan.token} deviceAttemptId={scan.attemptId} showtimeId={selected.id} eventId={selected.eventId}
+      recordPending={queue.record} queueItem={scanQueueItem} queueRevision={queue.revision}
+      benefitAttemptIdFor={(benefitEntitlementId) => benefitAttemptIdFor(scan.attemptId, benefitEntitlementId)} />
       : <p role="status" className="p-5 text-sm text-gray-600">{scanStatusMessage({ hasToken: Boolean(token), hasSelection: Boolean(selected), loadingShowtimes: Boolean(showtimes.isLoading) })}</p>}
   </div>;
 }
@@ -215,15 +273,20 @@ function SelectedShowtimeSummary({ showtime, restored }: { showtime: FieldShowti
 
 type LocalPendingState = 'checking' | 'none' | 'pending';
 
-function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
-  ticketToken: string; showtimeId: string; eventId: string;
+function ActiveScan({
+  ticketToken, deviceAttemptId, showtimeId, eventId, recordPending, queueItem, queueRevision, benefitAttemptIdFor,
+}: {
+  ticketToken: string; deviceAttemptId: string; showtimeId: string; eventId: string;
   recordPending: (attempt: PendingScanAttemptRecord) => Promise<FieldPendingRecordOutcome>;
+  /** This scan's own record in the device queue, once it was saved for sync. */
+  queueItem: ScannerOfflineQueueItem | null;
+  queueRevision: number;
+  benefitAttemptIdFor: (benefitEntitlementId: string) => string;
 }) {
   const { isInitialized, accessToken, user } = useAuthStore();
   const isOnline = useFieldOnlineStatus();
   const [actionError, setActionError] = useState<string | null>(null);
   const consumingRef = useRef(false);
-  const redemptionAttempts = useRef(new Map<string, string>());
   const [offlineConsumeResult, setOfflineConsumeResult] =
     useState<ScannerCheckInConsumeResult | null>(null);
   const [localPending, setLocalPending] = useState<LocalPendingState>('checking');
@@ -233,7 +296,6 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
   const [redeemingBenefitId, setRedeemingBenefitId] = useState<string | null>(null);
   const hasScannerAccess = hasAdminCapability(user, 'field.scan.verify');
   const canRedeemFieldBenefit = hasAdminCapability(user, 'field.benefits.redeem');
-  const deviceAttemptId = useMemo(() => createDeviceAttemptId(), []);
 
   const verifyQuery = useFieldCheckInVerify({
     token: ticketToken,
@@ -248,13 +310,16 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
 
   useEffect(() => {
     // A cached "processable" verify result must not admit a second holder of a
-    // QR that this device already queued while offline.
+    // QR that this device already queued while offline. Re-checked whenever the
+    // device queue changes, e.g. when that other record is synced.
     let cancelled = false;
     findPendingScanAttemptByToken(ticketToken)
-      .then((existing) => { if (!cancelled) setLocalPending(existing ? 'pending' : 'none'); })
+      .then((existing) => {
+        if (!cancelled) setLocalPending(existing && existing.deviceAttemptId !== deviceAttemptId ? 'pending' : 'none');
+      })
       .catch(() => { if (!cancelled) setLocalPending('none'); });
     return () => { cancelled = true; };
-  }, [ticketToken]);
+  }, [ticketToken, deviceAttemptId, queueRevision]);
 
   if (!isInitialized || (!accessToken && isInitialized)) {
     return <ScannerLoading message="검표 세션을 확인하고 있습니다" />;
@@ -342,7 +407,8 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
       user={user}
       verification={verifyQuery.data}
       consumeResult={
-        offlineConsumeResult
+        queueItemConsumeResult(queueItem)
+        ?? offlineConsumeResult
         ?? (localPending === 'pending' ? ALREADY_PENDING_RESULT : null)
         ?? consumeMutation.data
       }
@@ -361,8 +427,9 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
           consumingRef.current = true; setActionError(null);
           try {
           // Another tab may have queued the same QR since this screen opened.
-          if (await findPendingScanAttemptByToken(ticketToken).catch(() => null)) {
-            setLocalPending('pending');
+          const queued = await findPendingScanAttemptByToken(ticketToken).catch(() => null);
+          if (queued) {
+            if (queued.deviceAttemptId !== deviceAttemptId) setLocalPending('pending');
             return;
           }
 
@@ -402,21 +469,21 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
                 }
 
                 setRedeemingBenefitId(benefitEntitlementId); setActionError(null);
-                if (!redemptionAttempts.current.has(benefitEntitlementId)) redemptionAttempts.current.set(benefitEntitlementId, createDeviceAttemptId());
                 try {
                   const result = await benefitRedeemMutation.mutateAsync({
                     token: ticketToken,
                     showtimeId: scannerShowtimeId,
                     benefitEntitlementId,
-                    deviceAttemptId: redemptionAttempts.current.get(benefitEntitlementId)!,
+                    // A retry repeats the same request, so the server returns its first result.
+                    deviceAttemptId: benefitAttemptIdFor(benefitEntitlementId),
                     confirmed: true,
                   });
                   setBenefitRedemptionResults((current) => ({
                     ...current,
                     [benefitEntitlementId]: result,
                   }));
-                } catch {
-                  setActionError('특전 지급 결과를 확인하지 못했습니다. 실물을 다시 지급하지 말고 같은 요청으로 확인해주세요.');
+                } catch (error) {
+                  setActionError(benefitRedeemErrorMessage(error));
                 } finally {
                   setRedeemingBenefitId(null);
                 }
@@ -481,6 +548,36 @@ function ScannerNotice({
       </Card>
     </main>
   );
+}
+
+const SCANNER_RESULTS: readonly ScannerCheckInResult[] = [
+  'processable', 'processed', 'duplicate', 'tampered', 'refunded', 'expired', 'wrong-showtime',
+  'offline-pending', 'synced', 'rejected',
+];
+const NON_REJECTION_RESULTS: readonly ScannerCheckInResult[] = ['processable', 'processed', 'synced', 'offline-pending'];
+
+/** What the scan screen shows once this scan's own entry sits in the device queue. */
+function queueItemConsumeResult(item: ScannerOfflineQueueItem | null): ScannerCheckInConsumeResult | null {
+  if (!item) return null;
+  if (item.state === 'pending') return { result: 'offline-pending', resultLabel: '입장 동기화 대기' };
+  if (item.state === 'synced') return { result: 'synced', resultLabel: item.resultLabel ?? labelForResult('synced') };
+  const known = SCANNER_RESULTS.find((result) => result === item.result);
+  const result: ScannerCheckInResult = known && !NON_REJECTION_RESULTS.includes(known) ? known : 'rejected';
+  const resultLabel = item.resultLabel ?? labelForResult(result);
+  return {
+    result,
+    resultLabel,
+    rejectionReason: item.rejectionReason && item.rejectionReason !== resultLabel ? item.rejectionReason : null,
+  };
+}
+
+function benefitRedeemErrorMessage(error: unknown): string {
+  // 409: the server could not settle this request now (e.g. a payment held the
+  // showtime) and says how to retry it. The attempt id is kept for that retry.
+  if (error instanceof Error && (error as { statusCode?: unknown }).statusCode === 409 && error.message.trim()) {
+    return error.message;
+  }
+  return '특전 지급 결과를 확인하지 못했습니다. 실물을 다시 지급하지 말고 같은 요청으로 확인해주세요.';
 }
 
 function createDeviceAttemptId(): string {
