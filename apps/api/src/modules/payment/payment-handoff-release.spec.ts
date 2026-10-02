@@ -3,7 +3,7 @@ import { ConflictException, NotFoundException, ServiceUnavailableException } fro
 import type { PaymentMethod } from '@grabit/shared';
 import { PaymentService } from './payment.service.js';
 import { PAYMENT_HANDOFF_RELEASE_WINDOW_MS } from './payment-handoff-policy.js';
-import { PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
+import { PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL } from '../booking/booking.service.js';
 
 function createSelectChain<T>(rows: T[]) {
   const chain = { from: vi.fn(), where: vi.fn() };
@@ -29,6 +29,7 @@ describe('PaymentService.releaseTossPaymentHandoff', () => {
   let locks: {
     acquirePaymentConfirmLock: ReturnType<typeof vi.fn>;
     releasePaymentConfirmLock: ReturnType<typeof vi.fn>;
+    hasPaymentConfirmAttempt: ReturnType<typeof vi.fn>;
   };
   let service: PaymentService;
 
@@ -48,6 +49,7 @@ describe('PaymentService.releaseTossPaymentHandoff', () => {
     locks = {
       acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
       releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
+      hasPaymentConfirmAttempt: vi.fn().mockResolvedValue(false),
     };
     service = new PaymentService(
       db as never,
@@ -60,8 +62,8 @@ describe('PaymentService.releaseTossPaymentHandoff', () => {
     );
   });
 
-  it('keeps the release window inside the confirm lease TTL', () => {
-    expect(PAYMENT_HANDOFF_RELEASE_WINDOW_MS).toBeLessThan(PAYMENT_CONFIRM_LOCK_TTL * 1000);
+  it('keeps a confirm attempt visible far beyond the release window', () => {
+    expect(PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL * 1000).toBeGreaterThan(PAYMENT_HANDOFF_RELEASE_WINDOW_MS * 10);
   });
 
   it('reopens a card checkout whose SDK rejected before the provider opened, under the confirm lease', async () => {
@@ -83,9 +85,38 @@ describe('PaymentService.releaseTossPaymentHandoff', () => {
     const leaseToken = locks.acquirePaymentConfirmLock.mock.calls[0]![1];
     expect(locks.releasePaymentConfirmLock).toHaveBeenCalledWith('GRP-RELEASE', leaseToken);
     expect(locks.acquirePaymentConfirmLock.mock.invocationCallOrder[0]!)
+      .toBeLessThan(locks.hasPaymentConfirmAttempt.mock.invocationCallOrder[0]!);
+    expect(locks.hasPaymentConfirmAttempt).toHaveBeenCalledWith('GRP-RELEASE');
+    expect(locks.hasPaymentConfirmAttempt.mock.invocationCallOrder[0]!)
       .toBeLessThan(db.update.mock.invocationCallOrder[0]!);
     expect(db.update.mock.invocationCallOrder[0]!)
       .toBeLessThan(locks.releasePaymentConfirmLock.mock.invocationCallOrder[0]!);
+  });
+
+  it('never reopens an order once a confirm ran for it, even after that confirm released its lease', async () => {
+    // A confirm that timed out at the provider (or failed to record its approval)
+    // leaves no Payment row and frees the lease; only its attempt marker remains.
+    db.select.mockReturnValue(createSelectChain([pendingReservation()]));
+    locks.hasPaymentConfirmAttempt.mockResolvedValue(true);
+
+    await expect(service.releaseTossPaymentHandoff(
+      { orderId: 'GRP-CONFIRM-UNKNOWN', userId: 'buyer' },
+      NOW,
+    )).rejects.toThrow(new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.'));
+    expect(db.update).not.toHaveBeenCalled();
+    expect(locks.releasePaymentConfirmLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the handoff when the confirm-attempt marker cannot be read', async () => {
+    db.select.mockReturnValue(createSelectChain([pendingReservation()]));
+    locks.hasPaymentConfirmAttempt.mockRejectedValue(new Error('ECONNRESET'));
+
+    await expect(service.releaseTossPaymentHandoff(
+      { orderId: 'GRP-MARKER-DOWN', userId: 'buyer' },
+      NOW,
+    )).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(db.update).not.toHaveBeenCalled();
+    expect(locks.releasePaymentConfirmLock).toHaveBeenCalledTimes(1);
   });
 
   it('is idempotent once the handoff was already released', async () => {

@@ -81,6 +81,7 @@ function createDependencies() {
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
     refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
     releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
+    markPaymentConfirmAttempted: vi.fn().mockResolvedValue(undefined),
     extendOwnedSeatLocks: vi.fn(),
     assertOwnedSeatLocks: vi.fn(),
     consumeOwnedSeatLocks: vi.fn(),

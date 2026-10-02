@@ -544,8 +544,11 @@ export class PaymentService {
    * resolves it and retry, abandonment and expiry stay blocked.
    *
    * Only merchant-confirmed methods qualify, only inside the short release window,
-   * only while no Payment exists, and only while holding the same confirm lease that
-   * payment confirm and async progress use.
+   * only while no Payment exists, only while holding the same confirm lease that
+   * payment confirm and async progress use, and only when no confirm was ever
+   * attempted for the order. The lease ends with each confirm, so a confirm that
+   * finished without a Payment row (provider timeout, recording failure) is visible
+   * only through its attempt marker; such an order stays in status review.
    */
   async releaseTossPaymentHandoff(
     input: TossPaymentHandoffReleaseRequest,
@@ -611,6 +614,16 @@ export class PaymentService {
     }
 
     try {
+      let confirmAttempted: boolean;
+      try {
+        confirmAttempted = await this.bookingService.hasPaymentConfirmAttempt(orderId);
+      } catch {
+        throw new ServiceUnavailableException('결제 상태를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      }
+      if (confirmAttempted) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+
       const [released] = await this.db
         .update(reservations)
         .set({ checkoutStartedAt: null, updatedAt: now })

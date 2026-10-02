@@ -45,7 +45,10 @@ export class PaymentController {
     });
   }
 
-  /** Called by the checkout page only when the provider SDK rejected before opening checkout. */
+  /**
+   * Called by the checkout page when the provider SDK rejected before opening checkout,
+   * or when the branch response was lost or failed with a 5xx after a possible commit.
+   */
   @Post('branch/release')
   @HttpCode(200)
   releaseTossPaymentHandoff(

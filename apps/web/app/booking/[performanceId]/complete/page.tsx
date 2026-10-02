@@ -201,18 +201,6 @@ function CompletePageContent() {
     : null;
   const effectiveBooking = bookingData ?? recoveredBooking;
 
-  useEffect(() => {
-    if (!recoveredBooking) {
-      return;
-    }
-
-    setBookingData(recoveredBooking);
-    clearBooking();
-    setConfirmFailed(false);
-    setConfirmRetryable(false);
-    setUnreportedConfirmError(null);
-  }, [clearBooking, recoveredBooking]);
-
   // Once confirmed, drop the one-time provider return so reload or history
   // navigation reads the order instead of sending confirm again.
   const replaceConfirmReturnWithLookup = useCallback((confirmedOrderId: string) => {
@@ -224,6 +212,30 @@ function CompletePageContent() {
     nextParams.set('orderId', confirmedOrderId);
     router.replace(`${window.location.pathname}?${nextParams.toString()}`, { scroll: false });
   }, [router, searchParams]);
+
+  useEffect(() => {
+    if (!recoveredBooking) {
+      return;
+    }
+
+    setBookingData(recoveredBooking);
+    clearBooking();
+    setConfirmFailed(false);
+    setConfirmRetryable(false);
+    setUnreportedConfirmError(null);
+    // Confirmed by lookup after a failed confirm (for example a reload past the
+    // admission window): the return parameters must not send confirm again either.
+    if (hasConfirmParams && !isPendingReturn && orderId) {
+      replaceConfirmReturnWithLookup(orderId);
+    }
+  }, [
+    clearBooking,
+    hasConfirmParams,
+    isPendingReturn,
+    orderId,
+    recoveredBooking,
+    replaceConfirmReturnWithLookup,
+  ]);
 
   // Confirm payment on mount — only needs URL params (server has pending order)
   const confirmPayment = useCallback(async (): Promise<boolean> => {
@@ -239,7 +251,8 @@ function CompletePageContent() {
 
     hasConfirmedRef.current = true;
     setIsConfirming(true);
-    setConfirmRetryable(false);
+    // confirmRetryable changes only with an outcome, so a resend keeps its card
+    // (with a busy button) instead of flashing the status-check variant.
 
     try {
       const result = await confirmMutation.mutateAsync(buildConfirmPaymentPayload({
@@ -251,12 +264,14 @@ function CompletePageContent() {
       }));
 
       if (result.status !== 'CONFIRMED') {
+        setConfirmRetryable(false);
         setConfirmFailed(true);
         return false;
       }
 
       setBookingData(result);
       setConfirmFailed(false);
+      setConfirmRetryable(false);
       setUnreportedConfirmError(null);
       clearBooking();
       replaceConfirmReturnWithLookup(orderId);
@@ -463,7 +478,7 @@ function CompletePageContent() {
   }
 
   if (
-    isConfirming
+    (isConfirming && !canRetryConfirm)
     || (confirmFailed && paymentRecovery.fetchStatus === 'fetching' && paymentRecovery.paymentStatus === 'idle')
     || (!effectiveBooking && !isPendingReturn && !confirmFailed)
   ) {

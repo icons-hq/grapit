@@ -558,7 +558,7 @@
       "confirmUnknownBody": "We could not confirm the payment yet. Try checking again shortly or check your booking history.",
       "retryStatus": "Check status again",
       "retryConfirm": "Send payment confirmation again",
-      "confirmRetryBody": "Your payment was authenticated, but the confirmation request did not reach us. Check your connection and send it again. You will only be charged once.",
+      "confirmRetryBody": "Your payment was authenticated, but we could not finish confirming it yet. Please request confirmation again in a moment. You will only be charged once.",
       "statusCheckFailed": "Could not check payment status.",
       "deadlineExpired": "The payment window expired at {deadline}.",
       "pendingDeadline": "This order will wait for payment status until {deadline}."

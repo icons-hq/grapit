@@ -85,6 +85,33 @@ describe('Payment return confirm delivery', () => {
     expect(boundary.toastError).not.toHaveBeenCalled();
   });
 
+  it('keeps the resend card, with a busy button, while the resent confirm is in flight', async () => {
+    const gatewayError = Object.assign(new Error('Bad Gateway'), { statusCode: 502 });
+    let finishResend!: (value: unknown) => void;
+    boundary.post
+      .mockRejectedValueOnce(gatewayError)
+      .mockRejectedValueOnce(gatewayError)
+      .mockRejectedValueOnce(gatewayError)
+      .mockRejectedValueOnce(gatewayError)
+      .mockReturnValueOnce(new Promise((resolve) => { finishResend = resolve; }));
+    boundary.get.mockResolvedValue(handedOff);
+
+    mountPage();
+
+    const resend = await screen.findByRole('button', { name: 'Send payment confirmation again' });
+    const body = 'Your payment was authenticated, but we could not finish confirming it yet. Please request confirmation again in a moment. You will only be charged once.';
+    expect(screen.getByText(body)).toBeInTheDocument();
+    await userEvent.setup().click(resend);
+
+    await waitFor(() => expect(boundary.post).toHaveBeenCalledTimes(5));
+    expect(screen.getByRole('button', { name: 'Send payment confirmation again' })).toBeDisabled();
+    expect(screen.getByText(body)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check status again' })).not.toBeInTheDocument();
+
+    finishResend(confirmed);
+    expect(await screen.findByText('Confirmed ticket')).toBeInTheDocument();
+  });
+
   it('retries a busy confirm lease but never repeats a definite rejection', async () => {
     boundary.post
       .mockRejectedValueOnce(Object.assign(new Error('결제 확인이 이미 진행 중입니다.'), { statusCode: 409 }))
@@ -120,6 +147,11 @@ describe('Payment return confirm delivery', () => {
     expect(await screen.findByText('Confirmed ticket')).toBeInTheDocument();
     expect(boundary.post).toHaveBeenCalledTimes(1);
     expect(boundary.toastError).not.toHaveBeenCalled();
+    // Confirmed through lookup: a reload must not send the stale return again either.
+    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(
+      '/en/booking/performance-return/complete?orderId=GRP-return&pending=true',
+      { scroll: false },
+    ));
   });
 
   it('reports the confirm error once lookup shows the order did not complete', async () => {

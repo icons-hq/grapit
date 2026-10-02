@@ -264,20 +264,27 @@ window. A fail URL alone never cancels or replaces an order. See
 [the prepared checkout ADR](adr/0010-preserve-prepared-checkout-across-provider-returns.md).
 
 The browser validates the live widget selection and payment-terms status before handoff.
-When the Toss SDK rejects before its checkout opens (for example `NEED_CARD_PAYMENT_DETAIL`)
-or the branch response is lost, it calls `POST /api/v1/payments/branch/release`; the server
-clears the handoff only for merchant-confirmed methods, within 45 seconds, with no Payment
-row and under the order's confirm lease. The pending-payment worker fails a handoff whose
-release never arrived only after deadline + 45 minutes and only when the Toss transaction
-ledger for that MID has no transaction for the order (`AbandonedPaymentHandoffService`;
-`PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` disables it). Asynchronous wallets are never
-released or failed this way.
+When the Toss SDK rejects before its checkout opens (for example `NEED_CARD_PAYMENT_DETAIL`),
+or the branch response is lost or comes back as a 5xx, it calls
+`POST /api/v1/payments/branch/release`; the server clears the handoff only for
+merchant-confirmed methods, within 45 seconds, with no Payment row, under the order's confirm
+lease, and only when no payment confirm was ever attempted for the order. Payment confirm
+records that attempt in Valkey (`{payment-confirm-attempt}:<orderId>`, 30 minutes) before it
+can call Toss, because its lease ends with the request even when the outcome is unknown.
+The pending-payment worker fails a handoff whose release never arrived only after deadline +
+45 minutes and only when the Toss transaction ledger of every configured MID key has no
+transaction for the order (`AbandonedPaymentHandoffService`;
+`PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` disables it). Orders it cannot conclude are
+deferred in Valkey (`{payment-handoff-review}:*`: 30 minutes after a lookup error or page
+cap, 24 hours after a provider transaction is found) and the scan resumes from a cursor, so
+they never block newer orphans. Asynchronous wallets are never released or failed this way.
 
 ### 6.4 Payment Confirm
 
 `ReservationService.confirmAndCreateReservation` and payment services coordinate:
 
 - payment confirm lock by order ID,
+- a confirm-attempt marker recorded under that lock (Valkey, 30 minutes), which keeps Provider Handoff release closed after the request ends,
 - amount and payment identity checks,
 - lock extension before provider confirmation,
 - conditional sold transition in PostgreSQL,
@@ -287,9 +294,10 @@ released or failed this way.
 Only the returning browser holds the paymentKey, so the complete page repeats the confirm
 POST on transient failures (lost request/response, 408/425/429/5xx without a decided
 outcome, and a busy confirm lease) up to three times with 1s/2s/4s backoff, then offers a
-manual resend. Definite rejections go straight to order lookup. After confirmation the page
-replaces the one-time provider return parameters with `pending=true&orderId=...`, so a
-reload reads the order instead of confirming again.
+manual resend. Definite rejections go straight to order lookup. Once the order is confirmed,
+whether by the confirm response or by order lookup after a failed confirm, the page replaces
+the one-time provider return parameters with `pending=true&orderId=...`, so a reload reads the
+order instead of confirming again.
 
 Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
 

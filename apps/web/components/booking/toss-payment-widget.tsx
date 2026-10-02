@@ -417,14 +417,17 @@ function appendPaymentDeadlineReturnParam(
   return url.toString();
 }
 
-/**
- * Best effort: the server accepts only a fresh, merchant-confirmed handoff with no
- * payment and a free confirm lease. Any refusal leaves the order in status review.
- */
-function hasHttpStatus(error: unknown): boolean {
-  return typeof (error as { statusCode?: unknown } | null)?.statusCode === 'number';
+/** The HTTP status of an API error, or null when no response arrived. */
+function getHttpStatus(error: unknown): number | null {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  return typeof statusCode === 'number' ? statusCode : null;
 }
 
+/**
+ * Best effort: the server accepts only a fresh, merchant-confirmed handoff with no
+ * payment, a free confirm lease and no confirm attempt. Any refusal leaves the order
+ * in status review.
+ */
 async function releaseTossPaymentHandoff(orderId: string): Promise<void> {
   try {
     await apiClient.post('/api/v1/payments/branch/release', { orderId }, {
@@ -755,9 +758,11 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             showErrorToast: false,
           });
         } catch (error) {
-          // A lost response may hide a committed handoff. An HTTP rejection did not
-          // commit one, and may describe another tab's handoff that must stay intact.
-          if (!hasHttpStatus(error)) {
+          // A lost response or a gateway/server error (502/503/504 under open load) may
+          // hide a committed handoff; the server re-checks every release condition. A 4xx
+          // rejection committed nothing and may describe another tab's handoff.
+          const statusCode = getHttpStatus(error);
+          if (statusCode === null || statusCode >= 500) {
             await releaseTossPaymentHandoff(orderId);
           }
           throw error;

@@ -52,12 +52,18 @@ export interface TossSettlementRow {
 const TOSS_SETTLEMENT_PAGE_SIZE = 5_000;
 
 export const TOSS_TRANSACTION_PAGE_SIZE = 5_000;
+/** Toss documents transaction lookup as taking up to 60 seconds. */
+export const TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS = 65_000;
+
+export type TossSecretKeyScope = NonNullable<TossPaymentRequestOptions['secretKeyScope']>;
 
 export interface TossTransactionQueryOptions extends TossPaymentRequestOptions {
   startDate: string;
   endDate: string;
   startingAfter?: string;
   limit?: number;
+  /** A caller with its own time budget may shorten it; defaults to the documented maximum. */
+  timeoutMs?: number;
 }
 
 export interface TossTransactionRow {
@@ -313,6 +319,32 @@ export class TossPaymentsClient {
   }
 
   /**
+   * One scope per distinct configured secret key, i.e. per Toss MID this server can
+   * approve payments with. Proving that an order has no transaction needs all of them,
+   * because the MID a checkout used depends on the widget variant and confirm scope.
+   * A missing (or, for overseas card, non-widget) key cannot approve anything.
+   */
+  getTransactionLookupScopes(): TossSecretKeyScope[] {
+    const scopes: TossSecretKeyScope[] = [];
+    const seenKeys = new Set<string>();
+    const add = (scope: TossSecretKeyScope, key: string) => {
+      const normalized = key.trim();
+      if (!normalized || seenKeys.has(normalized)) {
+        return;
+      }
+      seenKeys.add(normalized);
+      scopes.push(scope);
+    };
+
+    add('default', this.secretKey);
+    if (this.isWidgetSecretKey(this.overseasCardSecretKey)) {
+      add('overseas-card', this.overseasCardSecretKey);
+    }
+    add('foreign-easy-pay', this.foreignEasyPaySecretKey);
+    return scopes;
+  }
+
+  /**
    * Transaction lookup (GET /v1/transactions) is in the widget secret key scope, unlike
    * order-ID lookup. Dates are KST `yyyy-MM-dd'T'HH:mm:ss`. Returns one page.
    */
@@ -330,7 +362,7 @@ export class TossPaymentsClient {
 
     const response = await fetch(`${this.baseUrl}/transactions?${params.toString()}`, {
       method: 'GET',
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(options.timeoutMs ?? TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS),
       headers: {
         Authorization: this.getAuthHeader(options.secretKeyScope),
       },

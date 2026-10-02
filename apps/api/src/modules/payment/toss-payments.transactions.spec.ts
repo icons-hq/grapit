@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigService } from '@nestjs/config';
-import { TossPaymentError, TossPaymentsClient } from './toss-payments.client.js';
+import {
+  TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS,
+  TossPaymentError,
+  TossPaymentsClient,
+} from './toss-payments.client.js';
+
+function createClient(keys: Record<string, string>) {
+  return new TossPaymentsClient({
+    get: vi.fn((key: string, fallback?: string) => keys[key] ?? fallback),
+  } as unknown as ConfigService);
+}
 
 describe('TossPaymentsClient.queryTransactions', () => {
   const secretKey = 'test_sk_transactions_secret';
@@ -44,6 +54,41 @@ describe('TossPaymentsClient.queryTransactions', () => {
         headers: { Authorization: `Basic ${Buffer.from(`${overseasKey}:`).toString('base64')}` },
       }),
     );
+  });
+
+  it('waits the documented 60 seconds by default and accepts a shorter caller budget', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+
+    await client.queryTransactions({ startDate: '2026-10-02', endDate: '2026-10-03' });
+    await client.queryTransactions({ startDate: '2026-10-02', endDate: '2026-10-03', timeoutMs: 12_000 });
+
+    expect(TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+    expect(timeout).toHaveBeenNthCalledWith(1, TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS);
+    expect(timeout).toHaveBeenNthCalledWith(2, 12_000);
+    timeout.mockRestore();
+  });
+
+  it('lists one lookup scope per distinct configured MID key', () => {
+    expect(createClient({
+      TOSS_SECRET_KEY: 'live_gsk_shared',
+      TOSS_OVERSEAS_CARD_SECRET_KEY: 'live_gsk_shared',
+      TOSS_FOREIGN_EASY_PAY_SECRET_KEY: 'live_gsk_shared',
+    }).getTransactionLookupScopes()).toEqual(['default']);
+
+    expect(createClient({
+      TOSS_SECRET_KEY: 'live_gsk_domestic',
+      TOSS_OVERSEAS_CARD_SECRET_KEY: 'live_gsk_uspay',
+      TOSS_FOREIGN_EASY_PAY_SECRET_KEY: 'live_gsk_uspay',
+    }).getTransactionLookupScopes()).toEqual(['default', 'overseas-card']);
+
+    expect(createClient({
+      TOSS_SECRET_KEY: 'live_gsk_domestic',
+      TOSS_OVERSEAS_CARD_SECRET_KEY: 'live_sk_not_a_widget_key',
+      TOSS_FOREIGN_EASY_PAY_SECRET_KEY: 'live_gsk_foreign',
+    }).getTransactionLookupScopes()).toEqual(['default', 'foreign-easy-pay']);
+
+    expect(createClient({}).getTransactionLookupScopes()).toEqual([]);
   });
 
   it('never turns an error or malformed success into an empty ledger', async () => {

@@ -337,6 +337,11 @@ return {1, 'OK', tostring(#ARGV - 3), ''}
 `;
 
 export const PAYMENT_CONFIRM_LOCK_TTL = 60;
+/**
+ * How long a confirm attempt keeps blocking Provider Handoff release. It must outlive
+ * the release window by far; the lease alone cannot, because it ends with the confirm.
+ */
+export const PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL = 30 * 60;
 export const RECOVERY_SEAT_LOCK_TTL = 60;
 
 export const RELEASE_PAYMENT_CONFIRM_LOCK_LUA = `
@@ -803,6 +808,24 @@ export class BookingService {
   async releasePaymentConfirmLock(orderId: string, lockToken: string): Promise<void> {
     const lockKey = `{payment-confirm}:${orderId}`;
     await this.redis.eval(RELEASE_PAYMENT_CONFIRM_LOCK_LUA, 1, lockKey, lockToken);
+  }
+
+  /**
+   * Recorded by payment confirm while it holds the lease, before any provider approval.
+   * It survives the lease, so a confirm that ended without a Payment row (provider
+   * timeout, recording failure) still blocks Provider Handoff release.
+   */
+  async markPaymentConfirmAttempted(orderId: string): Promise<void> {
+    await this.redis.set(
+      `{payment-confirm-attempt}:${orderId}`,
+      '1',
+      'EX',
+      PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL,
+    );
+  }
+
+  async hasPaymentConfirmAttempt(orderId: string): Promise<boolean> {
+    return (await this.redis.get(`{payment-confirm-attempt}:${orderId}`)) !== null;
   }
 
   private lockConflictFromResult(result: SeatLockOwnershipResult): ConflictException | null {

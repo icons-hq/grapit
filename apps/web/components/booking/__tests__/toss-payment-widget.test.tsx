@@ -353,7 +353,7 @@ describe('TossPaymentWidget', () => {
     expect(apiClientPostMock).toHaveBeenCalledTimes(2);
   });
 
-  it('hands back a handoff whose branch response was lost, but never one refused over HTTP', async () => {
+  it('hands back a handoff whose branch response was lost or hit a server error, but never one refused with 4xx', async () => {
     const ref = createRef<TossPaymentWidgetRef>();
     render(<TossPaymentWidget {...defaultProps} ref={ref} />);
     await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
@@ -361,6 +361,18 @@ describe('TossPaymentWidget', () => {
     const lost = new TypeError('Failed to fetch');
     apiClientPostMock.mockRejectedValueOnce(lost).mockResolvedValueOnce({ orderId: defaultProps.orderId, released: true });
     await expect(ref.current!.requestPayment()).rejects.toBe(lost);
+    expect(apiClientPostMock).toHaveBeenLastCalledWith(
+      '/api/v1/payments/branch/release',
+      { orderId: defaultProps.orderId },
+      { showErrorToast: false },
+    );
+
+    // A gateway error can arrive after the server committed the handoff under open load.
+    apiClientPostMock.mockClear();
+    const gateway = Object.assign(new Error('Bad Gateway'), { statusCode: 502 });
+    apiClientPostMock.mockRejectedValueOnce(gateway).mockResolvedValueOnce({ orderId: defaultProps.orderId, released: true });
+    await expect(ref.current!.requestPayment()).rejects.toBe(gateway);
+    expect(apiClientPostMock).toHaveBeenCalledTimes(2);
     expect(apiClientPostMock).toHaveBeenLastCalledWith(
       '/api/v1/payments/branch/release',
       { orderId: defaultProps.orderId },

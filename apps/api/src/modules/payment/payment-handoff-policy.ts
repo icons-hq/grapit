@@ -1,23 +1,29 @@
 import type { PaymentMethod, PaymentProvider } from '@grabit/shared';
-import { PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
-import type { TossPaymentRequestOptions } from './toss-payments.client.js';
 
-const ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
+/**
+ * Foreign wallets that the provider can approve without this server's confirm call.
+ * Their handoff outcome is owned by the provider webhook, never by local release or review.
+ */
+export const ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS = [
   'ALIPAY_PLUS',
   'TRUEMONEY',
-]);
+] as const satisfies readonly PaymentProvider[];
+
+const ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDER_SET = new Set<PaymentProvider>(
+  ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS,
+);
 
 /**
  * A browser may release its own Provider Handoff only right after the provider SDK
- * rejected before opening checkout. The window stays shorter than the confirm lease
- * TTL (with clock-skew headroom): any confirm that started after this handoff still
- * holds its lease when a release inside the window runs, so release cannot hide an
- * approval whose recording failed.
+ * rejected before opening checkout, which happens within seconds of the handoff.
+ *
+ * The window is not what keeps release safe. Release also requires the order's confirm
+ * lease (no confirm in flight) and no confirm-attempt marker (no confirm ever started
+ * for the order; the marker outlives the window by far), plus no Payment row. The
+ * window only bounds how long a stale or scripted caller can reopen a handoff whose
+ * provider checkout may still be open in another tab.
  */
-export const PAYMENT_HANDOFF_RELEASE_WINDOW_MS = Math.min(
-  45_000,
-  (PAYMENT_CONFIRM_LOCK_TTL - 15) * 1000,
-);
+export const PAYMENT_HANDOFF_RELEASE_WINDOW_MS = 45_000;
 
 /**
  * Toss expires an unauthenticated checkout after 30 minutes and an authenticated but
@@ -38,25 +44,6 @@ export const PAYMENT_HANDOFF_UNKNOWN_MESSAGE =
 export function isMerchantConfirmedCheckoutMethod(paymentMethod: PaymentMethod): boolean {
   return !(
     paymentMethod.method === 'FOREIGN_EASY_PAY'
-    && ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS.has(paymentMethod.provider)
+    && ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDER_SET.has(paymentMethod.provider)
   );
-}
-
-export function isOverseasCardCheckoutMethod(paymentMethod: PaymentMethod): boolean {
-  return (
-    paymentMethod.method === 'CARD'
-    && paymentMethod.provider === 'CARD'
-    && (
-      (paymentMethod.currency !== undefined
-        && paymentMethod.currency.toUpperCase() !== 'KRW')
-      || paymentMethod.overseasPaymentConsent?.required === true
-    )
-  );
-}
-
-/** The secret key (and therefore Toss MID) whose transactions contain this checkout. */
-export function resolveCheckoutSecretKeyScope(
-  paymentMethod: PaymentMethod,
-): NonNullable<TossPaymentRequestOptions['secretKeyScope']> {
-  return isOverseasCardCheckoutMethod(paymentMethod) ? 'overseas-card' : 'default';
 }
