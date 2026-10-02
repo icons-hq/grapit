@@ -16,7 +16,8 @@ API(`deploy.yml`)와 background worker(`scripts/managed-demo/deploy-background-w
 
 ## 누락 시 증상
 
-- 구매자 예매 상세·QR 조회·티켓 메일: HTTP 500 `QR 티켓을 일시적으로 표시할 수 없습니다`. 로그 `CRITICAL: QR secret version ... is missing from QR_TICKET_SECRET_KEYRING_JSON`. 세션 만료(401)로 보이지 않는다.
+- 구매자 예매 상세(`GET /reservations/:id`): HTTP 200으로 열리지만 해당 좌석의 QR이 표시되지 않는다. 예매 상세는 QR 발급·재서명 실패를 숨기고 다음 조회에서 다시 시도하기 때문이다. 로그에는 warn `QR self-heal issuance failed during reservation read`와 `CRITICAL: QR secret version ... is missing from QR_TICKET_SECRET_KEYRING_JSON`이 남는다. 세션 만료(401)로 보이지 않는다.
+- 티켓 메일 재발송(`POST /tickets/reservations/:id/email`)과 QR 조회 API(`GET /tickets/reservations/:id`): HTTP 500 `QR 티켓을 일시적으로 표시할 수 없습니다`와 같은 CRITICAL 로그. 예약 reminder 메일 job은 발송 claim을 되돌리고 실패해 pg-boss가 재시도한다.
 - 현장 검표: 해당 version 토큰이 `tampered`(검증할 수 없는 QR)로 거절. 로그 `QR token presented with a secret version missing from the keyring`.
 - 기동 시: `CRITICAL: QR_TICKET_SECRET_KEYRING_JSON is missing secret versions still used by issued tickets: ...` 로그와 Sentry(`check=secret-keyring-coverage`, level fatal).
 - 어긋난 secret·version 쌍으로 기동: `CRITICAL: QR_TICKET_SECRET_KEYRING_JSON entry for the current QR secret version "..." differs from QR_TICKET_SECRET` 로그와 Sentry(`check=secret-keyring-conflict`, level fatal). keyring JSON에 현재 version이 들어 있어야 감지된다. secret 값은 로그에 남지 않는다.
@@ -62,12 +63,12 @@ API(`deploy.yml`)와 background worker(`scripts/managed-demo/deploy-background-w
    - 다음 정규 배포가 binding을 `latest`로 되돌린다. 이때 `latest`는 (c)의 번호와 같다.
 4. 배포 후 확인.
    - API·worker 기동 로그에 `missing secret versions`, `differs from QR_TICKET_SECRET`, `QR secret keyring coverage check failed`, `QR secret keyring conflict check failed`가 없다.
-   - 교체 전에 발급된 티켓의 예매 상세가 200으로 열리고, 그 QR이 현장 검표 verify에서 `processable`이다.
+   - 교체 전에 발급된 티켓의 예매 상세에서 좌석별 QR이 표시되고, 그 QR이 현장 검표 verify에서 `processable`이다. 예매 상세는 keyring이 빠져도 200으로 열리므로 상태 코드만으로 판단하지 않는다.
    - 교체 후 새로 발급된 `tickets.secret_version`이 새 version이다.
 
 ## 되돌리기
 
-- CRITICAL 로그나 구매자 500이 보이면 빠진 version을 keyring에 추가하고 재배포한다. 이전 revision으로 즉시 돌릴 수도 있다.
+- CRITICAL 로그, 좌석 QR이 빠진 예매 상세, 티켓 메일 500이 보이면 빠진 version을 keyring에 추가하고 재배포한다. 이전 revision으로 즉시 돌릴 수도 있다.
 - `differs from QR_TICKET_SECRET`가 보이면 3번 (c)를 일치하는 번호 쌍으로 다시 실행하거나, (a)의 고정 번호로 되돌린다.
 - 티켓의 `secret_version`을 일괄 수정하거나 이전 version을 지워 증상을 숨기지 않는다.
 
