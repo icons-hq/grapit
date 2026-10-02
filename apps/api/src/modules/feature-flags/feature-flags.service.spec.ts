@@ -63,13 +63,29 @@ describe('FeatureFlagsService', () => {
       .toThrow('예매는 추후 오픈 예정입니다');
   });
 
-  it('allows admin actors when booking is disabled', () => {
+  it('allows full admin actors when booking is disabled', () => {
     const service = new FeatureFlagsService(() => ({
       [FLAG_NAMES.BOOKING_ENABLED]: 'false',
     }));
 
-    expect(() => service.assertBookingEnabled({ id: 'admin-1', role: 'admin' }))
-      .not.toThrow();
+    expect(() => service.assertBookingEnabled({
+      id: 'admin-1', role: 'admin', adminCapabilityBundle: 'admin', adminCapabilities: [],
+    })).not.toThrow();
+    expect(() => service.assertBookingEnabled({
+      id: 'admin-2', role: 'admin', adminCapabilityBundle: null, adminCapabilities: [],
+    })).not.toThrow();
+  });
+
+  it('keeps restricted admin bundles behind the Sitewide Booking Gate (audit #25)', () => {
+    const service = new FeatureFlagsService(() => ({
+      [FLAG_NAMES.BOOKING_ENABLED]: 'false',
+    }));
+
+    expect(() => service.assertBookingEnabled({
+      id: 'scanner-1', role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [],
+    })).toThrow('예매는 추후 오픈 예정입니다');
+    expect(() => service.assertBookingEnabled({ id: 'admin-3', role: 'admin' }))
+      .toThrow('예매는 추후 오픈 예정입니다');
   });
 
   it('compiles in a Nest module with the default runtime env provider', async () => {

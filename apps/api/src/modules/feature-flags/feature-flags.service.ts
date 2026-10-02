@@ -1,9 +1,13 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { readFeatureFlags } from '@grabit/shared';
+import {
+  canUseAdminBookingBypass,
+  type AdminBookingBypassActor,
+} from '../../common/admin-booking-bypass.js';
 
 type RuntimeEnv = Record<string, string | undefined>;
 type RuntimeEnvProvider = () => RuntimeEnv;
-type BookingActor = { id: string; role?: string };
+type BookingActor = AdminBookingBypassActor & { id: string };
 
 export const FEATURE_FLAGS_ENV_PROVIDER = Symbol('FEATURE_FLAGS_ENV_PROVIDER');
 
@@ -19,7 +23,7 @@ export class FeatureFlagsService {
   }
 
   assertBookingEnabled(actor?: BookingActor): void {
-    if (this.getFlags().bookingEnabled || actor?.role === 'admin') {
+    if (this.getFlags().bookingEnabled || canUseAdminBookingBypass(actor)) {
       return;
     }
 

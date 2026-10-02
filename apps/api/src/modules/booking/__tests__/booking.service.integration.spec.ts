@@ -48,7 +48,13 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
                 },
               }]
-            : [{ performancePublishState: 'published', performanceStatus: 'selling', bookingStartsAt: null }];
+            : [{
+                // Sales close at the showtime start, so the fixture showtime has not started.
+                showtimeDateTime: new Date('2099-01-01T10:00:00.000Z'),
+                performancePublishState: 'published',
+                performanceStatus: 'selling',
+                bookingStartsAt: null,
+              }];
           return {
             where: () => queryRows(rows),
             leftJoin: () => ({

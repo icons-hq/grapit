@@ -313,7 +313,31 @@ describe('use-booking payment mutations', () => {
     });
 
     await result.current.mutateAsync(payload);
-    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm', payload, {
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=ko', payload, {
+      showErrorToast: false,
+    });
+  });
+
+  it('useConfirmPayment() requests the confirm detail in the current display locale', async () => {
+    const payload: ConfirmPaymentRequest = {
+      paymentKey: 'test_payment_key_th',
+      orderId: 'GRP-CONFIRM-TH',
+      amount: 50000,
+    };
+    postMock.mockResolvedValueOnce({ id: 'reservation-confirm-th', status: 'CONFIRMED' });
+    const previousPath = window.location.pathname;
+    window.history.pushState({}, '', '/th/booking/performance-1/complete');
+
+    try {
+      const { result } = renderHook(() => useConfirmPayment(), {
+        wrapper: createWrapper().Wrapper,
+      });
+      await result.current.mutateAsync(payload);
+    } finally {
+      window.history.pushState({}, '', previousPath);
+    }
+
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=th', payload, {
       showErrorToast: false,
     });
   });
@@ -384,7 +408,7 @@ describe('use-booking payment mutations', () => {
     await expect(result.current.mutateAsync(payload)).resolves.toMatchObject({
       id: 'reservation-confirm-disabled',
     });
-    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm', payload, {
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=ko', payload, {
       showErrorToast: false,
     });
   });

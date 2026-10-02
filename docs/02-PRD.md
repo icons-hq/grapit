@@ -54,10 +54,13 @@ Auth must protect scarce booking resources and admin surfaces.
 Booking is gated by runtime feature flags and queue admission.
 
 - `BOOKING_ENABLED` is the API-side runtime flag. Client-public names are not accepted as API authority.
-- When booking is disabled, non-admin buyers cannot create seat locks, prepare reservations, or confirm payment.
+- When booking is disabled, non-admin buyers cannot create seat locks, prepare reservations, or confirm payment. Admin Booking Bypass belongs to full admins only; scanner, finance and other restricted admin bundles book like Buyers.
 - Queue entry is event/performance scoped and returns admission state used by booking mutation guards.
 - Queue admission is carried through the booking flow and checked again during reservation prepare and payment confirm.
-- Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, and manual open rules.
+- Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, allowed payment methods, and manual open rules.
+- The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
+- Sales for a showtime close at its scheduled start time. Seat lock and reservation prepare reject a started showtime for every actor.
+- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods.
 
 ### 3.4 Seat Selection
 
@@ -74,6 +77,8 @@ Seat selection is SVG-based and floor-aware.
 Payment and reservation finalization are server-authoritative.
 
 - Toss Payments is the current payment provider integration.
+- The queue admission token stays in its httpOnly cookie; reservations do not store it and responses do not echo it.
+- The payment confirm response uses the buyer's display locale for translated performance titles.
 - The payment branch API chooses synchronous or asynchronous handling based on payment method.
 - Payment confirm validates amount, order identity, lock ownership, queue admission, and payment state before finalizing reservation state.
 - Toss webhook handling records provider events and re-checks provider state before applying final state changes.

@@ -48,6 +48,8 @@ type QueueAdmissionRequest = ExpressRequest & {
   user: {
     id: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
     isEmailVerified?: boolean;
     isPhoneVerified?: boolean;
   };
@@ -57,6 +59,8 @@ type QueueAdmissionRequest = ExpressRequest & {
 type AuthenticatedReservationUser = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -83,6 +87,8 @@ export class ReservationController {
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
@@ -103,15 +109,19 @@ export class ReservationController {
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
     @Request() req: { user: AuthenticatedReservationUser },
+    @Query('locale') locale?: string,
   ) {
     return this.reservationService.confirmAndCreateReservation(
       body as ConfirmPaymentRequest,
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
+      locale,
     );
   }
 

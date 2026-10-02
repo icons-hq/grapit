@@ -224,7 +224,13 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
 - Lock keyspace is showtime-scoped.
 - Lock ownership is per user.
 - Lock and unlock operations use Lua-compatible atomic checks.
-- Max-ticket policy is enforced from performance booking policy.
+- Max-ticket policy is enforced from performance booking policy. Seat lock, prepare and
+  confirm count the confirmed tickets of every Buyer Account that verified the same phone
+  number (E.164 identity via `parseE164`); an account without a verified phone counts alone.
+  SQL narrows candidates through `idx_users_verified_phone_suffix` (last 8 digits) and the
+  confirm-time advisory lock uses the same phone scope (`apps/api/src/database/ticket-limit.ts`).
+- Showtime sales close at `showtimes.date_time`: seat lock and prepare (new and retried
+  orders) reject a started showtime with 403, including Admin Booking Bypass.
 - Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`.
 - Seat updates are broadcast over Socket.IO rooms named by showtime.
 
@@ -240,6 +246,13 @@ Local development can use an in-memory Redis-compatible mock when Redis URL is a
 - order binding for payment confirm where needed.
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
+Only a full admin (`resolveAdminCapabilitySnapshot(...).superuser`: the `admin` bundle or a
+legacy admin without bundle/capabilities) may bypass the queue, the Sitewide Booking Gate,
+Performance Publication and the sale start time (`apps/api/src/common/admin-booking-bypass.ts`).
+Restricted bundles such as scanner or finance also carry `role=admin` but queue and book
+like Buyers. Callers must forward the capability claims; without them the bypass is denied.
+The admission token is cookie-only: it is not stored on the Reservation and API responses
+return the `cookie-bound` marker instead.
 
 ### 6.3 Reservation Prepare
 
@@ -250,10 +263,16 @@ Admin bypass exists for controlled tests and operational flows, not for normal b
 - required consent rows,
 - duplicate seats,
 - showtime booking context,
-- booking policy,
+- booking policy, including `allowedPaymentMethods` for a new order or a changed method
+  (409 before seat TTLs change; an unchanged fixed method is not re-checked),
+- showtime sales cutoff,
 - active lock ownership,
 - canonical seat/tier/price,
 - queue admission.
+
+Reservation numbers are `GRP-<KST date>-<8 base32 CSPRNG chars>`. A unique collision
+regenerates the number (bounded retries); a concurrent prepare that lost the `toss_order_id`
+race answers through the idempotent existing-order path.
 
 The pending reservation stores server-side payment deadline, queue recovery timestamps,
 Checkout Payment Method and Provider Charge Quote. Authenticated order lookup reads the
@@ -274,6 +293,9 @@ window. A fail URL alone never cancels or replaces an order. See
 - compensation cancellation if provider confirmation succeeds but finalization fails,
 - QR ticket issuance after confirmed payment.
 
+`POST /api/v1/payments/confirm?locale=` returns the Reservation detail in the buyer's
+display locale, like reservation lookup.
+
 Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
 
 ### 6.5 Refund And Cancelled Seat Reopen
@@ -284,6 +306,12 @@ Toss webhook processing records provider events, handles replay/idempotency, and
 - delayed cancelled-seat release.
 
 Admin refund writes audit evidence and can hold seats before manual reopening.
+
+When a definitive provider rejection restores rights, Benefit Entitlements revoked as
+`cancellation_pending` are re-validated under the showtime benefit lock: a limited right
+returns only while its run is still the latest completed live run, an included right only
+while the current configuration still includes it for the tier, and included rights added
+meanwhile are created (`apps/api/src/database/benefit-entitlement-restoration.ts`).
 
 ## 7. QR And Field Operations
 

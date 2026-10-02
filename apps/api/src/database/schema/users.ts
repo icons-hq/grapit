@@ -7,6 +7,7 @@ import {
   timestamp,
   pgEnum,
   jsonb,
+  index,
 } from 'drizzle-orm/pg-core';
 
 export const genderEnum = pgEnum('gender', ['male', 'female', 'unspecified']);
@@ -38,4 +39,9 @@ export const users = pgTable('users', {
   withdrawalSource: varchar('withdrawal_source', { length: 20 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  // Verified phone identity lookup for the per-person ticket limit (ticket-limit.ts, migration 0039).
+  index('idx_users_verified_phone_suffix')
+    .on(sql`(right(regexp_replace(translate(${table.phone}, '０１２３４５６７８９', '0123456789'), '[^0-9]', '', 'g'), 8))`)
+    .where(sql`${table.isPhoneVerified} = true`),
+]);

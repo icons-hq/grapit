@@ -352,10 +352,13 @@ export function usePrepareReservation() {
 
 export function useConfirmPayment() {
   return useMutation({
+    // The confirm response renders the complete screen, so it needs the display locale too.
     mutationFn: (data: ConfirmPaymentRequest) =>
-      apiClient.post<ReservationDetail>('/api/v1/payments/confirm', data, {
-        showErrorToast: false,
-      }),
+      apiClient.post<ReservationDetail>(
+        `/api/v1/payments/confirm?locale=${encodeURIComponent(getClientLocale())}`,
+        data,
+        { showErrorToast: false },
+      ),
   });
 }
 

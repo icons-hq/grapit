@@ -1,9 +1,123 @@
 import { NotFoundException } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
+import { parseE164 } from '../modules/sms/phone.util.js';
 import type { DrizzleDB } from './drizzle.provider.js';
 type TicketLimitExecutor = Pick<DrizzleDB, 'execute'>;
 type TicketLimitSnapshot = { performanceId: string; maxTicketsPerUser: number; activeTicketCount: number };
+type BuyerTicketCountRow = {
+  active_ticket_count?: unknown;
+  buyer_phone?: unknown;
+  buyer_phone_verified?: unknown;
+  linked_phone_accounts?: unknown;
+};
+
+/*
+ * The per-person ticket limit (booking_policies.max_tickets_per_user) is summed
+ * over every Buyer Account that verified the same phone number (E.164). An
+ * account without a verified phone keeps the account-only limit.
+ *
+ * Stored phones keep the submitted format ("010-…", "+82…", "+82 0…"), so SQL
+ * narrows candidates by the last 8 digits — identical for every format of one
+ * number — and parseE164 decides the exact identity, the same normalization
+ * the SMS verification token uses. The expression must stay byte-identical to
+ * idx_users_verified_phone_suffix (migration 0039) for the index to apply.
+ */
+function verifiedPhoneSuffix(phoneColumn: SQL): SQL {
+  return sql`right(regexp_replace(translate(${phoneColumn}, '０１２３４５６７８９', '0123456789'), '[^0-9]', '', 'g'), 8)`;
+}
+
+function confirmedTicketCount(input: {
+  userId: SQL;
+  performanceId: SQL;
+  excludeReservationId?: string;
+}): SQL {
+  return sql`(
+    SELECT count(*)::int
+    FROM ticket_items ti
+    INNER JOIN reservations r ON r.id = ti.reservation_id
+    INNER JOIN showtimes ticket_showtimes ON ticket_showtimes.id = ti.showtime_id
+    WHERE r.user_id = ${input.userId}
+      ${input.excludeReservationId ? sql`AND r.id <> ${input.excludeReservationId}` : sql``}
+      AND ticket_showtimes.performance_id = ${input.performanceId}
+      AND r.status = 'CONFIRMED'
+      AND ti.status IN ('active', 'cancellation_pending')
+  )`;
+}
+
+function buyerPhoneColumns(input: {
+  performanceId: SQL;
+  excludeReservationId?: string;
+}): SQL {
+  return sql`
+    buyer.phone AS buyer_phone,
+    buyer.is_phone_verified AS buyer_phone_verified,
+    (
+      SELECT coalesce(json_agg(json_build_object(
+        'phone', linked.phone,
+        'active_ticket_count', ${confirmedTicketCount({
+          userId: sql`linked.id`,
+          performanceId: input.performanceId,
+          excludeReservationId: input.excludeReservationId,
+        })}
+      )), '[]'::json)
+      FROM users linked
+      WHERE buyer.is_phone_verified = true
+        AND linked.is_phone_verified = true
+        AND linked.id <> buyer.id
+        AND ${verifiedPhoneSuffix(sql`linked.phone`)} = ${verifiedPhoneSuffix(sql`buyer.phone`)}
+    ) AS linked_phone_accounts
+  `;
+}
+
+function toCount(value: unknown): number {
+  const count = typeof value === 'number' ? value : Number(value ?? 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function toE164OrNull(phone: unknown): string | null {
+  if (typeof phone !== 'string' || phone.length === 0) {
+    return null;
+  }
+  try {
+    return parseE164(phone);
+  } catch {
+    return null;
+  }
+}
+
+/** Buyer's own confirmed tickets plus those of accounts sharing the verified phone. */
+function sumBuyerIdentityTickets(row: BuyerTicketCountRow): number {
+  const ownCount = toCount(row.active_ticket_count);
+  const buyerPhone = row.buyer_phone_verified === true ? toE164OrNull(row.buyer_phone) : null;
+  if (!buyerPhone || !Array.isArray(row.linked_phone_accounts)) {
+    return ownCount;
+  }
+
+  return row.linked_phone_accounts.reduce<number>((total, account) => {
+    const linked = account as { phone?: unknown; active_ticket_count?: unknown };
+    return toE164OrNull(linked.phone) === buyerPhone
+      ? total + toCount(linked.active_ticket_count)
+      : total;
+  }, ownCount);
+}
+
+/** Confirmed active tickets the buyer's verified phone identity holds for a performance. */
+export async function countBuyerActiveTicketsForPerformance(
+  executor: TicketLimitExecutor,
+  userId: string,
+  performanceId: string,
+): Promise<number> {
+  const result = await executor.execute(sql`
+    SELECT
+      ${confirmedTicketCount({ userId: sql`${userId}`, performanceId: sql`${performanceId}` })} AS active_ticket_count,
+      ${buyerPhoneColumns({ performanceId: sql`${performanceId}` })}
+    FROM (SELECT 1) AS anchor
+    LEFT JOIN users buyer ON buyer.id = ${userId}
+  `);
+
+  return sumBuyerIdentityTickets((result.rows[0] ?? {}) as BuyerTicketCountRow);
+}
 
 export async function getTicketLimitSnapshot(
   executor: TicketLimitExecutor,
@@ -18,27 +132,22 @@ export async function getTicketLimitSnapshot(
         bp.max_tickets_per_user,
         ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
       )::int AS max_tickets_per_user,
-      (
-        SELECT count(*)::int
-        FROM ticket_items ti
-        INNER JOIN reservations r ON r.id = ti.reservation_id
-        INNER JOIN showtimes ticket_showtimes ON ticket_showtimes.id = ti.showtime_id
-        WHERE r.user_id = ${userId}
-          AND r.id <> ${reservationId}
-          AND ticket_showtimes.performance_id = s.performance_id
-          AND r.status = 'CONFIRMED'
-          AND ti.status IN ('active', 'cancellation_pending')
-      ) AS active_ticket_count
+      ${confirmedTicketCount({
+        userId: sql`${userId}`,
+        performanceId: sql`s.performance_id`,
+        excludeReservationId: reservationId,
+      })} AS active_ticket_count,
+      ${buyerPhoneColumns({ performanceId: sql`s.performance_id`, excludeReservationId: reservationId })}
     FROM showtimes s
     LEFT JOIN booking_policies bp ON bp.performance_id = s.performance_id
+    LEFT JOIN users buyer ON buyer.id = ${userId}
     WHERE s.id = ${showtimeId}
   `);
   const row = result.rows[0] as
-    | {
+    | (BuyerTicketCountRow & {
       performance_id?: unknown;
       max_tickets_per_user?: unknown;
-      active_ticket_count?: unknown;
-    }
+    })
     | undefined;
 
   if (!row) {
@@ -48,10 +157,15 @@ export async function getTicketLimitSnapshot(
   return {
     performanceId: String(row.performance_id),
     maxTicketsPerUser: Number(row.max_tickets_per_user ?? 0),
-    activeTicketCount: Number(row.active_ticket_count ?? 0),
+    activeTicketCount: sumBuyerIdentityTickets(row),
   };
 }
 
+/**
+ * Serializes limit checks of one buyer identity for a performance. Accounts
+ * with a verified phone share the phone-suffix scope — a superset of the exact
+ * E.164 identity, so every account of that phone takes the same lock.
+ */
 export async function lockTicketLimitScope(
   executor: TicketLimitExecutor,
   userId: string,
@@ -59,7 +173,22 @@ export async function lockTicketLimitScope(
 ): Promise<void> {
   await executor.execute(sql`
     SELECT pg_advisory_xact_lock(
-      hashtextextended(${`ticket-limit:${userId}:${performanceId}`}, 0)
+      hashtextextended(
+        'ticket-limit:'
+          || coalesce(
+            (
+              SELECT 'phone:' || ${verifiedPhoneSuffix(sql`buyer.phone`)}
+              FROM users buyer
+              WHERE buyer.id = ${userId}
+                AND buyer.is_phone_verified = true
+                AND ${verifiedPhoneSuffix(sql`buyer.phone`)} <> ''
+            ),
+            ${userId}
+          )
+          || ':'
+          || ${performanceId},
+        0
+      )
     )
   `);
 }
