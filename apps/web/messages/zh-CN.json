@@ -126,7 +126,22 @@
     "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。",
     "loading": "正在加载最新帮助信息。",
     "loadError": "无法加载最新帮助信息。请重试或通过下方邮箱联系我们。",
-    "legalLinks": "条款与隐私信息"
+    "legalLinks": "条款与隐私信息",
+    "noticePostedAt": "发布于 {date}",
+    "noticeOriginalLanguage": "译文准备中，暂以{language}原文显示。",
+    "noticeLanguages": {
+      "ko": "韩语",
+      "en": "英语"
+    },
+    "noticeCategories": {
+      "general": "一般",
+      "urgent": "紧急",
+      "maintenance": "维护",
+      "payment": "支付",
+      "refund": "退款",
+      "signup": "注册",
+      "event": "演出"
+    }
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",

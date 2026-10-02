@@ -54,6 +54,9 @@ export const supportNotices = pgTable(
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
     scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+    // Links locale versions of the same notice. NULL marks legacy rows that
+    // were created before translation linking and never fall back by locale.
+    translationGroupId: uuid('translation_group_id'),
     reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -84,5 +87,8 @@ export const supportNotices = pgTable(
     ),
     index('idx_support_notices_review_state').on(table.reviewState),
     index('idx_support_notices_published_at').on(table.publishedAt),
+    index('idx_support_notices_translation_group_id').on(
+      table.translationGroupId,
+    ),
   ],
 );

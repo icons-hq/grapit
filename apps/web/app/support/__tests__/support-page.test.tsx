@@ -98,4 +98,66 @@ describe('SupportPage', () => {
     expect(screen.getByText('Refund or account support')).toBeInTheDocument();
     expect(screen.getByText('wecordofficial_cs@mariannekate.com')).toBeVisible();
   });
+
+  it('labels urgent notices with category and KST posting time (audit #134)', () => {
+    localeMock.activeLocale = 'ko';
+    supportContentMock.result = {
+      isError: false,
+      data: {
+        notices: [
+          {
+            id: 'notice-urgent',
+            category: 'urgent',
+            locale: 'ko',
+            title: '결제 장애 안내',
+            body: '결제가 지연되고 있습니다.',
+            priority: 'urgent',
+            publishedAt: '2026-06-03T08:00:00.000Z',
+          },
+        ],
+        faqs: [],
+      },
+    };
+
+    render(<SupportPage />);
+
+    expect(screen.getByText('긴급')).toBeInTheDocument();
+    expect(screen.getByText('게시 2026.06.03 17:00 KST')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/원문 공지입니다/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('marks a Korean fallback notice shown on another locale page (audit #168)', () => {
+    localeMock.activeLocale = 'th';
+    supportContentMock.result = {
+      isError: false,
+      data: {
+        notices: [
+          {
+            id: 'notice-ko-fallback',
+            category: 'payment',
+            locale: 'ko',
+            title: '결제 장애 안내',
+            body: '결제가 지연되고 있습니다.',
+            priority: 'urgent',
+            publishedAt: '2026-06-03T08:00:00.000Z',
+          },
+        ],
+        faqs: [],
+      },
+    };
+
+    render(<SupportPage />);
+
+    expect(screen.getByText('결제 장애 안내')).toBeInTheDocument();
+    expect(
+      screen.getByText('แสดงเป็นภาษาเกาหลีระหว่างเตรียมคำแปล'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('การชำระเงิน')).toBeInTheDocument();
+    expect(screen.getByText('결제 장애 안내').closest('article')).toHaveAttribute(
+      'lang',
+      'ko',
+    );
+  });
 });

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   render,
   renderHook,
   screen,
@@ -242,6 +243,275 @@ describe('SupportContentManager', () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ['admin', 'operations'],
+    });
+  });
+});
+
+function noticeRow(overrides: Record<string, unknown>) {
+  return {
+    ...supportContentResponse.notices[0],
+    translationGroupId: null,
+    startsAt: null,
+    endsAt: null,
+    ...overrides,
+  };
+}
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+}
+
+describe('SupportContentManager edit safety', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'created',
+      canPublish: true,
+    });
+    (apiClient.patch as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  });
+
+  it('keeps the edit target and selection when a refetch puts another notice first (audit #141)', async () => {
+    const user = userEvent.setup();
+    const queryClient = createTestQueryClient();
+    const noticeX = noticeRow({
+      id: 'notice-x',
+      title: 'Notice X',
+      body: 'Body X',
+      updatedAt: '2026-09-30T01:00:00.000Z',
+    });
+    const noticeY = noticeRow({
+      id: 'notice-y',
+      title: 'Notice Y',
+      body: 'Body Y',
+      reviewState: 'published',
+      status: 'published',
+    });
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [],
+      notices: [noticeX],
+    });
+
+    render(<SupportContentManager />, { wrapper: createWrapper(queryClient) });
+    await user.click(await screen.findByRole('tab', { name: '공지' }));
+    await user.click(screen.getByRole('button', { name: 'Notice X 수정' }));
+    await user.clear(screen.getByLabelText('내용'));
+    await user.type(screen.getByLabelText('내용'), 'Body X edited');
+
+    // Another operator publishes Y; the list refetches with Y on top.
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [],
+      notices: [noticeY, noticeX],
+    });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['admin', 'support-content'] });
+    });
+    expect(await screen.findByText('Notice Y')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/support-content/notices/notice-x',
+        {
+          body: 'Body X edited',
+          expectedUpdatedAt: '2026-09-30T01:00:00.000Z',
+        },
+      );
+    });
+    expect(apiClient.patch).not.toHaveBeenCalledWith(
+      '/api/v1/admin/support-content/notices/notice-y',
+      expect.anything(),
+    );
+    expect(await screen.findByText('Body X')).toBeInTheDocument();
+  });
+
+  it('shows a conflict message and keeps the form open when the server rejects a stale save', async () => {
+    const user = userEvent.setup();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      supportContentResponse,
+    );
+    (apiClient.patch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(
+        new Error('다른 운영자가 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해주세요'),
+        { statusCode: 409 },
+      ),
+    );
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(
+      await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' }),
+    );
+    await user.type(screen.getByLabelText('내용'), ' 추가');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(
+      await screen.findByText(
+        '다른 운영자가 먼저 수정했습니다. 최신 내용을 확인한 뒤 다시 저장해주세요',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '최신 내용 다시 불러오기' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('내용')).toHaveValue(
+      '좌석을 선택하고 결제하면 예매됩니다. 추가',
+    );
+  });
+
+  it('enables review only for content waiting for review and confirms before unpublishing an assisted edit (audit #48)', async () => {
+    const user = userEvent.setup();
+    const publishedThai = noticeRow({
+      id: 'notice-th',
+      locale: 'th',
+      title: 'ประกาศ',
+      body: 'เนื้อหาเดิม',
+      status: 'published',
+      reviewState: 'published',
+      translationUse: 'assisted',
+      translationUseLabel: '자동 번역 검수본',
+    });
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [],
+      notices: [publishedThai],
+    });
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(await screen.findByRole('tab', { name: '공지' }));
+    await user.click(screen.getByRole('button', { name: 'ประกาศ' }));
+    expect(screen.getByRole('button', { name: '검수 완료' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'ประกาศ 수정' }));
+    await user.type(screen.getByLabelText('내용'), ' ใหม่');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(
+      await screen.findByRole('alertdialog', { name: '저장하면 게시가 내려갑니다' }),
+    ).toBeInTheDocument();
+    expect(apiClient.patch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '저장하고 게시 내리기' }));
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/support-content/notices/notice-th',
+        expect.objectContaining({ body: 'เนื้อหาเดิม ใหม่' }),
+      );
+    });
+  });
+
+  it('saves a published Korean FAQ edit without a confirmation and sends only changed fields', async () => {
+    const user = userEvent.setup();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [
+        {
+          ...supportContentResponse.faqs[0],
+          reviewState: 'published',
+          publishedAt: '2026-05-14T02:00:00.000Z',
+        },
+      ],
+      notices: [],
+    });
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(
+      await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' }),
+    );
+    expect(
+      screen.getByText('게시 중인 콘텐츠입니다. 저장하면 공개 화면에 바로 반영됩니다.'),
+    ).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('분류'), 'event_info');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/support-content/faqs/faq-ko',
+        {
+          category: 'event_info',
+          expectedUpdatedAt: '2026-05-14T01:00:00.000Z',
+        },
+      );
+    });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('creates urgent notices with urgent priority and an exposure window (audit #134)', async () => {
+    const user = userEvent.setup();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      supportContentResponse,
+    );
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await screen.findByText('예매는 어떻게 하나요?');
+    await user.click(screen.getByRole('button', { name: '공지 등록' }));
+    await user.selectOptions(screen.getByLabelText('분류'), 'urgent');
+    expect(screen.getByLabelText('중요도')).toHaveValue('urgent');
+    await user.type(screen.getByLabelText('노출 종료'), '2026-10-01T23:00');
+    await user.type(screen.getByLabelText('제목'), '결제 지연');
+    await user.type(screen.getByLabelText('내용'), '결제가 지연되고 있습니다.');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/admin/support-content/notices',
+        {
+          category: 'urgent',
+          locale: 'ko',
+          title: '결제 지연',
+          body: '결제가 지연되고 있습니다.',
+          priority: 'urgent',
+          translationUse: 'manual',
+          endsAt: new Date('2026-10-01T23:00').toISOString(),
+        },
+      );
+    });
+  });
+
+  it('registers a linked translation for a Korean urgent notice (audit #168)', async () => {
+    const user = userEvent.setup();
+    const urgentKo = noticeRow({
+      id: 'notice-ko-urgent',
+      locale: 'ko',
+      category: 'urgent',
+      priority: 'urgent',
+      title: '결제 장애',
+      body: '결제가 지연되고 있습니다.',
+      status: 'published',
+      reviewState: 'published',
+      translationGroupId: 'notice-ko-urgent',
+    });
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [],
+      notices: [urgentKo],
+    });
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(await screen.findByRole('tab', { name: '공지' }));
+    expect(
+      screen.getByText(
+        '게시된 번역본이 없는 언어에는 영어 공지가, 영어도 없으면 한국어 공지가 대신 노출됩니다.',
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '번역본 등록' }));
+    expect(screen.getByLabelText('언어')).toHaveValue('en');
+    await user.type(screen.getByLabelText('제목'), 'Payment delay');
+    await user.type(screen.getByLabelText('내용'), 'Payments are delayed.');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/admin/support-content/notices',
+        expect.objectContaining({
+          locale: 'en',
+          category: 'urgent',
+          priority: 'urgent',
+          translationOfNoticeId: 'notice-ko-urgent',
+        }),
+      );
     });
   });
 });

@@ -1,12 +1,15 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { describe, expect, it } from 'vitest';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { AdminAuditWriteInput } from './admin-audit.service.js';
 import {
   AdminSupportContentService,
+  publicSupportContentCacheKey,
   type SupportContentMemoryStore,
 } from './admin-support-content.service.js';
 
 const OPERATOR_ID = '00000000-0000-4000-8000-000000000025';
+const SECOND_OPERATOR_ID = '00000000-0000-4000-8000-000000000026';
 
 function createStore(): SupportContentMemoryStore {
   return {
@@ -15,12 +18,57 @@ function createStore(): SupportContentMemoryStore {
   };
 }
 
-function createService(store = createStore()) {
+function createAuditService() {
+  const entries: AdminAuditWriteInput[] = [];
   return {
-    service: new AdminSupportContentService(store),
-    store,
+    entries,
+    write: vi.fn(async (input: AdminAuditWriteInput) => {
+      entries.push(input);
+      return { id: `audit-${entries.length}` };
+    }),
   };
 }
+
+/** Redis-like fake: JSON round-trip and TTL expiry on the (fakeable) clock. */
+function createCache() {
+  const values = new Map<string, { json: string; expiresAt: number }>();
+  return {
+    values,
+    get: vi.fn(async (key: string) => {
+      const entry = values.get(key);
+      if (!entry || entry.expiresAt <= Date.now()) return null;
+      return JSON.parse(entry.json) as unknown;
+    }),
+    set: vi.fn(async (key: string, value: unknown, ttlSeconds = 300) => {
+      values.set(key, {
+        json: JSON.stringify(value),
+        expiresAt: Date.now() + ttlSeconds * 1000,
+      });
+    }),
+    invalidate: vi.fn(async (...keys: string[]) => {
+      for (const key of keys) values.delete(key);
+    }),
+  };
+}
+
+function createService(store = createStore()) {
+  const audit = createAuditService();
+  const cache = createCache();
+  return {
+    service: new AdminSupportContentService(
+      store,
+      audit as never,
+      cache as never,
+    ),
+    store,
+    audit,
+    cache,
+  };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('AdminSupportContentService', () => {
   it('creates, edits, reviews, publishes, archives, and lists FAQ rows', async () => {
@@ -383,5 +431,538 @@ describe('AdminSupportContentService', () => {
     await expect(service.getNotice('missing-notice')).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  describe('editing published content (audit #48)', () => {
+    it('keeps a published Korean FAQ live after an operator edit', async () => {
+      const { service } = createService();
+      const faq = await service.createFaq({
+        actorUserId: OPERATOR_ID,
+        category: 'booking',
+        locale: 'ko',
+        question: '예매 오픈 시간은?',
+        answer: '오후 8시에 오픈합니다.',
+      });
+      const published = await service.publishFaq(faq.id, {
+        actorUserId: OPERATOR_ID,
+      });
+
+      const edited = await service.updateFaq(faq.id, {
+        actorUserId: SECOND_OPERATOR_ID,
+        category: 'event_info',
+        question: '예매 오픈 시간은?',
+        answer: '오후 8시 정각에 오픈합니다.',
+        translationUse: 'manual',
+      });
+
+      expect(edited).toMatchObject({
+        reviewState: 'published',
+        publishedAt: published.publishedAt,
+        reviewedByUserId: SECOND_OPERATOR_ID,
+        answer: '오후 8시 정각에 오픈합니다.',
+        category: 'event_info',
+      });
+      const publicContent = await service.listPublished({ locale: 'ko' });
+      expect(publicContent.faqs.map((row) => row.answer)).toEqual([
+        '오후 8시 정각에 오픈합니다.',
+      ]);
+    });
+
+    it('keeps a published notice live when the UI resends unchanged fields or only the category changes', async () => {
+      const { service } = createService();
+      const notice = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'ko',
+        title: '예매 오픈 안내',
+        body: '오늘 오후 8시에 예매가 열립니다.',
+      });
+      await service.publishNotice(notice.id, { actorUserId: OPERATOR_ID });
+
+      const recategorized = await service.updateNotice(notice.id, {
+        actorUserId: OPERATOR_ID,
+        category: 'payment',
+        title: '예매 오픈 안내',
+        body: '오늘 오후 8시에 예매가 열립니다.',
+        translationUse: 'manual',
+      });
+      expect(recategorized).toMatchObject({
+        status: 'published',
+        reviewState: 'published',
+        category: 'payment',
+      });
+
+      const typoFixed = await service.updateNotice(notice.id, {
+        actorUserId: OPERATOR_ID,
+        body: '오늘 오후 8시 정각에 예매가 열립니다.',
+      });
+      expect(typoFixed).toMatchObject({
+        status: 'published',
+        reviewState: 'published',
+        publishedAt: recategorized.publishedAt,
+      });
+      const publicContent = await service.listPublished({ locale: 'ko' });
+      expect(publicContent.notices).toEqual([
+        expect.objectContaining({
+          id: notice.id,
+          body: '오늘 오후 8시 정각에 예매가 열립니다.',
+        }),
+      ]);
+    });
+
+    it('unpublishes an assisted translation edit until it is reviewed again, keeping status consistent', async () => {
+      const { service } = createService();
+      const notice = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'th',
+        title: 'ประกาศ',
+        body: 'เนื้อหาเดิม',
+        translationUse: 'assisted',
+      });
+      await service.reviewNotice(notice.id, { actorUserId: OPERATOR_ID });
+      await service.publishNotice(notice.id, { actorUserId: OPERATOR_ID });
+
+      const edited = await service.updateNotice(notice.id, {
+        actorUserId: OPERATOR_ID,
+        body: 'เนื้อหาใหม่',
+      });
+
+      expect(edited).toMatchObject({
+        status: 'draft',
+        reviewState: 'review',
+        publishedAt: null,
+        canPublish: false,
+      });
+      await expect(service.listPublished({ locale: 'th' })).resolves.toEqual({
+        faqs: [],
+        notices: [],
+      });
+    });
+
+    it('rejects review on published or archived content instead of silently unpublishing it', async () => {
+      const { service } = createService();
+      const faq = await service.createFaq({
+        actorUserId: OPERATOR_ID,
+        category: 'booking',
+        locale: 'en',
+        question: 'When does booking open?',
+        answer: 'At 8 PM KST.',
+      });
+      await service.publishFaq(faq.id, { actorUserId: OPERATOR_ID });
+
+      await expect(
+        service.reviewFaq(faq.id, { actorUserId: OPERATOR_ID }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(service.getFaq(faq.id)).resolves.toMatchObject({
+        reviewState: 'published',
+      });
+      await expect(service.listPublished({ locale: 'en' })).resolves.toMatchObject({
+        faqs: [expect.objectContaining({ id: faq.id })],
+      });
+
+      const notice = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'en',
+        title: 'Archived',
+        body: 'Archived body',
+      });
+      await service.archiveNotice(notice.id, { actorUserId: OPERATOR_ID });
+      await expect(
+        service.reviewNotice(notice.id, { actorUserId: OPERATOR_ID }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('optimistic concurrency (audit #141)', () => {
+    it('rejects a stale edit with 409 instead of overwriting another operator change', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-30T01:00:00.000Z'));
+      const { service } = createService();
+      const notice = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'ko',
+        title: '원본',
+        body: '원본 본문',
+      });
+
+      vi.setSystemTime(new Date('2026-09-30T01:01:00.000Z'));
+      await service.updateNotice(notice.id, {
+        actorUserId: SECOND_OPERATOR_ID,
+        title: '다른 운영자 수정',
+        expectedUpdatedAt: notice.updatedAt,
+      });
+
+      vi.setSystemTime(new Date('2026-09-30T01:02:00.000Z'));
+      await expect(
+        service.updateNotice(notice.id, {
+          actorUserId: OPERATOR_ID,
+          title: '덮어쓰기 시도',
+          expectedUpdatedAt: notice.updatedAt,
+        }),
+      ).rejects.toThrow(ConflictException);
+      await expect(service.getNotice(notice.id)).resolves.toMatchObject({
+        title: '다른 운영자 수정',
+      });
+
+      const faq = await service.createFaq({
+        actorUserId: OPERATOR_ID,
+        category: 'booking',
+        locale: 'ko',
+        question: '질문',
+        answer: '답변',
+      });
+      await expect(
+        service.updateFaq(faq.id, {
+          actorUserId: OPERATOR_ID,
+          answer: '새 답변',
+          expectedUpdatedAt: '2026-09-30T00:00:00.000Z',
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('admin audit trail (audit #133)', () => {
+    it('records create, update, review, publish, and archive with prior body and request context', async () => {
+      const { service, audit } = createService();
+      const context = {
+        actorUserId: OPERATOR_ID,
+        ipAddress: '203.0.113.7',
+        userAgent: 'Vitest Admin',
+        requestId: 'req-support-1',
+      };
+
+      const notice = await service.createNotice({
+        ...context,
+        category: 'refund',
+        locale: 'th',
+        title: 'ประกาศคืนเงิน',
+        body: 'ข้อความเดิม',
+        translationUse: 'assisted',
+      });
+      await service.updateNotice(notice.id, { ...context, body: 'ข้อความใหม่' });
+      await service.reviewNotice(notice.id, context);
+      await service.publishNotice(notice.id, context);
+      await service.archiveNotice(notice.id, context);
+
+      expect(audit.entries.map((entry) => entry.action)).toEqual([
+        'support.content.create',
+        'support.content.update',
+        'support.content.review',
+        'support.content.publish',
+        'support.content.archive',
+      ]);
+      for (const entry of audit.entries) {
+        expect(entry).toMatchObject({
+          actorUserId: OPERATOR_ID,
+          resourceType: 'support_notice',
+          resourceId: notice.id,
+          status: 'success',
+          ipAddress: '203.0.113.7',
+          userAgent: 'Vitest Admin',
+          requestId: 'req-support-1',
+        });
+      }
+      expect(audit.entries[1]?.before).toMatchObject({ body: 'ข้อความเดิม' });
+      expect(audit.entries[1]?.after).toMatchObject({ body: 'ข้อความใหม่' });
+      expect(audit.entries[3]?.after).toMatchObject({
+        reviewState: 'published',
+        status: 'published',
+        publishedAt: expect.any(String),
+      });
+      expect(audit.entries[4]?.before).toMatchObject({
+        publishedAt: expect.any(String),
+        body: 'ข้อความใหม่',
+      });
+    });
+
+    it('records FAQ mutations as support_faq resources', async () => {
+      const { service, audit } = createService();
+      const faq = await service.createFaq({
+        actorUserId: OPERATOR_ID,
+        category: 'booking',
+        locale: 'ko',
+        question: '질문',
+        answer: '답변',
+      });
+      await service.updateFaq(faq.id, { actorUserId: OPERATOR_ID, answer: '수정 답변' });
+      await service.publishFaq(faq.id, { actorUserId: OPERATOR_ID });
+
+      expect(audit.entries.map((entry) => [entry.action, entry.resourceType])).toEqual([
+        ['support.content.create', 'support_faq'],
+        ['support.content.update', 'support_faq'],
+        ['support.content.publish', 'support_faq'],
+      ]);
+      expect(audit.entries[1]?.before).toMatchObject({ answer: '답변' });
+    });
+  });
+
+  describe('notice schedule and priority (audit #134)', () => {
+    it('hides scheduled notices until their time and drops them after endsAt', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'));
+      const { service } = createService();
+      const notice = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'event',
+        locale: 'ko',
+        title: '예매 오픈',
+        body: '지금부터 예매할 수 있습니다.',
+        scheduledAt: '2026-10-01T11:00:00.000Z',
+        endsAt: '2026-10-01T15:00:00.000Z',
+      });
+      await service.publishNotice(notice.id, { actorUserId: OPERATOR_ID });
+
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toMatchObject({
+        notices: [],
+      });
+
+      vi.setSystemTime(new Date('2026-10-01T11:00:31.000Z'));
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toMatchObject({
+        notices: [
+          {
+            id: notice.id,
+            publishedAt: '2026-10-01T11:00:00.000Z',
+          },
+        ],
+      });
+
+      vi.setSystemTime(new Date('2026-10-01T15:00:31.000Z'));
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toMatchObject({
+        notices: [],
+      });
+    });
+
+    it('rejects an end time before the start time and publishing an already ended notice', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'));
+      const { service } = createService();
+
+      await expect(
+        service.createNotice({
+          actorUserId: OPERATOR_ID,
+          category: 'maintenance',
+          locale: 'ko',
+          title: '점검',
+          body: '점검 안내',
+          scheduledAt: '2026-10-01T12:00:00.000Z',
+          endsAt: '2026-10-01T11:00:00.000Z',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const ended = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'maintenance',
+        locale: 'ko',
+        title: '지난 점검',
+        body: '점검 안내',
+        endsAt: '2026-10-01T08:00:00.000Z',
+      });
+      await expect(
+        service.publishNotice(ended.id, { actorUserId: OPERATOR_ID }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('defaults urgent-category notices to urgent priority so later normal notices do not bury them', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'));
+      const { service } = createService();
+      const urgent = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'ko',
+        title: '결제 장애',
+        body: '결제가 지연되고 있습니다.',
+      });
+      expect(urgent.priority).toBe('urgent');
+      await service.publishNotice(urgent.id, { actorUserId: OPERATOR_ID });
+
+      vi.setSystemTime(new Date('2026-10-01T09:10:00.000Z'));
+      const later = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'ko',
+        title: '일반 안내',
+        body: '일반 안내입니다.',
+      });
+      await service.publishNotice(later.id, { actorUserId: OPERATOR_ID });
+
+      const recategorized = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'ko',
+        title: '분류 변경',
+        body: '긴급으로 바꿉니다.',
+      });
+      await expect(
+        service.updateNotice(recategorized.id, {
+          actorUserId: OPERATOR_ID,
+          category: 'urgent',
+        }),
+      ).resolves.toMatchObject({ priority: 'urgent' });
+
+      const publicContent = await service.listPublished({ locale: 'ko' });
+      expect(publicContent.notices.map((row) => row.id)).toEqual([
+        urgent.id,
+        later.id,
+      ]);
+    });
+  });
+
+  describe('locale fallback for critical notices (audit #168)', () => {
+    it('shows a Korean-only urgent notice to en, th, and zh-CN viewers until a translation is published', async () => {
+      const { service } = createService();
+      const urgent = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'ko',
+        title: '결제 장애 안내',
+        body: '결제가 지연되고 있습니다.',
+      });
+      await service.publishNotice(urgent.id, { actorUserId: OPERATOR_ID });
+      const general = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'general',
+        locale: 'ko',
+        title: '일반 안내',
+        body: '한국어 전용 일반 안내',
+      });
+      await service.publishNotice(general.id, { actorUserId: OPERATOR_ID });
+
+      for (const locale of ['en', 'th', 'zh-CN'] as const) {
+        const content = await service.listPublished({ locale });
+        expect(content.notices).toEqual([
+          expect.objectContaining({ id: urgent.id, locale: 'ko' }),
+        ]);
+      }
+
+      const english = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'en',
+        title: 'Payment delay',
+        body: 'Payments are delayed.',
+        translationOfNoticeId: urgent.id,
+      });
+      expect(english.translationGroupId).toBe(urgent.id);
+      // Draft translations do not hide the fallback yet.
+      await expect(service.listPublished({ locale: 'en' })).resolves.toMatchObject({
+        notices: [{ id: urgent.id }],
+      });
+
+      await service.publishNotice(english.id, { actorUserId: OPERATOR_ID });
+      await expect(service.listPublished({ locale: 'en' })).resolves.toMatchObject({
+        notices: [{ id: english.id, locale: 'en' }],
+      });
+      await expect(service.listPublished({ locale: 'th' })).resolves.toMatchObject({
+        notices: [{ id: english.id, locale: 'en' }],
+      });
+
+      const thai = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'th',
+        title: 'การชำระเงินล่าช้า',
+        body: 'การชำระเงินล่าช้า',
+        translationOfNoticeId: english.id,
+      });
+      await service.publishNotice(thai.id, { actorUserId: OPERATOR_ID });
+      await expect(service.listPublished({ locale: 'th' })).resolves.toMatchObject({
+        notices: [{ id: thai.id, locale: 'th' }],
+      });
+      await expect(service.listPublished({ locale: 'zh-CN' })).resolves.toMatchObject({
+        notices: [{ id: english.id, locale: 'en' }],
+      });
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toMatchObject({
+        notices: [{ id: urgent.id }, { id: general.id }],
+      });
+    });
+
+    it('keeps legacy unlinked notices in their own locale and rejects a second translation for the same locale', async () => {
+      const { service, store } = createService();
+      const legacy = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'payment',
+        locale: 'ko',
+        title: '기존 결제 공지',
+        body: '번역 연결 이전에 만든 공지',
+      });
+      await service.publishNotice(legacy.id, { actorUserId: OPERATOR_ID });
+      store.notices.find((row) => row.id === legacy.id)!.translationGroupId = null;
+
+      await expect(service.listPublished({ locale: 'th' })).resolves.toMatchObject({
+        notices: [],
+      });
+
+      const english = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'payment',
+        locale: 'en',
+        title: 'Payment notice',
+        body: 'Linked later',
+        translationOfNoticeId: legacy.id,
+      });
+      expect(english.translationGroupId).toBe(legacy.id);
+      await expect(service.getNotice(legacy.id)).resolves.toMatchObject({
+        translationGroupId: legacy.id,
+      });
+      await expect(
+        service.createNotice({
+          actorUserId: OPERATOR_ID,
+          category: 'payment',
+          locale: 'en',
+          title: 'Duplicate',
+          body: 'Duplicate',
+          translationOfNoticeId: legacy.id,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('public read cache (audit #132)', () => {
+    it('serves repeat reads from cache, collapses concurrent misses, and invalidates on mutation', async () => {
+      const { service, store, cache } = createService();
+      const faq = await service.createFaq({
+        actorUserId: OPERATOR_ID,
+        category: 'booking',
+        locale: 'ko',
+        question: '질문',
+        answer: '답변',
+      });
+      await service.publishFaq(faq.id, { actorUserId: OPERATOR_ID });
+      cache.set.mockClear();
+
+      const [first, second] = await Promise.all([
+        service.listPublished({ locale: 'ko' }),
+        service.listPublished({ locale: 'ko' }),
+      ]);
+      expect(first).toEqual(second);
+      expect(cache.set).toHaveBeenCalledTimes(1);
+      expect(cache.set).toHaveBeenCalledWith(
+        publicSupportContentCacheKey('ko'),
+        expect.any(Object),
+        30,
+      );
+
+      // A direct store change is invisible while the cached copy is valid.
+      store.faqs[0]!.answer = '캐시 밖 변경';
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toMatchObject({
+        faqs: [{ answer: '답변' }],
+      });
+
+      await service.archiveFaq(faq.id, { actorUserId: OPERATOR_ID });
+      expect(cache.invalidate).toHaveBeenLastCalledWith(
+        publicSupportContentCacheKey('ko'),
+        publicSupportContentCacheKey('en'),
+        publicSupportContentCacheKey('th'),
+        publicSupportContentCacheKey('zh-CN'),
+      );
+      await expect(service.listPublished({ locale: 'ko' })).resolves.toEqual({
+        faqs: [],
+        notices: [],
+      });
+    });
   });
 });

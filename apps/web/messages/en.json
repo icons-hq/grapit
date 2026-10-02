@@ -126,7 +126,22 @@
     "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review.",
     "loading": "Loading the latest help content.",
     "loadError": "We could not load the latest help content. Try again or contact us by email below.",
-    "legalLinks": "Terms and privacy information"
+    "legalLinks": "Terms and privacy information",
+    "noticePostedAt": "Posted {date}",
+    "noticeOriginalLanguage": "Shown in {language} while the translation is being prepared.",
+    "noticeLanguages": {
+      "ko": "Korean",
+      "en": "English"
+    },
+    "noticeCategories": {
+      "general": "General",
+      "urgent": "Urgent",
+      "maintenance": "Maintenance",
+      "payment": "Payment",
+      "refund": "Refund",
+      "signup": "Sign-up",
+      "event": "Event"
+    }
   },
   "booking": {
     "disabled": "Ticket booking will open later",

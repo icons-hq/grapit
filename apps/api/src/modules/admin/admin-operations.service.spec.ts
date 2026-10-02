@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,7 +8,12 @@ import {
 
 const NOW = new Date('2026-05-14T03:00:00.000Z');
 
-function createMockDb(rows: AdminOperationsThreadRow[] = []) {
+type MockTotals = { all: number; escalated: number; overdue: number; dueSoon: number };
+
+function createMockDb(
+  rows: AdminOperationsThreadRow[] = [],
+  totals: MockTotals = { all: rows.length, escalated: 0, overdue: 0, dueSoon: 0 },
+) {
   const limit = vi.fn().mockResolvedValue(rows);
   const orderBy = vi.fn().mockReturnValue({ limit });
   const where = vi.fn().mockReturnValue({ orderBy });
@@ -15,7 +21,14 @@ function createMockDb(rows: AdminOperationsThreadRow[] = []) {
   const leftJoinAssignee = vi.fn().mockReturnValue({ leftJoin: leftJoinRefund });
   const leftJoinRequester = vi.fn().mockReturnValue({ leftJoin: leftJoinAssignee });
   const from = vi.fn().mockReturnValue({ leftJoin: leftJoinRequester });
-  const select = vi.fn().mockReturnValue({ from });
+
+  // Totals query: select({ all, ... }).from().leftJoin(refunds).where()
+  const countWhere = vi.fn().mockResolvedValue([totals]);
+  const countLeftJoin = vi.fn().mockReturnValue({ where: countWhere });
+  const countFrom = vi.fn().mockReturnValue({ leftJoin: countLeftJoin });
+
+  const select = vi.fn((fields?: Record<string, unknown>) =>
+    fields && 'all' in fields ? { from: countFrom } : { from });
 
   const returning = vi.fn().mockResolvedValue([{ id: 'thread-payment' }]);
   const updateWhere = vi.fn().mockReturnValue({ returning });
@@ -27,6 +40,9 @@ function createMockDb(rows: AdminOperationsThreadRow[] = []) {
     update,
     _set: set,
     _returning: returning,
+    _limit: limit,
+    _where: where,
+    _countWhere: countWhere,
   };
 }
 
@@ -273,5 +289,61 @@ describe('AdminOperationsService', () => {
       ipAddress: '203.0.113.10',
       userAgent: 'Vitest Admin Console',
     });
+  });
+
+  it('reports inbox totals from the full matching set instead of the loaded page', async () => {
+    const db = createMockDb(
+      [threadRow({ id: 'thread-overdue', slaDueAt: new Date('2026-05-14T02:00:00.000Z') })],
+      { all: 240, escalated: 30, overdue: 150, dueSoon: 12 },
+    );
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    const inbox = await service.listInbox({}, { now: NOW });
+
+    expect(inbox.rows).toHaveLength(1);
+    expect(inbox.totals).toEqual({ all: 240, escalated: 30, overdue: 150, dueSoon: 12 });
+    expect(db._countWhere).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads thread detail by id with a single-row query instead of scanning the newest inbox page', async () => {
+    const db = createMockDb([
+      threadRow({
+        id: '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        slaDueAt: new Date('2025-01-02T00:00:00.000Z'),
+      }),
+    ]);
+    const messagesOrderBy = vi.fn().mockResolvedValue([]);
+    const messagesWhere = vi.fn().mockReturnValue({ orderBy: messagesOrderBy });
+    const messagesFrom = vi.fn().mockReturnValue({ where: messagesWhere });
+    const baseSelect = db.select;
+    let call = 0;
+    db.select = vi.fn((fields?: Record<string, unknown>) => {
+      call += 1;
+      return call === 1 ? baseSelect(fields) : { from: messagesFrom };
+    }) as never;
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    const detail = await service.getThreadDetail(
+      '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+      { now: NOW },
+    );
+
+    expect(detail).toMatchObject({
+      id: '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+      sla: { state: 'overdue' },
+      messages: [],
+    });
+    expect(db._limit).toHaveBeenCalledWith(1);
+    expect(db._countWhere).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a malformed thread id without querying the database', async () => {
+    const db = createMockDb();
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    await expect(service.getThreadDetail('not-a-uuid', { now: NOW }))
+      .rejects.toThrow(NotFoundException);
+    expect(db.select).not.toHaveBeenCalled();
   });
 });
