@@ -920,7 +920,19 @@ export class QrTicketService implements OnModuleInit {
       return ticketRecords;
     }
 
-    const scheduled = await this.ensureReminderSchedule(candidate);
+    // The reminder is a side effect of issued QR tickets. A pg-boss or DB
+    // failure here must not fail issuance or the buyer's QR lookup; the
+    // missing emailJobId makes the next lookup schedule it again.
+    let scheduled: TicketRecord;
+    try {
+      scheduled = await this.ensureReminderSchedule(candidate);
+    } catch (error) {
+      this.logger.warn(
+        `QR reminder schedule failed; will retry on next lookup. ticketId=${candidate.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return ticketRecords;
+    }
     return ticketRecords.map((ticket) =>
       ticket.id === scheduled.id
         ? this.withSeatIdentity(scheduled, ticket)

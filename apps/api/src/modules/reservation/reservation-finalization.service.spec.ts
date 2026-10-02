@@ -29,16 +29,20 @@ function ticketLimitResult({
   performanceId = 'performance-1',
   maxTicketsPerUser = 999,
   activeTicketCount = 0,
+  showtimeStartsAt = new Date(Date.now() + 24 * 60 * 60 * 1000),
 }: {
   performanceId?: string;
   maxTicketsPerUser?: number;
   activeTicketCount?: number;
+  showtimeStartsAt?: Date;
 } = {}) {
+  // db.execute also serves the pre-approval showtime cutoff lookup.
   return {
     rows: [{
       performance_id: performanceId,
       max_tickets_per_user: maxTicketsPerUser,
       active_ticket_count: activeTicketCount,
+      date_time: showtimeStartsAt,
     }],
   };
 }
@@ -76,6 +80,7 @@ function createDependencies() {
   const tossClient = {
     confirmPayment: vi.fn(),
     cancelPayment: vi.fn(),
+    queryPayment: vi.fn(),
   };
   const bookingService = {
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
@@ -164,6 +169,13 @@ describe('ReservationFinalizationService', () => {
       maxTicketsPerUser: 4,
       activeTicketCount: 2,
     }));
+    // The gate asks the provider whether an earlier attempt was approved.
+    tossClient.queryPayment.mockResolvedValue({
+      paymentKey: 'payment-key-1',
+      orderId: 'order-cumulative-limit-1',
+      status: 'IN_PROGRESS',
+      totalAmount: 156000,
+    });
 
     await expect(
       service.confirmAndCreateReservation(
@@ -173,6 +185,7 @@ describe('ReservationFinalizationService', () => {
     ).rejects.toThrow('이 공연은 1인 최대 4매까지 예매할 수 있습니다');
 
     expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(tossClient.cancelPayment).not.toHaveBeenCalled();
     expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
     expect(db.transaction).not.toHaveBeenCalled();
   });
@@ -222,6 +235,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-race-limit',
       orderId: 'order-race-limit-1',
+      status: 'DONE',
+      currency: 'KRW',
       method: '카드',
       totalAmount: 204000,
       approvedAt: '2026-06-04T04:20:00.000Z',
@@ -290,6 +305,7 @@ describe('ReservationFinalizationService', () => {
           showtimeId: 'showtime-1',
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
+          checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' },
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
@@ -316,6 +332,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-paypal',
       orderId: 'order-paypal-1',
+      status: 'DONE',
+      currency: 'USD',
       method: 'FOREIGN_EASY_PAY',
       totalAmount: 108,
       approvedAt: '2026-05-29T10:01:00.000Z',
@@ -434,6 +452,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-dup',
       orderId: 'order-dup-1',
+      status: 'DONE',
+      currency: 'KRW',
       method: '카드',
       totalAmount: 52000,
       approvedAt: '2026-07-03T00:00:00.000Z',
@@ -520,6 +540,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-overseas-card-krw',
       orderId: 'order-overseas-card-krw-1',
+      status: 'DONE',
+      currency: 'KRW',
       method: 'CARD',
       totalAmount: 150000,
       approvedAt: '2026-06-05T10:01:00.000Z',
@@ -645,6 +667,7 @@ describe('ReservationFinalizationService', () => {
           showtimeId: 'showtime-1',
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
+          checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'USD' },
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
           providerChargeRate: '0.00072',
@@ -664,6 +687,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-overseas-card',
       orderId: 'order-overseas-card-1',
+      status: 'DONE',
+      currency: 'USD',
       method: 'CARD',
       totalAmount: 108,
       approvedAt: '2026-06-02T10:01:00.000Z',
@@ -805,6 +830,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-overseas-card-usd',
       orderId: 'order-overseas-card-usd-1',
+      status: 'DONE',
+      currency: 'USD',
       method: 'CARD',
       totalAmount: 150000,
       approvedAt: '2026-06-02T10:01:00.000Z',
@@ -1527,6 +1554,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-1',
       orderId: 'order-legacy-pending',
+      status: 'DONE',
+      currency: 'KRW',
       method: '카드',
       totalAmount: 200000,
       approvedAt: '2026-05-28T10:00:00.000Z',
@@ -1583,6 +1612,8 @@ describe('ReservationFinalizationService', () => {
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-1',
       orderId: 'order-1',
+      status: 'DONE',
+      currency: 'KRW',
       method: '카드',
       totalAmount: 204000,
       approvedAt: '2026-05-28T10:00:00.000Z',
