@@ -510,7 +510,13 @@ The service-level PATCH is the documented Cloud Run API ([minimum instances](htt
 
 1. Resume both Scheduler jobs only for the test. Run scale-up with a small value no higher than the API maximum, wait for HTTP 200, then run step-down.
 2. In Cloud Audit Logs, the `google.cloud.run.v2.Services.UpdateService` entries must show `scaling.minInstanceCount`, not `template.scaling`. `gcloud run revisions list --service=grabit-api` must show no new revision.
-3. `gcloud run services describe grabit-api --format='value(scaling.minInstanceCount)'` must read back the stepped-down value.
+3. Read the service-level minimum back from the Cloud Run Admin API v2; it must equal the stepped-down value. `gcloud run services describe` prints the v1 resource, where `scaling.minInstanceCount` does not exist, so a `--format='value(scaling.minInstanceCount)'` readback prints nothing and proves nothing:
+
+   ```bash
+   curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+     "https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/asia-northeast3/services/grabit-api" \
+     | jq '.scaling.minInstanceCount // 0'
+   ```
 
 If Cloud Run rejects the service-level update (Scheduler sees `503 PREWARM_SCALE_UPDATE_FAILED:400`), set repository variable `PREWARM_SCALING_SCOPE=template` and redeploy. The template form rolls a new revision on every call, so step down only after traffic falls. Cloud Run applies the highest minimum, so clear the level you leave: when moving to `template`, run `gcloud run services update grabit-api --min=0` to clear the service-level minimum; when moving back to `service`, the redeploy resets the template minimum to `API_MIN_INSTANCES`. Pause both jobs again after the test.
 
