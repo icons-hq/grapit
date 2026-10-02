@@ -1,4 +1,5 @@
 import twilio from 'twilio';
+import { redactSensitiveText } from '../../common/observability/sentry-redaction.js';
 
 export interface SendVerificationResult {
   sid: string;
@@ -26,14 +27,29 @@ export type TwilioVerifyCredentials =
       authToken?: never;
     };
 
+/**
+ * A failed Twilio Verify call.
+ *
+ * The message carries only the HTTP status and Twilio error code because it
+ * reaches logs and Sentry (`exception.value`) as is. Twilio error bodies can
+ * repeat the recipient (`Invalid parameter To: +8210...`), so the body is kept
+ * separately in `providerBody` with E.164 numbers masked.
+ */
 export class TwilioVerifyApiError extends Error {
+  readonly providerBody: string;
+
   constructor(
     public readonly status: number,
     public readonly code: number | undefined,
-    public readonly body: string,
+    body: string,
   ) {
-    super(`Twilio Verify API ${status}: ${body}`);
+    super(
+      code === undefined
+        ? `Twilio Verify API ${status}`
+        : `Twilio Verify API ${status} (code ${code})`,
+    );
     this.name = 'TwilioVerifyApiError';
+    this.providerBody = redactSensitiveText(body);
   }
 
   get shouldRollbackQuota(): boolean {

@@ -1,3 +1,4 @@
+import { Agent } from 'node:http';
 import { createServer, type Server, type Socket } from 'node:net';
 import { Controller, Get, Logger, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -53,6 +54,7 @@ describe('catch-all filter + Sentry options with a real DrizzleQueryError', () =
   let pool: Pool;
   let hangingServer: Server;
   let client: Sentry.NodeClient;
+  let agent: Agent;
   const sockets = new Set<Socket>();
   const envelopes: string[] = [];
   const loggerError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -102,6 +104,10 @@ describe('catch-all filter + Sentry options with a real DrizzleQueryError', () =
     app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalFilters(...createGlobalExceptionFilters());
     await app.init();
+    // One listening server and one keep-alive socket for the whole file
+    // instead of supertest listening on and closing a port per request.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   beforeEach(() => {
@@ -110,6 +116,7 @@ describe('catch-all filter + Sentry options with a real DrizzleQueryError', () =
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
     await pool?.end();
     for (const socket of sockets) socket.destroy();
@@ -123,7 +130,7 @@ describe('catch-all filter + Sentry options with a real DrizzleQueryError', () =
     ['signup', 'insert into users'],
     ['confirm', 'select id from payments'],
   ])('reports the %s query failure without its bound values', async (route, sqlText) => {
-    const response = await request(app.getHttpServer()).get(`/probe/${route}`);
+    const response = await request(app.getHttpServer()).get(`/probe/${route}`).agent(agent);
 
     expect(response.status).toBe(500);
     expect(response.body).toEqual({

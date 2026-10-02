@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildPgBossOptions,
   bootstrapPgBossQueues,
+  closePgBossForShutdown,
   DEFAULT_PGBOSS_POOL_MAX_PROCESSING,
   DEFAULT_PGBOSS_POOL_MAX_PRODUCER,
   initializePgBoss,
@@ -18,6 +19,7 @@ import {
   resolvePgBossConstructor,
   resolvePgBossPoolMax,
   stopPgBossForShutdown,
+  stopPgBossWorkersForShutdown,
   type PgBossContract,
   type StartablePgBoss,
 } from './pgboss.provider.js';
@@ -319,7 +321,9 @@ describe('stopPgBossForShutdown', () => {
       timeout: PGBOSS_SHUTDOWN_TIMEOUT_MS,
       close: false,
     });
-    expect(PGBOSS_SHUTDOWN_TIMEOUT_MS).toBeLessThan(10_000);
+    // 1s of API drains + this stop leaves room for failWip, closing the
+    // HTTP server and the pools before Cloud Run's SIGKILL at 10s.
+    expect(PGBOSS_SHUTDOWN_TIMEOUT_MS).toBe(7_000);
     expect(boss.db.close).toHaveBeenCalledTimes(1);
     expect(availableWhenPoolClosed).toBe(false);
     expect(boss.isAvailable).toBe(false);
@@ -350,6 +354,45 @@ describe('stopPgBossForShutdown', () => {
 
     await stopPgBossForShutdown(boss);
 
+    expect(boss.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('two-phase pg-boss shutdown (API SIGTERM)', () => {
+  it('stopping the workers keeps the pool open and the boss available for in-flight requests', async () => {
+    const boss = availableScriptedBoss();
+    boss.db.opened = true;
+
+    await stopPgBossWorkersForShutdown(boss);
+
+    expect(boss.stop).toHaveBeenCalledWith({
+      graceful: true,
+      timeout: PGBOSS_SHUTDOWN_TIMEOUT_MS,
+      close: false,
+    });
+    expect(boss.isAvailable).toBe(true);
+    expect(boss.db.close).not.toHaveBeenCalled();
+    // A refund retry enqueued by a request that was in flight at SIGTERM.
+    const producer: PgBossContract = boss;
+    await expect(producer.send('refund-cancel-retry', { refundId: 'r-1', attempt: 1 }))
+      .resolves.toBe('job-1');
+  });
+
+  it('closing marks the boss unavailable before its pool closes and is idempotent', async () => {
+    const boss = availableScriptedBoss();
+    boss.db.opened = true;
+    let availableWhenPoolClosed: boolean | undefined;
+    boss.db.close.mockImplementationOnce(async () => {
+      availableWhenPoolClosed = boss.isAvailable;
+      boss.db.opened = false;
+    });
+
+    await closePgBossForShutdown(boss);
+    await closePgBossForShutdown(boss);
+    await stopPgBossWorkersForShutdown(boss);
+
+    expect(availableWhenPoolClosed).toBe(false);
+    expect(boss.db.close).toHaveBeenCalledTimes(1);
     expect(boss.stop).not.toHaveBeenCalled();
   });
 });

@@ -150,6 +150,63 @@ describe('web Sentry redaction (#155)', () => {
     expectNoSecrets(scrubbed);
   });
 
+  it('masks phone numbers in Redis statements and error text and filters client addresses (audit D6)', () => {
+    const clientIpv4 = '203.0.113.7';
+    const clientIpv6 = '2001:db8::1';
+    const event: Event = {
+      type: 'transaction',
+      transaction: '/auth/signup',
+      exception: {
+        values: [{ type: 'Error', value: `Twilio Verify API 400: Invalid parameter \`To\`: ${PHONE}` }],
+      },
+      contexts: {
+        trace: {
+          trace_id: 'a'.repeat(32),
+          span_id: 'b'.repeat(16),
+          data: {
+            'http.client_ip': clientIpv4,
+            'client.address': clientIpv6,
+            'net.peer.ip': clientIpv4,
+            'network.peer.address': clientIpv6,
+            'http.method': 'POST',
+          },
+        },
+      },
+      spans: [
+        {
+          span_id: 'c'.repeat(16),
+          trace_id: 'a'.repeat(32),
+          start_timestamp: 1,
+          description: `get {sms:${PHONE}}:verified`,
+          data: { 'db.system': 'redis', 'db.statement': `get {sms:${PHONE}}:verified` },
+        },
+      ],
+      breadcrumbs: [{ category: 'console', message: `verify failed for ${PHONE}` }],
+    };
+
+    const scrubbed = scrubSentryEvent(event);
+
+    expect(scrubbed.exception?.values?.[0]?.value)
+      .toBe('Twilio Verify API 400: Invalid parameter `To`: [redacted phone]');
+    expect(scrubbed.spans?.[0]?.description).toBe('get {sms:[redacted phone]}:verified');
+    expect(scrubbed.spans?.[0]?.data).toEqual({
+      'db.system': 'redis',
+      'db.statement': 'get {sms:[redacted phone]}:verified',
+    });
+    expect(scrubbed.contexts?.trace?.data).toEqual({
+      'http.client_ip': SENTRY_FILTERED_VALUE,
+      'client.address': SENTRY_FILTERED_VALUE,
+      'net.peer.ip': SENTRY_FILTERED_VALUE,
+      'network.peer.address': SENTRY_FILTERED_VALUE,
+      'http.method': 'POST',
+    });
+    expect(scrubbed.breadcrumbs?.[0]?.message).toBe('verify failed for [redacted phone]');
+    const serialized = JSON.stringify(scrubbed);
+    expectNoSecrets(scrubbed);
+    expect(serialized).not.toContain(clientIpv4);
+    expect(serialized).not.toContain(clientIpv6);
+  });
+
   it('scrubs a fetch breadcrumb before it is stored', () => {
     expect(
       scrubSentryBreadcrumb({

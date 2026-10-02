@@ -18,6 +18,7 @@ import {
   smsGlobalHourlySendCounterKey,
   smsGlobalSendCounterKey,
   smsOtpKey,
+  smsPendingVerificationKey,
   smsResendKey,
   smsSendCounterKey,
   smsVerificationTokenClaimKey,
@@ -257,6 +258,7 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
     it('같은 번호의 15분 10회를 넘는 확인 시도는 Twilio 호출 전에 429로 막힌다', async () => {
       const server = app.getHttpServer();
       const phone = phoneAt(4);
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
 
       for (let i = 0; i < 10; i++) {
         const res = await request(server)
@@ -273,9 +275,38 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
       expect(checkSpy).toHaveBeenCalledTimes(10);
     });
 
-    it('진행 중인 인증이 없는 번호(Twilio 404)로 반복 확인해도 15분 한도를 쓰지 않아 다른 사람이 잠글 수 없다', async () => {
+    it('send-code가 없던 번호의 확인은 Twilio를 부르지 않고 410이며 15분 한도도 쓰지 않는다', async () => {
       const server = app.getHttpServer();
       const phone = phoneAt(6);
+
+      for (let i = 0; i < 11; i++) {
+        await request(server)
+          .post('/sms/verify-code')
+          .send({ phone, code: '000000' })
+          .expect(HttpStatus.GONE);
+      }
+      expect(checkSpy).not.toHaveBeenCalled();
+      expect(await redis.exists(smsVerifyCounterKey(phone))).toBe(0);
+
+      // The owner sends a code and then verifies against Twilio as usual.
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
+      const markerTtl = await redis.pttl(smsPendingVerificationKey(phone));
+      expect(markerTtl).toBeGreaterThan(590_000);
+      expect(markerTtl).toBeLessThanOrEqual(600_000);
+      checkSpy.mockResolvedValueOnce({ sid: 'VE_owner', status: 'approved', valid: true });
+      const owner = await request(server)
+        .post('/sms/verify-code')
+        .send({ phone, code: '123456' })
+        .expect(HttpStatus.OK);
+      expect(owner.body.verified).toBe(true);
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+      expect(await redis.exists(smsPendingVerificationKey(phone))).toBe(0);
+    });
+
+    it('진행 중인 인증이 없다는 Twilio 응답(404)은 slot을 돌려주고 marker를 지워 이후 확인은 Twilio에 가지 않는다', async () => {
+      const server = app.getHttpServer();
+      const phone = phoneAt(7);
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
       checkSpy.mockRejectedValue(new TwilioVerifyApiError(404, 20404, 'Not Found'));
 
       for (let i = 0; i < 11; i++) {
@@ -284,14 +315,10 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
           .send({ phone, code: '000000' })
           .expect(HttpStatus.GONE);
       }
-      expect(await redis.get(smsVerifyCounterKey(phone))).toBe('0');
 
-      checkSpy.mockResolvedValueOnce({ sid: 'VE_owner', status: 'approved', valid: true });
-      const owner = await request(server)
-        .post('/sms/verify-code')
-        .send({ phone, code: '123456' })
-        .expect(HttpStatus.OK);
-      expect(owner.body.verified).toBe(true);
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+      expect(await redis.get(smsVerifyCounterKey(phone))).toBe('0');
+      expect(await redis.exists(smsPendingVerificationKey(phone))).toBe(0);
     });
   });
 
@@ -299,6 +326,7 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
     it('발급된 토큰은 한 번만 claim되고, release하면 같은 토큰으로 재시도할 수 있다', async () => {
       const server = app.getHttpServer();
       const phone = phoneAt(5);
+      await request(server).post('/sms/send-code').send({ phone }).expect(HttpStatus.OK);
       checkSpy.mockResolvedValueOnce({ sid: 'VE_ok', status: 'approved', valid: true });
 
       const verified = await request(server)

@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
+import { Logger } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import type { Request } from 'express';
 
 const FALLBACK_IP = '0.0.0.0';
@@ -13,6 +15,22 @@ export const EDGE_PROXY_SHARED_SECRET_ENV = 'EDGE_PROXY_SHARED_SECRET';
 export const EDGE_PROXY_SECRET_HEADER = 'x-grabit-edge-secret';
 /** Header the Grabit edge Worker sets to the visitor IP Cloudflare observed. */
 export const EDGE_CLIENT_IP_HEADER = 'x-grabit-client-ip';
+/**
+ * `true` makes a production API refuse to start without
+ * `EDGE_PROXY_SHARED_SECRET`. Unset (the default) only warns, because a
+ * load-balancer fallback or Worker rollback runs without the secret on purpose.
+ */
+export const EDGE_PROXY_SHARED_SECRET_REQUIRED_ENV = 'EDGE_PROXY_SHARED_SECRET_REQUIRED';
+export const EDGE_PROXY_SECRET_MISSING_MESSAGE =
+  'CRITICAL: EDGE_PROXY_SHARED_SECRET is not set in production. Client IPs fall back to '
+  + 'cf-connecting-ip from Cloudflare peers, which is the Worker egress address on Grabit '
+  + 'edge Worker subrequests, so every visitor can share one IP-based rate limit '
+  + '(email verification, signup, login, password reset).';
+/** At most one "client IP is a Cloudflare address" warning per interval. */
+export const CLOUDFLARE_CLIENT_IP_WARNING_INTERVAL_MS = 60_000;
+
+const logger = new Logger('RequestIp');
+let lastCloudflareClientIpWarningAtMs: number | null = null;
 const CLOUDFLARE_IPV4_CIDRS = [
   '173.245.48.0/20',
   '103.21.244.0/22',
@@ -68,7 +86,76 @@ export function resolveTrustedRequestIp(req: Request): string {
     proxyPeerIp ||
     req.socket?.remoteAddress ||
     FALLBACK_IP;
-  return isIP(ip) ? ip : FALLBACK_IP;
+  const resolved = isIP(ip) ? ip : FALLBACK_IP;
+  warnIfCloudflareClientIp(resolved, forwardedIp ? 'forwarded header' : 'peer');
+  return resolved;
+}
+
+/**
+ * A client IP inside Cloudflare's own ranges is a Worker egress or edge
+ * address, not a visitor: every request resolved this way shares one
+ * IP-based rate limit bucket (the 260517 incident). Usually the edge secret is
+ * missing on the API or the Worker, or the Worker stopped sending it.
+ */
+function warnIfCloudflareClientIp(ip: string, source: 'forwarded header' | 'peer'): void {
+  if (!isCloudflareProxyIp(ip)) {
+    return;
+  }
+  const nowMs = Date.now();
+  if (
+    lastCloudflareClientIpWarningAtMs !== null
+    && nowMs - lastCloudflareClientIpWarningAtMs < CLOUDFLARE_CLIENT_IP_WARNING_INTERVAL_MS
+  ) {
+    return;
+  }
+  lastCloudflareClientIpWarningAtMs = nowMs;
+  logger.warn(
+    `Resolved client IP ${ip} (from the ${source}) is a Cloudflare address, so visitors share `
+    + `IP-based rate limits. Check EDGE_PROXY_SHARED_SECRET on the API and the edge Worker. `
+    + `Logged at most once per minute.`,
+  );
+}
+
+export type EdgeProxySecretStatus = 'configured' | 'not_production' | 'missing';
+
+export interface EdgeProxySecretCheckReporter {
+  critical(message: string): void;
+  captureMessage(message: string): void;
+}
+
+const defaultEdgeProxySecretReporter: EdgeProxySecretCheckReporter = {
+  critical: (message) => logger.error(message),
+  captureMessage: (message) => {
+    Sentry.captureMessage(message, 'fatal');
+  },
+};
+
+/**
+ * Startup check (main.ts): a production API without `EDGE_PROXY_SHARED_SECRET`
+ * logs a CRITICAL line and reports to Sentry. With
+ * `EDGE_PROXY_SHARED_SECRET_REQUIRED=true` it throws, so the revision fails to
+ * start instead.
+ */
+export function checkEdgeProxySecretAtStartup(
+  env: NodeJS.ProcessEnv = process.env,
+  reporter: EdgeProxySecretCheckReporter = defaultEdgeProxySecretReporter,
+): EdgeProxySecretStatus {
+  const isProduction = env['NODE_ENV'] === 'production' || env['GRABIT_ENV'] === 'production';
+  if (!isProduction) {
+    return 'not_production';
+  }
+  if (configuredEdgeSecrets(env).length > 0) {
+    return 'configured';
+  }
+
+  reporter.critical(EDGE_PROXY_SECRET_MISSING_MESSAGE);
+  reporter.captureMessage(EDGE_PROXY_SECRET_MISSING_MESSAGE);
+  if (env[EDGE_PROXY_SHARED_SECRET_REQUIRED_ENV]?.trim().toLowerCase() === 'true') {
+    throw new Error(
+      `${EDGE_PROXY_SECRET_MISSING_MESSAGE} ${EDGE_PROXY_SHARED_SECRET_REQUIRED_ENV}=true, aborting startup.`,
+    );
+  }
+  return 'missing';
 }
 
 function resolveForwardedClientIp(
@@ -91,8 +178,8 @@ function resolveForwardedClientIp(
     : null;
 }
 
-function configuredEdgeSecrets(): string[] {
-  return (process.env[EDGE_PROXY_SHARED_SECRET_ENV] ?? '')
+function configuredEdgeSecrets(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env[EDGE_PROXY_SHARED_SECRET_ENV] ?? '')
     .split(',')
     .map((secret) => secret.trim())
     .filter((secret) => secret.length > 0);

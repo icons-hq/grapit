@@ -86,8 +86,13 @@ export const DEFAULT_PGBOSS_POOL_MAX_PROCESSING = 3;
 export const DEFAULT_PGBOSS_POOL_MAX_PRODUCER = 1;
 export const DEFAULT_PGBOSS_START_MAX_ATTEMPTS = 3;
 export const PGBOSS_START_RETRY_BASE_DELAY_MS = 1_000;
-/** Cloud Run sends SIGKILL 10 seconds after SIGTERM. */
-export const PGBOSS_SHUTDOWN_TIMEOUT_MS = 8_000;
+/**
+ * Graceful pg-boss stop on SIGTERM. Cloud Run sends SIGKILL 10 seconds after
+ * SIGTERM; the API first gives its recovery drains up to 1 second
+ * (`API_SHUTDOWN_DRAIN_BUDGET_MS`), and failWip, closing the HTTP server and
+ * the pools need the rest.
+ */
+export const PGBOSS_SHUTDOWN_TIMEOUT_MS = 7_000;
 
 const logger = new Logger('PgBossProvider');
 
@@ -376,14 +381,18 @@ export async function initializePgBoss(
   return createUnavailableBoss(describeError(lastError));
 }
 
+type ShutdownPgBoss = PgBossContract & { getDb?(): PgBossDbHandle | undefined };
+
 /**
- * Graceful stop used on SIGTERM: stop fetching, let in-flight handlers finish
- * within Cloud Run's termination grace period, then fail any remaining active
- * job (pg-boss failWip) so it retries immediately instead of waiting for the
- * 15-minute expiration.
+ * First half of the SIGTERM shutdown: stop fetching, let in-flight handlers
+ * finish within Cloud Run's termination grace period, then fail any remaining
+ * active job (pg-boss failWip) so it retries immediately instead of waiting
+ * for the 15-minute expiration. The pool stays open and the boss stays
+ * available, so requests still in flight can enqueue (pg-boss `send` does not
+ * check the stopped state).
  */
-export async function stopPgBossForShutdown(
-  boss: PgBossContract & { getDb?(): PgBossDbHandle | undefined },
+export async function stopPgBossWorkersForShutdown(
+  boss: ShutdownPgBoss,
   timeoutMs = PGBOSS_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
   if (!boss.isAvailable) {
@@ -391,8 +400,6 @@ export async function stopPgBossForShutdown(
   }
 
   try {
-    // Keep the pool open while workers drain and failWip runs, so producers
-    // that already checked isAvailable can still enqueue.
     await boss.stop({ graceful: true, timeout: timeoutMs, close: false });
   } catch (error) {
     logger.error(
@@ -400,10 +407,18 @@ export async function stopPgBossForShutdown(
       error instanceof Error ? error.stack : String(error),
     );
   }
+}
 
-  // Mark unavailable before closing the pool: late producers then take their
-  // existing "not enqueued" path instead of pg-boss's "Database not opened"
-  // assertion.
+/**
+ * Second half, once the HTTP server is closed: mark the boss unavailable
+ * before closing its pool, so a late producer takes its existing "not
+ * enqueued" path instead of pg-boss's "Database not opened" assertion.
+ */
+export async function closePgBossForShutdown(boss: ShutdownPgBoss): Promise<void> {
+  if (!boss.isAvailable) {
+    return;
+  }
+
   boss.isAvailable = false;
 
   try {
@@ -414,6 +429,19 @@ export async function stopPgBossForShutdown(
       error instanceof Error ? error.stack : String(error),
     );
   }
+}
+
+/**
+ * Both halves back to back, for callers without an HTTP server in between
+ * (the bounded worker's idempotent fallback, tests). A no-op once
+ * PgBossShutdownService has run.
+ */
+export async function stopPgBossForShutdown(
+  boss: ShutdownPgBoss,
+  timeoutMs = PGBOSS_SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
+  await stopPgBossWorkersForShutdown(boss, timeoutMs);
+  await closePgBossForShutdown(boss);
 }
 
 export const pgbossProvider = {

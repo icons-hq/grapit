@@ -1,3 +1,4 @@
+import type { EventEmitter } from 'node:events';
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import IORedis, { Cluster, type RedisOptions } from 'ioredis';
@@ -682,7 +683,12 @@ export function sanitizeRedisErrorMessage(message: string): string {
 }
 
 function registerRedisErrorLogging(client: IORedis | Cluster): void {
-  client.on('error', (err: Error) => {
+  // Both clients are EventEmitters. Calling `on` through the union fails to
+  // type-check (TS2349) when the ioredis overload sets of the two classes are
+  // resolved together, as in a program that also includes the integration
+  // specs.
+  const emitter: EventEmitter = client;
+  emitter.on('error', (err: Error) => {
     const safeMessage = sanitizeRedisErrorMessage(err.message);
     if (safeMessage.includes('ECONNREFUSED')) {
       if (!redisWarned) {
@@ -763,10 +769,14 @@ type GuardableRedisClient = {
   connect?: (...args: unknown[]) => Promise<unknown>;
   quit?: (...args: unknown[]) => unknown;
   disconnect?: (reconnect?: boolean) => unknown;
+  /** ioredis reads `enableOfflineQueue` from here each time a command is sent. */
+  options?: { enableOfflineQueue?: boolean };
 };
 
 const intentionallyClosedRedisClients = new WeakSet<object>();
 const endRecoveryRegisteredClients = new WeakSet<object>();
+/** Clients whose offline queue a link-down quit() turned off. */
+const offlineQueueDisabledByQuit = new WeakSet<object>();
 
 /**
  * Statuses in which the link to Valkey is down and ioredis would park QUIT in
@@ -791,6 +801,14 @@ function markIntentionalCloseOnShutdownCalls(client: GuardableRedisClient): void
         // and stop reconnecting so a bounded worker can exit during an outage.
         flushOfflineCommands(client, new Error('Connection is closed.'));
         originalDisconnect.call(client, false);
+        // A reconnecting standalone client or a cluster never reaches `end`
+        // from here, so later commands (a drain cut off by the run deadline)
+        // would wait in an offline queue nothing flushes any more. Make them
+        // fail at once instead; ioredis reads the option per command.
+        if (client.options && client.options.enableOfflineQueue !== false) {
+          client.options.enableOfflineQueue = false;
+          offlineQueueDisabledByQuit.add(client);
+        }
         const callback = args.find((arg): arg is (err: null, result: 'OK') => void =>
           typeof arg === 'function');
         callback?.(null, 'OK');
@@ -830,9 +848,13 @@ export function registerRedisEndRecovery(
   endRecoveryRegisteredClients.add(client);
 
   markIntentionalCloseOnShutdownCalls(guardable);
-  // Connected again after a shutdown call (explicit connect()): re-arm.
+  // Connected again after a shutdown call (explicit connect()): re-arm, and
+  // give back the offline queue a link-down quit() turned off.
   guardable.on('ready', () => {
     intentionallyClosedRedisClients.delete(client);
+    if (offlineQueueDisabledByQuit.delete(client) && guardable.options) {
+      guardable.options.enableOfflineQueue = true;
+    }
   });
   guardable.on('end', () => {
     if (intentionallyClosedRedisClients.has(client)) return;

@@ -25,7 +25,7 @@ export const BACKGROUND_WORKER_FORCED_EXIT_GRACE_MS = 5_000;
 /** Cloud Run Job task timeout (scripts/managed-demo/deploy-background-worker-v2.mjs `timeout`). */
 export const BACKGROUND_WORKER_JOB_TIMEOUT_MS = 120_000;
 /**
- * Kept after the run deadline for pg-boss's graceful stop (8s), closing the
+ * Kept after the run deadline for pg-boss's graceful stop (7s), closing the
  * Redis and database clients, and margin. A task that exceeds the Job timeout
  * fails and is retried (maxRetries 1), so the deadline must leave this room.
  */

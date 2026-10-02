@@ -7,7 +7,12 @@ import type IORedis from 'ioredis';
 import { AppModule } from './app.module.js';
 import { getFrontendOrigins, parseFrontendUrlList } from './config/frontend-origins.js';
 import { createGlobalExceptionFilters } from './common/filters/global-exception-filters.js';
+import {
+  API_SHUTDOWN_DRAIN_BUDGET_MS,
+  installShutdownRunDeadline,
+} from './common/run-deadline.js';
 import { ZodValidationPipe } from './common/pipes/zod-validation.pipe.js';
+import { checkEdgeProxySecretAtStartup } from './common/request-ip.js';
 import { RedisIoAdapter } from './modules/booking/providers/redis-io.adapter.js';
 import { REDIS_CLIENT } from './modules/booking/providers/redis.provider.js';
 
@@ -37,6 +42,11 @@ async function bootstrap() {
       process.exit(1);
     }
   }
+
+  // Without the edge secret, IP-based rate limits can collapse into one bucket
+  // behind the edge Worker (Architecture 8.4, 10.1). Warns by default; throws with
+  // EDGE_PROXY_SHARED_SECRET_REQUIRED=true.
+  checkEdgeProxySecretAtStartup();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', 1);
@@ -82,11 +92,18 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
-  // SIGTERM (Cloud Run scale-in/revision replacement) runs Nest shutdown hooks:
-  // pg-boss stops gracefully and fails unfinished jobs back for retry, and
-  // worker intervals are cleared before the HTTP server is disposed. Only the
-  // termination signals are subscribed; Nest's default list also includes
-  // SIGSEGV/SIGBUS/SIGFPE/SIGILL, where running JS listeners is unsafe.
+  // SIGTERM (Cloud Run scale-in/revision replacement) runs Nest shutdown hooks
+  // in this order, inside Cloud Run's 10 seconds before SIGKILL:
+  // 1. onModuleDestroy: worker intervals stop and in-flight recovery sweeps
+  //    get at most API_SHUTDOWN_DRAIN_BUDGET_MS (the run deadline set by the
+  //    listener installed first below); a cut-off row converges on its lease.
+  // 2. beforeApplicationShutdown: pg-boss stops gracefully (7s) and fails
+  //    unfinished jobs back for retry, still accepting new jobs.
+  // 3. the HTTP/WebSocket servers close; requests in flight can still enqueue.
+  // 4. onApplicationShutdown: pg-boss is marked unavailable and its pool closes.
+  // Only the termination signals are subscribed; Nest's default list also
+  // includes SIGSEGV/SIGBUS/SIGFPE/SIGILL, where running JS listeners is unsafe.
+  installShutdownRunDeadline(process, API_SHUTDOWN_DRAIN_BUDGET_MS);
   app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
 
   const port = process.env['PORT'] ?? 8080;

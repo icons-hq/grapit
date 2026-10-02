@@ -7,6 +7,7 @@ import * as Sentry from '@sentry/nestjs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type IORedis from 'ioredis';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
+import { redactSensitiveText } from '../../common/observability/sentry-redaction.js';
 import {
   TwilioVerifyApiError,
   TwilioVerifyClient,
@@ -38,6 +39,9 @@ const GLOBAL_HOURLY_SEND_WINDOW_MS = 3_600_000;
 const GLOBAL_HOURLY_SEND_COUNTER_TTL_SEC = 7_200;
 
 const VERIFIED_FLAG_TTL_SEC = 600;           // verified flag 10min for signup re-check
+// Twilio Verify keeps a sent code valid for 10 minutes. verifyCode only asks
+// Twilio about a number that has this marker (set by a successful send-code).
+const PENDING_VERIFICATION_TTL_MS = 600_000;
 const PHONE_VERIFICATION_TOKEN_TTL_MS = VERIFIED_FLAG_TTL_SEC * 1000;
 // Keep the single-use marker a little past token expiry so API instances with
 // slightly different clocks cannot accept a token whose marker already expired.
@@ -152,6 +156,7 @@ export const smsVerifiedKey      = (e164: string): string => { assertE164(e164);
 export const smsResendKey        = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:resend`; };
 export const smsSendCounterKey   = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:send-count`; };
 export const smsVerifyCounterKey = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:verify-count`; };
+export const smsPendingVerificationKey = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:pending`; };
 export const smsVerificationTokenClaimKey = (e164: string, nonce: string): string => {
   assertE164(e164);
   if (!PHONE_VERIFICATION_NONCE_RE.test(nonce)) {
@@ -223,6 +228,7 @@ const SMS_GLOBAL_RATE_LIMITED_MESSAGE =
 const PHONE_VERIFICATION_REQUIRED_MESSAGE = '전화번호 인증이 완료되지 않았습니다';
 const PHONE_VERIFICATION_TOKEN_USED_MESSAGE =
   '이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.';
+const SMS_CODE_EXPIRED_MESSAGE = '인증번호가 만료되었습니다. 재발송해주세요';
 
 const SMS_ERROR_CODES = {
   invalidPhone: 'SMS_PHONE_INVALID',
@@ -230,6 +236,8 @@ const SMS_ERROR_CODES = {
   recipientBlocked: 'SMS_RECIPIENT_BLOCKED',
   providerRateLimited: 'SMS_PROVIDER_RATE_LIMITED',
   sendFailed: 'SMS_SEND_FAILED',
+  // The web clears its stored token and shows phone verification again.
+  phoneVerificationTokenUsed: 'PHONE_VERIFICATION_TOKEN_USED',
 } as const;
 
 type SmsErrorCode = (typeof SMS_ERROR_CODES)[keyof typeof SMS_ERROR_CODES];
@@ -314,9 +322,37 @@ export function parseSmsAllowedCountries(value: string | undefined): ReadonlySet
   return countries.length > 0 ? new Set(countries) : null;
 }
 
+// Every SMS log line names the phone through this mask: logs are exported to
+// Cloud Logging and read during incidents, so they never carry the full number.
 function maskE164ForLog(e164: string): string {
   if (e164.length <= 6) return `${e164.slice(0, 3)}***`;
   return `${e164.slice(0, 4)}${'*'.repeat(Math.max(3, e164.length - 6))}${e164.slice(-2)}`;
+}
+
+/** Error text for a log field: E.164 numbers and URL queries are masked. */
+function errorMessageForLog(err: unknown): string {
+  return redactSensitiveText(err instanceof Error ? err.message : String(err));
+}
+
+/** Reports a provider or Valkey failure with the Twilio status/code as tags. */
+function captureSmsProviderException(
+  err: unknown,
+  tags: Record<string, string> = {},
+): void {
+  Sentry.withScope((scope) => {
+    scope.setTag('provider', 'twilio_verify');
+    for (const [name, value] of Object.entries(tags)) {
+      scope.setTag(name, value);
+    }
+    if (err instanceof TwilioVerifyApiError) {
+      scope.setTag('twilio.status', String(err.status));
+      if (err.code !== undefined) {
+        scope.setTag('twilio.code', String(err.code));
+      }
+    }
+    scope.setLevel('error');
+    Sentry.captureException(err);
+  });
 }
 
 function mapTwilioSendFailure(err: TwilioVerifyApiError): BadRequestException {
@@ -497,7 +533,7 @@ export class SmsService {
             event: 'sms.rollback_failed',
             phone: maskE164ForLog(e164),
             op: rollbacks[index]!.op,
-            err: (result.reason as Error).message,
+            err: errorMessageForLog(result.reason),
           });
         }
       });
@@ -583,7 +619,7 @@ export class SmsService {
 
     // Dev mock -- cooldown/counter/Twilio all skipped
     if (this.isDevMock) {
-      this.logger.log({ event: 'sms.sent', mode: 'dev_mock', phone: e164 });
+      this.logger.log({ event: 'sms.sent', mode: 'dev_mock', phone: maskE164ForLog(e164) });
       return { success: true, message: '인증번호가 발송되었습니다' };
     }
 
@@ -591,9 +627,17 @@ export class SmsService {
 
     try {
       const sent = await this.client!.sendVerification(e164);
+      // verifyCode calls Twilio only while this marker exists (audit #36
+      // follow-up). A Valkey failure here takes the non-provider failure path
+      // below, like every other Valkey error in this service (fail closed):
+      // the quota is given back so the buyer can resend at once, because a
+      // code sent without the marker cannot be verified.
+      await this.redis.set(
+        smsPendingVerificationKey(e164), '1', 'PX', PENDING_VERIFICATION_TTL_MS,
+      );
       this.logger.log({
         event: 'sms.sent',
-        phone: e164,
+        phone: maskE164ForLog(e164),
         country,
         providerStatus: sent.status,
         providerChannel: sent.channel,
@@ -607,32 +651,23 @@ export class SmsService {
       //   transient provider outage would burn the user's 5/hour quota
       //   without delivering anything (Issue 2 from PR #16 review).
       // Twilio permanent 4xx -> keep both cooldown and counter (abuse mitigation).
-      // The global budget slot follows the same rule.
+      // The global budget slot follows the same rule. A Valkey failure while
+      // recording the pending marker also rolls back (see above).
       const shouldRollback =
         !(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota;
       if (shouldRollback) {
         await releaseSendQuota();
       }
 
-      Sentry.withScope((scope) => {
-        scope.setTag('provider', 'twilio_verify');
-        scope.setTag('country', country);
-        if (err instanceof TwilioVerifyApiError) {
-          scope.setTag('http_status', String(err.status));
-          if (err.code !== undefined) {
-            scope.setTag('twilio_code', String(err.code));
-          }
-        }
-        scope.setLevel('error');
-        Sentry.captureException(err);
-      });
+      captureSmsProviderException(err, { country });
       this.logger.error({
         event: 'sms.send_failed',
         phone: maskE164ForLog(e164),
         country,
         providerStatus: err instanceof TwilioVerifyApiError ? err.status : undefined,
         providerCode: err instanceof TwilioVerifyApiError ? err.code : undefined,
-        err: (err as Error).message,
+        providerBody: err instanceof TwilioVerifyApiError ? err.providerBody : undefined,
+        err: errorMessageForLog(err),
       });
       if (err instanceof TwilioVerifyApiError) {
         throw mapTwilioSendFailure(err);
@@ -662,6 +697,11 @@ export class SmsService {
    * 15 minutes with 11 free requests, without ever triggering an SMS. Only
    * checks against a live verification (which needs a send-code first, under
    * the send limits) count toward the limit.
+   *
+   * Twilio is called only for a number with a pending marker, which a
+   * successful send-code sets for the code's 10-minute lifetime. Without it
+   * the request gets 410 straight away; approval and "no pending
+   * verification" clear it. Dev mock skips the marker.
    */
   async verifyCode(
     phone: string,
@@ -673,13 +713,23 @@ export class SmsService {
     // Dev mock: 000000 universal
     if (this.isDevMock) {
       if (code === '000000') {
-        this.logger.log({ event: 'sms.verified', mode: 'dev_mock', phone: e164 });
+        this.logger.log({ event: 'sms.verified', mode: 'dev_mock', phone: maskE164ForLog(e164) });
         return {
           verified: true,
           verificationToken: this.createPhoneVerificationToken(e164, purpose),
         };
       }
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
+    }
+
+    // No send-code for this number in the last 10 minutes: answer without
+    // calling Twilio, so verify-code (which skips the IP throttler) cannot be
+    // used to spend the Twilio rate and concurrency limits on arbitrary
+    // numbers. A Valkey error propagates before any provider call, the same
+    // fail-closed policy as the verify counter below.
+    const pendingKey = smsPendingVerificationKey(e164);
+    if (!(await this.redis.get(pendingKey))) {
+      throw new GoneException(SMS_CODE_EXPIRED_MESSAGE);
     }
 
     const verifyCounterKey = smsVerifyCounterKey(e164);
@@ -705,9 +755,10 @@ export class SmsService {
           'EX',
           VERIFIED_FLAG_TTL_SEC,
         );
+        await this.clearPendingVerification(e164, pendingKey);
         this.logger.log({
           event: 'sms.verified',
-          phone: e164,
+          phone: maskE164ForLog(e164),
           providerStatus: result.status,
           verificationSid: result.sid,
         });
@@ -719,7 +770,7 @@ export class SmsService {
 
       this.logger.warn({
         event: 'sms.verify_wrong',
-        phone: e164,
+        phone: maskE164ForLog(e164),
         providerStatus: result.status,
       });
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
@@ -727,9 +778,12 @@ export class SmsService {
       if (err instanceof GoneException) throw err;
       if (err instanceof TwilioVerifyApiError && err.isExpiredOrExhausted) {
         // No live verification to check a code against: nothing was tried,
-        // so this request must not count toward the verify limit.
+        // so this request must not count toward the verify limit. Twilio has
+        // no verification to check any more either, so later requests for
+        // this number stop before the provider until the next send-code.
         await this.releaseVerifySlot(e164, verifyCounterKey);
-        throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
+        await this.clearPendingVerification(e164, pendingKey);
+        throw new GoneException(SMS_CODE_EXPIRED_MESSAGE);
       }
       if (err instanceof TwilioVerifyApiError && err.isRateLimited) {
         await this.releaseVerifySlot(e164, verifyCounterKey);
@@ -744,20 +798,32 @@ export class SmsService {
         await this.releaseVerifySlot(e164, verifyCounterKey);
       }
       // Provider failure etc. -- log + propagate as user-facing generic message
-      Sentry.withScope((scope) => {
-        scope.setTag('provider', 'twilio_verify');
-        if (err instanceof TwilioVerifyApiError) {
-          scope.setTag('http_status', String(err.status));
-          if (err.code !== undefined) {
-            scope.setTag('twilio_code', String(err.code));
-          }
-        }
-        scope.setLevel('error');
-        Sentry.captureException(err);
+      captureSmsProviderException(err);
+      this.logger.error({
+        event: 'sms.verify_failed',
+        phone: maskE164ForLog(e164),
+        providerStatus: err instanceof TwilioVerifyApiError ? err.status : undefined,
+        providerCode: err instanceof TwilioVerifyApiError ? err.code : undefined,
+        providerBody: err instanceof TwilioVerifyApiError ? err.providerBody : undefined,
+        err: errorMessageForLog(err),
       });
-      this.logger.error({ event: 'sms.verify_failed', phone: e164, err: (err as Error).message });
       return { verified: false, message: '인증번호 확인에 실패했습니다. 잠시 후 다시 시도해주세요.' };
     }
+  }
+
+  /**
+   * Best effort: a marker left behind only lets more requests reach Twilio,
+   * which answers 404 and clears it again. A send-code racing this DEL loses
+   * its marker and the buyer resends after the cooldown.
+   */
+  private async clearPendingVerification(e164: string, pendingKey: string): Promise<void> {
+    await this.redis.del(pendingKey).catch((err: unknown) => {
+      this.logger.warn({
+        event: 'sms.pending_clear_failed',
+        phone: maskE164ForLog(e164),
+        err: errorMessageForLog(err),
+      });
+    });
   }
 
   private async releaseVerifySlot(e164: string, verifyCounterKey: string): Promise<void> {
@@ -769,7 +835,7 @@ export class SmsService {
           event: 'sms.rollback_failed',
           phone: maskE164ForLog(e164),
           op: 'verify_counter_decr',
-          err: (rollbackErr as Error).message,
+          err: errorMessageForLog(rollbackErr),
         });
       });
   }
@@ -801,8 +867,8 @@ export class SmsService {
       // unverified. The caller will re-throw the original GoneException.
       this.logger.warn({
         event: 'sms.is_phone_verified_failed',
-        phone: e164,
-        err: (err as Error).message,
+        phone: maskE164ForLog(e164),
+        err: errorMessageForLog(err),
       });
       return false;
     }
@@ -845,7 +911,10 @@ export class SmsService {
         phone: maskE164ForLog(e164),
         purpose: options.purpose,
       });
-      throw new BadRequestException(PHONE_VERIFICATION_TOKEN_USED_MESSAGE);
+      throw smsBadRequest(
+        PHONE_VERIFICATION_TOKEN_USED_MESSAGE,
+        SMS_ERROR_CODES.phoneVerificationTokenUsed,
+      );
     }
 
     let released = false;
@@ -862,7 +931,7 @@ export class SmsService {
             event: 'sms.verification_token_release_failed',
             phone: maskE164ForLog(e164),
             purpose: options.purpose,
-            err: (err as Error).message,
+            err: errorMessageForLog(err),
           });
         }
       },
