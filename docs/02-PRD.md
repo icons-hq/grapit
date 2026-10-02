@@ -91,7 +91,7 @@ Buyers can review and manage reservations.
 - My Page lists reservations and reservation details.
 - Reservation detail shows payment, refund, cancellation deadline, seats, QR ticket, and entry status.
 - Buyer cancellation updates reservation and seat inventory when allowed.
-- Buyer refund requests are blocked once the showtime start time has passed.
+- Buyer refund requests are blocked after the cancellation window (23:59 KST on the day before the show) and once the showtime start time has passed. After the window only an admin Full Refund Override can refund.
 - Refund preview and refund request APIs expose refund timeline and expected customer-service state.
 - Admin refund can hold cancelled seats for controlled reopening and records operational audit evidence.
 

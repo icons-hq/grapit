@@ -83,6 +83,11 @@ export interface FinalizeFullPaymentCancellationInput {
   providerResponse?: PaymentCancellationProviderResponse;
   actor?: PaymentCancellationActor;
   source: 'refund_request' | 'refund_retry' | 'cancel_webhook' | 'ticket_item';
+  /**
+   * The refundable amount is zero, so no provider cancellation was requested. The reservation and items are
+   * cancelled locally while the captured payment keeps its provider status (the whole balance is retained).
+   */
+  localOnly?: boolean;
 }
 
 export type PaymentCancellationProviderResponse = {
@@ -109,6 +114,7 @@ const RESULT_MESSAGE_BY_SOURCE: Record<CancellationSource, string> = {
 };
 
 const REDACTED_PROVIDER_METADATA_VALUE = '[REDACTED]';
+const LOCAL_ONLY_RESULT_CODE = 'NO_PROVIDER_REFUND';
 const SENSITIVE_PROVIDER_METADATA_KEY =
   /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
 
@@ -264,15 +270,20 @@ export class PaymentCancellationFinalizerService {
             sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${now.toISOString()}::timestamptz)`,
             completedAt: now,
             updatedAt: now,
-            resultCode: input.providerResponse?.status ?? 'CANCELED',
-            resultMessage: RESULT_MESSAGE_BY_SOURCE[input.source],
+            resultCode: input.localOnly
+              ? LOCAL_ONLY_RESULT_CODE
+              : input.providerResponse?.status ?? 'CANCELED',
+            resultMessage: input.localOnly
+              ? 'Cancelled locally without a provider refund because nothing is refundable'
+              : RESULT_MESSAGE_BY_SOURCE[input.source],
             failureReason: null,
             expectedDepositAt: null,
             customerServiceCtaVisible: false,
             providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
               cancelReason: input.reason,
-              paymentStatus: input.providerResponse?.status ?? 'CANCELED',
+              paymentStatus: input.localOnly ? null : input.providerResponse?.status ?? 'CANCELED',
               source: input.source,
+              ...(input.localOnly ? { localOnlyCancellation: true } : {}),
               ...(fullReservationCancellationQuote
                 ? { cancellationQuote: fullReservationCancellationQuote }
                 : {}),
@@ -315,7 +326,7 @@ export class PaymentCancellationFinalizerService {
           throw new BadRequestException('예매 취소 업데이트 결과가 유효하지 않습니다');
         }
 
-        const updatedPayments = await tx
+        const updatedPayments = input.localOnly ? [{ id: input.context.payment.id }] : await tx
           .update(payments)
           .set({
             status: localPaymentStatus,
@@ -391,47 +402,27 @@ export class PaymentCancellationFinalizerService {
           if (quoteSeatIdentities.length > 0) {
             seatIdentities = uniqueSeatIdentities(quoteSeatIdentities);
           }
-        } else {
-          const ticketItemUpdateValues = ticketItemCancellation
-            ? {
-                status: 'cancelled' as const,
-                cancelledAt: now,
-                cancelReason: input.reason,
-                cancellationFee: ticketItemCancellation.cancellationFee,
-                serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
-                refundableAmount: ticketItemCancellation.refundableAmount,
-                reopenState: 'not_required' as const,
-                reopenHoldUntil: null,
-                reopenJobId: null,
-                updatedAt: now,
-              }
-            : {
-                status: 'cancelled' as const,
-                cancelledAt: now,
-                cancelReason: input.reason,
-                cancellationFee: 0,
-                serviceFeeRefund: sql`${ticketItems.serviceFee}`,
-                refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
-                reopenState: 'not_required' as const,
-                reopenHoldUntil: null,
-                reopenJobId: null,
-                updatedAt: now,
-              };
-          const ticketItemScope = ticketItemCancellation
-            ? eq(ticketItems.id, ticketItemCancellation.ticketItemId)
-            : inArray(
-                ticketItems.seatKey,
-                seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
-              );
+        } else if (ticketItemCancellation) {
           const updatedTicketItems = await tx
             .update(ticketItems)
-            .set(ticketItemUpdateValues)
+            .set({
+              status: 'cancelled' as const,
+              cancelledAt: now,
+              cancelReason: input.reason,
+              cancellationFee: ticketItemCancellation.cancellationFee,
+              serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
+              refundableAmount: ticketItemCancellation.refundableAmount,
+              reopenState: 'not_required' as const,
+              reopenHoldUntil: null,
+              reopenJobId: null,
+              updatedAt: now,
+            })
             .where(
               and(
                 eq(ticketItems.reservationId, input.context.reservation.id),
                 eq(ticketItems.paymentId, input.context.payment.id),
                 eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
-                ticketItemScope,
+                eq(ticketItems.id, ticketItemCancellation.ticketItemId),
                 inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
               ),
             )
@@ -444,6 +435,65 @@ export class PaymentCancellationFinalizerService {
           targetTicketItemIds.push(...updatedTicketItems.map(
             (ticketItem) => ticketItem.id,
           ));
+        } else {
+          // A provider cancellation without a stored quote (for example a PG console cancel) only cancels
+          // still-valid items. Items cancelled earlier keep their own fee, refund and cancellation time,
+          // their credentials are not touched again and their seats are not re-held.
+          const seatKeys = seatIdentities.map((seatIdentity) => seatIdentity.seatKey);
+          const updatedTicketItems = await tx
+            .update(ticketItems)
+            .set({
+              status: 'cancelled' as const,
+              cancelledAt: now,
+              cancelReason: input.reason,
+              cancellationFee: 0,
+              serviceFeeRefund: sql`${ticketItems.serviceFee}`,
+              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+              reopenState: 'not_required' as const,
+              reopenHoldUntil: null,
+              reopenJobId: null,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(ticketItems.reservationId, input.context.reservation.id),
+                eq(ticketItems.paymentId, input.context.payment.id),
+                eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+                inArray(ticketItems.seatKey, seatKeys),
+                inArray(ticketItems.status, ['active', 'cancellation_pending']),
+              ),
+            )
+            .returning({
+              id: ticketItems.id,
+              seatId: ticketItems.seatId,
+              floorKey: ticketItems.floorKey,
+              seatKey: ticketItems.seatKey,
+            });
+          const previouslyCancelledTicketItems = await tx
+            .select({ seatKey: ticketItems.seatKey })
+            .from(ticketItems)
+            .where(
+              and(
+                eq(ticketItems.reservationId, input.context.reservation.id),
+                eq(ticketItems.paymentId, input.context.payment.id),
+                eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+                inArray(ticketItems.seatKey, seatKeys),
+                eq(ticketItems.status, 'cancelled'),
+              ),
+            );
+          const coveredSeatKeys = new Set([
+            ...updatedTicketItems.map((ticketItem) => ticketItem.seatKey),
+            ...previouslyCancelledTicketItems.map((ticketItem) => ticketItem.seatKey),
+          ]);
+
+          if (seatKeys.some((seatKey) => !coveredSeatKeys.has(seatKey))) {
+            throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
+          }
+
+          targetTicketItemIds.push(...updatedTicketItems.map(
+            (ticketItem) => ticketItem.id,
+          ));
+          seatIdentities = uniqueSeatIdentities(updatedTicketItems);
         }
 
         await this.inactivateBenefitEntitlementsForTicketItems(
@@ -452,7 +502,19 @@ export class PaymentCancellationFinalizerService {
           now,
         );
 
-        const updatedTickets = await tx
+        // A provider-backed full cancellation (stored quote or quote-less provider cancel) closes the whole
+        // reservation, so legacy reservation-level credentials are revoked with the target items.
+        const fullCancellation = !ticketItemCancellation;
+        const credentialScope = fullCancellation
+          ? targetTicketItemIds.length > 0
+            ? or(
+                inArray(tickets.ticketItemId, targetTicketItemIds),
+                isNull(tickets.ticketItemId),
+              )
+            : isNull(tickets.ticketItemId)
+          : inArray(tickets.ticketItemId, targetTicketItemIds);
+
+        await tx
           .update(tickets)
           .set({
             status: 'revoked',
@@ -464,15 +526,10 @@ export class PaymentCancellationFinalizerService {
               eq(tickets.reservationId, input.context.reservation.id),
               eq(tickets.paymentId, input.context.payment.id),
               eq(tickets.showtimeId, input.context.reservation.showtimeId),
-              fullReservationCancellationQuote
-                ? or(
-                    inArray(tickets.ticketItemId, targetTicketItemIds),
-                    isNull(tickets.ticketItemId),
-                  )
-                : inArray(tickets.ticketItemId, targetTicketItemIds),
+              credentialScope,
               inArray(
                 tickets.status,
-                fullReservationCancellationQuote
+                fullCancellation
                   ? ['active', 'revoked', 'used']
                   : ['active', 'revoked'],
               ),
@@ -480,20 +537,23 @@ export class PaymentCancellationFinalizerService {
           )
           .returning({ id: tickets.id, ticketItemId: tickets.ticketItemId });
 
-        const hasLegacyReservationLevelTicket = updatedTickets.some(
-          (ticket) => ticket.ticketItemId === null,
-        );
-        const updatedLinkedTicketItemIds = new Set(
-          updatedTickets
-            .map((ticket) => ticket.ticketItemId)
-            .filter((ticketItemId): ticketItemId is string => ticketItemId !== null),
-        );
+        // The invariant is "no cancelled Ticket Item keeps a valid QR credential". A target item that never
+        // received a credential (issuance failed and was never backfilled) has nothing to revoke and must not
+        // keep a provider-cancelled refund from finalizing. A credential left valid because it belongs to
+        // another payment/showtime still aborts the whole cancellation.
+        const remainingValidCredentials = await tx
+          .select({ id: tickets.id })
+          .from(tickets)
+          .where(
+            and(
+              eq(tickets.reservationId, input.context.reservation.id),
+              credentialScope,
+              inArray(tickets.status, ['active', 'used']),
+            ),
+          )
+          .limit(1);
 
-        if (
-          updatedTickets.length === 0
-          || (!hasLegacyReservationLevelTicket
-            && updatedLinkedTicketItemIds.size !== targetTicketItemIds.length)
-        ) {
+        if (remainingValidCredentials.length > 0) {
           throw new BadRequestException('취소할 티켓 수가 일치하지 않습니다');
         }
       }
@@ -515,7 +575,9 @@ export class PaymentCancellationFinalizerService {
             soldAt: null,
             heldCancelledAt: now,
             reopenHoldUntil: releaseAt,
-            reopenJobId: JOB_ENQUEUE_FAILED,
+            // Record the release job id inside the cancellation transaction. If the process dies before the
+            // job is sent, or the send fails, the held-seat recovery sweep still releases the seat.
+            reopenJobId: preallocatedReleaseJobId,
           })
           .where(
             and(
@@ -529,10 +591,10 @@ export class PaymentCancellationFinalizerService {
           .returning({ id: seatInventories.id });
 
         if (updatedSoldSeatInventory.length === 1) {
-          await recordTicketHold(releaseAt, JOB_ENQUEUE_FAILED);
+          await recordTicketHold(releaseAt, preallocatedReleaseJobId);
           seatReleaseStates.push({
             seatIdentity,
-            reopenJobId: JOB_ENQUEUE_FAILED,
+            reopenJobId: preallocatedReleaseJobId,
           });
           continue;
         }
@@ -550,7 +612,7 @@ export class PaymentCancellationFinalizerService {
             soldAt: null,
             heldCancelledAt: sql`coalesce(${seatInventories.heldCancelledAt}, ${now})`,
             reopenHoldUntil: sql`case when ${seatInventories.reopenJobId} is not null and ${seatInventories.reopenJobId} <> ${JOB_ENQUEUE_FAILED} then ${seatInventories.reopenHoldUntil} else ${releaseAt} end`,
-            reopenJobId: sql`case when ${seatInventories.reopenJobId} is not null and ${seatInventories.reopenJobId} <> ${JOB_ENQUEUE_FAILED} then ${seatInventories.reopenJobId} else ${JOB_ENQUEUE_FAILED} end`,
+            reopenJobId: sql`case when ${seatInventories.reopenJobId} is not null and ${seatInventories.reopenJobId} <> ${JOB_ENQUEUE_FAILED} then ${seatInventories.reopenJobId} else ${preallocatedReleaseJobId} end`,
           })
           .where(
             and(
@@ -569,10 +631,10 @@ export class PaymentCancellationFinalizerService {
 
         if (updatedHeldCancelledSeatInventory.length === 1) {
           await recordTicketHold(updatedHeldCancelledSeatInventory[0]?.reopenHoldUntil ?? releaseAt,
-            updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED);
+            updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? preallocatedReleaseJobId);
           seatReleaseStates.push({
             seatIdentity,
-            reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED,
+            reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? preallocatedReleaseJobId,
           });
           continue;
         }
@@ -617,14 +679,14 @@ export class PaymentCancellationFinalizerService {
     });
 
     const seatIdentitiesNeedingReleaseJob = seatReleaseStates
-      .filter((state) =>
-        !state.reopenJobId || state.reopenJobId === JOB_ENQUEUE_FAILED
-      )
+      .filter((state) => state.reopenJobId === preallocatedReleaseJobId)
       .map((state) => state.seatIdentity);
     const existingReleaseJobId = seatReleaseStates
       .map((state) => state.reopenJobId)
       .find((reopenJobId) =>
-        Boolean(reopenJobId) && reopenJobId !== JOB_ENQUEUE_FAILED
+        Boolean(reopenJobId)
+        && reopenJobId !== JOB_ENQUEUE_FAILED
+        && reopenJobId !== preallocatedReleaseJobId
       );
 
     if (seatIdentities.length > 0 && seatIdentitiesNeedingReleaseJob.length === 0) {
@@ -646,18 +708,17 @@ export class PaymentCancellationFinalizerService {
       preallocatedReleaseJobId,
     );
     if (releaseEnqueued) {
-      const actualJobIdPersisted = await this.persistReleaseJobEnqueueSuccess(
-        input.context,
-        releaseTargetSeatIdentities,
-        preallocatedReleaseJobId,
-      );
-      if (actualJobIdPersisted) {
-        return {
-          releaseJobId: preallocatedReleaseJobId,
-          releaseEnqueued: true,
-        };
-      }
+      return {
+        releaseJobId: preallocatedReleaseJobId,
+        releaseEnqueued: true,
+      };
     }
+
+    await this.markReleaseJobEnqueueFailed(
+      input.context,
+      releaseTargetSeatIdentities,
+      preallocatedReleaseJobId,
+    );
 
     return {
       releaseJobId: JOB_ENQUEUE_FAILED,
@@ -722,13 +783,18 @@ export class PaymentCancellationFinalizerService {
     }
   }
 
-  private async persistReleaseJobEnqueueSuccess(
+  /**
+   * The release job was never created: mark the held seats with the enqueue-failure sentinel so operators can
+   * see them. Release itself does not depend on this marker; the held-seat recovery sweep frees any held seat
+   * whose hold has expired.
+   */
+  private async markReleaseJobEnqueueFailed(
     context: FullPaymentCancellationContext,
     seatIdentities: SeatIdentityPayload[],
     releaseJobId: string,
-  ): Promise<boolean> {
+  ): Promise<void> {
     if (seatIdentities.length === 0) {
-      return true;
+      return;
     }
 
     try {
@@ -748,39 +814,30 @@ export class PaymentCancellationFinalizerService {
                 ),
               );
 
-        const updatedSeatInventories = await tx
+        await tx
           .update(seatInventories)
-          .set({ reopenJobId: releaseJobId })
+          .set({ reopenJobId: JOB_ENQUEUE_FAILED })
           .where(
             and(
               eq(seatInventories.showtimeId, context.reservation.showtimeId),
               eq(seatInventories.status, 'held_cancelled'),
-              eq(seatInventories.reopenJobId, JOB_ENQUEUE_FAILED),
+              eq(seatInventories.reopenJobId, releaseJobId),
               seatIdentityFilter,
             ),
           )
           .returning({ id: seatInventories.id });
-
-        if (updatedSeatInventories.length !== seatIdentities.length) {
-          throw new Error(
-            `Expected ${seatIdentities.length} released seat rows, updated ${updatedSeatInventories.length}`,
-          );
-        }
-        await tx.update(ticketItems).set({ reopenJobId: releaseJobId }).where(and(
+        await tx.update(ticketItems).set({ reopenJobId: JOB_ENQUEUE_FAILED }).where(and(
           eq(ticketItems.reservationId, context.reservation.id),
           inArray(ticketItems.seatKey, seatIdentities.map((seat) => seat.seatKey)),
           eq(ticketItems.status, 'cancelled'), eq(ticketItems.reopenState, 'held_cancelled'),
-          eq(ticketItems.reopenJobId, JOB_ENQUEUE_FAILED),
+          eq(ticketItems.reopenJobId, releaseJobId),
         ));
       });
-
-      return true;
     } catch (error) {
       this.logger.error(
-        `Manual reconciliation required: release-cancelled-seat job was enqueued but seat reopen job id was not persisted for reservationId=${context.reservation.id}, releaseJobId=${releaseJobId}`,
+        `release-cancelled-seat job was not enqueued and the failure marker could not be recorded for reservationId=${context.reservation.id}, releaseJobId=${releaseJobId}. The held-seat recovery sweep releases these seats after their hold expires.`,
         error instanceof Error ? error.stack : String(error),
       );
-      return false;
     }
   }
 

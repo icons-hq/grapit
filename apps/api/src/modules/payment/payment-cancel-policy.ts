@@ -83,6 +83,41 @@ export function hasUnchangedCancellationBalance(response: TossPaymentResponse, s
     && Math.round((response.balanceAmount ?? -1) * scale) === snapshot.balanceBeforeMinor;
 }
 
+/**
+ * The provider still holds more than the local ledger expects (for example a seat that was cancelled only in
+ * Grabit and refunded out of band). Our cancellation can only lower the balance, so this proves the frozen
+ * command was not applied. A lower provider balance is never treated this way: it may hide an unknown refund.
+ */
+export function isProviderBalanceAboveSnapshot(response: TossPaymentResponse, snapshot: unknown): boolean {
+  if (!isRecord(snapshot) || !['KRW', 'USD'].includes(String(snapshot.currency))
+    || !Number.isSafeInteger(snapshot.originalAmountMinor) || !Number.isSafeInteger(snapshot.balanceBeforeMinor)
+    || typeof response.balanceAmount !== 'number' || !Number.isFinite(response.balanceAmount)) return false;
+  const scale = snapshot.currency === 'USD' ? 100 : 1;
+  return (response.currency === undefined || response.currency === snapshot.currency)
+    && Math.round(response.totalAmount * scale) === snapshot.originalAmountMinor
+    && Math.round(response.balanceAmount * scale) > (snapshot.balanceBeforeMinor as number);
+}
+
+/** Any provider cancel row (done or in progress) that belongs to this exact frozen command. */
+export function hasProviderCancelForCommand(response: TossPaymentResponse, command: PaymentCancelRequest): boolean {
+  const cancelRequestId = command.options.cancelRequestId;
+  return response.cancels?.some((cancel) => cancel.cancelReason === command.reason
+    || (Boolean(cancelRequestId) && cancel.cancelRequestId === cancelRequestId)) ?? false;
+}
+
+/**
+ * Amount evidence for a cancellation whose refundable amount is zero (for example a 0 KRW tier seat after the
+ * booking day). No provider cancel is sent, so the whole captured balance stays with the original payment.
+ */
+export function describeLocalOnlyCancellation(payment: PaymentCancelPaymentSnapshot) {
+  const currency = payment.providerChargeCurrency === 'USD' ? 'USD' as const : 'KRW' as const;
+  const originalAmountMinor = currency === 'USD' && typeof payment.providerChargeAmountMinor === 'number'
+    ? payment.providerChargeAmountMinor
+    : payment.amount;
+  const balanceBeforeMinor = originalAmountMinor - (payment.providerRefundedAmountMinor ?? 0);
+  return { currency, amountMinor: 0, amountDecimal: currency === 'USD' ? '0.00' : '0', originalAmountMinor, balanceBeforeMinor };
+}
+
 interface BuildFullPaymentCancelRequestInput {
   payment: PaymentCancelPaymentSnapshot;
   reason: string;

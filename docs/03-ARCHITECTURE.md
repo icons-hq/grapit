@@ -278,12 +278,23 @@ Toss webhook processing records provider events, handles replay/idempotency, and
 
 ### 6.5 Refund And Cancelled Seat Reopen
 
-`RefundModule` owns refund preview/request/admin refund. Buyer refund requests are blocked after showtime start; admin refund remains an operational override path. Refund state can be terminal or provider-processing. pg-boss schedules:
+`RefundModule` owns refund preview/request/admin refund. Buyer refund requests are blocked after the Cancellation Window (`cancel_deadline`) and after showtime start. Default admin refund follows the same window; after it only the Administrative Full Refund Override can refund (show cancellation, company fault, mistaken entry together with Entered Ticket Override). Refund state can be terminal or provider-processing. pg-boss schedules:
 
 - refund cancel retry,
 - delayed cancelled-seat release.
 
 Admin refund writes audit evidence and can hold seats before manual reopening.
+
+Refund failure handling (2026-10):
+
+- Before revoking any right, the request compares the provider balance with the local ledger and refuses with 409 on a known mismatch. The admin preview runs the same check and returns `blockedReason`.
+- Only definite provider rejections (`NOT_CANCELABLE_*`, `INVALID_REQUEST`, `REFUND_REJECTED`, `EXCEED_MAX_REFUND_DUE` …) are final, and rights are restored only when the provider balance proves no money moved. Toss 5xx codes, `FORBIDDEN_CONSECUTIVE_REQUEST`, unknown codes and non-JSON gateway pages are ambiguous: the refund stays `sent_to_pg` and the same frozen command is retried with backoff 1m→2m→5m→10m→30m→1h→2h→4h→8h→12h→daily until the 15-day provider idempotency window closes. After three attempts the refund shows the customer-service CTA and `manualReviewRequired`.
+- A frozen command is not resent after the window, nor when the provider balance is lower than the frozen ledger (unknown cancellation); those refunds become `failed` for manual review with rights still revoked. A provider balance higher than the frozen ledger, or a provider-aborted async cancel with an unchanged balance, restores the rights.
+- Retry jobs are claimed per attempt (`refundCancelRetryClaim`), so duplicated jobs never fork into parallel chains. Every background-processing process (and each bounded worker run) sweeps non-terminal refunds whose `refundCancelRetry.nextAttemptAt` is more than 10 minutes overdue, or that never recorded a schedule for 20 minutes, and runs the attempt inline without depending on pg-boss.
+- Pressing admin refund again on a stuck refund reconciles it with the provider first: a matching completed cancel is finalized, an untouched balance resumes the same frozen command (or, past the idempotency window, restores rights and starts a reviewed new attempt), and an unknown provider cancellation is refused for manual reconciliation.
+- A quote with nothing refundable (a 0 KRW tier after the booking day) is cancelled locally without a provider call; the captured payment keeps its status and the refund completes with `NO_PROVIDER_REFUND`.
+- The cancellation transaction writes the preallocated release job id onto held seats before the job is sent; if the send fails the seats are marked `JOB_ENQUEUE_FAILED`. Background-processing processes sweep `held_cancelled` seats whose hold expired more than 15 minutes ago and release them with the release worker's guards (no active/pending Ticket Item on the seat, never within 5 minutes of showtime). This covers whole-reservation and single Ticket Item cancellations.
+- A provider-cancelled reservation finalizes even when a Ticket Item never received a QR credential; it aborts only if a credential of a cancelled item would stay valid. A quote-less provider cancellation (for example a PG console cancel) cancels only still-valid Ticket Items and leaves earlier seat cancellations, their fees and their seats untouched.
 
 ## 7. QR And Field Operations
 

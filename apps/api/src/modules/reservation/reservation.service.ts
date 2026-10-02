@@ -139,6 +139,8 @@ type TicketItemCancellationContext = {
   reservationNumber?: string;
   reservationStatus: string;
   reservationCreatedAt: Date;
+  /** Booking day anchor for the fee schedule: provider approval time, legacy fallback to creation. */
+  bookingConfirmedAt: Date;
   cancelDeadline: Date | null;
   showtimeAt: Date;
   paymentId: string;
@@ -180,7 +182,8 @@ type PreparedTicketItemCancellation = {
   quote: TicketItemCancellationQuote;
   reason: string;
   isPendingRetry: boolean;
-  paymentCancelRequest: PaymentCancelRequest;
+  /** Null when nothing is refundable: the item is cancelled locally without a provider command. */
+  paymentCancelRequest: PaymentCancelRequest | null;
   isFullPaymentCancellation: boolean;
   finalizerContext: FullPaymentCancellationContext;
   now: Date;
@@ -895,16 +898,17 @@ export class ReservationService {
     return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
   }
 
+  /** `bookedAt` is the booking confirmation (provider approval) time, not the seat-selection time. */
   private calculateTicketItemCancellationQuote(input: {
     price: number;
     serviceFee: number;
-    reservationCreatedAt: Date;
+    bookedAt: Date;
     showtimeAt: Date;
     now?: Date;
   }): TicketItemCancellationQuote {
     const now = input.now ?? new Date();
     const today = this.getSeoulDayOrdinal(now);
-    const bookingDay = this.getSeoulDayOrdinal(input.reservationCreatedAt);
+    const bookingDay = this.getSeoulDayOrdinal(input.bookedAt);
     const showDay = this.getSeoulDayOrdinal(input.showtimeAt);
     const daysBeforeShow = showDay - today;
 
@@ -1981,6 +1985,10 @@ export class ReservationService {
       throw new NotFoundException('예매를 찾을 수 없습니다');
     }
 
+    const reservationCreatedAt = this.toDate(
+      row['reservation_created_at'] as Date | string,
+      'reservation_created_at',
+    );
     return {
       reservationId: String(row['reservation_id']),
       userId: String(row['user_id']),
@@ -1989,10 +1997,10 @@ export class ReservationService {
         ? String(row['reservation_number'])
         : undefined,
       reservationStatus: String(row['reservation_status']),
-      reservationCreatedAt: this.toDate(
-        row['reservation_created_at'] as Date | string,
-        'reservation_created_at',
-      ),
+      reservationCreatedAt,
+      bookingConfirmedAt: row['payment_paid_at']
+        ? this.toDate(row['payment_paid_at'] as Date | string, 'payment_paid_at')
+        : reservationCreatedAt,
       cancelDeadline: row['cancel_deadline'] ? this.toDate(row['cancel_deadline'] as Date | string, 'cancel_deadline') : null,
       showtimeAt: this.toDate(row['showtime_at'] as Date | string, 'showtime_at'),
       paymentId: String(row['payment_id']),
@@ -2418,17 +2426,21 @@ export class ReservationService {
     if (!payment || payment.status !== 'DONE') throw new BadRequestException('취소할 수 없는 결제 상태입니다');
     const rows = await this.db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservationId));
     const quote = this.calculateTicketItemCancellationQuote({ price: selected.price, serviceFee: selected.serviceFee,
-      reservationCreatedAt: new Date(detail.createdAt), showtimeAt: new Date(detail.showDateTime) });
+      bookedAt: payment.paidAt ?? new Date(detail.createdAt), showtimeAt: new Date(detail.showDateTime) });
     const snapshot = withCompletedRefunds(payment, rows);
-    const command = buildTicketItemPaymentCancelRequest({ payment: snapshot,
+    // Nothing refundable means no provider command and no provider balance requirement.
+    const command = quote.refundableAmount === 0 ? null : buildTicketItemPaymentCancelRequest({ payment: snapshot,
       ticketItem: { id: ticketItemId, refundableAmount: quote.refundableAmount },
       activeTicketItems: rows.filter((item) => item.status === 'active'), reason: 'Refund preview' });
     const currency = payment.providerChargeCurrency === 'USD' ? 'USD' : 'KRW';
     const scale = currency === 'USD' ? 100 : 1;
     const chargeMinor = payment.providerChargeAmountMinor ?? payment.amount;
     const balanceMinor = chargeMinor - (snapshot.providerRefundedAmountMinor ?? 0);
-    const amountMinor = command.options.cancelAmount === undefined ? balanceMinor : Math.round(command.options.cancelAmount * scale);
-    const provider = await this.tossClient.queryPayment(payment.paymentKey, { secretKeyScope: command.options.secretKeyScope });
+    const amountMinor = !command ? 0
+      : command.options.cancelAmount === undefined ? balanceMinor : Math.round(command.options.cancelAmount * scale);
+    const provider = command
+      ? await this.tossClient.queryPayment(payment.paymentKey, { secretKeyScope: command.options.secretKeyScope })
+      : null;
     const [fullRefund] = await this.db.select({ id: refunds.id, status: refunds.status, providerMetadata: refunds.providerMetadata })
       .from(refunds).where(eq(refunds.reservationId, reservationId)).limit(1);
     const [policy] = await this.db.select({ min: bookingPolicies.cancelledSeatHoldMinMinutes,
@@ -2438,9 +2450,9 @@ export class ReservationService {
     else if (selected.admissionState === 'ENTERED') blockedReason = '입장 처리된 티켓은 취소할 수 없습니다';
     else if (selected.benefitEntitlements.some((benefit) => benefit.state === 'redeemed')) blockedReason = '특전을 수령한 티켓은 취소할 수 없습니다';
     else if ((fullRefund && !hasRestoredRefundRights(fullRefund)) || rows.some((item) => item.status === 'cancellation_pending')) blockedReason = '다른 취소가 처리 중입니다. 결과 확인 후 다시 시도해주세요.';
-    else if (command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
-    else if (Math.round((provider.balanceAmount ?? -1) * scale) !== balanceMinor
-      || Math.round(provider.totalAmount * scale) !== chargeMinor) blockedReason = '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
+    else if (command && provider && command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
+    else if (provider && (Math.round((provider.balanceAmount ?? -1) * scale) !== balanceMinor
+      || Math.round(provider.totalAmount * scale) !== chargeMinor)) blockedReason = '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
     return { reservationId, reservationNumber: detail.reservationNumber, paymentKey: payment.paymentKey,
       refundableAmount: quote.refundableAmount, canRequestRefund: !blockedReason, blockedReason,
       selectedTicketItemId: ticketItemId, remainingTicketItemIds: rows.filter((item) => item.id !== ticketItemId && item.status === 'active').map((item) => item.id),
@@ -2489,6 +2501,7 @@ export class ReservationService {
             p.provider_charge_currency,
             p.provider_charge_amount_minor,
             p.status AS payment_status,
+            p.paid_at AS payment_paid_at,
             bp.cancelled_seat_hold_min_minutes,
             bp.cancelled_seat_hold_max_minutes,
             ti.id AS ticket_item_id,
@@ -2525,7 +2538,10 @@ export class ReservationService {
 
         const now = new Date();
         const isPendingRetry = context.ticketItemStatus === 'cancellation_pending';
-        if (isPendingRetry && !context.cancellationCommand) {
+        // A 0 KRW item prepared without a provider command (nothing refundable) only needs local completion.
+        const pendingLocalOnly = isPendingRetry && !context.cancellationCommand
+          && context.price === 0 && context.refundableAmount === 0;
+        if (isPendingRetry && !context.cancellationCommand && !pendingLocalOnly) {
           throw new ConflictException('이전 취소 요청의 결제사 결과를 확인해야 합니다. 고객센터로 문의해주세요.');
         }
         const quote = isPendingRetry
@@ -2537,7 +2553,7 @@ export class ReservationService {
           : this.calculateTicketItemCancellationQuote({
               price: context.price,
               serviceFee: context.serviceFee,
-              reservationCreatedAt: context.reservationCreatedAt,
+              bookedAt: context.bookingConfirmedAt,
               showtimeAt: context.showtimeAt,
             });
         const cancellationReason = isPendingRetry && context.cancelReason
@@ -2592,16 +2608,19 @@ export class ReservationService {
           context,
           activeTicketItems,
         });
-        const paymentCancelRequest = context.cancellationCommand ? {
+        // Nothing refundable (for example a 0 KRW tier after the booking day): no provider command can carry
+        // a zero amount, so the item is cancelled locally and its seat reopens without a PG call.
+        const localOnlyCancellation = !context.cancellationCommand && quote.refundableAmount === 0;
+        const paymentCancelRequest: PaymentCancelRequest | null = context.cancellationCommand ? {
           paymentKey: context.paymentKey, reason: context.cancellationCommand.reason,
           options: context.cancellationCommand.options,
-        } : this.buildTicketItemPaymentCancelRequest({
+        } : localOnlyCancellation ? null : this.buildTicketItemPaymentCancelRequest({
           context,
           quote,
           activeTicketItems,
           reason: cancellationReason,
         });
-        if (!context.cancellationCommand) {
+        if (paymentCancelRequest && !context.cancellationCommand) {
           const commandId = randomUUID();
           paymentCancelRequest.reason = `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
           paymentCancelRequest.options.idempotencyKey = `ticket-item-cancel:${ticketItemId}:${commandId}`;
@@ -2622,7 +2641,7 @@ export class ReservationService {
           };
         }
         if (!isPendingRetry && expected?.expectedProviderRefundAmountMinor !== undefined
-          && expected.expectedProviderRefundAmountMinor !== context.cancellationCommand.amountMinor) {
+          && expected.expectedProviderRefundAmountMinor !== (context.cancellationCommand?.amountMinor ?? 0)) {
           throw new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.');
         }
         await tx
@@ -2674,7 +2693,7 @@ export class ReservationService {
           isPendingRetry,
           paymentCancelRequest,
           isFullPaymentCancellation:
-            paymentCancelRequest.options.cancelAmount === undefined,
+            paymentCancelRequest !== null && paymentCancelRequest.options.cancelAmount === undefined,
           finalizerContext,
           now: preparedAt,
         };
@@ -2682,7 +2701,7 @@ export class ReservationService {
 
       if (!preparedCancellation) return this.getReservationDetail(reservationId, userId);
 
-      if (preparedCancellation.quote.refundableAmount > 0) {
+      if (preparedCancellation.paymentCancelRequest && preparedCancellation.quote.refundableAmount > 0) {
         tossCancelAttempted = true;
         const cancelOutcome = await this.cancelTicketItemPaymentOrConfirm({
           request: preparedCancellation.paymentCancelRequest,

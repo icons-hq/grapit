@@ -136,6 +136,16 @@ type SelectCall = {
   whereArgs: unknown[];
 };
 
+function whereParams(where: unknown): unknown[] {
+  if (!where) return [];
+  return new PgDialect().sqlToQuery(where as SQL).params;
+}
+
+function isActiveSeatOwnerCheck(call: SelectCall): boolean {
+  const params = whereParams(call.whereArgs[0]);
+  return call.table === ticketItems && params.includes('cancellation_pending') && !params.includes('cancelled');
+}
+
 function createTransactionMock(options: {
   refundReturning?: Array<{ id: string }>;
   reservationReturning?: Array<{ id: string }>;
@@ -150,6 +160,8 @@ function createTransactionMock(options: {
   seatInventoryReturning?: Array<Array<SeatInventoryReturningRow>>;
   postCommitSeatInventoryReturning?: Array<Array<{ id: string }>>;
   activeSeatOwnerReturning?: Array<Array<{ reservationId: string }>>;
+  remainingValidCredentialReturning?: Array<{ id: string }>;
+  previouslyCancelledTicketItemReturning?: Array<{ seatKey: string }>;
 } = {}) {
   const updateCalls: UpdateCall[] = [];
   const postCommitUpdateCalls: UpdateCall[] = [];
@@ -164,8 +176,8 @@ function createTransactionMock(options: {
     { id: 'ticket-2', ticketItemId: 'ticket-item-2' },
   ];
   const ticketItemReturning = options.ticketItemReturning ?? [
-    { id: 'ticket-item-1' },
-    { id: 'ticket-item-2' },
+    { id: 'ticket-item-1', seatId: 'A-10', floorKey: '1F', seatKey: '1F:A-10' },
+    { id: 'ticket-item-2', seatId: 'B-20', floorKey: '2F', seatKey: '2F:B-20' },
   ];
   const seatInventoryReturning = [
     ...(options.seatInventoryReturning ?? [
@@ -246,10 +258,19 @@ function createTransactionMock(options: {
             where: vi.fn((...whereArgs: unknown[]) => {
               const call: SelectCall = { table, whereArgs };
               selectCalls.push(call);
+              const unlimitedRows = table === ticketItems
+                ? options.previouslyCancelledTicketItemReturning ?? []
+                : [];
               return {
                 limit: vi.fn(() =>
-                  Promise.resolve(activeSeatOwnerReturning.shift() ?? []),
+                  Promise.resolve(table === tickets
+                    ? options.remainingValidCredentialReturning ?? []
+                    : activeSeatOwnerReturning.shift() ?? []),
                 ),
+                then: (
+                  resolve: (rows: unknown[]) => unknown,
+                  reject?: (error: unknown) => unknown,
+                ) => Promise.resolve(unlimitedRows).then(resolve, reject),
               };
             }),
           };
@@ -435,10 +456,13 @@ describe('PaymentCancellationFinalizerService', () => {
         soldAt: null,
         heldCancelledAt: NOW,
         reopenHoldUntil: RELEASE_AT,
-        reopenJobId: JOB_ENQUEUE_FAILED,
+        reopenJobId: expect.any(String),
       });
+      expect(update.values.reopenJobId).not.toBe(JOB_ENQUEUE_FAILED);
     }
-    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+    // pg-boss is unavailable: the preallocated id is replaced by the visible failure marker after commit.
+    expect(transaction.postCommitUpdateCalls.find((call) => call.table === seatInventories)?.values)
+      .toEqual({ reopenJobId: JOB_ENQUEUE_FAILED });
   });
 
   it('stores fee-bearing full-reservation cancellations as local partial-canceled payments', async () => {
@@ -970,7 +994,7 @@ describe('PaymentCancellationFinalizerService', () => {
     ]);
   });
 
-  it('replaces the failed marker with the preallocated release job id after pgBoss send succeeds', async () => {
+  it('records the preallocated release job id inside the cancellation transaction before sending it', async () => {
     const pgBoss = {
       isAvailable: true,
       send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
@@ -1019,37 +1043,18 @@ describe('PaymentCancellationFinalizerService', () => {
         reopenHoldUntil: null,
         reopenJobId: null,
       });
+    // A crash between commit and send leaves seats that the release job (if sent) or the held-seat
+    // recovery sweep can still release: the job id is never written after the fact.
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
+          values: expect.objectContaining({ reopenJobId: releaseJobId }),
         }),
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
+          values: expect.objectContaining({ reopenJobId: releaseJobId }),
         }),
       ]);
-
-    const postCommitSeatUpdate = transaction.postCommitUpdateCalls.find(
-      (call) => call.table === seatInventories,
-    );
-    expect(postCommitSeatUpdate).toEqual(
-      expect.objectContaining({
-        values: expect.objectContaining({ reopenJobId: releaseJobId }),
-        returningSelection: { id: seatInventories.id },
-      }),
-    );
-    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
-      .toHaveLength(1);
-    const where = postCommitSeatUpdate?.whereArgs[0];
-    expect(objectGraphContains(where, seatInventories.showtimeId)).toBe(true);
-    expect(objectGraphContains(where, seatInventories.floorKey)).toBe(true);
-    expect(objectGraphContains(where, seatInventories.seatKey)).toBe(true);
-    expect(objectGraphContains(where, seatInventories.status)).toBe(true);
-    expect(objectGraphContains(where, seatInventories.reopenJobId)).toBe(true);
-    expect(objectGraphContains(where, 'held_cancelled')).toBe(true);
-    expect(objectGraphContains(where, JOB_ENQUEUE_FAILED)).toBe(true);
-    expect(objectGraphContains(where, '1F:A-10')).toBe(true);
-    expect(objectGraphContains(where, '2F:B-20')).toBe(true);
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
   it('treats an already finalized full cancellation as idempotent when release jobs are persisted', async () => {
@@ -1091,9 +1096,8 @@ describe('PaymentCancellationFinalizerService', () => {
     const ticketItemWhere = transaction.updateCalls.find(
       (call) => call.table === ticketItems,
     )?.whereArgs[0];
-    expect(objectGraphContains(ticketItemWhere, 'active')).toBe(true);
-    expect(objectGraphContains(ticketItemWhere, 'cancellation_pending')).toBe(true);
-    expect(objectGraphContains(ticketItemWhere, 'cancelled')).toBe(true);
+    expect(whereParams(ticketItemWhere)).toEqual(expect.arrayContaining(['active', 'cancellation_pending']));
+    expect(whereParams(ticketItemWhere)).not.toContain('cancelled');
 
     const seatUpdates = transaction.updateCalls.filter(
       (call) => call.table === seatInventories,
@@ -1248,7 +1252,7 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
-  it('aborts without enqueueing when target ticket rows are fewer than target ticket items', async () => {
+  it('aborts without enqueueing when a target ticket item keeps a valid credential after revocation', async () => {
     const pgBoss = {
       isAvailable: true,
       send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
@@ -1257,14 +1261,16 @@ describe('PaymentCancellationFinalizerService', () => {
     };
     const { service, transaction, transactionCommitted } = createService(pgBoss, {
       ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+      remainingValidCredentialReturning: [{ id: 'ticket-2' }],
     });
 
-    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow('취소할 티켓 수가 일치하지 않습니다');
+    const credentialCheck = transaction.selectCalls.find((call) => call.table === tickets);
+    expect(objectGraphContains(credentialCheck?.whereArgs[0], 'active')).toBe(true);
+    expect(objectGraphContains(credentialCheck?.whereArgs[0], 'used')).toBe(true);
 
     expect(transaction.updateCalls.find((call) => call.table === tickets)
       ?.returningSelection).toEqual({ id: tickets.id, ticketItemId: tickets.ticketItemId });
-    expect(transaction.updateCalls.find((call) => call.table === ticketItems)
-      ?.returningSelection).toEqual({ id: ticketItems.id });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
     expect(transactionCommitted).not.toHaveBeenCalled();
     expect(pgBoss.send).not.toHaveBeenCalled();
@@ -1390,7 +1396,7 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(objectGraphContains(where, 'revoked')).toBe(true);
   });
 
-  it('aborts without enqueueing when ticket revocation returns more rows than target ticket items', async () => {
+  it('finalizes a provider-cancelled reservation whose ticket items never received a QR credential', async () => {
     const pgBoss = {
       isAvailable: true,
       send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
@@ -1398,23 +1404,17 @@ describe('PaymentCancellationFinalizerService', () => {
       ),
     };
     const { service, transaction, transactionCommitted } = createService(pgBoss, {
-      ticketReturning: [
-        { id: 'ticket-1', ticketItemId: 'ticket-item-1' },
-        { id: 'ticket-2', ticketItemId: 'ticket-item-2' },
-        { id: 'ticket-extra-sibling', ticketItemId: 'ticket-item-extra-sibling' },
-      ],
+      ticketReturning: [],
+      remainingValidCredentialReturning: [],
     });
 
-    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+    const result = await service.finalizeFullPaymentCancellation(baseInput());
 
-    expect(transaction.updateCalls.find((call) => call.table === ticketItems)
-      ?.returningSelection).toEqual({ id: ticketItems.id });
-    expect(transaction.updateCalls.find((call) => call.table === tickets)
-      ?.returningSelection).toEqual({ id: tickets.id, ticketItemId: tickets.ticketItemId });
-    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
-    expect(transactionCommitted).not.toHaveBeenCalled();
-    expect(pgBoss.send).not.toHaveBeenCalled();
-    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+    expect(result.releaseEnqueued).toBe(true);
+    expect(transactionCommitted).toHaveBeenCalled();
+    expect(transaction.updateCalls.find((call) => call.table === refunds)?.values)
+      .toMatchObject({ status: 'completed' });
+    expect(transaction.updateCalls.filter((call) => call.table === seatInventories)).toHaveLength(2);
   });
 
   it('aborts seat state updates when not every expected ticket item row is updated', async () => {
@@ -1423,14 +1423,49 @@ describe('PaymentCancellationFinalizerService', () => {
         isAvailable: false,
         send: vi.fn(),
       },
-      { ticketItemReturning: [{ id: 'ticket-item-1' }] },
+      { ticketItemReturning: [{ id: 'ticket-item-1', seatId: 'A-10', floorKey: '1F', seatKey: '1F:A-10' }] },
     );
 
-    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow('취소할 티켓 항목 수가 일치하지 않습니다');
 
     expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.returningSelection)
-      .toEqual({ id: ticketItems.id });
+      .toEqual({
+        id: ticketItems.id,
+        seatId: ticketItems.seatId,
+        floorKey: ticketItems.floorKey,
+        seatKey: ticketItems.seatKey,
+      });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+  });
+
+  it('does not overwrite or re-hold an earlier cancelled ticket item when a quote-less provider cancel arrives', async () => {
+    const { service, transaction } = createService(
+      { isAvailable: false, send: vi.fn() },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-2', seatId: 'B-20', floorKey: '2F', seatKey: '2F:B-20' }],
+        previouslyCancelledTicketItemReturning: [{ seatKey: '1F:A-10' }],
+        ticketReturning: [{ id: 'ticket-2', ticketItemId: 'ticket-item-2' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-2' }]],
+      },
+    );
+
+    await service.finalizeFullPaymentCancellation(baseInput({
+      refundId: undefined,
+      source: 'cancel_webhook',
+      reason: 'PG console cancel',
+    }));
+
+    const ticketItemUpdates = transaction.updateCalls.filter((call) => call.table === ticketItems
+      && call.values.status === 'cancelled');
+    expect(ticketItemUpdates).toHaveLength(1);
+    expect(whereParams(ticketItemUpdates[0]?.whereArgs[0])).not.toContain('cancelled');
+    const credentialUpdate = transaction.updateCalls.find((call) => call.table === tickets);
+    expect(whereParams(credentialUpdate?.whereArgs[0])).toContain('ticket-item-2');
+    expect(whereParams(credentialUpdate?.whereArgs[0])).not.toContain('ticket-item-1');
+    const seatUpdates = transaction.updateCalls.filter((call) => call.table === seatInventories);
+    expect(seatUpdates).toHaveLength(1);
+    expect(whereParams(seatUpdates[0]?.whereArgs[0])).toContain('2F:B-20');
+    expect(whereParams(seatUpdates[0]?.whereArgs[0])).not.toContain('1F:A-10');
   });
 
   it('persists JOB_ENQUEUE_FAILED when pgBoss send fails', async () => {
@@ -1452,53 +1487,50 @@ describe('PaymentCancellationFinalizerService', () => {
         reopenHoldUntil: null,
         reopenJobId: null,
       });
+    const preallocatedJobId = (pgBoss.send.mock.calls[0]?.[2] as { id: string }).id;
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
+          values: expect.objectContaining({ reopenJobId: preallocatedJobId }),
         }),
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
+          values: expect.objectContaining({ reopenJobId: preallocatedJobId }),
         }),
       ]);
-    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+    const postCommitSeatUpdate = transaction.postCommitUpdateCalls.find((call) => call.table === seatInventories);
+    expect(postCommitSeatUpdate?.values).toEqual({ reopenJobId: JOB_ENQUEUE_FAILED });
+    expect(objectGraphContains(postCommitSeatUpdate?.whereArgs[0], preallocatedJobId)).toBe(true);
   });
 
-  it('leaves the failed marker and returns failed when post-commit job id replacement is incomplete', async () => {
+  it('still returns an enqueue failure when the failure marker cannot be written after commit', async () => {
     const pgBoss = {
       isAvailable: true,
-      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
-        Promise.resolve(options.id),
-      ),
+      send: vi.fn().mockRejectedValue(new Error('Queue missing')),
     };
-    const { service, transaction, transactionCommitted } = createService(pgBoss, {
-      postCommitSeatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
-    });
+    const { service, db, transactionCommitted } = createService(pgBoss);
+    const originalTransaction = db.transaction.getMockImplementation()!;
+    db.transaction.mockImplementationOnce(originalTransaction)
+      .mockImplementationOnce(async () => { throw new Error('connection lost'); });
 
     const result = await service.finalizeFullPaymentCancellation(baseInput());
 
-    expect(result).toEqual({
-      releaseJobId: JOB_ENQUEUE_FAILED,
-      releaseEnqueued: false,
-    });
-    expect(pgBoss.send).toHaveBeenCalledTimes(1);
-    expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
-      .toEqual([
-        expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
-        }),
-        expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
-        }),
-      ]);
-    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
-      .toEqual([
-        expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: expect.any(String) }),
-          returningSelection: { id: seatInventories.id },
-        }),
-      ]);
+    expect(result).toEqual({ releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false });
     expect(transactionCommitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels locally without touching the captured payment when nothing is refundable', async () => {
+    const { service, transaction } = createService({ isAvailable: false, send: vi.fn() });
+
+    await service.finalizeFullPaymentCancellation(baseInput({
+      providerResponse: undefined,
+      localOnly: true,
+    }));
+
+    expect(transaction.updateCalls.find((call) => call.table === refunds)?.values)
+      .toMatchObject({ status: 'completed', resultCode: 'NO_PROVIDER_REFUND' });
+    expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
+    expect(transaction.updateCalls.find((call) => call.table === reservations)?.values)
+      .toMatchObject({ status: 'CANCELLED' });
   });
 
   it('skips refund updates when refundId is omitted', async () => {
@@ -1533,7 +1565,7 @@ describe('PaymentCancellationFinalizerService', () => {
       ),
     };
     const { service, transaction } = createService(pgBoss, {
-      ticketItemReturning: [{ id: 'ticket-item-1' }],
+      ticketItemReturning: [{ id: 'ticket-item-1', seatId: 'A-10', floorKey: '1F', seatKey: '1F:A-10' }],
       ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
       seatInventoryReturning: [[], []],
       activeSeatOwnerReturning: [[{ reservationId: 'other-reservation' }]],
@@ -1560,9 +1592,9 @@ describe('PaymentCancellationFinalizerService', () => {
       expect(renderedWhere).toContain('not exists');
     }
 
-    expect(transaction.selectCalls).toHaveLength(1);
-    expect(transaction.selectCalls[0]?.table).toBe(ticketItems);
-    const ownerWhere = transaction.selectCalls[0]?.whereArgs[0];
+    const ownerChecks = transaction.selectCalls.filter(isActiveSeatOwnerCheck);
+    expect(ownerChecks).toHaveLength(1);
+    const ownerWhere = ownerChecks[0]?.whereArgs[0];
     expect(objectGraphContains(ownerWhere, 'other-reservation')).toBe(false);
     expect(objectGraphContains(ownerWhere, 'active')).toBe(true);
     expect(objectGraphContains(ownerWhere, 'cancellation_pending')).toBe(true);
@@ -1576,7 +1608,7 @@ describe('PaymentCancellationFinalizerService', () => {
       ),
     };
     const { service, transaction, transactionCommitted } = createService(pgBoss, {
-      ticketItemReturning: [{ id: 'ticket-item-1' }],
+      ticketItemReturning: [{ id: 'ticket-item-1', seatId: 'A-10', floorKey: '1F', seatKey: '1F:A-10' }],
       ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
       seatInventoryReturning: [[], []],
       activeSeatOwnerReturning: [[]],
@@ -1592,6 +1624,6 @@ describe('PaymentCancellationFinalizerService', () => {
 
     expect(pgBoss.send).not.toHaveBeenCalled();
     expect(transactionCommitted).not.toHaveBeenCalled();
-    expect(transaction.selectCalls).toHaveLength(1);
+    expect(transaction.selectCalls.filter(isActiveSeatOwnerCheck)).toHaveLength(1);
   });
 });
