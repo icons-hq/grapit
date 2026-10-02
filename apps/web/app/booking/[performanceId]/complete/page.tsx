@@ -25,6 +25,8 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
+import { getQueueAccessClosedCopy } from '@/lib/booking/queue-access';
+import { isShowtimeSalesClosedError } from '@/lib/booking/showtime-sales';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail } from '@grabit/shared';
 
@@ -41,6 +43,15 @@ function formatDeadline(dateStr: string | null, locale: string): string | null {
     timeZone: 'Asia/Seoul',
     timeZoneName: 'short',
   }).format(new Date(dateStr));
+}
+
+/** Confirm 409 once the seat hold behind the order expired (C8: status + message). */
+const SEAT_HOLD_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
+
+/** Admission guard 403 once the queue access window closed (C8: status + message). */
+function isQueueAccessExpiredConfirmError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err && Number(err.statusCode) === 403
+    && err.message.trim() === '대기열 입장 시간이 만료되었습니다';
 }
 
 function CompleteSkeleton() {
@@ -63,6 +74,8 @@ interface RecoveryStateCardProps {
   title: string;
   body: string;
   deadlineLabel?: string | null;
+  /** Why the last confirm was refused, shown while the order is still being checked. */
+  note?: string | null;
   primaryAction?: {
     label: string;
     onClick: () => void;
@@ -81,6 +94,7 @@ function RecoveryStateCard({
   title,
   body,
   deadlineLabel,
+  note,
   primaryAction,
   secondaryAction,
   supportAction,
@@ -101,6 +115,7 @@ function RecoveryStateCard({
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-semibold">{title}</h1>
             <p className="mt-2 text-sm">{body}</p>
+            {note && <p className="mt-3 text-sm font-medium">{note}</p>}
             {deadlineLabel && (
               <p className="mt-3 text-sm font-medium">{deadlineLabel}</p>
             )}
@@ -140,9 +155,11 @@ function RecoveryStateCard({
 
 function CompletePageContent() {
   const t = useTranslations('booking.paymentRecovery');
+  const showtimeClosedCopy = useTranslations('booking')('seatSelection.showtimeClosed');
   const locale = resolveVisibleCopyLocale(useLocale());
   const visibleCopy = getVisibleCopy(locale);
   const completeCopy = visibleCopy.bookingExtra.complete;
+  const confirmCopy = visibleCopy.bookingExtra.confirm;
   const checkoutCopy = getCheckoutCopy(locale);
   const router = useRouter();
   const params = useParams<{ performanceId: string }>();
@@ -187,6 +204,9 @@ function CompletePageContent() {
   const [confirmRetryable, setConfirmRetryable] = useState(false);
   // A confirm error is reported only after lookup shows the order is not confirmed.
   const [unreportedConfirmError, setUnreportedConfirmError] = useState<string | null>(null);
+  // A definite confirm refusal behind an order that still reads as pending (for example
+  // until the provider EXPIRED webhook arrives), shown on the checking card (audit #96).
+  const [pendingConfirmRefusal, setPendingConfirmRefusal] = useState<string | null>(null);
   // A confirmed response is authoritative; a later lookup outage must not replace it.
   const shouldRecoverByOrderId = !!orderId && !bookingData && (confirmFailed || isPendingReturn);
   const paymentRecovery = useBookingPaymentRecovery(
@@ -223,6 +243,7 @@ function CompletePageContent() {
     setConfirmFailed(false);
     setConfirmRetryable(false);
     setUnreportedConfirmError(null);
+    setPendingConfirmRefusal(null);
     // Confirmed by lookup after a failed confirm (for example a reload past the
     // admission window): the return parameters must not send confirm again either.
     if (hasConfirmParams && !isPendingReturn && orderId) {
@@ -277,8 +298,18 @@ function CompletePageContent() {
       replaceConfirmReturnWithLookup(orderId);
       return true;
     } catch (err) {
+      // Server messages are Korean; other locales get locale copy, never the raw text.
+      const message = err instanceof Error ? err.message.trim() : '';
       setUnreportedConfirmError(
-        err instanceof Error ? err.message : completeCopy.confirmFailedTitle,
+        isShowtimeSalesClosedError(err)
+          ? showtimeClosedCopy
+          : locale === 'ko' && message
+            ? message
+            : isQueueAccessExpiredConfirmError(err)
+              ? getQueueAccessClosedCopy(locale).toast
+              : message === SEAT_HOLD_EXPIRED_MESSAGE
+                ? confirmCopy.lockExpired
+                : completeCopy.confirmFailedTitle,
       );
       setConfirmRetryable(isRetryableConfirmPaymentError(err));
       // Try recovery — maybe already confirmed on a previous attempt
@@ -298,7 +329,10 @@ function CompletePageContent() {
     confirmMutation,
     clearBooking,
     completeCopy,
+    confirmCopy,
+    locale,
     replaceConfirmReturnWithLookup,
+    showtimeClosedCopy,
   ]);
 
   const { refetch: refetchPaymentRecovery } = paymentRecovery;
@@ -328,8 +362,16 @@ function CompletePageContent() {
     ) {
       toast.error(unreportedConfirmError);
       setUnreportedConfirmError(null);
+      return;
     }
-  }, [recoveryPaymentStatus, unreportedConfirmError]);
+    // A definite refusal (403 sales closed, 409 seat hold expired, 400 amount mismatch)
+    // can leave the order handed off and pending until the provider expires it. Say why
+    // on the checking card instead of showing a silent "checking" for minutes.
+    if (recoveryPaymentStatus === 'pending' && !confirmRetryable) {
+      setPendingConfirmRefusal(unreportedConfirmError);
+      setUnreportedConfirmError(null);
+    }
+  }, [confirmRetryable, recoveryPaymentStatus, unreportedConfirmError]);
 
   useEffect(() => {
     if (hasConfirmParams && !isPendingReturn) {
@@ -461,6 +503,7 @@ function CompletePageContent() {
         tone="amber"
         title={checkoutCopy.checking}
         body={canRetryConfirm ? completeCopy.confirmRetryBody : checkoutCopy.checkingBody}
+        note={canRetryConfirm ? null : pendingConfirmRefusal}
         supportAction={{ label: checkoutCopy.support, href: getLocalizedPathname('/support', locale) }}
         primaryAction={canRetryConfirm ? retryConfirmAction : {
           label: completeCopy.retryStatus,

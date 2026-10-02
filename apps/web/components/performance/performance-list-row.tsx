@@ -8,20 +8,23 @@ import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
 import {
   parseBookingStartMs,
-  resolveTimeAwarePerformanceStatus,
-  useBookingStartClock,
+  resolveBookingStartPerformanceStatus,
 } from './performance-display-status';
 
-export function PerformanceListRow({ performance, locale, bookingEnabled }: {
+export function PerformanceListRow({ performance, locale, bookingEnabled, flagsResolved = true }: {
   performance: PerformanceCardData; locale: SupportedLocale; bookingEnabled: boolean;
+  /** False while no runtime flag value is known; the badge is then not downgraded. */
+  flagsResolved?: boolean;
 }) {
   const copy = getVisibleCopy(locale).home;
-  const nowMs = useBookingStartClock([performance.bookingStartsAt]);
-  const saleStatus = resolveTimeAwarePerformanceStatus(performance.status, performance.bookingStartsAt, nowMs);
-  const status = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
+  // Server-corrected clock, the same verdict the detail page and its booking CTA use.
+  const bookingStartReached = useServerTimeReached(parseBookingStartMs(performance.bookingStartsAt));
+  const saleStatus = resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !bookingStartReached);
+  const status = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
   const validStart = Boolean(performance.startDate) && Number.isFinite(Date.parse(performance.startDate));
   const start = formatCatalogDateRange(performance.startDate, performance.endDate, locale) ?? copy.dateUnknown;
   const price = performance.minPrice == null ? copy.priceUnknown

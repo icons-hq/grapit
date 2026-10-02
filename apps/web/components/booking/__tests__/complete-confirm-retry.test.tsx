@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/use-auth-store';
 
 const boundary = vi.hoisted(() => ({
   get: vi.fn(), post: vi.fn(), search: new URLSearchParams(), replace: vi.fn(), toastError: vi.fn(),
+  locale: 'en',
 }));
 vi.mock('@/lib/api-client', () => ({ apiClient: { get: boundary.get, post: boundary.post } }));
 vi.mock('next/navigation', () => ({
@@ -16,7 +17,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: boundary.replace }),
   useSearchParams: () => boundary.search,
 }));
-vi.mock('next-intl', () => ({ useLocale: () => 'en', useTranslations: () => (key: string) => key }));
+vi.mock('next-intl', () => ({ useLocale: () => boundary.locale, useTranslations: () => (key: string) => key }));
 vi.mock('sonner', () => ({ toast: { error: boundary.toastError } }));
 vi.mock('@/components/auth/auth-guard', () => ({ AuthGuard: ({ children }: { children: ReactNode }) => children }));
 vi.mock('@/components/booking/booking-complete', () => ({ BookingComplete: () => <p>Confirmed ticket</p> }));
@@ -45,6 +46,7 @@ function mountPage() {
 describe('Payment return confirm delivery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    boundary.locale = 'en';
     window.history.replaceState(null, '', '/en/booking/performance-return/complete');
     useAuthStore.setState({ user: { id: 'buyer' } as never });
     boundary.search = new URLSearchParams(RETURN);
@@ -155,14 +157,56 @@ describe('Payment return confirm delivery', () => {
     ));
   });
 
-  it('reports the confirm error once lookup shows the order did not complete', async () => {
+  it('reports the confirm error in the page locale once lookup shows the order did not complete', async () => {
     boundary.post.mockRejectedValueOnce(Object.assign(new Error('금액이 일치하지 않습니다'), { statusCode: 400 }));
     boundary.get.mockResolvedValue({ ...handedOff, status: 'FAILED', checkoutStartedAt: null });
 
     mountPage();
 
     expect(await screen.findByRole('heading', { name: 'Payment confirmation failed' })).toBeInTheDocument();
-    await waitFor(() => expect(boundary.toastError).toHaveBeenCalledWith('금액이 일치하지 않습니다'));
+    // Never the Korean server text on the English page (audit #96).
+    await waitFor(() => expect(boundary.toastError).toHaveBeenCalledWith('Payment confirmation failed'));
     expect(boundary.toastError).toHaveBeenCalledTimes(1);
+    expect(boundary.toastError).not.toHaveBeenCalledWith('금액이 일치하지 않습니다');
+    expect(screen.queryByText('금액이 일치하지 않습니다')).not.toBeInTheDocument();
+  });
+
+  it('keeps the Korean server reason on the Korean page', async () => {
+    boundary.locale = 'ko';
+    boundary.post.mockRejectedValueOnce(Object.assign(new Error('금액이 일치하지 않습니다'), { statusCode: 400 }));
+    boundary.get.mockResolvedValue({ ...handedOff, status: 'FAILED', checkoutStartedAt: null });
+
+    mountPage();
+
+    await waitFor(() => expect(boundary.toastError).toHaveBeenCalledWith('금액이 일치하지 않습니다'));
+  });
+
+  it('says why on the checking card when a definite refusal leaves the order pending (403 sales closed)', async () => {
+    boundary.post.mockRejectedValueOnce(
+      Object.assign(new Error('이미 시작된 회차는 예매할 수 없습니다.'), { statusCode: 403 }),
+    );
+    // Still handed off and unpaid until the provider EXPIRED webhook arrives.
+    boundary.get.mockResolvedValue(handedOff);
+
+    mountPage();
+
+    expect(await screen.findByRole('heading', { name: 'Checking your existing booking' })).toBeInTheDocument();
+    expect(await screen.findByText('seatSelection.showtimeClosed')).toBeInTheDocument();
+    expect(screen.queryByText('이미 시작된 회차는 예매할 수 없습니다.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send payment confirmation again' })).not.toBeInTheDocument();
+    expect(boundary.post).toHaveBeenCalledTimes(1);
+    expect(boundary.toastError).not.toHaveBeenCalled();
+  });
+
+  it('shows the seat-hold refusal in the page locale on the checking card (409)', async () => {
+    boundary.post.mockRejectedValueOnce(
+      Object.assign(new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'), { statusCode: 409 }),
+    );
+    boundary.get.mockResolvedValue(handedOff);
+
+    mountPage();
+
+    expect(await screen.findByText('Your seat hold expired. Please choose seats again.')).toBeInTheDocument();
+    expect(screen.queryByText(/좌석 점유/)).not.toBeInTheDocument();
   });
 });

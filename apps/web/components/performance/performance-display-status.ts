@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import type { FetchStatus } from '@tanstack/react-query';
 import type { PerformanceCardData, PerformanceStatus } from '@grabit/shared';
+import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 
 /** Browsers fire setTimeout immediately when the delay overflows a signed 32-bit int. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -41,9 +41,10 @@ export function resolveTimeAwarePerformanceStatus(
 
 /**
  * The same rule as resolveTimeAwarePerformanceStatus, driven by a verdict that
- * was already taken (for example useBookingAvailability's server-clock
- * `isBeforeScheduledBookingStart`), so a status display and the booking CTA
- * that share the verdict cannot disagree when the device clock is off.
+ * was already taken on the server-corrected clock (useServerTimeReached, or
+ * useBookingAvailability's `isBeforeScheduledBookingStart`). List rows, cards and
+ * the detail page all use it, so a skewed device clock cannot make the list say
+ * "on sale" while the detail page says "coming soon".
  */
 export function resolveBookingStartPerformanceStatus(
   status: PerformanceStatus,
@@ -69,36 +70,11 @@ export function getNextBookingStartMs(
   return next;
 }
 
-/**
- * Current time for status display that re-renders exactly when the nearest
- * booking start passes, so badges and schedule copy flip without a reload.
- */
-export function useBookingStartClock(
-  bookingStartsAtValues: ReadonlyArray<string | null | undefined>,
-): number {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const valuesKey = bookingStartsAtValues
-    .filter((value): value is string => Boolean(value))
-    .join('|');
-
-  useEffect(() => {
-    const next = getNextBookingStartMs(
-      valuesKey ? valuesKey.split('|') : [],
-      nowMs,
-    );
-    if (next === null) return;
-
-    // A start already passed (for example data arriving after the opening
-    // second) resolves with a zero delay instead of waiting for a reload.
-    const delay = Math.min(Math.max(0, next - Date.now()), MAX_TIMEOUT_MS);
-    const timeout = window.setTimeout(() => setNowMs(Date.now()), delay);
-    return () => window.clearTimeout(timeout);
-  }, [valuesKey, nowMs]);
-
-  return nowMs;
-}
-
 let clientRefetchJitterMs: number | null = null;
+
+export function resetCatalogRefetchJitterForTests(): void {
+  clientRefetchJitterMs = null;
+}
 
 function getClientRefetchJitterMs(): number {
   if (clientRefetchJitterMs === null) {
@@ -117,7 +93,9 @@ type CatalogRefetchCards = ReadonlyArray<
  * Delay until the one refetch of a status-filtered catalog list. Rows move
  * between the upcoming and selling filters at their booking start, so the list
  * is refetched once, grace + per-client jitter after the nearest booking start
- * that was still pending when the list was fetched.
+ * that was still pending when the list was fetched. `fetchedAtMs` and `nowMs`
+ * are server-clock instants: on a device clock that runs fast the refetch would
+ * otherwise land before the opening, read the pre-opening page and stop polling.
  *
  * The target is anchored to `fetchedAtMs`, not to the current time: TanStack
  * Query re-evaluates refetchInterval on every render, and a target derived from
@@ -129,7 +107,7 @@ type CatalogRefetchCards = ReadonlyArray<
 export function getCatalogBookingStartRefetchDelay(
   cards: CatalogRefetchCards | undefined,
   fetchedAtMs: number,
-  nowMs: number = Date.now(),
+  nowMs: number = getServerNowMs(),
   jitterMs?: number,
 ): number | false {
   if (!cards?.length || !(fetchedAtMs > 0)) return false;
@@ -167,8 +145,12 @@ export function getCatalogListBookingStartRefetchInterval(
 ): number | false {
   // An in-flight or offline-paused fetch re-arms the timer when it settles.
   if (query.state.fetchStatus !== 'idle') return false;
+  const settledAtDeviceMs = Math.max(query.state.dataUpdatedAt, query.state.errorUpdatedAt);
+  if (!(settledAtDeviceMs > 0)) return false;
+  // TanStack Query stamps updates with the device clock; move the anchor to the server clock.
   return getCatalogBookingStartRefetchDelay(
     query.state.data?.data,
-    Math.max(query.state.dataUpdatedAt, query.state.errorUpdatedAt),
+    settledAtDeviceMs + getServerClockOffsetMs(),
+    getServerNowMs(),
   );
 }

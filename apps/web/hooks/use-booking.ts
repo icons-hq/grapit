@@ -241,6 +241,12 @@ const DEFAULT_SEAT_HOLD_MINUTES = 10;
 const DEFAULT_ALLOWED_PAYMENT_METHODS = ['CARD'] as const;
 
 export interface BookingPaymentSnapshot {
+  /**
+   * The instant payment can no longer start: the server payment deadline once prepare
+   * issued one, before that the checkout deadline (seat lock or queue access window,
+   * whichever ends first). The server counts its payment window from prepare, so the
+   * time spent on the review screen does not shorten it (audit #95).
+   */
   paymentDeadlineAt: string | null;
   lockExpiresAt: string | null;
   bookingPolicy: BookingPolicy;
@@ -357,6 +363,21 @@ function assertCachedPerformanceBookable(
   }
 }
 
+/**
+ * The checkout deadline the pay button follows: the server payment deadline once prepare
+ * issued one, otherwise the booking store's `expiresAt` (seat lock and queue access
+ * window, whichever ends first). Both are server instants.
+ */
+function resolveCheckoutDeadlineMs(
+  lockExpiresAtMs: number | null,
+  serverPaymentDeadlineAtMs: number | null,
+): number | null {
+  const deadline = serverPaymentDeadlineAtMs ?? lockExpiresAtMs;
+  return typeof deadline === 'number' && Number.isFinite(deadline) && deadline > 0
+    ? deadline
+    : null;
+}
+
 function buildBookingPaymentSnapshot(
   lockExpiresAtMs: number | null,
   serverPaymentDeadlineAtMs: number | null,
@@ -365,12 +386,12 @@ function buildBookingPaymentSnapshot(
   const paymentWindowMinutes = performancePolicy?.paymentWindowMinutes ?? DEFAULT_PAYMENT_WINDOW_MINUTES;
   const seatHoldMinutes = performancePolicy?.seatHoldMinutes ?? DEFAULT_SEAT_HOLD_MINUTES;
   const lockExpiresAt = lockExpiresAtMs ? new Date(lockExpiresAtMs).toISOString() : null;
-  const paymentDeadlineAt = serverPaymentDeadlineAtMs
-    ? new Date(serverPaymentDeadlineAtMs).toISOString()
-    : lockExpiresAtMs
-    ? new Date(
-      Math.min(lockExpiresAtMs, getServerNowMs() + paymentWindowMinutes * 60 * 1000),
-    ).toISOString()
+  // No "screen entry + payment window" estimate: the server starts the payment window at
+  // prepare, so an estimate would block the pay button while the lock and the queue
+  // access window are still open.
+  const paymentDeadlineAtMs = resolveCheckoutDeadlineMs(lockExpiresAtMs, serverPaymentDeadlineAtMs);
+  const paymentDeadlineAt = paymentDeadlineAtMs !== null
+    ? new Date(paymentDeadlineAtMs).toISOString()
     : null;
 
   return {
@@ -456,12 +477,10 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
       cachedPerformance?.bookingPolicy,
     );
   }, [lockExpiresAtMs, performanceId, queryClient, serverPaymentDeadlineAtMs]);
-  // The snapshot is built once per deadline; expiry must still flip on time.
-  const paymentDeadlineAtMs = snapshot.paymentDeadlineAt
-    ? Date.parse(snapshot.paymentDeadlineAt)
-    : Number.NaN;
+  // The snapshot is built once per deadline; expiry must still flip on time, and only at
+  // a real deadline (server payment deadline, else seat lock or queue access window).
   const isPaymentDeadlineExpired = useServerTimeReached(
-    Number.isFinite(paymentDeadlineAtMs) ? paymentDeadlineAtMs : null,
+    resolveCheckoutDeadlineMs(lockExpiresAtMs, serverPaymentDeadlineAtMs),
   );
 
   return useMemo(

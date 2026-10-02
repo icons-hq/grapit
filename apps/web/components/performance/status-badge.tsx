@@ -12,11 +12,20 @@ const STATUS_STYLES: Record<PerformanceStatus, string> = {
   upcoming: 'bg-primary text-white hover:bg-primary',
 };
 
+/**
+ * Buyer-facing badge status under the sitewide booking switch. Only a loaded
+ * flag value can turn an on-sale performance into "coming soon": while the
+ * runtime flags are still loading or failing with no known value, booking
+ * itself stays closed (useBookingAvailability) but the badge keeps the catalog
+ * status, so a status that is on sale never reads as opening later.
+ */
 export function getDisplayPerformanceStatus(
   status: PerformanceStatus,
   bookingEnabled: boolean,
+  flagsResolved = true,
 ): PerformanceStatus {
   if (
+    flagsResolved &&
     !bookingEnabled &&
     (status === 'selling' || status === 'closing_soon')
   ) {

@@ -27,8 +27,17 @@ interface AcceptedSample {
   receivedAtMs: number;
 }
 
-/** Samples with a slower round trip are too imprecise to correct anything. */
-export const SERVER_CLOCK_MAX_RTT_MS = 10_000;
+/**
+ * Samples with a slower round trip are too imprecise to correct anything: the error
+ * of a sample is up to rtt/2, and an open-time burst can make the first response slow.
+ */
+export const SERVER_CLOCK_MAX_RTT_MS = 2_500;
+/**
+ * An offset within rtt/2 plus this margin cannot be told apart from an in-sync device
+ * clock, so it is treated as zero: an NTP-synced device keeps its own clock instead of
+ * taking on up to rtt/2 of measurement error.
+ */
+export const SERVER_CLOCK_INSIGNIFICANT_OFFSET_MARGIN_MS = 250;
 /** A tighter sample is preferred, but an old one is refreshed after this age. */
 export const SERVER_CLOCK_SAMPLE_MAX_AGE_MS = 10 * 60_000;
 
@@ -79,8 +88,11 @@ export function recordServerTimeSample(sample: ServerTimeSample): boolean {
     return false;
   }
 
+  const measuredOffsetMs = Math.round(serverNowMs - (requestStartedAtMs + rttMs / 2));
   const nextSample: AcceptedSample = {
-    offsetMs: Math.round(serverNowMs - (requestStartedAtMs + rttMs / 2)),
+    offsetMs: Math.abs(measuredOffsetMs) <= rttMs / 2 + SERVER_CLOCK_INSIGNIFICANT_OFFSET_MARGIN_MS
+      ? 0
+      : measuredOffsetMs,
     rttMs,
     receivedAtMs: responseReceivedAtMs,
   };

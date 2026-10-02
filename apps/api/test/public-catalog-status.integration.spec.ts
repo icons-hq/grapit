@@ -34,17 +34,19 @@ describe('Public catalog sale status — PostgreSQL', () => {
   afterAll(async () => { await closePool?.(); await container?.stop(); });
 
   it('lists performances by their booking start, not only by the stored sale status', async () => {
+    // Far enough that a slow CI run cannot pass the start mid-test, well below the 300s default TTL.
+    const START_MARGIN_MS = 200_000;
     const category = `status-${randomUUID()}`;
     const now = Date.now();
     const rows = {
-      sellingBeforeStart: { status: 'selling', startsAt: new Date(now + 20_000), views: 1000 },
+      sellingBeforeStart: { status: 'selling', startsAt: new Date(now + START_MARGIN_MS), views: 1000 },
       sellingOpen: { status: 'selling', startsAt: new Date(now - 60_000), views: 3 },
       sellingNoPolicy: { status: 'selling', startsAt: undefined, views: 2 },
       closingBeforeStart: { status: 'closing_soon', startsAt: new Date(now + 3_600_000), views: 900 },
       upcomingOpened: { status: 'upcoming', startsAt: new Date(now - 60_000), views: 1 },
       upcomingScheduled: { status: 'upcoming', startsAt: new Date(now + 3_600_000), views: 0 },
       upcomingUnscheduled: { status: 'upcoming', startsAt: null, views: 0 },
-      endedBeforeStart: { status: 'ended', startsAt: new Date(now + 20_000), views: 0 },
+      endedBeforeStart: { status: 'ended', startsAt: new Date(now + START_MARGIN_MS), views: 0 },
     } as const;
     const ids = {} as Record<keyof typeof rows, string>;
     for (const [key, row] of Object.entries(rows) as Array<[keyof typeof rows, (typeof rows)[keyof typeof rows]]>) {
@@ -73,7 +75,7 @@ describe('Public catalog sale status — PostgreSQL', () => {
     // The on-sale page must expire when the selling row waiting for its start opens, not at the default TTL.
     const sellingTtl = vi.mocked(cache.set).mock.calls.at(-1)?.[2] as number;
     expect(sellingTtl).toBeGreaterThan(0);
-    expect(sellingTtl).toBeLessThanOrEqual(20);
+    expect(sellingTtl).toBeLessThanOrEqual(200);
 
     const upcoming = await list('upcoming');
     expect(upcoming.data.map((card) => card.id).sort()).toEqual(
@@ -87,10 +89,10 @@ describe('Public catalog sale status — PostgreSQL', () => {
     expect(hot.map((card) => card.id)).not.toContain(ids.sellingBeforeStart);
     expect(hot.map((card) => card.id)).not.toContain(ids.closingBeforeStart);
     expect(hot.every((card) => card.status === 'selling')).toBe(true);
-    // The most viewed row opens in 20s; the hot list must expire then, not after the default TTL.
+    // The most viewed row opens in 200s; the hot list must expire then, not after the default TTL.
     const hotTtl = vi.mocked(cache.set).mock.calls.at(-1)?.[2] as number;
     expect(hotTtl).toBeGreaterThan(0);
-    expect(hotTtl).toBeLessThanOrEqual(20);
+    expect(hotTtl).toBeLessThanOrEqual(200);
 
     const detail = new PerformanceController(catalog);
     expect((await detail.getPerformance(ids.sellingBeforeStart)).status).toBe('upcoming');

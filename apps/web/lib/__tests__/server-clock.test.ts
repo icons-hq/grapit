@@ -101,6 +101,52 @@ describe('server clock offset', () => {
     expect(getServerClockOffsetMs()).toBe(30_000 - 200_200);
   });
 
+  it('rejects a slow round trip whose error could exceed the correction (RTT 4s, offset 300ms)', () => {
+    expect(SERVER_CLOCK_MAX_RTT_MS).toBe(2_500);
+    expect(
+      recordServerTimeSample({
+        serverNowMs: 2_000 + 300,
+        requestStartedAtMs: 0,
+        responseReceivedAtMs: 4_000,
+      }),
+    ).toBe(false);
+    expect(getServerClockOffsetMs()).toBe(0);
+  });
+
+  it('keeps an in-sync device clock when the offset is within rtt/2 + 250ms', () => {
+    // RTT 400ms, measured offset 300ms <= 200 + 250: indistinguishable from no skew.
+    expect(
+      recordServerTimeSample({
+        serverNowMs: 200 + 300,
+        requestStartedAtMs: 0,
+        responseReceivedAtMs: 400,
+      }),
+    ).toBe(true);
+    expect(getServerClockOffsetMs()).toBe(0);
+
+    // Just past the margin the offset is applied.
+    resetServerClockForTests();
+    expect(
+      recordServerTimeSample({
+        serverNowMs: 200 + 451,
+        requestStartedAtMs: 0,
+        responseReceivedAtMs: 400,
+      }),
+    ).toBe(true);
+    expect(getServerClockOffsetMs()).toBe(451);
+  });
+
+  it('adopts a tight sample from a device clock 90 seconds off (RTT 200ms, offset 90s)', () => {
+    expect(
+      recordServerTimeSample({
+        serverNowMs: 100 + 90_000,
+        requestStartedAtMs: 0,
+        responseReceivedAtMs: 200,
+      }),
+    ).toBe(true);
+    expect(getServerClockOffsetMs()).toBe(90_000);
+  });
+
   it('notifies subscribers when the offset changes', () => {
     const listener = vi.fn();
     const unsubscribe = subscribeServerClock(listener);

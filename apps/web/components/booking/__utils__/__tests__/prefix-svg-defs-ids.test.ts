@@ -76,12 +76,81 @@ describe('prefixSvgDefsIds (W-2: SVG <defs> ID 충돌 방지)', () => {
     expect(result).toContain('url(#mini-gradient.1)');
   });
 
-  it('parse 실패 (잘못된 XML)도 graceful — 원본 반환', async () => {
+  it('parse 실패 (잘못된 XML)면 원본 대신 빈 MiniMap을 쓴다', async () => {
     // @ts-ignore -- Wave 0 Option B: module authored in Plan 12-03 Task 1 (W-2 helper).
     //   ts-ignore (not ts-expect-error) so 12-03 merge does not retroactively fail typecheck.
     const { prefixSvgDefsIds } = await import('../prefix-svg-defs-ids');
     const malformed = '<svg><defs><linearGradient id="g1"';
     const result = prefixSvgDefsIds(malformed, 'mini-');
-    expect(result).toBe(malformed);
+    expect(result).toBe('');
+  });
+});
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** MiniMap 경로와 같다: prefix 결과를 HTML parser(innerHTML)로 넣는다. */
+function injectLikeMiniMap(markup: string) {
+  const host = document.createElement('div');
+  host.innerHTML = markup;
+  return host;
+}
+
+describe('prefixSvgDefsIds DOM-only rewrite (audit #49 MiniMap)', () => {
+  it.each(['g$`', "g$'", 'g$&'])(
+    'keeps the markup inside SVG when a defs id contains the replacement pattern %s',
+    async (id) => {
+      const { prefixSvgDefsIds } = await import('../prefix-svg-defs-ids');
+      // The main seat map serializes this already; quotes in text nodes stay raw in XML.
+      const doc = new DOMParser().parseFromString(
+        `<svg xmlns="${SVG_NS}"><defs><linearGradient/></defs><rect/><text/></svg>`,
+        'image/svg+xml',
+      );
+      doc.querySelector('linearGradient')!.setAttribute('id', id);
+      doc.querySelector('rect')!.setAttribute('fill', `url(#${id})`);
+      doc.querySelector('rect')!.setAttribute('data-seat-id', 'A-1');
+      doc.querySelector('text')!.textContent = 'x" data-a="1" y="';
+      const mainMapHtml = doc.documentElement.outerHTML;
+
+      const host = injectLikeMiniMap(prefixSvgDefsIds(mainMapHtml, 'mini-'));
+      const elements = Array.from(host.querySelectorAll('*'));
+
+      expect(elements.filter((el) => el.namespaceURI !== SVG_NS)).toEqual([]);
+      expect(elements.flatMap((el) => Array.from(el.attributes)
+        .filter((attr) => attr.name.toLowerCase().startsWith('on')))).toEqual([]);
+      expect(host.querySelectorAll('svg')).toHaveLength(1);
+      expect(host.querySelectorAll('[data-seat-id="A-1"]')).toHaveLength(1);
+      expect(host.querySelector('text')?.textContent).toBe('x" data-a="1" y="');
+    },
+  );
+
+  it('rewrites href references and style url(#id) on the DOM, not text or comments', async () => {
+    const { prefixSvgDefsIds } = await import('../prefix-svg-defs-ids');
+    const svg =
+      `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10">` +
+      '<defs><clipPath id="c"><rect/></clipPath><marker id="m"/></defs>' +
+      '<path clip-path="url(&quot;#c&quot;)" marker-end="url(#m)"/>' +
+      '<text>url(#c)</text>' +
+      '</svg>';
+
+    const result = prefixSvgDefsIds(svg, 'mini-');
+    const doc = new DOMParser().parseFromString(result, 'image/svg+xml');
+
+    expect(doc.querySelector('clipPath')?.getAttribute('id')).toBe('mini-c');
+    expect(doc.querySelector('marker')?.getAttribute('id')).toBe('mini-m');
+    expect(doc.querySelector('path')?.getAttribute('clip-path')).toBe('url("#mini-c")');
+    expect(doc.querySelector('path')?.getAttribute('marker-end')).toBe('url(#mini-m)');
+    expect(doc.querySelector('text')?.textContent).toBe('url(#c)');
+  });
+
+  it('runs the result through the SVG sanitizer again', async () => {
+    const { prefixSvgDefsIds } = await import('../prefix-svg-defs-ids');
+    const svg =
+      `<svg xmlns="${SVG_NS}"><defs><linearGradient id="g"/></defs>` +
+      '<rect fill="url(#g)" onclick="alert(1)"/><foreignObject/></svg>';
+
+    const result = prefixSvgDefsIds(svg, 'mini-');
+
+    expect(result).toContain('url(#mini-g)');
+    expect(result).not.toMatch(/onclick|foreignObject/i);
   });
 });

@@ -54,7 +54,9 @@ vi.mock('@/components/auth/auth-guard', () => ({
 const TRANSFER: PaymentMethod = { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' };
 const CARD: PaymentMethod = { method: 'CARD', provider: 'CARD', currency: 'KRW' };
 
-vi.mock('@/components/booking/toss-payment-widget', () => ({
+vi.mock('@/components/booking/toss-payment-widget', async (importOriginal) => ({
+  // The real selection rules (isPayableWidgetSelection) with a test double for the iframe.
+  ...(await importOriginal<typeof import('@/components/booking/toss-payment-widget')>()),
   TossPaymentWidget: forwardRef(function TestProviderWidget(
     props: {
       onReady: () => void;
@@ -71,10 +73,20 @@ vi.mock('@/components/booking/toss-payment-widget', () => ({
     const choose = (code: string, paymentMethod: PaymentMethod) => props.onPaymentMethodChange?.({
       code, paymentMethod, requiresOverseasDisclaimer: false, requestFlow: 'widget',
     });
+    // What the real widget reports for a raw iframe code (resolvePaymentMethodSelection).
+    const chooseCode = async (code: string) => {
+      const { resolvePaymentMethodSelection } = await vi.importActual<
+        typeof import('@/components/booking/toss-payment-widget')
+      >('@/components/booking/toss-payment-widget');
+      props.onPaymentMethodChange?.(resolvePaymentMethodSelection(code));
+    };
     return (
       <div>
         <button type="button" onClick={() => choose('TRANSFER', TRANSFER)}>Choose transfer</button>
         <button type="button" onClick={() => choose('CARD', CARD)}>Choose card</button>
+        {['VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'PAYCO', '가상계좌'].map((code) => (
+          <button key={code} type="button" onClick={() => void chooseCode(code)}>{`Choose ${code}`}</button>
+        ))}
       </div>
     );
   }),
@@ -186,6 +198,33 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
     await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
     await user.click(screen.getByRole('button', { name: 'Choose transfer' }));
 
+    expect(screen.queryByText(copy.methodNotAllowed)).not.toBeInTheDocument();
+    expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
+  });
+
+  it.each([
+    ['VIRTUAL_ACCOUNT', { allowedPaymentMethods: ['CARD', 'VIRTUAL_ACCOUNT'], allowedPaymentMethodsKnown: true }],
+    ['MOBILE_PHONE', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
+    ['PAYCO', { allowedPaymentMethods: ['CARD', 'SIMPLE_PAY'], allowedPaymentMethodsKnown: true }],
+    ['가상계좌', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
+  ])('refuses a %s widget selection under any policy without calling prepare', async (code, policy) => {
+    const user = userEvent.setup();
+    boundary.policy = policy;
+    useBookingStore.getState().setBookingData({
+      ...booking, selectedSeats: seats, expiresAt: Date.parse(booking.paymentDeadlineAt),
+    });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getByRole('button', { name: `Choose ${code}` }));
+
+    expect(await screen.findByText(copy.methodNotAllowed)).toBeInTheDocument();
+    const blocked = payButton(copy.chooseAnotherMethod);
+    expect(blocked).toBeDisabled();
+    await user.click(blocked);
+    expect(boundary.prepare).toHaveBeenCalledTimes(0);
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Choose card' }));
     expect(screen.queryByText(copy.methodNotAllowed)).not.toBeInTheDocument();
     expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
   });

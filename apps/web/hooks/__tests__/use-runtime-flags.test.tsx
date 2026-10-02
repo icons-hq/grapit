@@ -13,6 +13,7 @@ import {
   getRuntimeFlagsErrorRefetchIntervalMs,
   getRuntimeFlagsRetryDelayMs,
   useRuntimeFlags,
+  type UseRuntimeFlagsOptions,
 } from '@/hooks/use-runtime-flags';
 import { RuntimeFlagsUnavailableError } from '@/lib/runtime-flags';
 import { resetServerClockForTests } from '@/lib/server-clock';
@@ -43,7 +44,7 @@ function unavailableResponse(): Response {
   } as unknown as Response;
 }
 
-function renderRuntimeFlags() {
+function renderRuntimeFlags(options?: UseRuntimeFlagsOptions) {
   // Mirrors the app defaults (apps/web/app/providers.tsx).
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -54,7 +55,7 @@ function renderRuntimeFlags() {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
 
-  return { queryClient, ...renderHook(() => useRuntimeFlags(), { wrapper }) };
+  return { queryClient, ...renderHook(() => useRuntimeFlags(options), { wrapper }) };
 }
 
 async function flush(ms = 0) {
@@ -162,6 +163,32 @@ describe('useRuntimeFlags', () => {
     }
 
     expect(fetchMock.mock.calls.length).toBeGreaterThan(4);
+  });
+
+  it('re-reads the flags once 20-30 seconds before a booking start to refresh the clock sample', async () => {
+    fetchMock.mockResolvedValue(okResponse(true));
+    // Math.random() = 1: the latest point of the window, 20 seconds before the start.
+    const startMs = Date.now() + 120_000;
+    renderRuntimeFlags({ resyncClockBeforeMs: startMs });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await flush(100_000 - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await flush(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await flush(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-read when the page opens inside the resync window', async () => {
+    fetchMock.mockResolvedValue(okResponse(true));
+    renderRuntimeFlags({ resyncClockBeforeMs: Date.now() + 10_000 });
+    await flush(60_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

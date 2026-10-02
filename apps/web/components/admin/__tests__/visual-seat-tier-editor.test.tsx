@@ -263,4 +263,18 @@ describe('VisualSeatTierEditor', () => {
       'SVG에 없는 좌석: MISSING-1',
     );
   });
+
+  it('falls back like a parse error when the document root is not an SVG <svg>', () => {
+    const { container } = render(
+      <VisualSeatTierEditor
+        svgMarkup={'<html xmlns="http://www.w3.org/1999/xhtml"><body><p data-seat-id="A-1">seat</p></body></html>'}
+        tiers={createTiers()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/SVG를 시각 편집기로 불러오지 못했습니다/)).toBeInTheDocument();
+    expect(screen.queryByRole('grid', { name: '등급 배정 좌석맵' })).not.toBeInTheDocument();
+    expect(container.querySelector('html, body, p')).toBeNull();
+  });
 });

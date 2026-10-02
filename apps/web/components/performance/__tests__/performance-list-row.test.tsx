@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import type { PerformanceCardData } from '@grabit/shared';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 import { PerformanceListRow } from '../performance-list-row';
 
 vi.mock('next/image', () => ({
@@ -38,10 +39,67 @@ describe('PerformanceListRow sale status', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
+    resetServerClockForTests();
   });
 
   afterEach(() => {
+    resetServerClockForTests();
     vi.useRealTimers();
+  });
+
+  /** The device reads NOW while the server is `offsetMs` ahead of it (RTT 200ms). */
+  function skewDeviceClock(offsetMs: number) {
+    recordServerTimeSample({
+      serverNowMs: NOW + offsetMs + 100,
+      requestStartedAtMs: NOW,
+      responseReceivedAtMs: NOW + 200,
+    });
+  }
+
+  it('reads on sale on a device clock 90 seconds slow once the server passed the start', () => {
+    // Device 10:59:00, server 11:00:30: the detail page CTA is open, so is the list.
+    skewDeviceClock(90_000);
+    renderRow(row);
+
+    expect(screen.getAllByLabelText('Status: On sale')).toHaveLength(2);
+    expect(screen.queryByText(/Booking opens/)).toBeNull();
+  });
+
+  it('stays coming soon on a device clock 90 seconds fast until the server start', () => {
+    // Device 11:00:30 reads past the start, but the server is at 10:59:00.
+    vi.setSystemTime(NOW + 90_000);
+    recordServerTimeSample({
+      serverNowMs: NOW + 100,
+      requestStartedAtMs: NOW + 90_000,
+      responseReceivedAtMs: NOW + 90_200,
+    });
+    renderRow(row);
+    expect(screen.getAllByLabelText('Status: Coming soon')).toHaveLength(2);
+
+    act(() => {
+      vi.advanceTimersByTime(59_999);
+    });
+    expect(screen.getAllByLabelText('Status: Coming soon')).toHaveLength(2);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getAllByLabelText('Status: On sale')).toHaveLength(2);
+  });
+
+  it('keeps an on-sale badge while the runtime flags are not known yet', () => {
+    render(
+      <ul>
+        <PerformanceListRow
+          performance={{ ...row, status: 'selling', bookingStartsAt: '2026-10-01T10:00:00.000Z' }}
+          locale="en"
+          bookingEnabled={false}
+          flagsResolved={false}
+        />
+      </ul>,
+    );
+
+    expect(screen.getAllByLabelText('Status: On sale')).toHaveLength(2);
   });
 
   it('switches the badge and guidance to on sale when the booking start passes', () => {

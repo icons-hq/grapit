@@ -8,10 +8,13 @@ import ConfirmPage from '@/app/booking/[performanceId]/confirm/page';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { getQueueAccessClosedCopy } from '@/lib/booking/queue-access';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { resetServerClockForTests } from '@/lib/server-clock';
 
 const boundary = vi.hoisted(() => ({
+  locale: 'ko',
   prepare: vi.fn(),
   read: vi.fn(),
   cancel: vi.fn(),
@@ -27,7 +30,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next-intl', () => ({
-  useLocale: () => 'ko',
+  useLocale: () => boundary.locale,
   useTranslations: () => (key: string) => key,
 }));
 vi.mock('sonner', () => ({
@@ -77,16 +80,17 @@ const seats = [{
 const queueCopy = getQueueAccessClosedCopy('ko');
 const confirmCopy = getVisibleCopy('ko').bookingExtra.confirm;
 
-function seedCheckout({ lockExpiresAt, queueAccessExpiresAt }: {
+function seedCheckout({ lockExpiresAt, queueAccessExpiresAt, showDateTime = '2099-01-02T09:00:00.000Z' }: {
   lockExpiresAt: number;
   queueAccessExpiresAt: number;
+  showDateTime?: string;
 }) {
   useBookingStore.getState().setBookingData({
     selectedSeats: seats,
     showtimeId: 'showtime-queue',
     performanceId: 'performance-queue',
     performanceTitle: 'Queue Test',
-    showDateTime: '2099-01-02T09:00:00.000Z',
+    showDateTime,
     venue: 'Test Hall',
     posterUrl: null,
     // Same value the seat screen hands over: the earlier of the two.
@@ -111,12 +115,31 @@ function payButtons() {
     button.textContent === 'paymentDisclaimer.payNow'
     || button.textContent === confirmCopy.agreeTerms
     || button.textContent === queueCopy.title
-    || button.textContent === 'paymentRecovery.expiredCta');
+    || button.textContent === 'paymentRecovery.expiredCta'
+    || button.textContent === 'seatSelection.showtimeClosed'
+    || button.textContent === confirmCopy.processing);
+}
+
+async function agreeToTerms(locale: 'ko' | 'en' | 'th' | 'zh-CN' = 'ko') {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: getCheckoutCopy(locale).allTerms }));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
+async function clickPay() {
+  await act(async () => {
+    fireEvent.click(payButtons()[0]!);
+    await vi.advanceTimersByTimeAsync(0);
+  });
 }
 
 describe('Checkout step queue access deadline (audit #32 follow-up)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    boundary.locale = 'ko';
+    boundary.prepare.mockReset();
+    boundary.read.mockReset();
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     resetServerClockForTests();
@@ -195,5 +218,124 @@ describe('Checkout step queue access deadline (audit #32 follow-up)', () => {
       expect(button).toHaveTextContent('paymentRecovery.expiredCta');
       expect(button).toBeDisabled();
     }
+
+    // The expiry notice offers the way out instead of a dead end.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'paymentRecovery.reselectCta' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(boundary.unlock).toHaveBeenCalledWith({ showtimeId: 'showtime-queue' });
+    expect(boundary.replace).toHaveBeenCalledWith('/booking/performance-queue');
   });
+
+  it('keeps the pay button open while the seat lock and queue access are alive (audit #95)', async () => {
+    // Ten minutes of seat lock; the server payment window only starts at prepare.
+    seedCheckout({
+      lockExpiresAt: NOW + 10 * 60_000,
+      queueAccessExpiresAt: NOW + 20 * 60_000,
+    });
+    mountPage();
+    await agreeToTerms();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8 * 60_000);
+    });
+
+    expect(screen.queryByText('paymentRecovery.expiredTitle')).not.toBeInTheDocument();
+    const buttons = payButtons();
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button).toHaveTextContent('paymentDisclaimer.payNow');
+      expect(button).toBeEnabled();
+    }
+  });
+
+  it('does not let the queue rejoin cancel the order while prepare is in flight', async () => {
+    boundary.prepare.mockReturnValue(new Promise(() => {}));
+    seedCheckout({
+      lockExpiresAt: NOW + 6 * 60_000,
+      queueAccessExpiresAt: NOW + 60_000,
+    });
+    mountPage();
+    await agreeToTerms();
+    await clickPay();
+    expect(boundary.prepare).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000 + 100);
+    });
+
+    const rejoin = screen.getByRole('button', { name: queueCopy.rejoin });
+    expect(rejoin).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(rejoin);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(boundary.cancel).not.toHaveBeenCalled();
+    expect(boundary.unlock).not.toHaveBeenCalled();
+  });
+
+  it('closes the pay button at the showtime start and offers seat reselection (C1)', async () => {
+    seedCheckout({
+      lockExpiresAt: NOW + 6 * 60_000,
+      queueAccessExpiresAt: NOW + 6 * 60_000,
+      showDateTime: new Date(NOW + 60_000).toISOString(),
+    });
+    mountPage();
+    await agreeToTerms();
+    for (const button of payButtons()) {
+      expect(button).toBeEnabled();
+    }
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    const blocked = payButtons();
+    expect(blocked.length).toBeGreaterThan(0);
+    for (const button of blocked) {
+      expect(button).toHaveTextContent('seatSelection.showtimeClosed');
+      expect(button).toBeDisabled();
+    }
+    // The notice itself, besides the two pay buttons that carry the same text.
+    expect(screen.getAllByText('seatSelection.showtimeClosed')).toHaveLength(blocked.length + 1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'paymentRecovery.reselectCta' }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(boundary.prepare).not.toHaveBeenCalled();
+    expect(boundary.replace).toHaveBeenCalledWith('/booking/performance-queue');
+  });
+
+  it.each(['en', 'th', 'zh-CN'] as const)(
+    'shows locale copy, not the generic failure, when prepare is refused for a closed showtime or queue access (%s)',
+    async (locale) => {
+      boundary.locale = locale;
+      // A successful owner lookup returning null: no order was created.
+      boundary.read.mockResolvedValue(null);
+      boundary.prepare
+        .mockRejectedValueOnce(Object.assign(new Error(SHOWTIME_SALES_CLOSED_MESSAGE), { statusCode: 403 }));
+      seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+      const view = mountPage();
+      await agreeToTerms(locale);
+      await clickPay();
+
+      expect(screen.getByText('seatSelection.showtimeClosed')).toBeInTheDocument();
+      expect(screen.queryByText(SHOWTIME_SALES_CLOSED_MESSAGE)).not.toBeInTheDocument();
+      expect(screen.queryByText(getVisibleCopy(locale).bookingExtra.confirm.paymentRequestFailed))
+        .not.toBeInTheDocument();
+      view.unmount();
+
+      boundary.prepare
+        .mockRejectedValueOnce(Object.assign(new Error('대기열 입장 시간이 만료되었습니다'), { statusCode: 403 }));
+      useBookingStore.getState().resetBooking();
+      seedCheckout({ lockExpiresAt: NOW + 6 * 60_000, queueAccessExpiresAt: NOW + 6 * 60_000 });
+      mountPage();
+      await agreeToTerms(locale);
+      await clickPay();
+
+      expect(screen.getByText(getQueueAccessClosedCopy(locale).toast)).toBeInTheDocument();
+      expect(screen.queryByText('대기열 입장 시간이 만료되었습니다')).not.toBeInTheDocument();
+    },
+  );
 });

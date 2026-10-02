@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useQuery, type Query } from '@tanstack/react-query';
 import { useLocale } from 'next-intl';
+import { getServerNowMs } from '@/lib/server-clock';
 import {
   RuntimeFlagsUnavailableError,
   fetchRuntimeFlags,
@@ -98,7 +100,23 @@ function planErrorRefetchInterval(query: Query<RuntimeFlags>): number | false {
   return intervalMs;
 }
 
-export function useRuntimeFlags() {
+/** How long before a booking start the server clock sample is refreshed. */
+export const SERVER_CLOCK_RESYNC_LEAD_MS = 30_000;
+/** Per-client spread so open pages do not all re-check at the same second. */
+export const SERVER_CLOCK_RESYNC_SPREAD_MS = 10_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+export interface UseRuntimeFlagsOptions {
+  /**
+   * A server instant (for example a booking start) the page acts on. The flags are
+   * re-read once 20–30 seconds before it: the response carries a fresh `serverNow`,
+   * so a slow first clock sample taken under load is replaced by a tighter one
+   * before the CTA opens (lib/server-clock.ts keeps the sample with the smaller RTT).
+   */
+  resyncClockBeforeMs?: number | null;
+}
+
+export function useRuntimeFlags(options: UseRuntimeFlagsOptions = {}) {
   const locale = useLocale();
   const query = useQuery({
     queryKey: RUNTIME_FLAGS_QUERY_KEY,
@@ -112,6 +130,22 @@ export function useRuntimeFlags() {
     refetchInterval: planErrorRefetchInterval,
   });
   const isResolved = query.data !== undefined;
+  const { refetch } = query;
+  const resyncClockBeforeMs = options.resyncClockBeforeMs ?? null;
+
+  useEffect(() => {
+    if (resyncClockBeforeMs === null || !Number.isFinite(resyncClockBeforeMs)) return;
+    const resyncAtMs = resyncClockBeforeMs - SERVER_CLOCK_RESYNC_LEAD_MS
+      + Math.floor(Math.random() * SERVER_CLOCK_RESYNC_SPREAD_MS);
+    const delayMs = resyncAtMs - getServerNowMs();
+    // Already inside the window (the page has just read the flags) or too far away.
+    if (delayMs <= 0 || delayMs > MAX_TIMEOUT_MS) return;
+
+    const timer = window.setTimeout(() => {
+      void refetch();
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [refetch, resyncClockBeforeMs]);
 
   return {
     ...(query.data ?? FAIL_CLOSED_FLAGS),

@@ -50,4 +50,11 @@ describe('StatusBadge', () => {
   it('keeps selling as selling while the booking gate is open', () => {
     expect(getDisplayPerformanceStatus('selling', true)).toBe('selling');
   });
+
+  it('does not downgrade an on-sale badge while no runtime flag value is known', () => {
+    // useRuntimeFlags reports bookingEnabled=false (fail-closed) until a value loads.
+    expect(getDisplayPerformanceStatus('selling', false, false)).toBe('selling');
+    expect(getDisplayPerformanceStatus('closing_soon', false, false)).toBe('closing_soon');
+    expect(getDisplayPerformanceStatus('selling', false, true)).toBe('upcoming');
+  });
 });
