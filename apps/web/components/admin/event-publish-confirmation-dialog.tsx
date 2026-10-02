@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { formatAdminKstDateTime } from '@/lib/admin-datetime';
+import type { PerformanceSaleOpening } from '@grabit/shared';
 
 const FIELD_LABELS: Record<string, string> = {
   publishState: '공개 상태', title: '공연명', genre: '공연 종류', venueName: '장소', venueAddress: '주소',
@@ -36,6 +38,8 @@ export interface EventPublishReviewSummary {
   showtimes?: string[];
   bookingStartsAt?: string | null;
   saleStatus?: string;
+  /** Server-computed effective sale opening for the stored performance. */
+  saleOpening?: PerformanceSaleOpening | null;
   changedFields: string[];
   localeStates: EventPublishLocaleState[];
   venue: {
@@ -62,6 +66,26 @@ export interface EventPublishConfirmInput {
   confirmed: true;
   confirmedChangedFields: string[];
   contentChecklist: EventPublishReviewSummary['contentChecklist'];
+  immediateSaleConfirmed?: true;
+}
+
+const kst = (iso: string) => `${formatAdminKstDateTime(iso).slice(0, 16).replace('T', ' ')} KST`;
+
+export function describeSaleOpening(summary: Pick<EventPublishReviewSummary, 'saleOpening' | 'bookingStartsAt'>): string {
+  const opening = summary.saleOpening;
+  if (!opening) return summary.bookingStartsAt || '시각 미지정 · 판매 상태에 따라 결정';
+  switch (opening.mode) {
+    case 'scheduled':
+      return `${kst(opening.at!)} 자동 오픈`;
+    case 'manual':
+      return '자동 오픈 안 됨 · 판매 상태를 판매 중으로 바꿀 때 판매 시작';
+    case 'ended':
+      return '판매 종료 · 공개해도 예매 불가';
+    case 'immediate':
+      return opening.startElapsed
+        ? `판매 시작 시각(${kst(opening.at!)})이 지나 공개 즉시 판매`
+        : '공개 즉시 판매 · 판매 중 상태이며 시작 시각 미지정';
+  }
 }
 
 interface EventPublishConfirmationDialogProps {
@@ -96,15 +120,19 @@ export function EventPublishConfirmationDialog({
 }: EventPublishConfirmationDialogProps) {
   const [reason, setReason] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [immediateSaleConfirmed, setImmediateSaleConfirmed] = useState(false);
+  const opensSaleImmediately = summary.saleOpening?.mode === 'immediate';
 
   useEffect(() => {
     if (!open) {
       setReason('');
       setConfirmed(false);
+      setImmediateSaleConfirmed(false);
     }
   }, [open]);
 
-  const canConfirm = reason.trim().length > 0 && confirmed && !isPublishing;
+  const canConfirm = reason.trim().length > 0 && confirmed
+    && (!opensSaleImmediately || immediateSaleConfirmed) && !isPublishing;
 
   async function handleConfirm() {
     if (!canConfirm) return;
@@ -113,6 +141,7 @@ export function EventPublishConfirmationDialog({
       confirmed: true,
       confirmedChangedFields: summary.changedFields,
       contentChecklist: summary.contentChecklist,
+      ...(opensSaleImmediately ? { immediateSaleConfirmed: true as const } : {}),
     });
   }
 
@@ -167,7 +196,7 @@ export function EventPublishConfirmationDialog({
           <dl className="space-y-3">
             {summary.showtimes && <SummaryRow label="공연 회차 · 한국 시간" value={summary.showtimes.join(' / ') || '미입력'} />}
             {summary.saleStatus && <SummaryRow label="판매 상태" value={summary.saleStatus} />}
-            {summary.showtimes && <SummaryRow label="판매 시작 · 한국 시간" value={summary.bookingStartsAt || '시각 미지정 · 공개 및 판매 설정 충족 시 시작'} />}
+            {(summary.showtimes || summary.saleOpening) && <SummaryRow label="실제 판매 개시 · 한국 시간" value={describeSaleOpening(summary)} />}
             <SummaryRow label="장소" value={summary.venue.name || '미입력'} />
             <SummaryRow
               label="주소"
@@ -214,6 +243,21 @@ export function EventPublishConfirmationDialog({
               placeholder="게시 사유를 입력하세요"
             />
           </div>
+
+          {opensSaleImmediately && (
+            <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">게시하는 순간 구매자가 바로 좌석을 선택하고 결제할 수 있습니다.</p>
+              <p>상세 페이지만 먼저 공개하려면 판매 상태를 판매 예정으로 바꾸거나 판매 시작 일시를 지정한 뒤 다시 승인하세요.</p>
+              <label htmlFor="publish-immediate-sale" className="flex min-h-11 items-center gap-3 font-semibold">
+                <Checkbox
+                  id="publish-immediate-sale"
+                  checked={immediateSaleConfirmed}
+                  onCheckedChange={(value) => setImmediateSaleConfirmed(value === true)}
+                />
+                공개 즉시 판매가 시작되는 것을 확인했습니다
+              </label>
+            </div>
+          )}
 
           <label
             htmlFor="publish-confirmation"

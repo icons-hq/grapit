@@ -28,6 +28,7 @@ describe('Phase 25 admin operations security schema contracts', () => {
     expect(adminAuditActionEnum.enumValues).toEqual([
       'event.publish',
       'event.update',
+      'event.delete',
       'refund.admin_refund',
       'support.escalate',
       'seat.disable',

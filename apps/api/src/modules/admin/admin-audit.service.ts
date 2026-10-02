@@ -7,6 +7,7 @@ import { adminAuditLogs } from '../../database/schema/index.js';
 export const ADMIN_AUDIT_ACTIONS = [
   'event.publish',
   'event.update',
+  'event.delete',
   'refund.admin_refund',
   'support.escalate',
   'seat.disable',

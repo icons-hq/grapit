@@ -105,6 +105,34 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
       priceTiers: [{ tierName: 'VIP', price: 50000 }] };
   }
 
+  async function createPublishableEvent(overrides: { status?: string; bookingStartsAt?: string;
+    priceTiers?: Array<{ tierName: string; price: number }>; tierName?: string } = {}) {
+    const payload = { ...input(), description: '공연 상세 안내', status: overrides.status ?? 'upcoming',
+      ...(overrides.priceTiers ? { priceTiers: overrides.priceTiers } : {}),
+      ...(overrides.bookingStartsAt ? { bookingPolicy: { maxTicketsPerUser: 2, allowedPaymentMethods: ['CARD'], changePolicyEnabled: false,
+        paymentWindowMinutes: 7, seatHoldMinutes: 10, cancelledSeatHoldMinMinutes: 1, cancelledSeatHoldMaxMinutes: 10,
+        manualOpenEnabled: true, bookingStartsAt: overrides.bookingStartsAt } } : {}),
+      showtimes: [{ dateTime: '2099-01-01T18:00' }],
+      seatMaps: [{ floorKey: '1F', floorLabel: '1층', svgUrl: 'https://example.test/seats.svg', totalSeats: 1,
+        seatConfig: { tiers: [{ tierName: overrides.tierName ?? 'VIP', color: '#336699', seatIds: ['A-1'] }] } }] };
+    const created = await request(app.getHttpServer()).post('/admin/performances').send(payload);
+    expect(created.status).toBe(201);
+    for (const field of ['title', 'description'] as const) {
+      const hash = createHash('sha256').update(payload[field]).digest('hex');
+      const [source] = await db.insert(schema.translationSources).values({ entityType: 'performance', entityId: created.body.id,
+        field, sourceText: payload[field], contentHash: hash }).returning();
+      await db.insert(schema.translationDrafts).values({ sourceId: source!.id, targetLocale: 'en', status: 'published',
+        translatedText: `Reviewed ${field}`, sourceContentHash: hash, reviewedBy: actorId, publishedAt: new Date() });
+    }
+    return created.body.id as string;
+  }
+
+  async function publishBody(id: string) {
+    const preparation = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body;
+    return { reason: '콘텐츠와 좌석 검수 완료', confirmed: true, expectedUpdatedAt: preparation.updatedAt, confirmedChangedFields: ['publishState'],
+      contentChecklist: { ko: { title: true, description: true }, en: { title: true, description: true } } };
+  }
+
   it.each(['finance', 'scanner'])('denies %s performance creation through the real capability guard', async (bundle) => {
     const response = await request(app.getHttpServer()).post('/admin/performances')
       .set('x-test-bundle', bundle).send(input());
@@ -210,7 +238,72 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     expect((await pool.query('SELECT id FROM performances WHERE id=$1', [id])).rows).toHaveLength(0);
     expect((await request(app.getHttpServer()).get(`/admin/performance-drafts/${draft.body.id}`)).status).toBe(404);
     const audit = await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id });
-    expect(audit).toHaveLength(1);
+    expect(audit).toHaveLength(2);
+    expect(audit.find((entry) => entry.action === 'event.delete')).toMatchObject({ actorUserId: actorId, status: 'success',
+      reason: '공연 삭제', diff: { before: { performance: { title: expect.stringContaining('Preparation'), publishState: 'draft', showtimeCount: 0 } } } });
+  });
+
+  it('refuses to delete a published performance without bookings and keeps its showtimes', async () => {
+    const id = await createPublishableEvent();
+    const published = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send(await publishBody(id));
+    expect(published.status).toBe(201);
+    for (const bundle of ['operator', 'approver', 'admin']) {
+      const response = await request(app.getHttpServer()).delete(`/admin/performances/${id}`).set('x-test-bundle', bundle)
+        .send({ reason: '오픈 전 정리' });
+      expect(response.status).toBe(409);
+      expect(response.body.message).toContain('판매종료');
+    }
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}`)).body.showtimes).toHaveLength(1);
+    expect(await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.delete' })).toHaveLength(0);
+  });
+
+  it('requires explicit confirmation before publishing a performance whose sale is already open', async () => {
+    const id = await createPublishableEvent({ status: 'selling' });
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.saleOpening)
+      .toEqual({ mode: 'immediate', at: null, startElapsed: false });
+    const body = await publishBody(id);
+    const refused = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver').send(body);
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toContain('즉시 판매');
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.publishState).toBe('draft');
+    const confirmed = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send({ ...body, immediateSaleConfirmed: true });
+    expect(confirmed.status).toBe(201);
+    const audit = await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.publish' });
+    expect(audit.map((entry) => [entry.status, entry.diff.after.saleOpening])).toEqual(expect.arrayContaining([
+      ['failed', { mode: 'immediate', at: null, startElapsed: false, confirmed: false }],
+      ['success', { mode: 'immediate', at: null, startElapsed: false, confirmed: true }],
+    ]));
+  });
+
+  it('blocks publishing a performance whose stored sale start already passed', async () => {
+    const id = await createPublishableEvent({ bookingStartsAt: '2025-10-01T11:00:00.000Z' });
+    const preparation = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body;
+    expect(preparation.canPublish).toBe(false);
+    expect(preparation.checks.find((check: { key: string }) => check.key === 'sales')).toMatchObject({ ready: false });
+    const response = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send({ ...(await publishBody(id)), immediateSaleConfirmed: true });
+    expect(response.status).toBe(400);
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.publishState).toBe('draft');
+  });
+
+  it('stores trimmed tier names so every configured seat stays sellable at the displayed price', async () => {
+    const id = await createPublishableEvent({ priceTiers: [{ tierName: 'VIP ', price: 50000 }], tierName: ' VIP ' });
+    const tiers = await pool.query('SELECT tier_name, price FROM price_tiers WHERE performance_id = $1', [id]);
+    expect(tiers.rows).toEqual([{ tier_name: 'VIP', price: 50000 }]);
+    const assigned = await pool.query(`SELECT t.tier_name, t.price, count(a.id)::int AS seats FROM performance_seat_tiers t
+      LEFT JOIN performance_seat_assignments a ON a.tier_id = t.id WHERE t.performance_id = $1 GROUP BY t.id`, [id]);
+    expect(assigned.rows).toEqual([{ tier_name: 'VIP', price: 50000, seats: 1 }]);
+    const seats = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.checks
+      .find((check: { key: string }) => check.key === 'seats');
+    expect(seats.ready).toBe(true);
+  });
+
+  it('rejects a zero-priced tier before it can be stored', async () => {
+    const response = await request(app.getHttpServer()).post('/admin/performances')
+      .send({ ...input(), priceTiers: [{ tierName: 'VIP', price: 50000 }, { tierName: 'R', price: 0 }] });
+    expect(response.status).toBe(400);
   });
 
   it('retains the applied draft and original performance when bookings block deletion', async () => {

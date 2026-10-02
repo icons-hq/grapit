@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { PerformanceSeatMapInput, SeatMapConfig } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,9 @@ import { Label } from '@/components/ui/label';
 const DEFAULT_MAX_FLOORS = 7;
 
 type SeatTier = SeatMapConfig['tiers'][number];
+
+let floorIdSequence = 0;
+const createFloorId = () => `floor-${(floorIdSequence += 1)}`;
 
 export interface FloorSeatMapEditorProps {
   value: PerformanceSeatMapInput[];
@@ -122,6 +125,18 @@ export function FloorSeatMapEditor({
     ? `중복된 floorKey가 있습니다: ${duplicateKeys.join(', ')}. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.`
     : duplicateFloorError;
   const sharedTierTemplates = deriveSharedTierTemplates(value);
+  // Floor cards need an identity that survives floorKey edits: keying by the
+  // editable key remounted the card (and its SVG preview) on every keystroke.
+  // Ids live beside the value so they never reach the saved payload.
+  const [storedFloorIds, setFloorIds] = useState(() => value.map(createFloorId));
+  let floorIds = storedFloorIds;
+  if (floorIds.length !== value.length) {
+    // Floors added or replaced outside this editor (draft load, form reset).
+    floorIds = floorIds.length < value.length
+      ? [...floorIds, ...value.slice(floorIds.length).map(createFloorId)]
+      : floorIds.slice(0, value.length);
+    setFloorIds(floorIds);
+  }
 
   function updateFloor(
     index: number,
@@ -140,6 +155,7 @@ export function FloorSeatMapEditor({
   }
 
   function removeFloor(index: number) {
+    setFloorIds(floorIds.filter((_, floorIndex) => floorIndex !== index));
     onChange(
       value
         .filter((_, floorIndex) => floorIndex !== index)
@@ -301,7 +317,7 @@ export function FloorSeatMapEditor({
           const isDuplicateFloorKey = duplicateKeySet.has(floor.floorKey.trim());
 
           return (
-            <div key={`${floor.floorKey}-${index}`} className="rounded-xl border bg-white p-4 shadow-sm">
+            <div key={floorIds[index]} className="rounded-xl border bg-white p-4 shadow-sm">
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>

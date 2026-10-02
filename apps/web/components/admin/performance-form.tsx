@@ -55,6 +55,7 @@ import {
   FloorSeatMapEditor,
 } from '@/components/admin/floor-seat-map-editor';
 import { SvgPreview } from '@/components/admin/svg-preview';
+import { KstDateTimeInput } from '@/components/admin/kst-datetime-input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -171,6 +172,15 @@ function hasText(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isElapsedInstant(value: string | null | undefined, now = Date.now()): boolean {
+  if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && ms <= now;
+}
+
+const formatKstMinute = (value: string | null | undefined) =>
+  value ? `${formatAdminKstDateTime(value).slice(0, 16).replace('T', ' ')} KST` : '미지정';
+
 function buildPublishReviewSummary(
   values: CreatePerformanceFormInput,
   dirtyFields: unknown,
@@ -193,6 +203,8 @@ function buildPublishReviewSummary(
     title: values.title || '제목 미입력',
     showtimes: (values.showtimes ?? []).map((showtime) => `${formatAdminKstDateTime(showtime.dateTime).replace('T', ' ')} KST`),
     bookingStartsAt: values.bookingPolicy?.bookingStartsAt ? `${formatAdminKstDateTime(values.bookingPolicy.bookingStartsAt).replace('T', ' ')} KST` : null,
+    // How sales open as a result of this approval; an already public performance is not re-opened.
+    saleOpening: preparation && preparation.publishState !== 'published' ? preparation.saleOpening ?? null : null,
     saleStatus: STATUS_LABELS[values.status ?? 'upcoming'],
     changedFields: changedFields.length > 0 ? changedFields : ['publishState'],
     localeStates: ADMIN_EVENT_LOCALE_ORDER.map((locale) => {
@@ -423,6 +435,9 @@ export function PerformanceForm({
   const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
   const detailImages = normalizeDetailImagesForSave(form.watch('detailImages'));
   const watchedValues = form.watch();
+  const isPublished = initialData?.publishState === 'published';
+  const persistedBookingStartsAt = initialData?.bookingPolicy?.bookingStartsAt ?? null;
+  const editedBookingStartsAt = watchedValues.bookingPolicy?.bookingStartsAt ?? null;
   const publishReviewSummary = buildPublishReviewSummary(
     watchedValues,
     form.formState.dirtyFields,
@@ -1095,9 +1110,9 @@ export function PerformanceForm({
         <h2 className="mb-4 text-xl font-semibold">가격 등급</h2>
         <Controller control={form.control} name="bookingPolicy.bookingStartsAt" render={({ field }) => <label className="mb-6 block space-y-2 text-sm font-semibold">
           <span>판매 시작 일시 · 한국 시간 (KST)</span>
-          <Input type="datetime-local" step="1" aria-label="판매 시작 일시" value={field.value ? formatAdminKstDateTime(field.value) : ''}
-            onChange={(event) => field.onChange(event.target.value ? new Date(`${event.target.value}+09:00`).toISOString() : null)} />
-          <span className="block text-xs font-normal text-gray-500">비워두면 공연이 공개되고 판매 중 상태이며 예매가 허용된 때 즉시 판매합니다.</span>
+          <KstDateTimeInput aria-label="판매 시작 일시" value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+          {isElapsedInstant(field.value) && (!isPublished || field.value !== persistedBookingStartsAt) && <span role="status" className="block text-xs font-normal text-amber-800">입력한 판매 시작 시각이 이미 지났습니다. 반영하거나 공개하면 바로 판매가 열립니다.</span>}
+          <span className="block text-xs font-normal text-gray-500">비워두면 판매 중 상태일 때 공개 즉시 판매하고, 판매 예정 상태일 때는 판매 상태를 판매 중으로 바꿀 때까지 판매가 열리지 않습니다.</span>
         </label>} />
         <div className="space-y-3">
           {priceTiersField.fields.map((field, index) => (
@@ -1504,6 +1519,9 @@ export function PerformanceForm({
       <section hidden={step !== 'review'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-3 text-xl font-semibold">반영할 내용 확인</h2>
         <p className="mb-4 text-sm text-gray-600">{performanceId ? `${form.getValues('title')}의 준비 정보와 공개 안내를 수정합니다.` : '새 공연을 비공개 상태로 등록합니다.'} {savedDraft ? '초안에 저장한 내용이 반영됩니다.' : '현재 입력한 내용을 저장하고 반영합니다.'}</p>
+        {isPublished && editedBookingStartsAt !== persistedBookingStartsAt && <p role="alert" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          공개 중인 공연의 판매 시작 일시가 바뀝니다: {formatKstMinute(persistedBookingStartsAt)} → {formatKstMinute(editedBookingStartsAt)}. 반영하는 즉시 구매자 판매 일정에 적용됩니다.
+        </p>}
         <p className="mb-5 rounded-lg bg-slate-50 p-4 text-sm leading-6">초안 저장은 공개된 공연에 영향을 주지 않습니다. ‘공연 정보에 반영’은 운영 정보에 적용되며, 이미 공개된 공연의 안내도 변경됩니다. 새 공연의 공개는 승인 권한으로 별도 진행합니다.</p>
         {canPublish && (form.formState.isDirty || Boolean(savedDraft && !savedDraft.appliedAt)) && <p className="mb-4 text-sm text-amber-800">아직 반영하지 않은 변경이 있습니다. 공연 정보에 반영한 뒤 최신 내용으로 공개를 승인해주세요.</p>}
         {performanceId && (preparation.isError ? <p role="alert" className="mb-4 text-sm text-red-700">서버의 준비 상태를 조회하지 못했습니다. <button type="button" className="underline" onClick={() => void preparation.refetch()}>다시 불러오기</button></p>

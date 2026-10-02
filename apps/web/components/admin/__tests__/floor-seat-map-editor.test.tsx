@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
+import { useEffect, useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { PerformanceSeatMapInput } from '@grabit/shared';
 import {
@@ -202,5 +204,58 @@ describe('FloorSeatMapEditor', () => {
         },
       }),
     ]);
+  });
+});
+
+const previewMounts = vi.fn();
+
+function PreviewProbe({ floorLabel }: { floorLabel: string }) {
+  // Mirrors SvgPreview: local state that is lost (and the SVG refetched) on remount.
+  const [loadedFor] = useState(floorLabel);
+  useEffect(() => { previewMounts(loadedFor); }, [loadedFor]);
+  return <p>미리보기 {loadedFor}</p>;
+}
+
+function StatefulFloorEditor({ initial }: { initial: PerformanceSeatMapInput[] }) {
+  const [value, setValue] = useState(initial);
+  return (
+    <FloorSeatMapEditor
+      value={value}
+      onChange={setValue}
+      renderPreview={({ floor }) => <PreviewProbe floorLabel={floor.floorLabel} />}
+    />
+  );
+}
+
+describe('FloorSeatMapEditor card identity', () => {
+  it('keeps focus and the preview mounted while a floorKey is typed', async () => {
+    previewMounts.mockClear();
+    const user = userEvent.setup();
+    render(<StatefulFloorEditor initial={[createSeatMap({ floorKey: '2F', floorLabel: '지하층' })]} />);
+    const input = screen.getByLabelText('floorKey');
+
+    await user.clear(input);
+    await user.type(input, 'B1');
+
+    expect(input).toHaveValue('B1');
+    expect(input).toHaveFocus();
+    expect(screen.getByLabelText('floorKey')).toBe(input);
+    expect(previewMounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps each remaining floor bound to its own preview after an earlier floor is removed', async () => {
+    previewMounts.mockClear();
+    const user = userEvent.setup();
+    render(<StatefulFloorEditor initial={[
+      createSeatMap({ floorKey: '1F', floorLabel: '1층' }),
+      createSeatMap({ floorKey: '2F', floorLabel: '2층', sortOrder: 1 }),
+    ]} />);
+
+    await user.click(screen.getByLabelText('1층 삭제'));
+
+    expect(screen.getByDisplayValue('2F')).toBeInTheDocument();
+    expect(screen.getByText('미리보기 2층')).toBeInTheDocument();
+    expect(screen.queryByText('미리보기 1층')).not.toBeInTheDocument();
+    expect(previewMounts).toHaveBeenCalledTimes(2);
   });
 });

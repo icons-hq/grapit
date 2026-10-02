@@ -14,6 +14,7 @@ import { users } from './users.js';
 export const adminAuditActionEnum = pgEnum('admin_audit_action', [
   'event.publish',
   'event.update',
+  'event.delete',
   'refund.admin_refund',
   'support.escalate',
   'seat.disable',

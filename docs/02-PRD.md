@@ -115,6 +115,9 @@ Field operations are web-first and scanner-account based.
 Admin is an operational console, not a marketing CMS.
 
 - Event management covers performance creation/editing, publish workflow, venue/transport fields, castings, detail images, price tiers, showtimes, banners, and seat maps.
+  - Publication approval shows the server-computed sale opening: a scheduled KST start, manual opening when an upcoming performance has no start time, or immediate sale. A stored sale start that has already passed blocks approval, and publishing a performance whose sale is already open requires an explicit immediate-sale confirmation. Sale start inputs outside 2000–2100 KST are rejected.
+  - Price tiers must be priced above 0 and tier names are trimmed on input. Preparation blocks publication until every configured seat has a sellable assignment charged at the displayed tier price.
+  - Only never-published performances without booking, scan, or seat-operation history can be deleted, and each deletion is audited as `event.delete` with the deleted performance snapshot. Published performances are archived (sale status ended) instead.
 - Booking admin covers reservation list/detail, CSV export, admin refund, and manual open.
 - Seat operations cover disable, reactivate, manual open, and history.
 - Support operations cover operations inbox, assignment, escalation, FAQ, notice, and support content review.

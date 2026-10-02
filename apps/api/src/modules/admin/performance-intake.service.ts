@@ -157,8 +157,10 @@ export class PerformanceIntakeService {
       .from(priceTiers)
       .where(eq(priceTiers.performanceId, performanceId));
 
+    // Rows written before tier names were trimmed at the API boundary must still
+    // match the trimmed names used for seat assignment.
     return rows.map((row) => ({
-      tierName: row.tierName,
+      tierName: row.tierName.trim(),
       price: row.price,
       sortOrder: row.sortOrder,
     }));
@@ -310,11 +312,17 @@ export class PerformanceIntakeService {
     this.assertUniqueFloorKeys(floors);
     this.assertSeatMapConfigsValid(floors, validTierNames);
     const previous = await tx.select().from(seatMaps).where(eq(seatMaps.performanceId, performanceId));
-    const comparable = (rows: Array<{ floorKey: string; floorLabel: string; sortOrder: number; svgUrl: string; seatConfig: unknown; totalSeats: number }>) => rows
-      .map(({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig, totalSeats }) => ({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig: seatConfig ?? null, totalSeats }))
+    const comparable = (rows: Array<{ floorKey: string; floorLabel: string; sortOrder: number; svgUrl: string; seatConfig: unknown; totalSeats: number }>,
+      trimTierNames = false) => rows
+      .map(({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig, totalSeats }) => ({ floorKey, floorLabel, sortOrder, svgUrl,
+        seatConfig: trimTierNames ? withTrimmedTierNames(seatConfig) : seatConfig ?? null, totalSeats }))
       .sort((a, b) => a.floorKey.localeCompare(b.floorKey));
     if (stableJson(comparable(previous)) === stableJson(comparable(floors))) return;
-    this.assertStructureChangeAllowed(protectedStructure ?? await this.lockAndCheckStructureProtection(tx, performanceId), 'seatMaps');
+    const structureProtected = protectedStructure ?? await this.lockAndCheckStructureProtection(tx, performanceId);
+    // Seat maps saved before tier names were trimmed at the API boundary come back
+    // trimmed from the form; that alone must not block copy edits on an open sale.
+    if (structureProtected && stableJson(comparable(previous, true)) === stableJson(comparable(floors, true))) return;
+    this.assertStructureChangeAllowed(structureProtected, 'seatMaps');
     const overlay = await this.syncVenueLayoutOverlay(
       tx,
       performanceId,
@@ -508,11 +516,14 @@ export class PerformanceIntakeService {
     await tx.delete(venueLayoutSeats).where(eq(venueLayoutSeats.layoutId, layoutId));
     await tx.delete(venueLayoutFloors).where(eq(venueLayoutFloors.layoutId, layoutId));
 
+    // Price tier snapshots are trimmed, so seat-side names must be trimmed the same
+    // way or a tier's seats silently lose their assignment.
     const tierColorByName = new Map<string, string>();
     for (const floor of floors) {
       for (const tier of floor.seatConfig?.tiers ?? []) {
-        if (!tierColorByName.has(tier.tierName)) {
-          tierColorByName.set(tier.tierName, tier.color);
+        const tierName = tier.tierName.trim();
+        if (!tierColorByName.has(tierName)) {
+          tierColorByName.set(tierName, tier.color);
         }
       }
     }
@@ -561,7 +572,7 @@ export class PerformanceIntakeService {
         for (const sourceSeatId of tier.seatIds) {
           seatTierBySeatKey.set(
             this.toStableSeatKey(floor.floorKey, sourceSeatId),
-            tier.tierName,
+            tier.tierName.trim(),
           );
         }
       }
@@ -659,6 +670,15 @@ export class PerformanceIntakeService {
 
     return { rowLabel: null, seatNumber: null };
   }
+}
+
+function withTrimmedTierNames(seatConfig: unknown): unknown {
+  const tiers = (seatConfig as { tiers?: unknown } | null)?.tiers;
+  if (!Array.isArray(tiers)) return seatConfig ?? null;
+  return { ...(seatConfig as Record<string, unknown>), tiers: tiers.map((tier) => {
+    const name = (tier as { tierName?: unknown } | null)?.tierName;
+    return typeof name === 'string' ? { ...(tier as Record<string, unknown>), tierName: name.trim() } : tier;
+  }) };
 }
 
 function stableJson(value: unknown): string {

@@ -192,6 +192,7 @@ export const adminAuditActionSchema = z.enum([
   ...ADMIN_CAPABILITIES,
   'field.scan.offline_sync',
   'event.update',
+  'event.delete',
   'refund.admin_refund',
   'support.assign',
   'support.resolve',

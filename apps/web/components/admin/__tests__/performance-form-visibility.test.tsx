@@ -241,6 +241,22 @@ describe('PerformanceForm copy visibility controls', () => {
     }), { showErrorToast: false }));
   });
 
+  it('keeps a half-typed sale start year visible and refuses to save it as year 0002', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PerformanceForm mode="edit" initialStep="seats" initialData={{ ...fixturePerformance,
+      bookingPolicy: { ...fixturePerformance.bookingPolicy, bookingStartsAt: '2025-10-01T11:00:00.000Z' } }} performanceId={fixturePerformance.id} />);
+    const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
+
+    // The browser reports year 0002 after the first digit typed into the year segment.
+    fireEvent.change(input, { target: { value: '0002-10-01T20:00' } });
+    expect(input.value).toBe('0002-10-01T20:00');
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
+
+    await waitFor(() => expect(screen.getAllByText(/예매 오픈 시각은 ISO datetime|판매 시작 일시는 2000년부터/).length).toBeGreaterThan(0));
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
   it('creates a new showtime from the visible date and time without an empty persisted identity', async () => {
     const user = userEvent.setup();
     renderWithClient(<PerformanceForm mode="edit" initialStep="seats" initialData={fixturePerformance} performanceId={fixturePerformance.id} />);

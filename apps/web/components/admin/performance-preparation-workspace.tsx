@@ -8,6 +8,7 @@ import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
+import { describeSaleOpening } from './event-publish-confirmation-dialog';
 
 export function PerformancePreparationWorkspace({ id }: { id: string }) {
   const user = useAuthStore((state) => state.user);
@@ -35,7 +36,7 @@ export function PerformancePreparationWorkspace({ id }: { id: string }) {
             {data.checks.map((check) => <li key={check.key} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-3 py-5 sm:items-center">
               <span className={`flex h-7 w-7 items-center justify-center rounded-full text-white ${check.ready ? 'bg-emerald-600' : 'bg-amber-600'}`}>
                 {check.ready ? <Check size={18} /> : <CircleAlert size={18} />}</span>
-              <div className="grid gap-1 lg:grid-cols-[150px_minmax(0,1fr)]"><span className="text-sm font-semibold">{check.label}</span><span className="text-sm leading-6 text-gray-500">{check.key === 'sales' && data.bookingStartsAt ? `판매 시작 ${formatAdminKstDateTime(data.bookingStartsAt).replace('T', ' ')} KST` : check.detail}</span></div>
+              <div className="grid gap-1 lg:grid-cols-[150px_minmax(0,1fr)]"><span className="text-sm font-semibold">{check.label}</span><span className="text-sm leading-6 text-gray-500">{check.detail}</span></div>
               <Link className="text-sm font-medium text-violet-700 underline-offset-4 hover:underline" href={href(`/admin/performances/${id}/edit?step=${check.step}`)}>
                 <span className={`mr-4 hidden sm:inline ${check.ready ? 'text-emerald-700' : 'text-amber-700'}`}>{check.ready ? '준비됨' : '확인 필요'}</span>수정<span className="sr-only">: {check.label}</span> ›</Link>
             </li>)}
@@ -61,7 +62,7 @@ export function PerformancePreparationWorkspace({ id }: { id: string }) {
       <aside className="h-fit rounded-lg border border-gray-200 bg-slate-50 p-5 text-sm leading-7">
         <h2 className="mb-5 flex items-center gap-2 text-lg font-bold"><Info size={20} className="text-blue-600" />판매 전 확인</h2>
         <p className="font-semibold">게시와 판매 시작은 구분됩니다.</p><p className="mt-2 text-gray-600">공개 후에도 판매 상태, 판매 시작 시각과 예매 허용 설정이 충족되어야 구매할 수 있습니다.</p>
-        <dl className="my-5 border-y border-gray-200 py-4"><dt className="text-gray-500">현재 공개 상태</dt><dd className="font-semibold">{data.publishState === 'published' ? '공개됨' : '비공개 준비 중'}</dd><dt className="mt-3 text-gray-500">판매 시작 · 한국 시간</dt><dd>{data.bookingStartsAt ? `${formatAdminKstDateTime(data.bookingStartsAt).replace('T', ' ')} KST` : '시각 미지정'}</dd></dl>
+        <dl className="my-5 border-y border-gray-200 py-4"><dt className="text-gray-500">현재 공개 상태</dt><dd className="font-semibold">{data.publishState === 'published' ? '공개됨' : '비공개 준비 중'}</dd><dt className="mt-3 text-gray-500">{data.publishState === 'published' ? '판매 시작 · 한국 시간' : '공개 시 판매 개시 · 한국 시간'}</dt><dd>{data.publishState !== 'published' && data.saleOpening ? describeSaleOpening({ saleOpening: data.saleOpening }) : data.bookingStartsAt ? `${formatAdminKstDateTime(data.bookingStartsAt).replace('T', ' ')} KST` : '시각 미지정'}</dd></dl>
         {data.publishState === 'published' ? <Link href={`/performance/${id}`} className="font-semibold text-violet-700">구매자 화면 보기 ↗</Link> : <p className="text-gray-600">준비 중인 공연은 공개 승인 후 구매자 화면에 나타납니다.</p>}
         {(capability.superuser || capability.capabilities.includes('benefits.manage')) && <Link href={href('/admin/benefits')} className="mt-3 block font-semibold text-violet-700">회차별 특전 설정 확인 ›</Link>}
       </aside>
