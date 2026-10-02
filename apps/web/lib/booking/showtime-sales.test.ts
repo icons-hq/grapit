@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 import {
   SHOWTIME_SALES_CLOSED_MESSAGE,
   filterBookableShowtimes,
@@ -46,5 +47,32 @@ describe('showtime sales cutoff (audit #2, contract C1)', () => {
     expect(isShowtimeSalesClosedError({ statusCode: 403, message: '대기열 입장 정보가 현재 공연과 일치하지 않습니다' })).toBe(false);
     expect(isShowtimeSalesClosedError({ statusCode: 409, message: SHOWTIME_SALES_CLOSED_MESSAGE })).toBe(false);
     expect(isShowtimeSalesClosedError(null)).toBe(false);
+  });
+});
+
+describe('showtime sales cutoff on the server clock (audit #2, #97)', () => {
+  afterEach(() => {
+    resetServerClockForTests();
+    vi.useRealTimers();
+  });
+
+  function deviceClockSlowBy(ms: number) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(START_MS - ms + 1_000);
+    // The server is 1 s past the start while the device is `ms` behind.
+    recordServerTimeSample({
+      serverNowMs: START_MS + 1_000,
+      requestStartedAtMs: Date.now() - 50,
+      responseReceivedAtMs: Date.now() + 50,
+    });
+  }
+
+  it('closes a started showtime by default even when the device clock is slow', () => {
+    deviceClockSlowBy(90_000);
+
+    expect(isShowtimeSalesClosed(START, Date.now())).toBe(false);
+    expect(isShowtimeSalesClosed(START)).toBe(true);
+    expect(filterBookableShowtimes([{ dateTime: START }])).toEqual([]);
+    expect(getNextShowtimeCutoffAt([{ dateTime: START }])).toBeNull();
   });
 });

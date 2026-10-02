@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
+import { getServerNowMs } from '@/lib/server-clock';
 
 /**
  * A hold deadline closer than this is treated as already over: it cannot be
@@ -141,7 +142,8 @@ export const useBookingStore = create<BookingState>((set) => ({
   setTimerExpiry: (expiresAt) =>
     set((state) => {
       const isTimerExpired = state.isTimerExpired
-        && expiresAt - Date.now() <= HOLD_EXPIRY_MARGIN_MS;
+        // Server deadline vs. the server-corrected clock (lib/server-clock.ts).
+        && expiresAt - getServerNowMs() <= HOLD_EXPIRY_MARGIN_MS;
       if (state.timerExpiresAt === expiresAt && state.isTimerExpired === isTimerExpired) {
         return state;
       }

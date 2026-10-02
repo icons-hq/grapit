@@ -1,4 +1,5 @@
 import type { Showtime } from '@grabit/shared';
+import { getServerNowMs } from '@/lib/server-clock';
 
 /**
  * Server message for a lock/prepare rejected because the showtime already
@@ -17,16 +18,17 @@ function parseShowtimeStart(dateTime: string): number {
 /**
  * Sales cutoff for a showtime: once `now >= showtimes.date_time` the showtime
  * can no longer be booked. No offset and no admin bypass. An unparseable
- * date is left to the server to decide.
+ * date is left to the server to decide. `now` defaults to the server-corrected
+ * clock (lib/server-clock.ts), like every other booking time decision.
  */
-export function isShowtimeSalesClosed(dateTime: string, now: number = Date.now()): boolean {
+export function isShowtimeSalesClosed(dateTime: string, now: number = getServerNowMs()): boolean {
   const startsAt = parseShowtimeStart(dateTime);
   return Number.isFinite(startsAt) && now >= startsAt;
 }
 
 export function filterBookableShowtimes<T extends Pick<Showtime, 'dateTime'>>(
   showtimes: readonly T[],
-  now: number = Date.now(),
+  now: number = getServerNowMs(),
 ): T[] {
   return showtimes.filter((showtime) => !isShowtimeSalesClosed(showtime.dateTime, now));
 }
@@ -34,7 +36,7 @@ export function filterBookableShowtimes<T extends Pick<Showtime, 'dateTime'>>(
 /** Earliest future cutoff, used to re-evaluate the list exactly when a showtime closes. */
 export function getNextShowtimeCutoffAt(
   showtimes: readonly Pick<Showtime, 'dateTime'>[],
-  now: number = Date.now(),
+  now: number = getServerNowMs(),
 ): number | null {
   let next: number | null = null;
   for (const showtime of showtimes) {
@@ -47,7 +49,7 @@ export function getNextShowtimeCutoffAt(
   return next;
 }
 
-export function getCutoffTimerDelay(cutoffAt: number, now: number = Date.now()): number {
+export function getCutoffTimerDelay(cutoffAt: number, now: number = getServerNowMs()): number {
   return Math.min(Math.max(0, cutoffAt - now), MAX_TIMEOUT_DELAY_MS);
 }
 

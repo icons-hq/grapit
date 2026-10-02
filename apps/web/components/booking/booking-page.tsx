@@ -29,6 +29,7 @@ import {
 import { HOLD_EXPIRY_MARGIN_MS, useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useServerClockOffsetMs } from '@/hooks/use-server-clock';
 import { ApiClientError } from '@/lib/api-client';
 import { getDefaultErrorMessage, getStatusMessages } from '@/lib/error-messages';
 import { BookingDisabledError } from '@/lib/runtime-flags';
@@ -45,6 +46,7 @@ import {
   isSameKstCalendarDate,
 } from '@/lib/booking-datetime';
 import { earliestDeadline } from '@/lib/booking/queue-access';
+import { getServerNowMs } from '@/lib/server-clock';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
@@ -89,26 +91,29 @@ function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
 }
 
 /**
- * Wall-clock `now` that advances exactly when the next showtime reaches its
- * sales cutoff (`now >= dateTime`), and when the tab becomes visible again
- * (timers are throttled while hidden or asleep).
+ * Server-corrected `now` (lib/server-clock.ts) that advances exactly when the
+ * next showtime reaches its sales cutoff (`now >= dateTime`), when the server
+ * clock offset is corrected, and when the tab becomes visible again (timers are
+ * throttled while hidden or asleep).
  */
 function useShowtimeSalesClock(showtimes: readonly Showtime[]): number {
-  const [now, setNow] = useState(() => Date.now());
+  const [deviceNow, setDeviceNow] = useState(() => Date.now());
+  const serverClockOffsetMs = useServerClockOffsetMs();
+  const now = deviceNow + serverClockOffsetMs;
 
   useEffect(() => {
     const nextCutoffAt = getNextShowtimeCutoffAt(showtimes, now);
     if (nextCutoffAt === null) {
       return undefined;
     }
-    const timeout = window.setTimeout(() => setNow(Date.now()), getCutoffTimerDelay(nextCutoffAt));
+    const timeout = window.setTimeout(() => setDeviceNow(Date.now()), getCutoffTimerDelay(nextCutoffAt));
     return () => window.clearTimeout(timeout);
   }, [now, showtimes]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        setNow(Date.now());
+        setDeviceNow(Date.now());
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -1069,7 +1074,7 @@ export function BookingPage({
           snapshot
           && snapshot.seatIds.length > 0
           && serverExpiresAt !== null
-          && serverExpiresAt - Date.now() > HOLD_EXPIRY_MARGIN_MS
+          && serverExpiresAt - getServerNowMs() > HOLD_EXPIRY_MARGIN_MS
           && state.selectedSeats.length > 0
         ) {
           setTimerExpiry(serverExpiresAt);
