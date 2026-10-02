@@ -163,7 +163,7 @@ The following table summarizes actual controller groups. It is intentionally gro
 | Queue | `POST /api/v1/queue/performances/:performanceId/enter`, `GET /api/v1/queue/sessions/:queueSessionId` |
 | Booking | `POST /api/v1/booking/seats/lock`, `DELETE /api/v1/booking/seats/lock/:showtimeId/:seatId`, `GET /api/v1/booking/my-locks/:showtimeId`, `DELETE /api/v1/booking/seats/lock-all/:showtimeId`, `GET /api/v1/booking/schedules/:showtimeId/seats` |
 | Reservation/payment confirm | `POST /api/v1/reservations/prepare`, `POST /api/v1/payments/confirm`, `GET /api/v1/users/me/reservations`, `GET /api/v1/reservations`, `GET /api/v1/reservations/:id`, `PUT /api/v1/reservations/:id/cancel`, `PUT /api/v1/reservations/:id/cancel-pending` |
-| Payment | `POST /api/v1/payments/branch`, `POST /api/v1/payments/toss/webhook` |
+| Payment | `POST /api/v1/payments/branch`, `POST /api/v1/payments/branch/release`, `POST /api/v1/payments/async-return`, `POST /api/v1/payments/toss/webhook` |
 | Refund | `GET /api/v1/reservations/:id/refund-preview`, `POST /api/v1/reservations/:id/refund` |
 | Ticket | `GET /api/v1/tickets/reservations/:id` |
 | Field | `POST /api/v1/field/check-in/verify`, `POST /api/v1/field/check-in/consume`, `POST /api/v1/field/check-in/offline-sync`, `GET /api/v1/field/monitor/summary`, `GET /api/v1/field/monitor/logs` |
@@ -263,6 +263,16 @@ owned seat locks; an unknown in-flight checkout cannot be abandoned during its a
 window. A fail URL alone never cancels or replaces an order. See
 [the prepared checkout ADR](adr/0010-preserve-prepared-checkout-across-provider-returns.md).
 
+The browser validates the live widget selection and payment-terms status before handoff.
+When the Toss SDK rejects before its checkout opens (for example `NEED_CARD_PAYMENT_DETAIL`)
+or the branch response is lost, it calls `POST /api/v1/payments/branch/release`; the server
+clears the handoff only for merchant-confirmed methods, within 45 seconds, with no Payment
+row and under the order's confirm lease. The pending-payment worker fails a handoff whose
+release never arrived only after deadline + 45 minutes and only when the Toss transaction
+ledger for that MID has no transaction for the order (`AbandonedPaymentHandoffService`;
+`PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` disables it). Asynchronous wallets are never
+released or failed this way.
+
 ### 6.4 Payment Confirm
 
 `ReservationService.confirmAndCreateReservation` and payment services coordinate:
@@ -273,6 +283,13 @@ window. A fail URL alone never cancels or replaces an order. See
 - conditional sold transition in PostgreSQL,
 - compensation cancellation if provider confirmation succeeds but finalization fails,
 - QR ticket issuance after confirmed payment.
+
+Only the returning browser holds the paymentKey, so the complete page repeats the confirm
+POST on transient failures (lost request/response, 408/425/429/5xx without a decided
+outcome, and a busy confirm lease) up to three times with 1s/2s/4s backoff, then offers a
+manual resend. Definite rejections go straight to order lookup. After confirmation the page
+replaces the one-time provider return parameters with `pending=true&orderId=...`, so a
+reload reads the order instead of confirming again.
 
 Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
 

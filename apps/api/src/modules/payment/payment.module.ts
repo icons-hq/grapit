@@ -8,6 +8,7 @@ import { TossPaymentsClient } from './toss-payments.client.js';
 import { PaymentService } from './payment.service.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
+import { AbandonedPaymentHandoffService } from './abandoned-payment-handoff.service.js';
 
 @Module({
   imports: [BookingModule, TicketModule, CancellationModule],
@@ -17,7 +18,13 @@ import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
     PaymentService,
     TossWebhookGuard,
     ProviderChargeQuoteService,
+    AbandonedPaymentHandoffService,
   ],
-  exports: [TossPaymentsClient, PaymentService, ProviderChargeQuoteService],
+  exports: [
+    TossPaymentsClient,
+    PaymentService,
+    ProviderChargeQuoteService,
+    AbandonedPaymentHandoffService,
+  ],
 })
 export class PaymentModule {}

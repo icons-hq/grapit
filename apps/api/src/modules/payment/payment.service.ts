@@ -58,6 +58,11 @@ import {
   paymentTerminalFailureDiagnostic,
   recordReservationPaymentFailureDiagnostic,
 } from './payment-failure-diagnostic.js';
+import {
+  PAYMENT_HANDOFF_RELEASE_WINDOW_MS,
+  PAYMENT_HANDOFF_UNKNOWN_MESSAGE,
+  isMerchantConfirmedCheckoutMethod,
+} from './payment-handoff-policy.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -106,6 +111,17 @@ export interface TossPaymentBranch {
   providerChargeQuote?: ProviderChargeQuote;
   checkoutEnabled?: boolean;
   disabledReason?: string;
+  paymentDeadlineAt?: string;
+}
+
+export interface TossPaymentHandoffReleaseRequest {
+  orderId: string;
+  userId: string;
+}
+
+export interface TossPaymentHandoffRelease {
+  orderId: string;
+  released: true;
   paymentDeadlineAt?: string;
 }
 
@@ -519,6 +535,108 @@ export class PaymentService {
       }
     }
     return effectiveDeadlineAt.toISOString();
+  }
+
+  /**
+   * Reopens a Prepared Checkout whose provider SDK rejected before opening checkout
+   * (card issuer not selected, a selection race, invalid parameters). Without this the
+   * order keeps `checkout_started_at` with no provider payment, so no webhook ever
+   * resolves it and retry, abandonment and expiry stay blocked.
+   *
+   * Only merchant-confirmed methods qualify, only inside the short release window,
+   * only while no Payment exists, and only while holding the same confirm lease that
+   * payment confirm and async progress use.
+   */
+  async releaseTossPaymentHandoff(
+    input: TossPaymentHandoffReleaseRequest,
+    now: Date = new Date(),
+  ): Promise<TossPaymentHandoffRelease> {
+    const { orderId, userId } = input;
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        status: reservations.status,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        checkoutStartedAt: reservations.checkoutStartedAt,
+      })
+      .from(reservations)
+      .where(and(
+        eq(reservations.tossOrderId, orderId),
+        eq(reservations.userId, userId),
+      ));
+
+    if (!reservation?.id) {
+      throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
+    }
+    if (reservation.status !== 'PENDING_PAYMENT') {
+      throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    const toRelease = (paymentDeadlineAt: Date | null | undefined): TossPaymentHandoffRelease => ({
+      orderId,
+      released: true,
+      ...(this.isValidDate(paymentDeadlineAt)
+        ? { paymentDeadlineAt: paymentDeadlineAt.toISOString() }
+        : {}),
+    });
+
+    if (!reservation.checkoutStartedAt) {
+      return toRelease(reservation.paymentDeadlineAt);
+    }
+
+    const handoffAgeMs = now.getTime() - reservation.checkoutStartedAt.getTime();
+    if (
+      !reservation.checkoutPaymentMethod
+      || !isMerchantConfirmedCheckoutMethod(reservation.checkoutPaymentMethod)
+      || !Number.isFinite(handoffAgeMs)
+      || handoffAgeMs > PAYMENT_HANDOFF_RELEASE_WINDOW_MS
+    ) {
+      throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+    }
+
+    if (!this.bookingService) {
+      throw new InternalServerErrorException('결제 확인 잠금 서비스가 설정되지 않았습니다');
+    }
+
+    const leaseToken = randomUUID();
+    let leaseAcquired: boolean;
+    try {
+      leaseAcquired = await this.bookingService.acquirePaymentConfirmLock(orderId, leaseToken);
+    } catch {
+      throw new ServiceUnavailableException('결제 상태를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
+    }
+    if (!leaseAcquired) {
+      throw new ConflictException('결제 확인이 이미 진행 중입니다.');
+    }
+
+    try {
+      const [released] = await this.db
+        .update(reservations)
+        .set({ checkoutStartedAt: null, updatedAt: now })
+        .where(and(
+          eq(reservations.id, reservation.id),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          eq(reservations.checkoutStartedAt, reservation.checkoutStartedAt),
+          sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`,
+          sql`not exists (
+            select 1 from ${payments}
+            where ${payments.reservationId} = ${reservations.id}
+          )`,
+        ))
+        .returning({
+          id: reservations.id,
+          paymentDeadlineAt: reservations.paymentDeadlineAt,
+        });
+      if (!released) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+      return toRelease(released.paymentDeadlineAt);
+    } finally {
+      await this.bookingService
+        .releasePaymentConfirmLock(orderId, leaseToken)
+        .catch(() => undefined);
+    }
   }
 
   private isValidDate(value: Date | null | undefined): value is Date {

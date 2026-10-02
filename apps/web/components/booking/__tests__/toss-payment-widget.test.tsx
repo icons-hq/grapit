@@ -302,6 +302,105 @@ describe('TossPaymentWidget', () => {
     });
     expect(await request).toEqual(expect.objectContaining({ message: expect.stringContaining('결제수단이 변경되었습니다') }));
     expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+    expect(apiClientPostMock).toHaveBeenLastCalledWith(
+      '/api/v1/payments/branch/release',
+      { orderId: defaultProps.orderId },
+      { showErrorToast: false },
+    );
+  });
+
+  it('hands the order back when the SDK rejects before opening checkout, then reports the SDK error', async () => {
+    const sdkError = Object.assign(new Error('카드 결제 정보를 선택해주세요.'), {
+      code: 'NEED_CARD_PAYMENT_DETAIL',
+    });
+    widgetsRequestPaymentMock.mockRejectedValueOnce(sdkError);
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    await expect(ref.current!.requestPayment()).rejects.toBe(sdkError);
+
+    expect(apiClientPostMock).toHaveBeenNthCalledWith(1, '/api/v1/payments/branch', expect.objectContaining({
+      orderId: defaultProps.orderId,
+    }), { showErrorToast: false });
+    expect(apiClientPostMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/payments/branch/release',
+      { orderId: defaultProps.orderId },
+      { showErrorToast: false },
+    );
+    expect(widgetsRequestPaymentMock.mock.invocationCallOrder[0]!)
+      .toBeLessThan(apiClientPostMock.mock.invocationCallOrder[1]!);
+  });
+
+  it('keeps reporting the SDK error when the handoff release itself fails', async () => {
+    const sdkError = Object.assign(new Error('필수 약관에 동의해주세요.'), {
+      code: 'NEED_AGREEMENT_WITH_REQUIRED_TERMS',
+    });
+    widgetsRequestPaymentMock.mockRejectedValueOnce(sdkError);
+    apiClientPostMock
+      .mockResolvedValueOnce({
+        orderId: defaultProps.orderId, method: 'CARD', provider: 'CARD', currency: 'KRW',
+        successUrl: 'https://grabit.test/complete', failUrl: 'https://grabit.test/confirm',
+        asyncStatus: 'sync', useInternationalCardOnly: false,
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('결제 상태를 확인 중입니다.'), { statusCode: 409 }));
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    await expect(ref.current!.requestPayment()).rejects.toBe(sdkError);
+    expect(apiClientPostMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands back a handoff whose branch response was lost, but never one refused over HTTP', async () => {
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    const lost = new TypeError('Failed to fetch');
+    apiClientPostMock.mockRejectedValueOnce(lost).mockResolvedValueOnce({ orderId: defaultProps.orderId, released: true });
+    await expect(ref.current!.requestPayment()).rejects.toBe(lost);
+    expect(apiClientPostMock).toHaveBeenLastCalledWith(
+      '/api/v1/payments/branch/release',
+      { orderId: defaultProps.orderId },
+      { showErrorToast: false },
+    );
+
+    apiClientPostMock.mockClear();
+    const otherTab = Object.assign(new Error('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.'), { statusCode: 409 });
+    apiClientPostMock.mockRejectedValueOnce(otherTab);
+    await expect(ref.current!.requestPayment()).rejects.toBe(otherTab);
+    expect(apiClientPostMock).toHaveBeenCalledTimes(1);
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+  });
+
+  it('does not record a handoff when the live widget selection differs from the last selection event', async () => {
+    const onPaymentMethodChange = vi.fn();
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} onPaymentMethodChange={onPaymentMethodChange} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onPaymentMethodChange).toHaveBeenCalled());
+    getSelectedPaymentMethodMock.mockResolvedValueOnce({ code: 'KAKAOPAY' });
+
+    await expect(ref.current!.requestPayment()).rejects.toThrow('결제수단이 변경되었습니다');
+
+    expect(apiClientPostMock).not.toHaveBeenCalled();
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+    expect(onPaymentMethodChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      paymentMethod: expect.objectContaining({ method: 'SIMPLE_PAY', provider: 'KAKAOPAY' }),
+    }));
+  });
+
+  it('does not record a handoff after the buyer withdraws the payment terms agreement', async () => {
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    const onAgreement = agreementOnMock.mock.calls.find(([event]) => event === 'agreementStatusChange')![1];
+    onAgreement({ agreedRequiredTerms: false, agreements: [] });
+
+    await expect(ref.current!.requestPayment()).rejects.toThrow('결제 약관에 동의해주세요');
+    expect(apiClientPostMock).not.toHaveBeenCalled();
   });
 
   it('requests overseas card through the foreign payment widget in USD with provider-charge amount markers', async () => {

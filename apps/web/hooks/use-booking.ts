@@ -8,6 +8,11 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
 import {
+  CONFIRM_PAYMENT_MAX_RETRIES,
+  getConfirmPaymentRetryDelayMs,
+  isRetryableConfirmPaymentError,
+} from '@/lib/booking/payment-return';
+import {
   normalizeSeatIdentity,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
 } from '@grabit/shared';
@@ -356,6 +361,11 @@ export function useConfirmPayment() {
       apiClient.post<ReservationDetail>('/api/v1/payments/confirm', data, {
         showErrorToast: false,
       }),
+    // Only the browser holds the paymentKey; the server cannot approve on its own.
+    // A transient failure must not let the authenticated payment expire unconfirmed.
+    retry: (failureCount, error) =>
+      failureCount < CONFIRM_PAYMENT_MAX_RETRIES && isRetryableConfirmPaymentError(error),
+    retryDelay: (failureCount) => getConfirmPaymentRetryDelayMs(failureCount),
   });
 }
 

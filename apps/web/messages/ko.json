@@ -557,6 +557,8 @@
       "confirmFailedBody": "예매 내역을 확인하거나 다시 결제를 시도해주세요.",
       "confirmUnknownBody": "결제 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인하거나 예매 내역을 확인해주세요.",
       "retryStatus": "상태 다시 확인",
+      "retryConfirm": "결제 확인 다시 요청",
+      "confirmRetryBody": "결제 인증은 끝났지만 결제 확인 요청이 전달되지 않았어요. 네트워크 연결을 확인한 뒤 다시 요청해 주세요. 결제는 한 번만 승인됩니다.",
       "statusCheckFailed": "결제 상태 확인에 실패했습니다.",
       "deadlineExpired": "결제 가능 시각이 {deadline}에 만료되었습니다.",
       "pendingDeadline": "현재 주문은 {deadline}까지 결제 상태를 기다립니다."

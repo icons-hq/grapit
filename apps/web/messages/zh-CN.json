@@ -557,6 +557,8 @@
       "confirmFailedBody": "再次付款前，请先在预订记录中确认结果。",
       "confirmUnknownBody": "尚无法确认付款结果。请稍后重新查询，或查看预订记录。",
       "retryStatus": "重新检查状态",
+      "retryConfirm": "重新发送付款确认",
+      "confirmRetryBody": "付款验证已完成，但确认请求未能送达。请检查网络连接后重新发送。只会扣款一次。",
       "statusCheckFailed": "无法查询付款状态。",
       "deadlineExpired": "付款期限已于 {deadline} 结束。",
       "pendingDeadline": "此订单将等待付款状态至 {deadline}。"
