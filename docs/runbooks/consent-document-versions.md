@@ -70,7 +70,17 @@ WHERE "key" IN ('privacy', 'pipa_required')
 
 ## Rollback
 
-- The release that introduced `CONSENT_DOCUMENT_VERSIONS` changed the booking payload: the new web sends only `terms` and `privacy`. An API revision from before that release requires `pipa_required` for booking too, so rolling back only the API while the new web is live fails every reservation prepare with 400. Roll back the web first, or both together. Rolling back only the web is safe.
+- The release that introduced `CONSENT_DOCUMENT_VERSIONS` changed the booking payload: the new web sends only `terms` and `privacy`. An API revision from before that release requires `pipa_required` for booking too, so rolling back only the API while the new web is live fails every reservation prepare with 400. Roll back the web first, or both together.
+- Rolling back only the web (or the web first) is safe only while the `privacy` and `pipa_required` `2026-04-28` rows are still active, that is, before the retirement migration above. A web build from before `CONSENT_DOCUMENT_VERSIONS` sends `2026-04-28` for those keys, so after the retirement every signup, social completion and reservation prepare from it fails with 400. After the retirement, do not roll the web back past the release that introduced `CONSENT_DOCUMENT_VERSIONS`; if that is unavoidable, first reactivate exactly those rows (key and version together), then roll back:
+
+  ```sql
+  UPDATE "consent_items"
+  SET "is_active" = true, "updated_at" = now()
+  WHERE "key" IN ('privacy', 'pipa_required')
+    AND "version" = '2026-04-28';
+  ```
+
+- Seat selection does not block a web rollback: it stays safe through the seat-update compatibility event from booking-web-4.
 - Do not roll back a consent seed migration. Its rows are additive, the previous version stays active, and audit rows may already reference the new rows.
 
 ## Reading Historical Rows
@@ -86,5 +96,6 @@ Existing audit rows are never rewritten. Interpret them as follows:
 ## Admin Consent Audit Query
 
 - `GET /api/v1/admin/consent-audit` requires the admin role and the `audit.read` capability. The field scanner account (`field.scan.*` only) is denied.
+- The `email` filter is case-insensitive: the query is lower-cased and compared with `lower(users.email)`, so `Fan@Example.com` finds the account stored as `fan@example.com` (and legacy rows kept as typed).
 - Responses are pages of at most `limit` rows (default 100, maximum 500) ordered by `agreed_at` and `id` descending, with an opaque `nextCursor` for the next older page.
 - A query with no `from` and no user, email, or IP filter is limited to the 7 days ending at `to`, or at the current time when `to` is not set. The response returns that start as `defaultWindowFrom`, and the cursor carries it, so every page of one query uses the same window. Set `from`, or search by user, email, or IP, to read older rows.

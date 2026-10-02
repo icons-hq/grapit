@@ -152,7 +152,9 @@ export class ConsentService {
       predicates.push(eq(consentAuditLogs.userId, filters.userId));
     }
     if (filters.email) {
-      predicates.push(eq(users.email, filters.email));
+      // Case-insensitive like login (idx_users_email_lower); legacy rows may
+      // keep the address as typed.
+      predicates.push(sql`lower(${users.email}) = ${filters.email.trim().toLowerCase()}`);
     }
 
     // Without a period start or an identity filter the query would walk the

@@ -97,6 +97,11 @@ describe('admin consent audit query schema', () => {
     expect(consentAuditQuerySchema.safeParse({ limit: '0' }).success).toBe(false);
   });
 
+  it('normalises the email filter to the lower-case address accounts store', () => {
+    expect(consentAuditQuerySchema.parse({ email: '  Fan@Example.COM ' }).email).toBe('fan@example.com');
+    expect(consentAuditQuerySchema.safeParse({ email: 'not-an-email' }).success).toBe(false);
+  });
+
   it('rejects an inverted period', () => {
     expect(consentAuditQuerySchema.safeParse({
       from: '2026-05-02T00:00:00.000Z',
