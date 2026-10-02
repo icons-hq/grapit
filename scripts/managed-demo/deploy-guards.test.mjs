@@ -12,10 +12,12 @@ import {
   evaluateDbPreflight,
   evaluateMigrationFreeze,
   findPendingMigrations,
+  formatCloudRunEnvVarLines,
   parseStrictBoolean,
   postgresSettingToMs,
   readServiceEnvValue,
   resolveDeployBookingValue,
+  resolveOptionalRuntimeEnv,
   runtimeBookingEnabled,
   validateDeployConfig,
 } from './deploy-guards.mjs';
@@ -306,6 +308,63 @@ test('parses PostgreSQL duration settings returned by current_setting()', () => 
   assert.throws(() => postgresSettingToMs('soon'), /Unrecognized/);
 });
 
+test('optional runtime settings reach a service only when their variable is set (u18a/u09b handoff)', () => {
+  // Unset (workflow passes blank vars): every process keeps its code default, so the
+  // producer-only API stays at 1 pg-boss connection instead of the budget input 3.
+  assert.deepEqual(resolveOptionalRuntimeEnv(workflowDefaults, 'api'), []);
+  assert.deepEqual(
+    resolveOptionalRuntimeEnv({ ...workflowDefaults, RUNTIME_PGBOSS_POOL_MAX: '  ' }, 'worker'),
+    [],
+  );
+
+  const env = {
+    ...workflowDefaults,
+    RUNTIME_PGBOSS_POOL_MAX: '2',
+    RUNTIME_DB_STATEMENT_TIMEOUT_MS: '30000',
+    RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: '120000',
+    RUNTIME_SMS_ALLOWED_COUNTRIES: 'kr, th,CN',
+    RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: 'true',
+  };
+  assert.deepEqual(resolveOptionalRuntimeEnv(env, 'api'), [
+    ['PGBOSS_POOL_MAX', '2'],
+    ['DB_STATEMENT_TIMEOUT_MS', '30000'],
+    ['DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS', '120000'],
+    ['SMS_ALLOWED_COUNTRIES', 'KR,TH,CN'],
+    ['SMS_LOCAL_RATE_LIMITS_ENABLED', 'true'],
+  ]);
+  // SMS settings are API-only; the worker never sends SMS.
+  assert.deepEqual(resolveOptionalRuntimeEnv(env, 'worker'), [
+    ['PGBOSS_POOL_MAX', '2'],
+    ['DB_STATEMENT_TIMEOUT_MS', '30000'],
+    ['DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS', '120000'],
+  ]);
+});
+
+test('optional runtime settings fail validation instead of failing every instance at startup', () => {
+  for (const [env, pattern] of [
+    [{ RUNTIME_DB_STATEMENT_TIMEOUT_MS: '0' }, /RUNTIME_DB_STATEMENT_TIMEOUT_MS must be between 1/],
+    [{ RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: '2m' }, /must be an integer/],
+    [{ RUNTIME_PGBOSS_START_MAX_ATTEMPTS: '-1' }, /must be an integer/],
+    [{ RUNTIME_SMS_ALLOWED_COUNTRIES: 'KOR' }, /ISO 3166-1 alpha-2/],
+    [{ RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: 'off' }, /must be exactly "true" or "false"/],
+    // The runtime pool can never exceed what the connection budget counted.
+    [{ RUNTIME_PGBOSS_POOL_MAX: '4' }, /must not exceed the PGBOSS_POOL_MAX budget input/],
+  ]) {
+    assert.throws(() => validateDeployConfig({ ...workflowDefaults, ...env }), pattern);
+  }
+});
+
+test('runtime env lines survive the deploy-cloudrun KEY=VALUE parser', () => {
+  assert.equal(formatCloudRunEnvVarLines([]), '');
+  assert.equal(
+    formatCloudRunEnvVarLines([
+      ['DB_STATEMENT_TIMEOUT_MS', '30000'],
+      ['SMS_ALLOWED_COUNTRIES', 'KR,TH'],
+    ]),
+    'DB_STATEMENT_TIMEOUT_MS=30000\nSMS_ALLOWED_COUNTRIES=KR\\,TH',
+  );
+});
+
 async function runGuards(args, { env = {}, files = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'deploy-guards-'));
   try {
@@ -405,6 +464,28 @@ test('CLI booking-gate-value writes the deploy value to GITHUB_OUTPUT', async ()
   assert.match(twoServices.stderr, /exactly one --service/);
 });
 
+test('CLI runtime-env writes only the set API settings as a multiline output', async () => {
+  const unset = await runGuards(['runtime-env', '--target', 'api']);
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.match(unset.githubOutput, /^env_vars<<(EOF_[A-Z_0-9]+)\n\n\1\n$/);
+
+  const set = await runGuards(['runtime-env', '--target', 'api'], {
+    env: {
+      RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: '120000',
+      RUNTIME_SMS_ALLOWED_COUNTRIES: 'KR,TH',
+    },
+  });
+  assert.equal(set.status, 0, set.stderr);
+  assert.match(
+    set.githubOutput,
+    /^env_vars<<(EOF_[A-Z_0-9]+)\nDB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS=120000\nSMS_ALLOWED_COUNTRIES=KR\\,TH\n\1\n$/,
+  );
+
+  const bad = await runGuards(['runtime-env', '--target', 'web']);
+  assert.equal(bad.status, 1);
+  assert.equal(bad.githubOutput, '');
+});
+
 function workflowJob(workflow, name) {
   const start = workflow.indexOf(`\n  ${name}:\n`);
   assert.ok(start > 0, `job ${name} exists`);
@@ -456,4 +537,31 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   // #54/#58: the budget default matches the pg-boss pool cap the API code sets
   // (3 with background processing, 1 producer-only), not the pg-boss library default 10.
   assert.match(workflow, /PGBOSS_POOL_MAX: \$\{\{ vars\.PGBOSS_POOL_MAX \|\| '3' \}\}/);
+
+  // u18a → u20 handoff: the runtime pool and session limits come from the same
+  // repository variables with no workflow default, and the API passes them only when set.
+  assert.match(workflow, /RUNTIME_PGBOSS_POOL_MAX: \$\{\{ vars\.PGBOSS_POOL_MAX \}\}\n/);
+  for (const name of [
+    'PGBOSS_START_MAX_ATTEMPTS',
+    'DB_STATEMENT_TIMEOUT_MS',
+    'DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS',
+    'SMS_ALLOWED_COUNTRIES',
+    'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE',
+    'SMS_GLOBAL_SEND_LIMIT_PER_HOUR',
+    'SMS_LOCAL_RATE_LIMITS_ENABLED',
+  ]) {
+    assert.match(workflow, new RegExp(`RUNTIME_${name}: \\$\\{\\{ vars\\.${name} \\}\\}\\n`));
+  }
+  const api = workflowJob(workflow, 'deploy-api');
+  const resolve = api.indexOf('deploy-guards.mjs runtime-env --target api');
+  assert.ok(resolve > 0 && resolve < api.indexOf('google-github-actions/deploy-cloudrun@'));
+  assert.match(api, /\n {12}\$\{\{ steps\.runtime_env\.outputs\.env_vars \}\}\n {10}secrets: \|/);
+  assert.doesNotMatch(api, /\n {12}(PGBOSS_POOL_MAX|DB_STATEMENT_TIMEOUT_MS)=/);
+
+  // #7 follow-up: with the self-reconnecting Valkey client (u07) the liveness probe samples
+  // every 10s and tolerates 6 failures (about one minute) before restarting an instance.
+  assert.match(
+    workflow,
+    /--liveness-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6\n/,
+  );
 });

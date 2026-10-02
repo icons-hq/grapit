@@ -52,6 +52,20 @@ env:
   PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX || '3' }}
   DB_CONNECTION_RESERVE: ${{ vars.DB_CONNECTION_RESERVE || '5' }}
   DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'false' }}
+  # Optional runtime settings, passed to the API and worker only when the repository
+  # variable is set (deploy-guards.mjs runtime-env); unset keeps each process's code
+  # default. RUNTIME_PGBOSS_POOL_MAX has no default on purpose: the producer-only API
+  # uses 1 pg-boss connection and the worker 3, while PGBOSS_POOL_MAX above is only the
+  # worst-case budget input. Removing a variable later does not remove a value already
+  # set on the API service (env vars are merged); see the cost-floor runbook.
+  RUNTIME_PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX }}
+  RUNTIME_PGBOSS_START_MAX_ATTEMPTS: ${{ vars.PGBOSS_START_MAX_ATTEMPTS }}
+  RUNTIME_DB_STATEMENT_TIMEOUT_MS: ${{ vars.DB_STATEMENT_TIMEOUT_MS }}
+  RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: ${{ vars.DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS }}
+  RUNTIME_SMS_ALLOWED_COUNTRIES: ${{ vars.SMS_ALLOWED_COUNTRIES }}
+  RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_MINUTE }}
+  RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_HOUR: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_HOUR }}
+  RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: ${{ vars.SMS_LOCAL_RATE_LIMITS_ENABLED }}
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
@@ -289,6 +303,9 @@ jobs:
           fi
           node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
             --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json"
+      - name: Resolve optional API runtime settings
+        id: runtime_env
+        run: node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.API_SERVICE }}
@@ -305,7 +322,7 @@ jobs:
             --cpu=1
             --port=8080
             --startup-probe=httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=1,timeoutSeconds=1,failureThreshold=180
-            --liveness-probe=httpGet.path=/api/v1/health,httpGet.port=8080,periodSeconds=15,timeoutSeconds=5,failureThreshold=4
+            --liveness-probe=httpGet.path=/api/v1/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6
             ${{ env.API_CPU_ALLOCATION_FLAG }}
             --session-affinity
             --allow-unauthenticated
@@ -333,6 +350,7 @@ jobs:
             PAYPAL_CHECKOUT_ENABLED=true
             ALIPAY_CHECKOUT_ENABLED=true
             PAYPAL_KRW_USD_RATE=${{ vars.PAYPAL_KRW_USD_RATE }}
+            ${{ steps.runtime_env.outputs.env_vars }}
           secrets: |
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest

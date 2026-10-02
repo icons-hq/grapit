@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { resolveOptionalRuntimeEnv } from './deploy-guards.mjs';
 
 const SECRET_BINDINGS = [
   ['DATABASE_URL', 'database-url'],
@@ -83,6 +84,9 @@ export function buildBackgroundWorkerJob(env) {
   const dbPoolMax = required(env, 'DB_POOL_MAX');
   const cloudSqlConnectionName = required(env, 'CLOUD_SQL_CONNECTION_NAME');
   const bookingEnabled = bookingEnabledValue(env);
+  // pg-boss and session limits from the runbook gate (RUNTIME_* repository
+  // variables); unset keeps the worker's code defaults.
+  const optionalRuntimeEnv = resolveOptionalRuntimeEnv(env, 'worker');
 
   for (const [value, name] of [
     [projectId, 'GCP_PROJECT_ID'],
@@ -135,6 +139,7 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('BACKGROUND_PROCESSING_ENABLED', 'true'),
               plainEnv('PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS', '0'),
               plainEnv('BACKGROUND_WORKER_WINDOW_MS', '30000'),
+              ...optionalRuntimeEnv.map(([envName, value]) => plainEnv(envName, value)),
               ...SECRET_BINDINGS.map(([envName, secret]) => secretEnv(envName, secret)),
             ],
             resources: {

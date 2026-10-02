@@ -7,6 +7,7 @@
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate --service NAME=FILE [...]
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate-value --service NAME=FILE
 //   node scripts/managed-demo/deploy-guards.mjs db-preflight
+//   node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
 //
 // Inputs come from the workflow environment (repository variables with
 // defaults). Secret values are never printed.
@@ -62,6 +63,82 @@ function parseDuration(value, name, { minMs, maxMs }) {
   return { text, ms };
 }
 
+const ISO_COUNTRY_LIST_PATTERN = /^[A-Za-z]{2}(\s*,\s*[A-Za-z]{2})*$/;
+
+function parsePositiveIntegerText(value, name) {
+  return String(parseInteger(value, name, { min: 1 }));
+}
+
+function parseNonNegativeIntegerText(value, name) {
+  return String(parseInteger(value, name, { min: 0 }));
+}
+
+function parseStrictBooleanText(value, name) {
+  return String(parseStrictBoolean(value, name));
+}
+
+function parseCountryListText(value, name) {
+  const text = value.trim();
+  if (!ISO_COUNTRY_LIST_PATTERN.test(text)) {
+    throw new Error(`${name} must be comma-separated ISO 3166-1 alpha-2 codes`);
+  }
+  return text.split(',').map((country) => country.trim().toUpperCase()).join(',');
+}
+
+/**
+ * Runtime settings the services read but the workflow passes only when the
+ * repository variable is set (as `RUNTIME_<NAME>` in the workflow env). Unset
+ * keeps the code default, which can differ per process: the pg-boss pool is 3
+ * with background processing and 1 for a producer-only API, so a fixed
+ * workflow default would change the managed-demo API's connection count.
+ * The budget input `PGBOSS_POOL_MAX` (default 3) stays separate.
+ */
+export const OPTIONAL_RUNTIME_ENV = [
+  { name: 'PGBOSS_POOL_MAX', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
+  { name: 'PGBOSS_START_MAX_ATTEMPTS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
+  { name: 'DB_STATEMENT_TIMEOUT_MS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
+  {
+    name: 'DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS',
+    targets: ['api', 'worker'],
+    parse: parsePositiveIntegerText,
+  },
+  { name: 'SMS_ALLOWED_COUNTRIES', targets: ['api'], parse: parseCountryListText },
+  { name: 'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE', targets: ['api'], parse: parseNonNegativeIntegerText },
+  { name: 'SMS_GLOBAL_SEND_LIMIT_PER_HOUR', targets: ['api'], parse: parseNonNegativeIntegerText },
+  { name: 'SMS_LOCAL_RATE_LIMITS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
+];
+
+const RUNTIME_ENV_TARGETS = new Set(['api', 'worker']);
+
+/**
+ * `[name, value]` pairs of the optional runtime settings that are set for a
+ * target. Blank means unset. Invalid values fail the deploy here instead of
+ * failing every new instance at startup.
+ */
+export function resolveOptionalRuntimeEnv(env, target) {
+  if (!RUNTIME_ENV_TARGETS.has(target)) {
+    throw new Error('runtime env target must be "api" or "worker"');
+  }
+  const pairs = [];
+  for (const setting of OPTIONAL_RUNTIME_ENV) {
+    if (!setting.targets.includes(target)) continue;
+    const raw = env[`RUNTIME_${setting.name}`];
+    if (raw === undefined || raw === null || String(raw).trim() === '') continue;
+    pairs.push([setting.name, setting.parse(String(raw), `RUNTIME_${setting.name}`)]);
+  }
+  return pairs;
+}
+
+/**
+ * `env_vars` lines for google-github-actions/deploy-cloudrun. Its parser splits
+ * on newlines and unescaped commas, so `\` and `,` in values are escaped.
+ */
+export function formatCloudRunEnvVarLines(pairs) {
+  return pairs
+    .map(([name, value]) => `${name}=${String(value).replace(/[\\,]/g, (ch) => `\\${ch}`)}`)
+    .join('\n');
+}
+
 /**
  * Validates every repository-variable driven deploy input before any job
  * mutates the database or Cloud Run.
@@ -94,9 +171,20 @@ export function validateDeployConfig(env) {
     throw new Error('PREWARM_SCALING_SCOPE must be exactly "service" or "template"');
   }
 
+  const pgBossPoolMax = parseInteger(env.PGBOSS_POOL_MAX, 'PGBOSS_POOL_MAX', { min: 1 });
+  const runtimeEnv = {
+    api: resolveOptionalRuntimeEnv(env, 'api'),
+    worker: resolveOptionalRuntimeEnv(env, 'worker'),
+  };
+  const runtimePgBossPoolMax = runtimeEnv.api.find(([name]) => name === 'PGBOSS_POOL_MAX');
+  if (runtimePgBossPoolMax && Number(runtimePgBossPoolMax[1]) > pgBossPoolMax) {
+    throw new Error('RUNTIME_PGBOSS_POOL_MAX must not exceed the PGBOSS_POOL_MAX budget input');
+  }
+
   return {
     bookingEnabled,
     prewarmScalingScope,
+    runtimeEnv,
     migrationLockTimeout,
     migrationStatementTimeout,
     migrationFreeze: parseStrictBoolean(env.MIGRATION_FREEZE, 'MIGRATION_FREEZE'),
@@ -104,7 +192,7 @@ export function validateDeployConfig(env) {
     apiMaxInstances,
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),
-    pgBossPoolMax: parseInteger(env.PGBOSS_POOL_MAX, 'PGBOSS_POOL_MAX', { min: 1 }),
+    pgBossPoolMax,
     dbConnectionReserve: parseInteger(env.DB_CONNECTION_RESERVE, 'DB_CONNECTION_RESERVE', {
       min: 0,
     }),
@@ -439,6 +527,16 @@ async function writeOutput(name, value) {
   await appendFile(outputPath, `${name}=${value}\n`);
 }
 
+async function writeMultilineOutput(name, value) {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (!outputPath) {
+    console.log(`${name}:\n${value}`);
+    return;
+  }
+  const delimiter = `EOF_${name.toUpperCase()}_${Date.now()}`;
+  await appendFile(outputPath, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
+}
+
 async function exportEnv(name, value) {
   const envPath = process.env.GITHUB_ENV;
   if (!envPath) {
@@ -486,9 +584,29 @@ async function commandValidateConfig() {
     `- Migration lock_timeout ${config.migrationLockTimeout.text}, statement_timeout ${config.migrationStatementTimeout.text}, freeze ${config.migrationFreeze}`,
     `- API instances ${config.apiMinInstances}-${config.apiMaxInstances}, concurrency ${config.apiConcurrency}`,
     `- Prewarm scaling scope ${config.prewarmScalingScope}`,
+    `- Optional runtime settings: API ${describeRuntimeEnv(config.runtimeEnv.api)}; worker ${describeRuntimeEnv(config.runtimeEnv.worker)}`,
   ];
   console.log(lines.slice(1).join('\n'));
   await writeSummary(lines);
+}
+
+function describeRuntimeEnv(pairs) {
+  return pairs.length === 0
+    ? 'code defaults'
+    : pairs.map(([name, value]) => `${name}=${value}`).join(', ');
+}
+
+async function commandRuntimeEnv(args) {
+  if (args.length !== 2 || args[0] !== '--target') {
+    throw new Error('runtime-env expects --target api|worker');
+  }
+  const config = validateDeployConfig(process.env);
+  const pairs = config.runtimeEnv[args[1]];
+  if (!pairs) {
+    throw new Error('runtime env target must be "api" or "worker"');
+  }
+  await writeMultilineOutput('env_vars', formatCloudRunEnvVarLines(pairs));
+  console.log(`Optional runtime settings (${args[1]}): ${describeRuntimeEnv(pairs)}`);
 }
 
 function readAllowReopen() {
@@ -631,9 +749,11 @@ async function main() {
     case 'db-preflight':
       if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(', ')}`);
       return commandDbPreflight();
+    case 'runtime-env':
+      return commandRuntimeEnv(args);
     default:
       throw new Error(
-        'Usage: deploy-guards.mjs <validate-config|booking-gate|booking-gate-value|db-preflight>',
+        'Usage: deploy-guards.mjs <validate-config|booking-gate|booking-gate-value|db-preflight|runtime-env>',
       );
   }
 }
