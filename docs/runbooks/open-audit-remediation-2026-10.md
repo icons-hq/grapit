@@ -28,7 +28,7 @@
 | admission token 원문 | `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';` | 많으면 승인된 DB 절차로 batch 선변환([migration 0039](show-relaunch-reliability.md#migration-0039-6268)) | #68 |
 | 결제 기한이 지난 고아 handoff | [First rollout of the review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement)의 후보 쿼리 | 운영자가 건수를 승인한 뒤 review 활성화 | #9 |
 | 금액 불일치로 거절된 과거 async DONE | [Read-Only Query Shapes](live-foreign-payment-cancel-uat-2026-06-03.md#read-only-query-shapes)의 async DONE 쿼리(`async_status='payment_amount_mismatch'`) | Toss 조회가 `DONE`이면 수동 환불 여부 결정. 이미 처리된 ledger라 배포만으로 자동 환불되지 않는다 | #75 |
-| 권리 미복원 `failed` 환불 | [Refund retry triage](ticket-cancellation-reconciliation.md#refund-retry-recovery-and-held-seats-2026-10) 첫 쿼리(`failed`, `rightsRestoredAt` 없음). `result_code`로 나눈다: `REFUND_RETRY_WINDOW_EXPIRED`는 잔액이 그대로이고 15일 기한만 지난 건, `BALANCE_RECONCILIATION_REQUIRED`는 잔액 대조가 필요한 건이다 | 건별로 결제사 내역을 확인하고, 관리자 예매 상세의 `환불 처리` 미리보기가 "이전 환불 재조정"(저장 금액·이전 실패 기록)을 보여 주면 `환불 확인`으로 재조정한다. 수동 대조 문구가 나오면 runbook대로 처리한다. 409로 권리가 복원되면 원 견적과 귀책을 보고 override 여부를 정한다. sweep은 이전 `failed`를 자동 재개하지 않는다 | #22 #53 #80 |
+| 권리 미복원 `failed` 환불 | [Refund retry triage](ticket-cancellation-reconciliation.md#refund-retry-recovery-and-held-seats-2026-10) 첫 쿼리(`failed`, `rightsRestoredAt` 없음). `result_code`로 나눈다: `REFUND_RETRY_WINDOW_EXPIRED`는 잔액이 그대로이고 15일 기한만 지난 건, `BALANCE_RECONCILIATION_REQUIRED`는 잔액 대조가 필요한 건이다 | 건별로 결제사 내역을 확인하고, 관리자 예매 상세의 `환불 처리` 미리보기가 "이전 환불 재조정"(저장 금액·이전 실패 기록)을 보여 주면 `환불 확인`으로 재조정한다. 수동 대조 문구가 나오면 runbook대로 처리한다. 409로 권리가 복원되면 원 견적과 귀책을 보고 override 여부를 정한다. 다른 탭·운영자가 먼저 권리를 복원한 뒤 누른 재조정은 신규 환불로 처리되고, 지금 견적이 화면의 저장 금액과 다르면 QR 회수·PG 호출 전에 409(`환불 금액이 변경되었습니다…`)로 멈춘다. sweep은 이전 `failed`를 자동 재개하지 않는다 | #22 #53 #80 |
 | 첫 worker 실행이 다시 진행할 환불 | 아래 SQL. triage 첫 쿼리 중 `requested`·`sent_to_pg`·`processing_at_pg`이면서 `nextAttemptAt`이 10분 넘게 지났거나, schedule 없이 20분 넘게 갱신되지 않은 행 | Deploy의 worker smoke가 API 배포 전에 같은 frozen command로 Toss 재취소를 보낸다. 건별로 Toss 결제 상태(이미 취소됐는지, 잔액)를 확인한 뒤 진행을 승인한다 | #22 #53 |
 | 다시 열릴 취소 좌석 | 아래 SQL. 기한이 지난 `held_cancelled` 좌석을 회차·공연 판매 상태와 함께 센다 | worker smoke가 이 좌석을 `available`로 열고 좌석 갱신을 보낸다. 판매 중 회차가 있으면 운영자 승인을 받거나 판매 창 밖에 배포한다 | #24 |
 | 기록 없이 남은 과거 보상 취소 | 아래 SQL. `DONE`·`cancel_pending`이고 `asyncDoneCompensation` 기록과 confirm claim이 없으며 예약이 `CONFIRMED`·`CANCELLED`가 아닌 결제 | worker smoke가 이 결제에 Toss 전액 취소를 보낸다. 건수와 금액을 재무·운영이 승인한 뒤 배포한다 | #76 |
@@ -113,6 +113,7 @@ ORDER BY p.created_at;
 
 - [ ] Toss: 국내·해외카드·해외간편결제 MID 모두에 `PAYMENT_STATUS_CHANGED` webhook URL과 서명 secret이 등록·일치하는지, 최근 `EXPIRED/ABORTED` 이벤트가 `payment_webhook_events`에 처리 완료로 쌓이는지 확인한다. 고아 handoff review의 45분 grace는 이 webhook을 전제로 한다. #73 #9
 - [ ] Toss: 위젯 variant(`DEFAULT`, `uspay`)에 가상계좌 등 비동기 입금 수단을 켜지 않는다. `uspay`의 TrueMoney·PayPay는 비활성으로 둔다. 웹은 가상계좌·휴대폰·PAYCO 같은 미지원 수단을 고르면 결제 단계에서 거절하고, prepare도 가상계좌·휴대폰을 모든 공연 정책에서 409로 거절하지만, 켜 두면 구매자가 고른 뒤에야 안내를 본다. #74 #86 #70
+- [ ] Toss 결제 어드민: 위젯 variant `DEFAULT`·`uspay`에서 카드사·은행 '바로가기' 노출이 꺼져 있는지 read-only로 확인한다(설정은 바꾸지 않는다). 웹은 명시 표에 없는 기관 코드(`SHINHAN`, `KOOKMIN` 등, 은행 코드와 겹친다)를 오분류하면 청구 뒤 보상 취소로 이어지므로 `다른 결제수단을 선택해 주세요`로 막는다. 그래서 바로가기가 켜져 있으면 그 버튼으로 카드를 고른 구매자가 결제하지 못한다. 켜야 한다면 먼저 웹 코드 표 갱신과 공연별 승인 결제수단 대조에 미치는 영향을 검토한다. 3.4 UAT는 이 점검을 전제로 한다. #70
 - [ ] Toss: 설정된 모든 secret key(`TOSS_SECRET_KEY`, `TOSS_OVERSEAS_CARD_SECRET_KEY`, `TOSS_FOREIGN_EASY_PAY_SECRET_KEY`)로 `GET /v1/transactions`가 200 배열과 응답 시간을 돌려주는지 테스트 상점에서 확인한다. 권한이 없으면 review는 아무 주문도 실패 처리하지 않고 30분마다 미루기만 한다. #9
 - [ ] Toss에 문의해 기록한다: ABORTED된 해외간편결제 취소를 새 `cancelRequestId`(`-r<n>`)로 다시 요청해도 되는지, 한 orderId에 서로 다른 paymentKey 두 건이 승인될 수 있는지. #76 #85
 - [ ] Twilio: Verify rate limit, 잔액·사용량·비용 알림, 상한 있는 자동 충전, 좁은 Geo Permissions를 확인한다. #36
@@ -173,7 +174,7 @@ ORDER BY p.created_at;
 - [ ] background worker Job 실행 시간을 본다. 고아 handoff 검토 예산 65초와 처리 창 30초가 Job timeout 120초 안에 들어가도록 설계됐다. #9 #154
 - [ ] 429 비율과 `Retry-After` 분포, 대기열 진입 400/404/403 `errorCode` 분포를 본다. 잘못된 ID가 더 이상 500을 내지 않아야 한다. `/api/v1/support-content`(추적 단위당 분당 120회)의 공유 NAT 사용자 429도 본다. #5 #158 #90 #132
 - [ ] `<provider> OAuth callback rejected: <reason>` warn 로그를 reason별로 본다. 모바일에서 `missing_nonce_cookie` 비중이 계속 높으면 인앱 브라우저 전환이 로그인을 깨는 것이다. #37
-- [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. API warn 로그 `Admin booking read hit statement_timeout`의 `aggregateKey`(필터 해시, 검색어 원문 없음)·`page`·경과 시간으로 같은 범위가 반복해서 5초를 넘는지 센다. 조건 없는 조회가 자주 503이면 운영자에게 공연·회차나 예매·결제 상태를 먼저 고르도록 안내한다. #127
+- [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. API warn 로그 `Admin booking read hit statement_timeout`에 남는 `performanceId`·`showtimeId`와 필터 차원(`reservationStatus`·`funnelStatus`·`paymentStatus`·`paymentMethod`·`audienceRegion`·`seatTier`·`floorKey`, 미선택은 `all`, 검색·좌석 검색·기간은 `hasSearch` 같은 사용 여부만)으로 어떤 범위가 반복해서 5초를 넘는지 센다. `aggregateKey`(필터 해시)·`page`·경과 시간도 같은 줄에 있고, 검색어·좌석 검색어 원문과 날짜는 남지 않는다. `performanceId=all`인 조회가 자주 503이면 운영자에게 공연·회차나 예매·결제 상태를 먼저 고르도록 안내한다. #127
 - [ ] Valkey active set 크기와 confirm 403 비율이 줄었는지, 이전 build의 `{queue:*}:eta-origin:*` 키가 남지 않았는지 본다(남아도 2시간 안에 만료). #4 #26 #91
 - [ ] worker 로그에서 같은 jobId의 `QR reminder claimed` 뒤에 `QR reminder sent`가 없는 건(유실된 reminder)을 본다. `superseded job`, `claimed by another worker` skip과, 읽은 뒤 취소·발송된 좌석을 뺀 `partial claim` warn은 무해하다. #107
 - [ ] Valkey 메모리: `{payment-confirm-attempt}:*`(confirm마다 30분), `{payment-handoff-review}:*`, `cache:admin:bookings:aggregates:v1:*`(30초), `seat-status-cache:*`(1초) 키와 seat-status 재계산 빈도(인스턴스·회차당 초당 1회 이하)를 지표에 넣는다. #9 #127 #8
@@ -214,7 +215,7 @@ ORDER BY p.created_at;
 
 - [ ] 명시 승인된 계정·금액으로 해외카드·PayPal의 승인·조회 응답 currency 표기(USD/`MUSD`)와 조회 API의 `NOT_FOUND_PAYMENT` 응답 형식을 실측한다. 코드는 USD와 `MUSD`를 모두 받는다. [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md). #1 #18
 - [ ] Toss sandbox 실기기(데스크톱·모바일)에서 카드사를 고르지 않고 결제하기(`NEED_CARD_PAYMENT_DETAIL`) → handoff 해제 → 같은 주문 재결제를 확인한다. #9
-- [ ] 같은 sandbox에서 위젯 `DEFAULT`·`uspay`에 켜 둔 결제수단을 하나씩 골라 결제 화면이 정상 결제 버튼을 보이는지 확인한다. 웹은 위젯이 알려 주는 코드를 명시 표(`CARD`/`카드`, `TRANSFER`/`계좌이체`, `TOSSPAY`·`NAVERPAY`·`KAKAOPAY`와 한글 이름, `PAYPAL`·`ALIPAY`·`TRUEMONEY`, 해외 위젯의 `CARD`·`OVERSEAS_CARD`·카드 브랜드)로만 분류하고, 표에 없는 코드(카드사·은행 바로가기 코드 포함)는 `다른 결제수단을 선택해 주세요`로 막는다. 켜 둔 수단이 막히면 위젯 설정을 바꾸거나 코드 표를 갱신한다. #70
+- [ ] 같은 sandbox에서 위젯 `DEFAULT`·`uspay`에 켜 둔 결제수단을 하나씩 골라 결제 화면이 정상 결제 버튼을 보이는지 확인한다. 웹은 위젯이 알려 주는 코드를 명시 표(`CARD`/`카드`, `TRANSFER`/`계좌이체`, `TOSSPAY`·`NAVERPAY`·`KAKAOPAY`와 한글 이름, `PAYPAL`·`ALIPAY`·`TRUEMONEY`, 해외 위젯의 `CARD`·`OVERSEAS_CARD`·카드 브랜드)로만 분류하고, 표에 없는 코드(카드사·은행 바로가기 코드 포함)는 `다른 결제수단을 선택해 주세요`로 막는다. 켜 둔 수단이 막히면 위젯 설정을 바꾸거나 코드 표를 갱신한다. 카드사·은행 바로가기 노출은 [1.3 사전 점검](#13-공급자-콘솔과-알림)에서 꺼져 있는지 먼저 확인한다. #70
 - [ ] 판매 중 수동 대조 기준을 정한다: `checkout_started_at` 이후 30분 넘게 결제 행이 없는 `PENDING_PAYMENT` 예약은 먼저 `payment-confirm-reconcile` job이 맡고 있는지 확인하고, 아니면 orderId로 국내·외화 상점 키 각각 Toss 주문 조회를 한다. [남은 gate](show-relaunch-reliability.md#새-공연-오픈의-남은-gate). #18 #73
 
 ### 3.5 현장 실기기

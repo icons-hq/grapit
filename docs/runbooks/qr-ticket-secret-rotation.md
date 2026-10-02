@@ -16,7 +16,7 @@ API(`deploy.yml`)와 background worker(`scripts/managed-demo/deploy-background-w
 
 ## 누락 시 증상
 
-- 구매자 예매 상세(`GET /reservations/:id`): HTTP 200으로 열리지만 해당 좌석의 QR이 표시되지 않는다. 예매 상세는 QR 발급·재서명 실패를 숨기고 다음 조회에서 다시 시도하기 때문이다. 로그에는 warn `QR self-heal issuance failed during reservation read`와 `CRITICAL: QR secret version ... is missing from QR_TICKET_SECRET_KEYRING_JSON`이 남는다. 세션 만료(401)로 보이지 않는다.
+- 구매자 예매 상세(`GET /reservations/:id`): HTTP 200으로 열리지만 그 예매의 좌석 QR이 모두 표시되지 않는다(혼합 version 예매 포함: version 하나만 빠져도 그 예매의 QR 발급·재서명 전체가 실패한다). 예매 상세는 QR 발급·재서명 실패를 숨기고 다음 조회에서 다시 시도하기 때문이다. 로그에는 warn `QR self-heal issuance failed during reservation read`와 `CRITICAL: QR secret version ... is missing from QR_TICKET_SECRET_KEYRING_JSON`이 남는다. 세션 만료(401)로 보이지 않는다.
 - 티켓 메일 재발송(`POST /tickets/reservations/:id/email`)과 QR 조회 API(`GET /tickets/reservations/:id`): HTTP 500 `QR 티켓을 일시적으로 표시할 수 없습니다`와 같은 CRITICAL 로그. 예약 reminder 메일 job은 발송 claim을 되돌리고 실패해 pg-boss가 재시도한다.
 - 현장 검표: 해당 version 토큰이 `tampered`(검증할 수 없는 QR)로 거절. 로그 `QR token presented with a secret version missing from the keyring`.
 - 기동 시: `CRITICAL: QR_TICKET_SECRET_KEYRING_JSON is missing secret versions still used by issued tickets: ...` 로그와 Sentry(`check=secret-keyring-coverage`, level fatal).
