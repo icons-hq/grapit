@@ -17,6 +17,16 @@ const GENERATION_KEY_PREFIX = 'cache:generation:';
 const GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** Token used while no invalidation has happened yet for a scope. */
 export const INITIAL_CACHE_GENERATION = '0';
+/**
+ * How long an instance reuses a generation token it read from Valkey. Hot
+ * catalog reads then cost one payload GET per request plus at most one
+ * generation GET per scope per window, instead of two GETs per request. A
+ * bump made by this instance replaces its memo at once; other instances pick
+ * it up within this window.
+ */
+export const CACHE_GENERATION_MEMO_MS = 250;
+/** Upper bound for memoized scopes (one per viewed performance detail). */
+const GENERATION_MEMO_MAX_ENTRIES = 10_000;
 
 /**
  * Result of a cache loader. `ttlSeconds: null` returns the value without
@@ -82,7 +92,9 @@ function hasClusterNodes(client: unknown): client is RedisClusterScanClient {
  *    tokens. Readers put the token into the cache key before reading the DB;
  *    writers bump it after commit. A reader that loaded pre-commit data can
  *    then only write to the superseded key, so a DEL→late SET race cannot
- *    republish stale catalog data.
+ *    republish stale catalog data. Tokens are memoized in process for
+ *    CACHE_GENERATION_MEMO_MS, so another instance's bump is seen within that
+ *    window rather than immediately.
  *
  * Notes:
  *  - Cache keys are server-generated — user input must never be concatenated
@@ -96,6 +108,10 @@ function hasClusterNodes(client: unknown): client is RedisClusterScanClient {
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
   private readonly inflightLoads = new Map<string, Promise<unknown>>();
+  private readonly generationMemo = new Map<string, { token: string; expiresAt: number }>();
+  private readonly generationReads = new Map<string, Promise<string | null>>();
+  /** Incremented by every local bump; a read that overlapped one is not memoized. */
+  private generationBumps = 0;
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
@@ -143,9 +159,57 @@ export class CacheService {
    * not read or write the shared cache with a null generation.
    */
   async getGeneration(scope: string): Promise<string | null> {
-    const key = `${GENERATION_KEY_PREFIX}${scope}`;
+    const memo = this.generationMemo.get(scope);
+    if (memo && memo.expiresAt > Date.now()) return memo.token;
+
+    // Concurrent readers of one scope share a single GET.
+    const pending = this.generationReads.get(scope);
+    if (pending) return pending;
+
+    const read = this.readGeneration(scope);
+    this.generationReads.set(scope, read);
     try {
-      return (await this.redis.get(key)) ?? INITIAL_CACHE_GENERATION;
+      return await read;
+    } finally {
+      if (this.generationReads.get(scope) === read) {
+        this.generationReads.delete(scope);
+      }
+    }
+  }
+
+  /**
+   * Replaces the scope's token. Returns false when Valkey rejected the write,
+   * so callers can retry or escalate; it never throws after a DB commit.
+   */
+  async bumpGeneration(scope: string): Promise<boolean> {
+    const key = `${GENERATION_KEY_PREFIX}${scope}`;
+    const token = `${Date.now().toString(36)}-${randomUUID()}`;
+    // Local readers must not keep (or start memoizing) the superseded token.
+    this.generationBumps += 1;
+    this.generationMemo.delete(scope);
+    this.generationReads.delete(scope);
+    try {
+      await this.redis.set(key, token, 'EX', GENERATION_TTL_SECONDS);
+      this.rememberGeneration(scope, token);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        { err: (err as Error).message, key, op: 'bumpGeneration' },
+        'cache generation bump failed — DB committed but cache may be stale until TTL',
+      );
+      return false;
+    }
+  }
+
+  private async readGeneration(scope: string): Promise<string | null> {
+    const key = `${GENERATION_KEY_PREFIX}${scope}`;
+    const bumpsBeforeRead = this.generationBumps;
+    try {
+      const token = (await this.redis.get(key)) ?? INITIAL_CACHE_GENERATION;
+      if (this.generationBumps === bumpsBeforeRead) {
+        this.rememberGeneration(scope, token);
+      }
+      return token;
     } catch (err) {
       this.logger.warn(
         { err: (err as Error).message, key, op: 'getGeneration' },
@@ -155,17 +219,17 @@ export class CacheService {
     }
   }
 
-  async bumpGeneration(scope: string): Promise<void> {
-    const key = `${GENERATION_KEY_PREFIX}${scope}`;
-    const token = `${Date.now().toString(36)}-${randomUUID()}`;
-    try {
-      await this.redis.set(key, token, 'EX', GENERATION_TTL_SECONDS);
-    } catch (err) {
-      this.logger.warn(
-        { err: (err as Error).message, key, op: 'bumpGeneration' },
-        'cache generation bump failed — DB committed but cache may be stale until TTL',
-      );
+  private rememberGeneration(scope: string, token: string): void {
+    const now = Date.now();
+    if (this.generationMemo.size >= GENERATION_MEMO_MAX_ENTRIES) {
+      for (const [memoScope, entry] of this.generationMemo) {
+        if (entry.expiresAt <= now) this.generationMemo.delete(memoScope);
+      }
+      if (this.generationMemo.size >= GENERATION_MEMO_MAX_ENTRIES) {
+        this.generationMemo.clear();
+      }
     }
+    this.generationMemo.set(scope, { token, expiresAt: now + CACHE_GENERATION_MEMO_MS });
   }
 
   async get<T>(key: string): Promise<T | null> {

@@ -491,6 +491,27 @@ describe('PerformanceService', () => {
       expect(viewCounter.pendingCount(PHASE23_I18N_SMOKE_PERFORMANCE_ID)).toBe(100);
     });
 
+    it('serves warm public detail reads with one Valkey read per request, not two', async () => {
+      // Freeze the clock inside one generation memo window.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        mockPublishedDetail();
+        await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+        mockRedis.get.mockClear();
+
+        for (let i = 0; i < 50; i += 1) {
+          await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+        }
+
+        // Payload GETs only; the generation token is memoized in process.
+        expect(mockRedis.get).toHaveBeenCalledTimes(50);
+        expect(mockRedis.get.mock.calls.some(([key]) => key.startsWith('cache:generation:'))).toBe(false);
+        expect(mockDb.select).toHaveBeenCalledTimes(6);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('does not count views for hidden or missing performances', async () => {
       mockDb.select.mockReturnValueOnce(
         createNonPublishedDetailResult([
@@ -946,6 +967,28 @@ describe('PerformanceService', () => {
       expect(result.data[0]?.title).toBe('2026 Girl Rules Fanmeeting');
       expect(result.data[0]?.automaticTranslationLabel).toBe(true);
       expect(result.data[0]?.translatedBy).toBe('machine_reviewed');
+    });
+
+    it('falls back to the Korean title instead of a published draft that still carries the manual-review marker', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([{
+          id: PHASE23_I18N_SMOKE_PERFORMANCE_ID, title: '2026 걸룰스 팬미팅', genre: 'artist_celebrity',
+          posterUrl: null, status: 'selling', startDate: new Date('2026-07-18T05:00:00.000Z'),
+          endDate: new Date('2026-07-18T07:00:00.000Z'), venueName: null,
+        }]))
+        .mockReturnValueOnce(createChainableResult([{ count: 1 }]))
+        .mockReturnValueOnce(createChainableResult([{
+          entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+          field: 'title',
+          translatedText: '[manual-review:deepl-unavailable] 2026 걸룰스 팬미팅',
+        }]));
+
+      const result = await service.findByGenre('artist_celebrity', {
+        page: 1, limit: 20, sort: 'latest', ended: false, locale: 'en',
+      });
+
+      expect(result.data[0]?.title).toBe('2026 걸룰스 팬미팅');
+      expect(result.data[0]?.automaticTranslationLabel).not.toBe(true);
     });
   });
 

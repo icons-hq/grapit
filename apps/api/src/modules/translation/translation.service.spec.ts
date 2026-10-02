@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
 import { PerformanceModule } from '../performance/performance.module.js';
-import { DeepLClient } from './deepl.client.js';
+import {
+  DEEPL_UNAVAILABLE_MARKER,
+  DeepLClient,
+  requiresManualTranslation,
+} from './deepl.client.js';
 import { TranslationModule } from './translation.module.js';
 import { TranslationService } from './translation.service.js';
 
@@ -428,6 +432,67 @@ describe('TranslationService', () => {
       automaticTranslationLabel: true,
     });
     expect(drafts.some((draft) => draft.status === 'published')).toBe(false);
+  });
+
+  describe('drafts that still need a manual translation', () => {
+    async function createMarkerDraft() {
+      deeplClient.translateText.mockResolvedValue({
+        status: 'unavailable',
+        text: `${DEEPL_UNAVAILABLE_MARKER} 팬미팅 안내`,
+        targetLang: 'EN-US',
+      });
+      const source = await service.createSource({
+        entityType: 'performance',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        field: 'description',
+        sourceText: '팬미팅 안내',
+        createdBy: '22222222-2222-2222-2222-222222222222',
+      });
+      const [draft] = await service.generateDrafts(source.id);
+      return draft;
+    }
+
+    it('cannot be marked reviewed with the copied Korean text left in place', async () => {
+      const draft = await createMarkerDraft();
+
+      await expect(service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333'))
+        .rejects.toThrow(BadRequestException);
+      await expect(service.markReviewed(
+        draft.id,
+        '33333333-3333-3333-3333-333333333333',
+        `  ${DEEPL_UNAVAILABLE_MARKER} 팬미팅 안내`,
+      )).rejects.toThrow('번역문을 직접 입력');
+      expect(store.getDraft(draft.id)?.status).toBe('draft');
+    });
+
+    it('can be reviewed and published once the operator replaces the text', async () => {
+      const draft = await createMarkerDraft();
+
+      await service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333', 'Fan meeting notice');
+      const published = await service.publishDraft(draft.id);
+
+      expect(published).toMatchObject({ status: 'published', translatedText: 'Fan meeting notice' });
+      expect(catalogFreshness.invalidatePerformance).toHaveBeenCalledTimes(1);
+    });
+
+    it('is never published, even when it reached review before this check existed', async () => {
+      const draft = await createMarkerDraft();
+      const stored = store.getDraft(draft.id)!;
+      stored.status = 'review';
+
+      await expect(service.publishDraft(draft.id)).rejects.toThrow(BadRequestException);
+      expect(stored.status).toBe('review');
+      expect(catalogFreshness.invalidatePerformance).not.toHaveBeenCalled();
+    });
+
+    it('uses the marker the DeepL client writes when no key is configured', async () => {
+      const client = new DeepLClient({ get: () => '' } as never);
+
+      const result = await client.translateText('팬미팅 안내', 'en');
+
+      expect(requiresManualTranslation(result.text)).toBe(true);
+      expect(requiresManualTranslation('Fan meeting notice')).toBe(false);
+    });
   });
 });
 

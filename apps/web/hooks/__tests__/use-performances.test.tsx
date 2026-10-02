@@ -2,16 +2,23 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Banner } from '@grabit/shared';
+import { PERFORMANCE_QUERY_MAX_PAGE, type Banner } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { useHomeBanners } from '../use-performances';
+import {
+  clampCatalogPage,
+  useBrowsePerformances,
+  useHomeBanners,
+  usePerformances,
+} from '../use-performances';
+
+const navigation = vi.hoisted(() => ({ search: '' }));
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'ko',
 }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 vi.mock('@/lib/api-client', () => ({
@@ -62,6 +69,60 @@ function banner(id: string, deviceTarget: Banner['deviceTarget']): Banner {
     isActive: true,
   };
 }
+
+describe('catalog page bounds', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.search = '';
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [], total: 0, page: 1, limit: 20, totalPages: 0,
+    });
+  });
+
+  function requestedPage() {
+    const [url] = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    return new URL(String(url), 'https://heygrabit.test').searchParams.get('page');
+  }
+
+  it('clamps out-of-range pages to what the API accepts', () => {
+    expect(clampCatalogPage(PERFORMANCE_QUERY_MAX_PAGE + 1)).toBe(PERFORMANCE_QUERY_MAX_PAGE);
+    expect(clampCatalogPage(0)).toBe(1);
+    expect(clampCatalogPage(Number.NaN)).toBe(1);
+    expect(clampCatalogPage(2.7)).toBe(2);
+  });
+
+  it('requests the last allowed genre page for a hand-edited ?page= above the API limit', async () => {
+    navigation.search = `page=${PERFORMANCE_QUERY_MAX_PAGE + 4000}`;
+
+    const { result } = renderHook(() => usePerformances('artist_celebrity'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe(String(PERFORMANCE_QUERY_MAX_PAGE));
+  });
+
+  it('requests page 1 for a non-numeric ?page= instead of an invalid query', async () => {
+    navigation.search = 'page=abc';
+
+    const { result } = renderHook(() => usePerformances('artist_celebrity'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe('1');
+  });
+
+  it('clamps the home browse page as well', async () => {
+    const { result } = renderHook(
+      () => useBrowsePerformances('selling', PERFORMANCE_QUERY_MAX_PAGE + 1),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe(String(PERFORMANCE_QUERY_MAX_PAGE));
+  });
+});
 
 describe('useHomeBanners', () => {
   beforeEach(() => {

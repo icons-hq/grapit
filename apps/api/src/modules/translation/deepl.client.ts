@@ -20,6 +20,18 @@ interface DeepLTranslateResponse {
 /** Admin draft generation must not hang on a stalled provider connection. */
 export const DEEPL_REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * Prefix of drafts that still contain the Korean source instead of a
+ * translation (for example when DEEPL_AUTH_KEY is not configured). Such text
+ * can be neither reviewed nor published as is.
+ */
+export const MANUAL_TRANSLATION_MARKER_PREFIX = '[manual-review:';
+export const DEEPL_UNAVAILABLE_MARKER = `${MANUAL_TRANSLATION_MARKER_PREFIX}deepl-unavailable]`;
+
+export function requiresManualTranslation(text: string): boolean {
+  return text.trimStart().startsWith(MANUAL_TRANSLATION_MARKER_PREFIX);
+}
+
 const DEEPL_TARGET_LOCALE: Record<TranslationTargetLocale, DeepLTargetLang> = {
   en: 'EN-US',
   th: 'TH',
@@ -48,7 +60,7 @@ export class DeepLClient {
     if (!this.authKey) {
       return {
         status: 'unavailable',
-        text: `[manual-review:deepl-unavailable] ${text}`,
+        text: `${DEEPL_UNAVAILABLE_MARKER} ${text}`,
         targetLang,
       };
     }

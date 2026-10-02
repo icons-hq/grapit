@@ -10,6 +10,7 @@ import {
   translationDrafts,
   translationSources,
 } from '../../database/schema/index.js';
+import { requiresManualTranslation } from './deepl.client.js';
 
 export const REVIEWED_TRANSLATION_SOURCE = 'machine_reviewed' as const;
 
@@ -80,6 +81,12 @@ export async function fetchReviewedPerformanceTranslations(
 
   return rows.reduce<TranslationMap>((map, row) => {
     if (!fields.includes(row.field as PerformanceTranslationField)) {
+      return map;
+    }
+
+    // Drafts published before review rejected the marker still hold the
+    // Korean source; keep showing the source instead of the internal marker.
+    if (requiresManualTranslation(row.translatedText)) {
       return map;
     }
 

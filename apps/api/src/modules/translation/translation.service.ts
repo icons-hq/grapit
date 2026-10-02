@@ -12,7 +12,11 @@ import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
 import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
-import { DeepLClient, type DeepLTranslationResult } from './deepl.client.js';
+import {
+  DeepLClient,
+  requiresManualTranslation,
+  type DeepLTranslationResult,
+} from './deepl.client.js';
 
 export const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN'] as const;
 
@@ -86,6 +90,9 @@ interface TranslationProvider {
 
 /** Translation sources whose published drafts are overlaid on the public catalog. */
 const CATALOG_TRANSLATION_ENTITY_TYPE = 'performance';
+
+const MANUAL_TRANSLATION_REQUIRED_MESSAGE =
+  '자동 번역을 사용할 수 없어 원문이 그대로 담긴 초안입니다. [manual-review:…] 표시를 지우고 번역문을 직접 입력해주세요.';
 
 const LEGAL_BLOCKED_CONTENT_TYPES = new Set<string>([
   'legal',
@@ -230,6 +237,10 @@ export class TranslationService {
     if (draft.status === 'published') {
       throw new BadRequestException('이미 게시된 번역은 검수 상태로 되돌릴 수 없습니다');
     }
+    // An empty translatedText keeps the stored text, so check what will be stored.
+    if (requiresManualTranslation(translatedText || draft.translatedText)) {
+      throw new BadRequestException(MANUAL_TRANSLATION_REQUIRED_MESSAGE);
+    }
 
     if (isMemoryStore(this.db)) {
       draft.status = 'review';
@@ -262,6 +273,11 @@ export class TranslationService {
 
     if (draft.status !== 'review' || draft.sourceContentHash !== source.contentHash) {
       throw new BadRequestException('검수 완료된 번역만 게시할 수 있습니다');
+    }
+    // Covers drafts reviewed before this check existed. The update below
+    // re-checks translatedText, so the text cannot change in between.
+    if (requiresManualTranslation(draft.translatedText)) {
+      throw new BadRequestException(MANUAL_TRANSLATION_REQUIRED_MESSAGE);
     }
 
     if (isMemoryStore(this.db)) {

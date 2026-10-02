@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -115,6 +115,56 @@ describe('Catalog cache and view counts — PostgreSQL', () => {
 
     await expect(counter.flush()).resolves.toBe(2);
     expect((await storedViewCount(performance.id)).viewCount).toBe(2);
+  });
+
+  it('flushes in one server-side round trip and leaves the pooled connection clean after a timeout', async () => {
+    const performance = await publishedPerformance();
+    // One connection, so every query below reuses the flush's session.
+    const flushPool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+      user: 'postgres', password: 'test', database: 'catalog_test', max: 1 });
+    const closeFlushPool = createPostgresPoolCleanup(flushPool);
+    try {
+      const counter = new PerformanceViewCounter(drizzle(flushPool, { schema }));
+      vi.spyOn(counter['logger'], 'warn').mockImplementation(() => undefined);
+      counter.record(performance.id);
+
+      const blocker = await pool.connect();
+      let flushRoundTrips = 0;
+      try {
+        await blocker.query('begin');
+        await blocker.query('select id from performances where id = $1 for update', [performance.id]);
+        const clientQuery = vi.spyOn(Client.prototype, 'query');
+        try {
+          await expect(counter.flush()).resolves.toBe(0);
+          flushRoundTrips = clientQuery.mock.calls.length;
+        } finally {
+          clientQuery.mockRestore();
+        }
+      } finally {
+        await blocker.query('rollback');
+        blocker.release();
+      }
+
+      // No BEGIN/SET/UPDATE/COMMIT round trips: the server ran the whole flush
+      // (and its rollback) inside one simple-protocol message.
+      expect(flushRoundTrips).toBe(1);
+
+      // SET LOCAL did not leak and no aborted transaction block stayed open.
+      const settings = await flushPool.query<{ lock_timeout: string; statement_timeout: string; in_tx: boolean }>(
+        `select current_setting('lock_timeout') as lock_timeout,
+                current_setting('statement_timeout') as statement_timeout,
+                now() <> statement_timestamp() as in_tx`,
+      );
+      expect(settings.rows[0]).toEqual({ lock_timeout: '0', statement_timeout: '0', in_tx: false });
+      expect(counter.pendingCount(performance.id)).toBe(1);
+
+      await expect(counter.flush()).resolves.toBe(1);
+      expect((await storedViewCount(performance.id)).viewCount).toBe(1);
+      const after = await flushPool.query<{ lock_timeout: string }>(`select current_setting('lock_timeout') as lock_timeout`);
+      expect(after.rows[0]?.lock_timeout).toBe('0');
+    } finally {
+      await closeFlushPool();
+    }
   });
 
   it('shows a newly published performance translation without waiting for the cache TTL', async () => {
