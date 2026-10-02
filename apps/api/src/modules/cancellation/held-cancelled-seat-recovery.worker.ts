@@ -18,6 +18,8 @@ export const HELD_SEAT_RECOVERY_GRACE_MS = 15 * 60 * 1000;
 /** Same guard as the release worker: never reopen a cancelled seat in the last minutes before showtime. */
 export const HELD_SEAT_RECOVERY_SHOWTIME_GUARD_MS = 5 * 60 * 1000;
 export const HELD_SEAT_RECOVERY_BATCH_SIZE = 200;
+/** Bounded wait for an in-flight sweep on shutdown (the bounded worker closes the database right after). */
+export const HELD_SEAT_RECOVERY_SHUTDOWN_WAIT_MS = 30 * 1000;
 const SHOWTIME_IMMINENT_REOPEN_REASON = 'SHOWTIME_IMMINENT';
 
 export interface HeldSeatRecoveryResult {
@@ -36,6 +38,8 @@ export class HeldCancelledSeatRecoveryWorker implements OnModuleInit, OnModuleDe
   private readonly logger = new Logger(HeldCancelledSeatRecoveryWorker.name);
   private sweepInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private sweepRun: Promise<unknown> | null = null;
+  private stopping = false;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -49,23 +53,50 @@ export class HeldCancelledSeatRecoveryWorker implements OnModuleInit, OnModuleDe
     }
 
     const run = () => {
-      void this.releaseExpiredHeldSeats().catch((error: unknown) => {
-        this.logger.error(
-          'Held cancelled seat recovery sweep failed',
-          error instanceof Error ? error.stack : String(error),
-        );
-      });
+      if (this.stopping || this.sweepRun) {
+        return;
+      }
+      const sweep = this.releaseExpiredHeldSeats()
+        .catch((error: unknown) => {
+          this.logger.error(
+            'Held cancelled seat recovery sweep failed',
+            error instanceof Error ? error.stack : String(error),
+          );
+        })
+        .finally(() => {
+          if (this.sweepRun === sweep) {
+            this.sweepRun = null;
+          }
+        });
+      this.sweepRun = sweep;
     };
     run();
     this.sweepInterval = setInterval(run, HELD_SEAT_RECOVERY_SWEEP_INTERVAL_MS);
     this.sweepInterval.unref?.();
   }
 
-  onModuleDestroy(): void {
+  /** Waits (bounded) for an in-flight sweep so a bounded worker run does not close the database under it. */
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.sweepInterval) {
       clearInterval(this.sweepInterval);
       this.sweepInterval = null;
     }
+
+    const inFlight = this.sweepRun;
+    if (!inFlight) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      inFlight.then(() => undefined, () => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, HELD_SEAT_RECOVERY_SHUTDOWN_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 
   async releaseExpiredHeldSeats(now: Date = new Date()): Promise<HeldSeatRecoveryResult> {

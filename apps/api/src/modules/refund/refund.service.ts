@@ -135,6 +135,8 @@ export const REFUND_CANCEL_RETRY_DELAYS_SECONDS = [
 ] as const;
 /** Toss idempotency keys are valid for 15 days. A frozen POST must not be resent after that. */
 export const REFUND_CANCEL_POST_WINDOW_MS = 15 * 24 * 60 * 60 * 1000;
+/** A claimed attempt that has not finished within this lease (crashed handler) may be claimed again. */
+export const REFUND_CANCEL_ATTEMPT_LEASE_MS = 10 * 60 * 1000;
 export const SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID = 'JOB_ENQUEUE_FAILED';
 
 export function refundCancelRetryDelaySeconds(attempt: number): number {
@@ -319,6 +321,16 @@ function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'
   return null;
 }
 
+export type RefundCancelRetryScheduleOptions = {
+  startAfter?: Date;
+  /**
+   * The provider accepted this exact cancel and is still processing it (asynchronous cancel). Polling it is
+   * the normal path, so repeated polls never raise the customer-service CTA or the manual-review flag; the
+   * timeline's own 3-day delay rule still surfaces a slow provider to the buyer.
+   */
+  awaitingProvider?: boolean;
+};
+
 /**
  * Retry bookkeeping shared by the request path, the retry worker and the stale-refund sweep.
  * `nextAttemptAt` lets the sweep detect a lost or never-enqueued job without guessing from update times.
@@ -327,12 +339,13 @@ export function buildRefundCancelRetrySchedule(
   jobId: string | null,
   retryCount: number,
   now: Date,
-  options: { startAfter?: Date } = {},
+  options: RefundCancelRetryScheduleOptions = {},
 ): { metadata: Record<string, unknown>; customerServiceCtaVisible: boolean } {
   const attempt = retryCount + 1;
   const nextAttemptAt = options.startAfter
     ?? new Date(now.getTime() + refundCancelRetryDelaySeconds(attempt) * 1000);
-  const attentionRequired = retryCount >= REFUND_CANCEL_ATTENTION_RETRY_COUNT;
+  const attentionRequired = !options.awaitingProvider
+    && retryCount >= REFUND_CANCEL_ATTENTION_RETRY_COUNT;
 
   return {
     metadata: {
@@ -345,6 +358,7 @@ export function buildRefundCancelRetrySchedule(
         nextAttemptAt: nextAttemptAt.toISOString(),
       },
       ...(attentionRequired ? { manualReviewRequired: true } : {}),
+      ...(options.awaitingProvider ? { manualReviewRequired: false } : {}),
     },
     customerServiceCtaVisible: !jobId || attentionRequired,
   };
@@ -387,6 +401,19 @@ export async function sendRefundCancelRetryJob(
   }
 }
 
+
+/** The provider accepted exactly this frozen command and reports it as an asynchronous cancel in progress. */
+export function hasMatchingInProgressProviderCancel(
+  response: Pick<TossPaymentResponse, 'cancels'>,
+  command: { reason: string; options: { cancelRequestId?: string } },
+  receipt: { expectedCancelReason?: string; expectedCancelAmount?: number } = {},
+): boolean {
+  const expectedReason = receipt.expectedCancelReason ?? command.reason;
+  return response.cancels?.some((cancel) => cancel.cancelStatus === 'IN_PROGRESS'
+    && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId)
+    && cancel.cancelReason === expectedReason
+    && (receipt.expectedCancelAmount === undefined || cancel.cancelAmount === receipt.expectedCancelAmount)) ?? false;
+}
 
 /** Booking day for the Cancellation Fee Schedule: provider approval time, legacy fallback to creation. */
 export function resolveBookingConfirmedAt(
@@ -550,15 +577,7 @@ export class RefundService {
         return this.respondToExistingRefund(context, existingRefund);
       }
 
-      const recovery = await this.recoverExistingRefundForAdmin(context, existingRefund, actor);
-      if (recovery.response) {
-        return recovery.response;
-      }
-      existingRefund = recovery.restoredRefund;
-      context = {
-        ...context,
-        ticketItems: await this.loadTicketItemsForReservation(context.reservation.id),
-      };
+      return this.recoverExistingRefundForAdmin(context, existingRefund, actor);
     }
 
     if (context.reservation.status !== 'CONFIRMED') {
@@ -711,9 +730,17 @@ export class RefundService {
         processingRefund.id,
         processingRefund.retryCount,
       );
+      // A matching asynchronous cancel still in progress is the normal provider path, not an attention case.
       const scheduledRefund = await this.recordRefundCancelRetrySchedule(
         processingRefund,
         jobId,
+        {
+          awaitingProvider: hasMatchingInProgressProviderCancel(
+            cancelResult,
+            command,
+            readStoredPaymentCancelReceipt(refund.providerMetadata),
+          ),
+        },
       );
 
       return this.buildRequestResponse(context, scheduledRefund, {
@@ -865,17 +892,22 @@ export class RefundService {
   /**
    * Operator recovery for a refund that is stuck after its rights were revoked. Non-terminal refunds are
    * re-scheduled. A failed refund is reconciled against the provider before anything changes: a matching
-   * provider cancel is finalized; a provably untouched balance resumes the same frozen command inside the
-   * provider idempotency window (or restores rights after it so a new attempt can start); an unknown
-   * provider cancellation stops for manual reconciliation.
+   * provider cancel is finalized; a provably untouched balance resumes the same frozen command (the stored
+   * quote the admin preview showed) inside the provider idempotency window; an unknown provider cancellation
+   * stops for manual reconciliation.
+   *
+   * When the frozen command can no longer be used (aborted by the provider, or past the idempotency window)
+   * the rights are restored and the request stops with 409. A new attempt needs a fresh quote computed at
+   * that time, so the operator must review the refreshed preview and request it again; this request never
+   * sends a re-quoted amount the operator did not see.
    */
   protected async recoverExistingRefundForAdmin(
     context: ReservationRefundContext,
     refund: RefundRecord,
     actor: Extract<RefundRequestActor, { kind: 'admin' }>,
-  ): Promise<{ response: RefundRequestResponse; restoredRefund?: undefined } | { response?: undefined; restoredRefund: RefundRecord }> {
+  ): Promise<RefundRequestResponse> {
     if (refund.status !== 'failed') {
-      return { response: await this.respondToExistingRefund(context, refund) };
+      return this.respondToExistingRefund(context, refund);
     }
 
     const quote = getStoredCancellationQuote(refund);
@@ -894,7 +926,7 @@ export class RefundService {
 
     if (quote.refundableAmount === 0) {
       const reopened = await this.reopenFailedRefund(refund, actor, 'requested');
-      return { response: await this.finalizeLocalOnlyRefund(context, reopened, quote, reason, actor) };
+      return this.finalizeLocalOnlyRefund(context, reopened, quote, reason, actor);
     }
     if (!command) {
       throw new ConflictException('이전 환불 요청의 취소 명령을 확인할 수 없어 수동 대조가 필요합니다');
@@ -907,28 +939,23 @@ export class RefundService {
       throw new ServiceUnavailableException('결제사 결제 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요');
     }
 
+    const receipt = readStoredPaymentCancelReceipt(refund.providerMetadata);
     const completionOptions = {
       allowPartialStatus: quote.refundableAmount < context.payment.amount,
       expectedCancelAmount: command.options.cancelAmount,
-      ...readStoredPaymentCancelReceipt(refund.providerMetadata),
+      ...receipt,
       allowUnidentifiedPartialCancel: true,
       requestedAt: refund.requestedAt,
     };
     if (isTossCancelCompleted(current, command.options.cancelRequestId, completionOptions)) {
-      return {
-        response: await this.finalizeProviderCancelledRefund(context, refund, quote, reason, current, actor, 'refund_retry'),
-      };
+      return this.finalizeProviderCancelledRefund(context, refund, quote, reason, current, actor, 'refund_retry');
     }
 
-    const receipt = readStoredPaymentCancelReceipt(refund.providerMetadata);
-    const inProgress = current.cancels?.some((cancel) => cancel.cancelStatus === 'IN_PROGRESS'
-      && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId)
-      && cancel.cancelReason === (receipt.expectedCancelReason ?? command.reason)) ?? false;
-    if (inProgress) {
+    if (hasMatchingInProgressProviderCancel(current, command, receipt)) {
       const reopened = await this.reopenFailedRefund(refund, actor, 'processing_at_pg');
       const jobId = await this.scheduleRefundCancelRetry(reopened.id, reopened.retryCount);
-      const scheduled = await this.recordRefundCancelRetrySchedule(reopened, jobId);
-      return { response: this.buildRequestResponse(context, scheduled, { idempotent: false, retryEnqueued: Boolean(jobId) }) };
+      const scheduled = await this.recordRefundCancelRetrySchedule(reopened, jobId, { awaitingProvider: true });
+      return this.buildRequestResponse(context, scheduled, { idempotent: false, retryEnqueued: Boolean(jobId) });
     }
 
     const aborted = current.cancels?.some((cancel) => cancel.cancelStatus === 'ABORTED'
@@ -936,27 +963,23 @@ export class RefundService {
       && cancel.cancelReason === (receipt.expectedCancelReason ?? command.reason)) ?? false;
     if (aborted && hasUnchangedCancellationBalance(current, amountSnapshot)) {
       // The provider aborted this exact command; replaying its idempotency key cannot create a new cancel.
-      return {
-        restoredRefund: await restoreRejectedRefundRights(this.db, refund, {
-          code: 'PROVIDER_CANCEL_ABORTED',
-          message: '결제사가 이전 취소 요청을 중단해 티켓 권리를 복원하고 새 환불을 요청합니다',
-        }),
-      };
+      return this.restoreRightsForReviewedRetry(context, refund, {
+        code: 'PROVIDER_CANCEL_ABORTED',
+        message: '결제사가 이전 취소 요청을 중단해 티켓 권리를 복원했습니다',
+      });
     }
 
     const untouched = !hasProviderCancelForCommand(current, command);
     if (untouched && hasUnchangedCancellationBalance(current, amountSnapshot)) {
       if (Date.now() - refund.requestedAt.getTime() < REFUND_CANCEL_POST_WINDOW_MS) {
         const reopened = await this.reopenFailedRefund(refund, actor, 'sent_to_pg');
-        return { response: await this.runProviderCancelAttempt(context, reopened, quote, reason, actor) };
+        return this.runProviderCancelAttempt(context, reopened, quote, reason, actor);
       }
 
-      return {
-        restoredRefund: await restoreRejectedRefundRights(this.db, refund, {
-          code: 'REFUND_RETRY_WINDOW_EXPIRED',
-          message: '이전 취소 명령의 결제사 재전송 기한이 지나 티켓 권리를 복원하고 새 환불을 요청합니다',
-        }),
-      };
+      return this.restoreRightsForReviewedRetry(context, refund, {
+        code: 'REFUND_RETRY_WINDOW_EXPIRED',
+        message: '이전 취소 명령의 결제사 재전송 기한이 지나 티켓 권리를 복원했습니다',
+      });
     }
 
     if (untouched && isProviderBalanceAboveSnapshot(current, amountSnapshot)) {
@@ -964,12 +987,40 @@ export class RefundService {
         code: REFUND_BALANCE_RECONCILIATION_CODE,
         message: '결제사 잔액이 예매 환불 기록과 달라 취소를 요청하지 않았습니다',
       });
-      return { response: this.buildRequestResponse(context, restored, { idempotent: false, retryEnqueued: false }) };
+      return this.buildRequestResponse(context, restored, { idempotent: false, retryEnqueued: false });
     }
 
     throw new ConflictException('결제사 취소 내역이 이 환불 요청과 일치하지 않아 수동 대조가 필요합니다');
   }
 
+  /**
+   * Restores the rights of a failed attempt whose frozen command can no longer be sent, then stops. The
+   * stored quote may be stale (fee schedule boundaries passed since the request), so the next attempt must
+   * be requested again after the operator reviews the refreshed preview.
+   */
+  protected async restoreRightsForReviewedRetry(
+    context: ReservationRefundContext,
+    refund: RefundRecord,
+    failure: { code: string; message: string },
+  ): Promise<RefundRequestResponse> {
+    const restored = await restoreRejectedRefundRights(this.db, refund, failure);
+    if (!hasRestoredRefundRights(restored)) {
+      // The refund changed concurrently (completed or a different attempt); report its current state.
+      return this.respondToExistingRefund(context, restored);
+    }
+
+    throw new ConflictException(
+      `${failure.message}. 환불 금액이 다시 계산되므로 환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요.`,
+    );
+  }
+
+  /**
+   * Re-opens a failed refund for an inline admin attempt. The inline attempt counts as the next attempt
+   * (`retryCount + 1`) so a stray job for the previous attempt is rejected as stale, and `nextAttemptAt` is
+   * pushed past the attempt lease so the stale-refund sweep of another instance does not run the same
+   * refund concurrently. The attempt records its own schedule when it finishes; if the process dies
+   * mid-attempt the sweep picks the refund up after the lease.
+   */
   protected async reopenFailedRefund(
     refund: RefundRecord,
     actor: Extract<RefundRequestActor, { kind: 'admin' }>,
@@ -986,9 +1037,18 @@ export class RefundService {
         resultMessage: 'Refund recovery requested by admin',
         failureReason: null,
         customerServiceCtaVisible: false,
+        retryCount: sql`${refunds.retryCount} + 1`,
         updatedAt: now,
         providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
           manualReviewRequired: false,
+          [REFUND_CANCEL_RETRY_METADATA_KEY]: {
+            status: 'admin_recovery',
+            jobId: null,
+            attempt: refund.retryCount + 1,
+            scheduledAt: now.toISOString(),
+            failedAt: null,
+            nextAttemptAt: new Date(now.getTime() + REFUND_CANCEL_ATTEMPT_LEASE_MS).toISOString(),
+          },
           adminRecovery: {
             operatorUserId: actor.operatorUserId,
             requestedAt: now.toISOString(),
@@ -1000,6 +1060,7 @@ export class RefundService {
       .where(and(
         eq(refunds.id, refund.id),
         eq(refunds.status, 'failed'),
+        eq(refunds.retryCount, refund.retryCount),
         sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
         idempotencyKey
           ? sql`${refunds.providerMetadata}->'cancelRequest'->'options'->>'idempotencyKey' = ${idempotencyKey}`
@@ -1937,10 +1998,11 @@ export class RefundService {
   protected async recordRefundCancelRetrySchedule(
     refund: RefundRecord,
     jobId: string | null,
+    options: RefundCancelRetryScheduleOptions = {},
   ): Promise<RefundRecord> {
     if (refund.status === 'completed' || hasRestoredRefundRights(refund)) return refund;
     const now = new Date();
-    const schedule = buildRefundCancelRetrySchedule(jobId, refund.retryCount, now);
+    const schedule = buildRefundCancelRetrySchedule(jobId, refund.retryCount, now, options);
 
     return this.updateRefund(refund.id, {
       providerMetadata: schedule.metadata,

@@ -689,6 +689,7 @@ describe('RefundCancelRetryWorker', () => {
       },
       1,
       'refund-retry-job-2',
+      { awaitingProvider: true },
     );
     expect(result.status).toBe('processing');
   });
@@ -764,6 +765,7 @@ describe('RefundCancelRetryWorker', () => {
       },
       LEGACY_THREE_ATTEMPT_BUDGET + 1,
       'refund-retry-job-max',
+      { awaitingProvider: true },
     );
     expect(finalFailureSpy).not.toHaveBeenCalled();
     expect(result.status).toBe('processing');
@@ -910,5 +912,81 @@ describe('RefundCancelRetryWorker', () => {
     );
     expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledOnce();
     expect(result.status).toBe('completed');
+  });
+});
+
+describe('RefundCancelRetryWorker stale refund recovery', () => {
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  function staleRows(rows: Array<{ id: string; retryCount: number }>) {
+    return {
+      select: vi.fn(() => ({
+        from: () => ({ where: () => ({ orderBy: () => ({ limit: vi.fn().mockResolvedValue(rows) }) }) }),
+      })),
+    };
+  }
+
+  it('fails a legacy refund for manual review when its cancel command cannot be rebuilt, instead of throwing every run', async () => {
+    vi.spyOn(RefundCancelRetryWorker.prototype as never, 'claimRetryAttempt').mockResolvedValue(true as never);
+    const tossPaymentsClient = { queryPayment: vi.fn(), cancelPayment: vi.fn() };
+    const worker = new RefundCancelRetryWorker({} as never, tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never);
+    const context = createRetryContext();
+    // No frozen command and a stored quote larger than the payment: the command builder rejects it.
+    context.refund.providerMetadata = {
+      cancelReason: '단순 변심',
+      cancellationQuote: { originalPaymentAmount: 132000, refundableAmount: 500000, items: [], policyCodes: [] },
+    } as never;
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+    const finalFailureSpy = vi.spyOn(worker as never, 'markFinalFailure').mockResolvedValue(undefined as never);
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 1 });
+
+    expect(result.status).toBe('failed');
+    expect(finalFailureSpy).toHaveBeenCalledWith('refund-1', expect.objectContaining({ code: 'CANCEL_COMMAND_UNAVAILABLE' }));
+    expect(tossPaymentsClient.queryPayment).not.toHaveBeenCalled();
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('defers each stale row before running it and skips rows another sweep already took', async () => {
+    const db = staleRows([{ id: 'refund-a', retryCount: 0 }, { id: 'refund-b', retryCount: 2 }]);
+    const worker = new RefundCancelRetryWorker(db as never, {} as never, {} as never);
+    const deferSpy = vi.spyOn(worker as never, 'deferStaleRefund')
+      .mockResolvedValueOnce(false as never)
+      .mockResolvedValueOnce(true as never);
+    const handleSpy = vi.spyOn(worker, 'handleJob').mockResolvedValue({ status: 'missing_refund' });
+    const now = new Date('2026-05-08T05:00:00.000Z');
+
+    const result = await worker.recoverStaleRefunds(now);
+
+    expect(deferSpy).toHaveBeenNthCalledWith(1, 'refund-a', now, expect.any(String), expect.any(String));
+    expect(handleSpy).toHaveBeenCalledTimes(1);
+    expect(handleSpy).toHaveBeenCalledWith({ refundId: 'refund-b', attempt: 3 });
+    // A row the attempt could not move is counted as found but not attempted; it was already deferred.
+    expect(result).toEqual({ found: 1, attempted: 0 });
+  });
+
+  it('waits for the row in flight on shutdown and does not start the next one', async () => {
+    const db = staleRows([{ id: 'refund-a', retryCount: 0 }, { id: 'refund-b', retryCount: 0 }]);
+    const worker = new RefundCancelRetryWorker(db as never, {} as never, {} as never, undefined,
+      { get: vi.fn().mockReturnValue(undefined) } as never);
+    vi.spyOn(worker as never, 'deferStaleRefund').mockResolvedValue(true as never);
+    let finishFirst!: () => void;
+    const handleSpy = vi.spyOn(worker, 'handleJob').mockImplementationOnce(() => new Promise((resolve) => {
+      finishFirst = () => resolve({ status: 'completed' });
+    }));
+
+    await worker.onModuleInit();
+    await vi.waitFor(() => expect(handleSpy).toHaveBeenCalledTimes(1));
+    let destroyed = false;
+    const destroy = worker.onModuleDestroy().then(() => { destroyed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(destroyed).toBe(false);
+
+    finishFirst();
+    await destroy;
+
+    expect(destroyed).toBe(true);
+    expect(handleSpy).toHaveBeenCalledTimes(1);
   });
 });

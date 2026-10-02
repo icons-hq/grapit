@@ -7,7 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { CancellationQuote } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -26,9 +26,11 @@ import {
   isTossCancelCompleted,
   isTransientRefundCancelFailure,
   REFUND_BALANCE_RECONCILIATION_CODE,
+  REFUND_CANCEL_ATTEMPT_LEASE_MS,
   REFUND_CANCEL_POST_WINDOW_MS,
   REFUND_NOT_PARTIAL_CANCELABLE_CODE,
   sendRefundCancelRetryJob,
+  type RefundCancelRetryScheduleOptions,
 } from '../refund/refund.service.js';
 import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
 import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
@@ -80,14 +82,22 @@ export type RefundCancelRetryJobResult = {
 
 const NON_TERMINAL_REFUND_STATUSES = ['requested', 'sent_to_pg', 'processing_at_pg'] as const;
 const REFUND_CANCEL_RETRY_CLAIM_METADATA_KEY = 'refundCancelRetryClaim';
-/** A claimed attempt that has not finished within this lease (crashed handler) may be claimed again. */
-export const REFUND_CANCEL_ATTEMPT_LEASE_MS = 10 * 60 * 1000;
+export { REFUND_CANCEL_ATTEMPT_LEASE_MS };
 export const REFUND_RECOVERY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 /** Grace after a scheduled attempt time before the sweep treats the job as lost. */
 export const REFUND_RECOVERY_OVERDUE_GRACE_MS = 10 * 60 * 1000;
 /** Rows without a recorded next attempt (crash right after revocation, legacy schedule) wait longer. */
 export const REFUND_RECOVERY_UNSCHEDULED_GRACE_MS = 20 * 60 * 1000;
+/**
+ * Before running a stale refund, the sweep pushes its `nextAttemptAt` this far ahead. An attempt that
+ * reschedules overwrites it; a row the attempt cannot move (missing context, a crash, a held claim) is
+ * retried after this backoff instead of staying first in line and starving the other stale refunds.
+ */
+export const REFUND_RECOVERY_RETRY_BACKOFF_MS = 30 * 60 * 1000;
 export const REFUND_RECOVERY_BATCH_SIZE = 20;
+/** Bounded wait for an in-flight sweep on shutdown, so a bounded worker run does not cut an attempt short. */
+export const REFUND_RECOVERY_SHUTDOWN_WAIT_MS = 60 * 1000;
+export const REFUND_CANCEL_COMMAND_UNAVAILABLE_CODE = 'CANCEL_COMMAND_UNAVAILABLE';
 
 function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -128,6 +138,8 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RefundCancelRetryWorker.name);
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
   private recoveryRunning = false;
+  private recoveryRun: Promise<unknown> | null = null;
+  private stopping = false;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -156,10 +168,36 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  onModuleDestroy(): void {
+  /**
+   * Stops starting new sweep rows and waits (bounded) for the row in flight. The bounded worker closes the
+   * application before the database, so an attempt is not cut off between the provider call and its
+   * bookkeeping; a row left unfinished after the bounded wait converges through the attempt lease.
+   */
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.recoveryInterval) {
       clearInterval(this.recoveryInterval);
       this.recoveryInterval = null;
+    }
+
+    const inFlight = this.recoveryRun;
+    if (!inFlight) {
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      inFlight.then(() => false, () => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), REFUND_RECOVERY_SHUTDOWN_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (timedOut) {
+      this.logger.warn(
+        'Stale refund recovery sweep was still running at shutdown. The unfinished attempt is retried after its lease.',
+      );
     }
   }
 
@@ -174,12 +212,22 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
     }
 
     const run = () => {
-      void this.recoverStaleRefunds().catch((error: unknown) => {
-        this.logger.error(
-          'Stale refund recovery sweep failed',
-          error instanceof Error ? error.stack : String(error),
-        );
-      });
+      if (this.stopping || this.recoveryRun) {
+        return;
+      }
+      const sweep = this.recoverStaleRefunds()
+        .catch((error: unknown) => {
+          this.logger.error(
+            'Stale refund recovery sweep failed',
+            error instanceof Error ? error.stack : String(error),
+          );
+        })
+        .finally(() => {
+          if (this.recoveryRun === sweep) {
+            this.recoveryRun = null;
+          }
+        });
+      this.recoveryRun = sweep;
     };
     run();
     this.recoveryInterval = setInterval(run, REFUND_RECOVERY_SWEEP_INTERVAL_MS);
@@ -198,26 +246,28 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       const staleRefunds = await this.db
         .select({ id: refunds.id, retryCount: refunds.retryCount })
         .from(refunds)
-        .where(and(
-          inArray(refunds.status, [...NON_TERMINAL_REFUND_STATUSES]),
-          sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
-          sql`(case
-            when ${refunds.providerMetadata}->'refundCancelRetry'->>'nextAttemptAt' is not null
-              then ${refunds.providerMetadata}->'refundCancelRetry'->>'nextAttemptAt' < ${overdueCutoff}
-            else ${refunds.updatedAt} < ${unscheduledCutoff}::timestamptz
-          end)`,
-        ))
-        .orderBy(asc(refunds.updatedAt))
+        .where(this.staleRefundCondition(overdueCutoff, unscheduledCutoff))
+        .orderBy(sql`coalesce((${refunds.providerMetadata}->'refundCancelRetry'->>'nextAttemptAt')::timestamptz, ${refunds.updatedAt}) asc`)
         .limit(REFUND_RECOVERY_BATCH_SIZE);
 
+      let found = 0;
       let attempted = 0;
       for (const staleRefund of staleRefunds) {
+        if (this.stopping) {
+          break;
+        }
+        // Claim the row for this sweep run and back it off, so a row the attempt cannot move does not stay
+        // first in line, and a concurrent sweep on another instance skips it.
+        if (!(await this.deferStaleRefund(staleRefund.id, now, overdueCutoff, unscheduledCutoff))) {
+          continue;
+        }
+        found += 1;
         try {
           const result = await this.handleJob({
             refundId: staleRefund.id,
             attempt: staleRefund.retryCount + 1,
           });
-          if (result.status !== 'stale_job') {
+          if (result.status !== 'stale_job' && result.status !== 'missing_refund') {
             attempted += 1;
           }
         } catch (error) {
@@ -228,16 +278,51 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      if (staleRefunds.length > 0) {
+      if (found > 0) {
         this.logger.warn(
-          `Recovered stale refunds without a live retry job. found=${staleRefunds.length}, attempted=${attempted}`,
+          `Recovered stale refunds without a live retry job. found=${found}, attempted=${attempted}`,
         );
       }
 
-      return { found: staleRefunds.length, attempted };
+      return { found, attempted };
     } finally {
       this.recoveryRunning = false;
     }
+  }
+
+  private staleRefundCondition(overdueCutoff: string, unscheduledCutoff: string) {
+    return and(
+      inArray(refunds.status, [...NON_TERMINAL_REFUND_STATUSES]),
+      sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
+      sql`(case
+        when ${refunds.providerMetadata}->'refundCancelRetry'->>'nextAttemptAt' is not null
+          then (${refunds.providerMetadata}->'refundCancelRetry'->>'nextAttemptAt')::timestamptz < ${overdueCutoff}::timestamptz
+        else ${refunds.updatedAt} < ${unscheduledCutoff}::timestamptz
+      end)`,
+    );
+  }
+
+  /** Conditional per-row claim: only a row that is still stale is pushed back and handed to this sweep. */
+  protected async deferStaleRefund(
+    refundId: string,
+    now: Date,
+    overdueCutoff: string,
+    unscheduledCutoff: string,
+  ): Promise<boolean> {
+    const deferredUntil = new Date(now.getTime() + REFUND_RECOVERY_RETRY_BACKOFF_MS).toISOString();
+    const [deferred] = await this.db
+      .update(refunds)
+      .set({
+        providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || jsonb_build_object(
+          'refundCancelRetry',
+          coalesce(${refunds.providerMetadata}->'refundCancelRetry', '{}'::jsonb)
+            || jsonb_build_object('nextAttemptAt', ${deferredUntil}::text, 'sweptAt', ${now.toISOString()}::text)
+        )`,
+      })
+      .where(and(eq(refunds.id, refundId), this.staleRefundCondition(overdueCutoff, unscheduledCutoff)))
+      .returning({ id: refunds.id });
+
+    return Boolean(deferred);
   }
 
   async handleJob(payload: RefundCancelRetryJobPayload): Promise<RefundCancelRetryJobResult> {
@@ -268,12 +353,23 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       idempotencyKey: this.buildRefundCancelIdempotencyKey(context.refund.id),
       cancelRequestIdSeed: context.refund.id,
     };
-    const command = readStoredPaymentCancelRequest(context.refund.providerMetadata) ?? (cancellationQuote
-      ? buildFullReservationPaymentCancelRequest({
-          ...baseCommandInput,
-          cancellationQuote,
-        })
-      : buildFullPaymentCancelRequest(baseCommandInput));
+    let command: ReturnType<typeof buildFullPaymentCancelRequest>;
+    try {
+      command = readStoredPaymentCancelRequest(context.refund.providerMetadata) ?? (cancellationQuote
+        ? buildFullReservationPaymentCancelRequest({
+            ...baseCommandInput,
+            cancellationQuote,
+          })
+        : buildFullPaymentCancelRequest(baseCommandInput));
+    } catch (error) {
+      // A legacy refund without a frozen command whose command cannot be rebuilt never succeeds by retrying.
+      // Whether an earlier POST moved money is unknown, so rights stay revoked for manual reconciliation.
+      await this.markFinalFailure(context.refund.id, new TossPaymentError(
+        REFUND_CANCEL_COMMAND_UNAVAILABLE_CODE,
+        `환불 취소 명령을 만들 수 없어 수동 대조가 필요합니다: ${getRefundErrorMessage(error)}`,
+      ));
+      return { status: 'failed' };
+    }
     const completionOptions = {
       allowPartialStatus:
         cancellationQuote !== null
@@ -593,6 +689,7 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       },
       retryCount,
       jobId,
+      { awaitingProvider: true },
     );
 
     return { status: jobId ? 'processing' : 'retry_schedule_failed' };
@@ -741,9 +838,10 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
     baseMetadata: Record<string, unknown>,
     retryCount: number,
     jobId: string | null,
+    options: RefundCancelRetryScheduleOptions = {},
   ): Promise<void> {
     const now = new Date();
-    const schedule = buildRefundCancelRetrySchedule(jobId, retryCount, now);
+    const schedule = buildRefundCancelRetrySchedule(jobId, retryCount, now, options);
     await this.db
       .update(refunds)
       .set({

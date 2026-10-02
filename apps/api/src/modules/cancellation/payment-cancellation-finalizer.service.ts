@@ -468,27 +468,36 @@ export class PaymentCancellationFinalizerService {
               seatId: ticketItems.seatId,
               floorKey: ticketItems.floorKey,
               seatKey: ticketItems.seatKey,
+              price: ticketItems.price,
+              serviceFee: ticketItems.serviceFee,
             });
-          const previouslyCancelledTicketItems = await tx
-            .select({ seatKey: ticketItems.seatKey })
+          const cancelledTicketItems = await tx
+            .select({
+              id: ticketItems.id,
+              seatKey: ticketItems.seatKey,
+              refundableAmount: ticketItems.refundableAmount,
+            })
             .from(ticketItems)
             .where(
               and(
                 eq(ticketItems.reservationId, input.context.reservation.id),
                 eq(ticketItems.paymentId, input.context.payment.id),
                 eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
-                inArray(ticketItems.seatKey, seatKeys),
                 eq(ticketItems.status, 'cancelled'),
               ),
             );
+          const newlyCancelledIds = new Set(updatedTicketItems.map((ticketItem) => ticketItem.id));
           const coveredSeatKeys = new Set([
             ...updatedTicketItems.map((ticketItem) => ticketItem.seatKey),
-            ...previouslyCancelledTicketItems.map((ticketItem) => ticketItem.seatKey),
+            ...cancelledTicketItems.map((ticketItem) => ticketItem.seatKey),
           ]);
 
           if (seatKeys.some((seatKey) => !coveredSeatKeys.has(seatKey))) {
             throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
           }
+
+          await this.attributeQuotelessProviderRefund(tx, input, now, updatedTicketItems,
+            cancelledTicketItems.filter((ticketItem) => !newlyCancelledIds.has(ticketItem.id)));
 
           targetTicketItemIds.push(...updatedTicketItems.map(
             (ticketItem) => ticketItem.id,
@@ -724,6 +733,81 @@ export class PaymentCancellationFinalizerService {
       releaseJobId: JOB_ENQUEUE_FAILED,
       releaseEnqueued: false,
     };
+  }
+
+  /**
+   * A quote-less provider cancellation records each newly cancelled Ticket Item at price + service fee.
+   * The money the provider actually returned in this cancellation is its cancelled total minus what the
+   * ledger already recorded for earlier cancellations. When that differs (for example a console cancel of
+   * the remaining balance also returns the fee retained by an earlier seat cancellation):
+   * - a single newly cancelled item records the provider amount as its refund, so refund totals match the
+   *   provider; earlier items keep their own fee evidence;
+   * - several items keep price + service fee and the difference is recorded on the payment as an
+   *   unattributed amount for finance reconciliation.
+   * Non-KRW or incomplete provider amounts are marked unverified.
+   */
+  private async attributeQuotelessProviderRefund(
+    tx: DrizzleDB,
+    input: FinalizeFullPaymentCancellationInput,
+    now: Date,
+    newlyCancelled: Array<{ id: string; price: number; serviceFee: number }>,
+    earlierCancelled: Array<{ refundableAmount: number }>,
+  ): Promise<void> {
+    if (newlyCancelled.length === 0 || input.localOnly) {
+      return;
+    }
+
+    const response = input.providerResponse;
+    const faceValueAmount = newlyCancelled.reduce((total, item) => total + item.price + item.serviceFee, 0);
+    const knownKrwAmounts = response?.currency === 'KRW'
+      && typeof response.totalAmount === 'number'
+      && typeof response.balanceAmount === 'number';
+    let reconciliation: Record<string, unknown> | null = null;
+
+    if (!knownKrwAmounts) {
+      reconciliation = { status: 'UNVERIFIED', faceValueAmount, reason: 'PROVIDER_KRW_AMOUNT_UNAVAILABLE' };
+    } else {
+      const providerCancelledTotal = (response.totalAmount as number) - (response.balanceAmount as number);
+      const earlierRecordedAmount = earlierCancelled.reduce((total, item) => total + item.refundableAmount, 0);
+      const providerCancelAmount = providerCancelledTotal - earlierRecordedAmount;
+      if (providerCancelAmount !== faceValueAmount) {
+        const attributable = newlyCancelled.length === 1
+          && Number.isSafeInteger(providerCancelAmount)
+          && providerCancelAmount > 0;
+        if (attributable) {
+          const item = newlyCancelled[0]!;
+          const cancellationFee = Math.max(0, item.price - providerCancelAmount);
+          const serviceFeeRefund = Math.min(item.serviceFee, Math.max(0, providerCancelAmount - item.price));
+          await tx.update(ticketItems).set({
+            cancellationFee,
+            serviceFeeRefund,
+            refundableAmount: providerCancelAmount,
+            updatedAt: now,
+          }).where(eq(ticketItems.id, item.id));
+        }
+        reconciliation = {
+          status: attributable ? 'ATTRIBUTED' : 'UNATTRIBUTED',
+          providerCancelAmount,
+          faceValueAmount,
+          differenceAmount: providerCancelAmount - faceValueAmount,
+          earlierRecordedAmount,
+          ...(attributable ? { attributedTicketItemId: newlyCancelled[0]!.id } : {}),
+        };
+      }
+    }
+
+    if (!reconciliation) {
+      return;
+    }
+
+    this.logger.warn(
+      `Quote-less provider cancellation needs finance reconciliation. reservationId=${input.context.reservation.id}, paymentId=${input.context.payment.id}, status=${String(reconciliation.status)}`,
+    );
+    await tx.update(payments).set({
+      providerMetadata: sql`coalesce(${payments.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
+        quotelessCancellationReconciliation: { ...reconciliation, recordedAt: now.toISOString() },
+      })}::jsonb`,
+    }).where(eq(payments.id, input.context.payment.id));
   }
 
   private resolveHoldWindowMinutes(

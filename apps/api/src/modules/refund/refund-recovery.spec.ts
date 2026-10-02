@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException, ServiceUnavailableException } fr
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
+  buildRefundCancelRetrySchedule,
   getRefundErrorCode,
   isDefiniteRefundCancelRejection,
   isTransientRefundCancelFailure,
@@ -149,6 +150,15 @@ describe('RefundService provider failure classification (audit #22)', () => {
       expect(isTransientRefundCancelFailure(new TossPaymentError(code, 'rejected'))).toBe(false);
     },
   );
+
+  it('raises attention after repeated unresolved attempts but never while the provider is processing the cancel', () => {
+    const now = new Date('2026-07-05T03:00:00.000Z');
+    expect(buildRefundCancelRetrySchedule('job', 5, now)).toMatchObject({
+      metadata: { manualReviewRequired: true }, customerServiceCtaVisible: true });
+    const awaiting = buildRefundCancelRetrySchedule('job', 5, now, { awaitingProvider: true });
+    expect(awaiting).toMatchObject({ metadata: { manualReviewRequired: false }, customerServiceCtaVisible: false });
+    expect(buildRefundCancelRetrySchedule(null, 5, now, { awaitingProvider: true }).customerServiceCtaVisible).toBe(true);
+  });
 
   it('never treats local preflight decisions as retryable', () => {
     expect(isTransientRefundCancelFailure(new TossPaymentError('BALANCE_RECONCILIATION_REQUIRED', 'x'))).toBe(false);
@@ -400,13 +410,14 @@ describe('RefundService admin recovery of stuck refunds (audit #53)', () => {
     expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(expect.objectContaining({ source: 'refund_retry' }));
   });
 
-  it('restores rights and starts a new attempt once the frozen command is past the idempotency window', async () => {
+  it('restores rights past the idempotency window and stops instead of sending a re-quoted amount the admin did not review', async () => {
+    // 16 days after the request: the fee schedule moved on, so a new quote would differ from the stored one.
     vi.setSystemTime(new Date(new Date('2026-07-05T03:00:00.000Z').getTime() + REFUND_CANCEL_POST_WINDOW_MS + 1000));
     const provider = {
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true, cancels: [] }),
       cancelPayment: vi.fn(),
     };
-    const { service } = createService(provider);
+    const { service, pgBoss } = createService(provider);
     const context = createContext({ itemStatus: 'cancellation_pending', cancelDeadline: new Date('2026-08-30T14:59:59.999Z'), showtimeAt: new Date('2026-08-31T10:00:00.000Z') });
     vi.spyOn(service as never, 'loadReservationContextByReservationId').mockResolvedValue(context as never);
     vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(stuckFailedRefund() as never);
@@ -414,15 +425,83 @@ describe('RefundService admin recovery of stuck refunds (audit #53)', () => {
     const restored = stuckFailedRefund();
     (restored.providerMetadata as Record<string, unknown>).rightsRestoredAt = new Date().toISOString();
     const restoreSpy = vi.spyOn(restoreModule, 'restoreRejectedRefundRights').mockResolvedValue(restored as never);
-    vi.spyOn(service as never, 'loadTicketItemsForReservation')
-      .mockResolvedValue(createContext().ticketItems as never);
-    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund').mockRejectedValue(new Error('stop after new quote'));
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+    const reopenSpy = vi.spyOn(service as never, 'reopenFailedRefund');
 
-    await expect(service.requestAdminRefund('reservation-1', 'admin-1', '재처리')).rejects.toThrow('stop after new quote');
+    const request = service.requestAdminRefund('reservation-1', 'admin-1', '재처리');
 
+    await expect(request).rejects.toBeInstanceOf(ConflictException);
+    await expect(request).rejects.toThrow('환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요');
     expect(restoreSpy).toHaveBeenCalledWith({}, expect.objectContaining({ id: 'refund-1' }), expect.objectContaining({ code: 'REFUND_RETRY_WINDOW_EXPIRED' }));
-    expect(insertSpy).toHaveBeenCalled();
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(reopenSpy).not.toHaveBeenCalled();
     expect(provider.cancelPayment).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it('restores rights after a provider-aborted command and stops for a reviewed re-request', async () => {
+    const provider = {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000,
+        isPartialCancelable: true,
+        cancels: [{ cancelAmount: 200000, cancelReason: FROZEN_COMMAND.reason, cancelStatus: 'ABORTED', canceledAt: '2026-07-05T03:01:00.000Z' }] }),
+      cancelPayment: vi.fn(),
+    };
+    const { service } = createService(provider);
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createContext({ itemStatus: 'cancellation_pending' }) as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(stuckFailedRefund() as never);
+    const restoreModule = await import('../cancellation/refund-rights-restoration.js');
+    const restored = stuckFailedRefund();
+    (restored.providerMetadata as Record<string, unknown>).rightsRestoredAt = new Date().toISOString();
+    const restoreSpy = vi.spyOn(restoreModule, 'restoreRejectedRefundRights').mockResolvedValue(restored as never);
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+    await expect(service.requestAdminRefund('reservation-1', 'admin-1', '재처리'))
+      .rejects.toThrow('결제사가 이전 취소 요청을 중단해 티켓 권리를 복원했습니다');
+    expect(restoreSpy).toHaveBeenCalledWith({}, expect.objectContaining({ id: 'refund-1' }), expect.objectContaining({ code: 'PROVIDER_CANCEL_ABORTED' }));
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('reports the current state when the refund changed while its rights were being restored', async () => {
+    vi.setSystemTime(new Date(new Date('2026-07-05T03:00:00.000Z').getTime() + REFUND_CANCEL_POST_WINDOW_MS + 1000));
+    const provider = {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true, cancels: [] }),
+      cancelPayment: vi.fn(),
+    };
+    const { service } = createService(provider);
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createContext({ itemStatus: 'cancellation_pending' }) as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(stuckFailedRefund() as never);
+    const restoreModule = await import('../cancellation/refund-rights-restoration.js');
+    // A webhook completed the refund concurrently, so nothing was restored.
+    vi.spyOn(restoreModule, 'restoreRejectedRefundRights').mockResolvedValue(createRefund({ status: 'completed' }) as never);
+
+    const result = await service.requestAdminRefund('reservation-1', 'admin-1', '재처리');
+
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(result.idempotent).toBe(true);
+  });
+
+  it('keeps polling a provider-accepted async cancel without raising attention after many attempts', async () => {
+    const provider = {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000,
+        isPartialCancelable: true,
+        cancels: [{ cancelAmount: 200000, cancelReason: FROZEN_COMMAND.reason, cancelStatus: 'IN_PROGRESS', canceledAt: '2026-07-05T03:01:00.000Z' }] }),
+      cancelPayment: vi.fn(),
+    };
+    const { service } = createService(provider);
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createContext({ itemStatus: 'cancellation_pending' }) as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(stuckFailedRefund() as never);
+    const reopened = createRefund({ status: 'processing_at_pg', retryCount: 4 });
+    vi.spyOn(service as never, 'reopenFailedRefund').mockResolvedValue(reopened as never);
+    const recordSpy = vi.spyOn(service as never, 'recordRefundCancelRetrySchedule').mockResolvedValue(reopened as never);
+
+    await service.requestAdminRefund('reservation-1', 'admin-1', '재처리');
+
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
+    expect(recordSpy).toHaveBeenCalledWith(reopened, 'refund-retry-job', { awaitingProvider: true });
   });
 
   it('stops for manual reconciliation when an unknown provider cancellation lowered the balance', async () => {

@@ -81,6 +81,8 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     showtimeAt?: Date;
     cancelDeadline?: Date;
     bookedAt?: Date;
+    /** Provider approval time; defaults to the booking (reservation creation) time. */
+    paidAt?: Date;
     issueQr?: boolean;
     seatInventory?: boolean;
   } = {}) {
@@ -102,7 +104,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
       reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status: 'CONFIRMED', totalAmount: amount,
       cancelDeadline: options.cancelDeadline ?? new Date(showtimeAt.getTime() - 86400000), createdAt: bookedAt }).returning();
     const [payment] = await db.insert(payments).values({ reservationId: reservation!.id, paymentKey: `pay_${id}`,
-      tossOrderId: reservation!.tossOrderId!, method: 'CARD', amount, status: 'DONE', paidAt: bookedAt }).returning();
+      tossOrderId: reservation!.tossOrderId!, method: 'CARD', amount, status: 'DONE', paidAt: options.paidAt ?? bookedAt }).returning();
     const items = [];
     for (const [index, seatKey] of ['1F:A-1', '1F:A-2'].entries()) {
       await db.insert(reservationSeats).values({ reservationId: reservation!.id, seatId: seatKey, tierName: 'VIP',
@@ -170,7 +172,8 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
         payment: { id: f.payment.id, paymentKey: f.payment.paymentKey }, bookingPolicy: null,
         seats: [{ seatId: '1F:A-1' }, { seatId: '1F:A-2' }] },
       reason: 'PG console cancel',
-      providerResponse: { status: 'CANCELED', balanceAmount: 0 },
+      // The console refunded the whole remaining balance: seat B (52,000) plus seat A's retained 6,000.
+      providerResponse: { status: 'CANCELED', currency: 'KRW', totalAmount: 104000, balanceAmount: 0 },
     });
 
     const [cancelledFirst] = await db.select().from(ticketItems).where(eq(ticketItems.id, first!.id));
@@ -179,7 +182,13 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const [firstTicket] = await db.select().from(tickets).where(eq(tickets.ticketItemId, first!.id));
     expect(firstTicket!.revokedAt).toEqual(earlierCancelledAt);
     const [cancelledSecond] = await db.select().from(ticketItems).where(eq(ticketItems.id, second!.id));
-    expect(cancelledSecond).toMatchObject({ status: 'cancelled', refundableAmount: 52000 });
+    // Refund totals follow the provider: 46,000 + 58,000 = 104,000 KRW actually returned.
+    expect(cancelledSecond).toMatchObject({ status: 'cancelled', refundableAmount: 58000, cancellationFee: 0, serviceFeeRefund: 2000 });
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.payment.id));
+    expect((payment!.providerMetadata as Record<string, unknown>).quotelessCancellationReconciliation).toMatchObject({
+      status: 'ATTRIBUTED', providerCancelAmount: 58000, faceValueAmount: 52000, differenceAmount: 6000,
+      attributedTicketItemId: second!.id,
+    });
     expect((await seat(f.showtime.id, '1F:A-1')).status).toBe('locked');
     expect((await seat(f.showtime.id, '1F:A-2')).status).toBe('held_cancelled');
   });
@@ -279,11 +288,27 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     expect((await service.requestRefund(f.reservation.id, f.userId, 'again')).idempotent).toBe(true);
 
     const healthy = provider(f.snapshot);
-    const result = await new RefundService(db, healthy as never, finalizer()).requestAdminRefund(f.reservation.id, adminId, '재처리');
+    let releaseCancel!: () => void;
+    const blockingHealthy = { queryPayment: healthy.queryPayment, cancelPayment: vi.fn(async (...args: Parameters<typeof healthy.cancelPayment>) => {
+      await new Promise<void>((resolve) => { releaseCancel = resolve; });
+      return healthy.cancelPayment(...args);
+    }) };
+    const admin = new RefundService(db, blockingHealthy as never, finalizer()).requestAdminRefund(f.reservation.id, adminId, '재처리');
+    await vi.waitFor(() => expect(blockingHealthy.cancelPayment).toHaveBeenCalledTimes(1));
 
+    // While the admin attempt is in flight, another instance's stale sweep must not run the same refund.
+    const reopened = await refundOf(f.reservation.id);
+    expect(reopened).toMatchObject({ status: 'sent_to_pg', retryCount: 4 });
+    const sweeper = new RefundCancelRetryWorker(db, healthy as never, finalizer());
+    expect(await sweeper.recoverStaleRefunds(new Date(Date.now() + 15 * 60000))).toEqual({ found: 0, attempted: 0 });
+    // A stray job for the attempt before the admin recovery is rejected as stale.
+    expect(await sweeper.handleJob({ refundId: reopened.id, attempt: 4 })).toEqual({ status: 'stale_job' });
+
+    releaseCancel();
+    const result = await admin;
     expect(result.refundTimeline?.currentState).toBe('COMPLETED');
     expect(healthy.cancelPayment).toHaveBeenCalledTimes(1);
-    expect(healthy.cancelPayment.mock.calls[0]?.[1]).toBe(toss.cancelPayment.mock.calls[0]?.[1]);
+    expect(blockingHealthy.cancelPayment.mock.calls[0]?.[1]).toBe(toss.cancelPayment.mock.calls[0]?.[1]);
     const [reservation] = await db.select().from(reservations).where(eq(reservations.id, f.reservation.id));
     expect(reservation!.status).toBe('CANCELLED');
   });
@@ -346,5 +371,98 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     expect(result.refundTimeline?.currentState).toBe('COMPLETED');
     expect(toss.cancelPayment).toHaveBeenCalledWith(f.payment.paymentKey, expect.any(String), expect.not.objectContaining({ cancelAmount: expect.anything() }));
     expect(f.snapshot.balanceAmount).toBe(0);
+  });
+
+  it('restores rights past the idempotency window and refunds only after the admin reviews the new quote (#53)', async () => {
+    const f = await purchase();
+    const toss = provider(f.snapshot, { fail: () => new TossPaymentError('FAILED_REFUND_PROCESS', '은행 응답 지연') });
+    const service = new RefundService(db, toss as never, finalizer());
+    await service.requestRefund(f.reservation.id, f.userId, 'stuck');
+    await db.update(refunds).set({ status: 'failed', resultCode: 'RETRY_EXHAUSTED', retryCount: 3, failedAt: new Date() })
+      .where(eq(refunds.reservationId, f.reservation.id));
+    const storedQuote = (await refundOf(f.reservation.id)).providerMetadata as { cancellationQuote: { refundableAmount: number } };
+    expect(storedQuote.cancellationQuote.refundableAmount).toBe(100000);
+
+    // 16 days later: the frozen command can no longer be resent and the fee schedule has moved on.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.now() + 16 * 86400000));
+    try {
+      const healthy = provider(f.snapshot);
+      const admin = new RefundService(db, healthy as never, finalizer());
+
+      await expect(admin.requestAdminRefund(f.reservation.id, adminId, '재처리'))
+        .rejects.toThrow('환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요');
+      expect(healthy.cancelPayment).not.toHaveBeenCalled();
+      const restored = await refundOf(f.reservation.id);
+      expect(restored).toMatchObject({ status: 'failed', resultCode: 'REFUND_RETRY_WINDOW_EXPIRED' });
+      expect((restored.providerMetadata as Record<string, unknown>).rightsRestoredAt).toEqual(expect.any(String));
+      const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.reservation.id));
+      expect(items.every((item) => item.status === 'active')).toBe(true);
+      const credentials = await db.select().from(tickets).where(eq(tickets.reservationId, f.reservation.id));
+      expect(credentials.every((ticket) => ticket.status === 'active')).toBe(true);
+
+      // The refreshed preview shows the fee now due (booking day 8+): 2 x (50,000 - 4,000).
+      const preview = await admin.getAdminRefundPreview(f.reservation.id);
+      expect(preview).toMatchObject({ canRequestRefund: true, cancellationQuote: { refundableAmount: 92000 } });
+      const result = await admin.requestAdminRefund(f.reservation.id, adminId, '재처리', { expectedRefundableAmount: 92000 });
+      expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+      expect(healthy.cancelPayment).toHaveBeenCalledTimes(1);
+      expect(healthy.cancelPayment.mock.calls[0]?.[2]).toMatchObject({ cancelAmount: 92000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the payment approval day for a single-seat cancellation across midnight (#83)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T15:10:00.000Z')); // 2026-07-02 00:10 KST
+    try {
+      const f = await purchase({
+        bookedAt: new Date('2026-07-01T14:57:00.000Z'), // seat selected 2026-07-01 23:57 KST
+        paidAt: new Date('2026-07-01T15:03:00.000Z'), // approved 2026-07-02 00:03 KST
+        showtimeAt: new Date('2026-08-01T10:00:00.000Z'),
+      });
+      const toss = provider(f.snapshot);
+      const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+        {} as never, {} as never, qr, undefined, undefined, finalizer());
+
+      const preview = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);
+      expect(preview).toMatchObject({ refundableAmount: 52000, cancellationQuote: { policyCodes: ['SAME_DAY_BEFORE_MIDNIGHT'] } });
+
+      await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, '당일 취소');
+      const [cancelled] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.items[0]!.id));
+      expect(cancelled).toMatchObject({ status: 'cancelled', cancellationFee: 0, serviceFeeRefund: 2000, refundableAmount: 52000 });
+      expect(toss.cancelPayment).toHaveBeenCalledWith(f.payment.paymentKey, expect.any(String),
+        expect.objectContaining({ cancelAmount: 52000 }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('backs off a stale refund the sweep cannot move so it does not starve the others (#53)', async () => {
+    const f = await purchase();
+    await new RefundService(db, provider(f.snapshot, { fail: () => new TossPaymentError('COMMON_ERROR', '일시적인 오류') }) as never,
+      finalizer()).requestRefund(f.reservation.id, f.userId, 'poison');
+    const refund = await refundOf(f.reservation.id);
+    expect(refund.status).toBe('sent_to_pg');
+    const worker = new RefundCancelRetryWorker(db, provider(f.snapshot) as never, finalizer());
+    const handleSpy = vi.spyOn(worker, 'handleJob').mockRejectedValue(new Error('poison row'));
+    const runsFor = () => handleSpy.mock.calls.filter(([payload]) => payload.refundId === refund.id).length;
+
+    const firstSweepAt = new Date(Date.now() + 15 * 60000);
+    await worker.recoverStaleRefunds(firstSweepAt);
+    expect(runsFor()).toBe(1);
+    await worker.recoverStaleRefunds(firstSweepAt);
+    expect(runsFor()).toBe(1);
+    const deferred = await refundOf(f.reservation.id);
+    expect((deferred.providerMetadata as { refundCancelRetry: { nextAttemptAt: string } }).refundCancelRetry.nextAttemptAt)
+      .toBe(new Date(firstSweepAt.getTime() + 30 * 60000).toISOString());
+
+    await worker.recoverStaleRefunds(new Date(firstSweepAt.getTime() + 41 * 60000));
+    expect(runsFor()).toBe(2);
+
+    // Leave no non-terminal refund behind for other cases.
+    handleSpy.mockRestore();
+    await db.update(refunds).set({ status: 'failed' }).where(eq(refunds.id, refund.id));
   });
 });

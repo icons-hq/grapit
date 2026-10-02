@@ -1434,6 +1434,8 @@ describe('PaymentCancellationFinalizerService', () => {
         seatId: ticketItems.seatId,
         floorKey: ticketItems.floorKey,
         seatKey: ticketItems.seatKey,
+        price: ticketItems.price,
+        serviceFee: ticketItems.serviceFee,
       });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
   });
@@ -1466,6 +1468,63 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(seatUpdates).toHaveLength(1);
     expect(whereParams(seatUpdates[0]?.whereArgs[0])).toContain('2F:B-20');
     expect(whereParams(seatUpdates[0]?.whereArgs[0])).not.toContain('1F:A-10');
+  });
+
+  it('records the provider amount on the single remaining item of a quote-less cancel that also refunded an earlier fee', async () => {
+    const { service, transaction } = createService(
+      { isAvailable: false, send: vi.fn() },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-2', seatId: 'B-20', floorKey: '2F', seatKey: '2F:B-20',
+          price: 50000, serviceFee: 2000 } as never],
+        previouslyCancelledTicketItemReturning: [{ id: 'ticket-item-1', seatKey: '1F:A-10', refundableAmount: 46000 } as never],
+        ticketReturning: [{ id: 'ticket-2', ticketItemId: 'ticket-item-2' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-2' }]],
+      },
+    );
+
+    // 104,000 KRW order, seat A refunded 46,000 earlier; the console cancel returned the remaining 58,000.
+    await service.finalizeFullPaymentCancellation(baseInput({
+      refundId: undefined,
+      source: 'cancel_webhook',
+      reason: 'PG console cancel',
+      providerResponse: { status: 'CANCELED', currency: 'KRW', totalAmount: 104000, balanceAmount: 0 },
+    }));
+
+    const attribution = transaction.updateCalls.find((call) => call.table === ticketItems
+      && call.values.refundableAmount === 58000);
+    expect(attribution?.values).toMatchObject({ cancellationFee: 0, serviceFeeRefund: 2000, refundableAmount: 58000 });
+    expect(whereParams(attribution?.whereArgs[0])).toEqual(['ticket-item-2']);
+    const reconciliation = transaction.updateCalls.filter((call) => call.table === payments).at(-1);
+    const patch = JSON.parse(new PgDialect().sqlToQuery(reconciliation?.values.providerMetadata as SQL).params[0] as string);
+    expect(patch.quotelessCancellationReconciliation).toMatchObject({ status: 'ATTRIBUTED', providerCancelAmount: 58000,
+      faceValueAmount: 52000, differenceAmount: 6000, earlierRecordedAmount: 46000, attributedTicketItemId: 'ticket-item-2' });
+  });
+
+  it('flags an unattributed provider amount when several items are cancelled by a quote-less cancel', async () => {
+    const { service, transaction } = createService(
+      { isAvailable: false, send: vi.fn() },
+      {
+        ticketItemReturning: [
+          { id: 'ticket-item-1', seatId: 'A-10', floorKey: '1F', seatKey: '1F:A-10', price: 50000, serviceFee: 2000 } as never,
+          { id: 'ticket-item-2', seatId: 'B-20', floorKey: '2F', seatKey: '2F:B-20', price: 50000, serviceFee: 2000 } as never,
+        ],
+        previouslyCancelledTicketItemReturning: [],
+      },
+    );
+
+    await service.finalizeFullPaymentCancellation(baseInput({
+      refundId: undefined,
+      source: 'cancel_webhook',
+      reason: 'PG console cancel',
+      providerResponse: { status: 'PARTIAL_CANCELED', currency: 'KRW', totalAmount: 104000, balanceAmount: 4000 },
+    }));
+
+    expect(transaction.updateCalls.filter((call) => call.table === ticketItems && 'refundableAmount' in call.values
+      && typeof call.values.refundableAmount === 'number')).toHaveLength(0);
+    const reconciliation = transaction.updateCalls.filter((call) => call.table === payments).at(-1);
+    const patch = JSON.parse(new PgDialect().sqlToQuery(reconciliation?.values.providerMetadata as SQL).params[0] as string);
+    expect(patch.quotelessCancellationReconciliation).toMatchObject({ status: 'UNATTRIBUTED', providerCancelAmount: 100000,
+      faceValueAmount: 104000, differenceAmount: -4000 });
   });
 
   it('persists JOB_ENQUEUE_FAILED when pgBoss send fails', async () => {

@@ -1122,7 +1122,7 @@ describe('RefundService', () => {
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
     expect(pgBoss.send).toHaveBeenCalled();
-    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, null);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, null, { awaitingProvider: false });
     expect(failedSpy).not.toHaveBeenCalled();
     expect(result.retryEnqueued).toBe(false);
     expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');

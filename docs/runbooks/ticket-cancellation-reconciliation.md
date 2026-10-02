@@ -56,7 +56,7 @@ Girl Rules의 저장된 승인/취소 결제 1,190건을 PG 원거래와 읽기 
 
 ## Refund retry, recovery and held seats (2026-10)
 
-Ambiguous provider answers (Toss 5xx codes, `FORBIDDEN_CONSECUTIVE_REQUEST`, unknown codes, non-JSON gateway pages) no longer end a refund. The refund stays `sent_to_pg`/`processing_at_pg` and the same frozen command (same idempotency key and reason) is retried with a long backoff until the 15-day provider idempotency window closes. After three attempts it shows the customer-service CTA and `provider_metadata.manualReviewRequired = true`.
+Ambiguous provider answers (Toss 5xx codes, `FORBIDDEN_CONSECUTIVE_REQUEST`, unknown codes, non-JSON gateway pages) no longer end a refund. The refund stays `sent_to_pg`/`processing_at_pg` and the same frozen command (same idempotency key and reason) is retried with a long backoff until the 15-day provider idempotency window closes. After three unresolved attempts it shows the customer-service CTA and `provider_metadata.manualReviewRequired = true`. A provider-accepted asynchronous cancel that is still `IN_PROGRESS` is polled without raising them.
 
 Read-only triage queries:
 
@@ -70,6 +70,12 @@ WHERE status IN ('requested', 'sent_to_pg', 'processing_at_pg', 'failed')
   AND provider_metadata->>'rightsRestoredAt' IS NULL
 ORDER BY requested_at;
 
+-- Quote-less provider cancellations (for example a Toss console cancel) whose provider amount differs from the
+-- remaining items' price + service fee, or could not be verified.
+SELECT id, reservation_id, provider_metadata->'quotelessCancellationReconciliation' AS reconciliation
+FROM payments
+WHERE provider_metadata ? 'quotelessCancellationReconciliation';
+
 -- Cancelled seats still held after their hold expired (the recovery sweep releases them).
 SELECT showtime_id, seat_key, reopen_job_id, reopen_hold_until
 FROM seat_inventories
@@ -78,13 +84,13 @@ WHERE status = 'held_cancelled' AND reopen_hold_until < now() - interval '15 min
 
 Recovery rules:
 
-- A non-terminal refund without a live retry job is re-driven automatically by the background sweep (10 minutes after its `nextAttemptAt`, or 20 minutes after the last update when no schedule was recorded). No manual action is needed while the provider is down.
+- A non-terminal refund without a live retry job is re-driven automatically by the background sweep (10 minutes after its `nextAttemptAt`, or 20 minutes after the last update when no schedule was recorded). No manual action is needed while the provider is down. The sweep pushes each row it takes 30 minutes ahead first, so a row it cannot move is retried later instead of blocking the batch. A legacy refund without a frozen command whose command cannot be rebuilt becomes `failed` with `CANCEL_COMMAND_UNAVAILABLE` (rights stay revoked); reconcile it manually.
 - A `failed` refund whose rights are still revoked (no `rightsRestoredAt`, for example a legacy `RETRY_EXHAUSTED`) is recovered by pressing **환불 처리** again in admin with the `refund.admin_refund` capability. The API first queries the provider:
   - matching completed cancel: finalized without another POST;
   - untouched balance inside the 15-day window: the same frozen command is resent;
-  - untouched balance after the window, or a provider-aborted async cancel: rights are restored and a new reviewed attempt starts (check the preview amount again);
+  - untouched balance after the window, or a provider-aborted async cancel: rights are restored and the request stops with 409 ("환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요"). Reopen the refund form, check the recalculated amount (the fee schedule may have moved on since the original request) and press **환불 처리** again;
   - provider balance higher than the frozen ledger: rights are restored without a POST;
   - provider balance lower than the frozen ledger (unknown cancellation) or ticket items no longer `cancellation_pending`: the API refuses with 409. Reconcile in the Toss dashboard first.
-- After a seat-level cancellation, refund the remaining balance through the app (admin refund), not the Toss console. A console cancel is reconciled by webhook only for still-valid Ticket Items; earlier seat cancellations keep their own fee and refund, and the extra retained amount refunded by the console must be explained in finance reconciliation.
+- After a seat-level cancellation, refund the remaining balance through the app (admin refund), not the Toss console. A console cancel is reconciled by webhook only for still-valid Ticket Items; earlier seat cancellations keep their own fee and refund, and the console amount is reconciled automatically when it can be: with one remaining item the item records the provider amount as its refund (`ATTRIBUTED`); with several items, or a non-KRW payment, the payment carries `quotelessCancellationReconciliation` (`UNATTRIBUTED`/`UNVERIFIED`) and finance must attribute the difference using the query above.
 - Held seats whose release job never ran (pg-boss unavailable, crash, `JOB_ENQUEUE_FAILED`) are released by the background sweep 15 minutes after their hold expires, with the same ownership and showtime guards as the release worker. Seats within 5 minutes of showtime stay held. Manual open is still available for cancelled reservations.
 - After the Cancellation Window only the Administrative Full Refund Override can refund (show cancellation, company fault). Add Entered Ticket Override for entered tickets.
