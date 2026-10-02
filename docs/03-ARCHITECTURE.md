@@ -415,6 +415,10 @@ Cloudflare R2 stores poster images, detail images, SVG seat maps, and uploaded p
 
 SVG seat maps are product-critical and must be treated as data with validation/safety constraints, not as arbitrary HTML.
 
+- Rendering boundary: every inline render (buyer seat viewer, admin visual tier editor) passes the parsed document through `apps/web/lib/svg/safety.ts` `sanitizeParsedSvg`. It is an allowlist: the root must be an SVG `<svg>`, comments and processing instructions are removed, CDATA becomes text, only allowlisted SVG elements and attributes survive (`data-*`/`aria-*` kept), `title`/`desc` keep text only, and URL-bearing attributes, event handlers, SMIL animation, external `url(...)` references and CSS escapes are dropped. This blocks XML→HTML re-serialization mXSS (`<!-->`, `<?x >`, HTML breakout tags). Do not inject seat-map markup without this function.
+- Upload check: `hasUnsafeSvgPayload` rejects security-relevant content (script/style/foreignObject/animation, HTML breakout tags, markup-like comment/PI/CDATA data, unsafe URLs or styles, non-SVG roots) but accepts harmless design-tool metadata, which the renderer strips. Presigned PUT or an externally set `svgUrl` can bypass the upload check, so the rendering sanitizer is the security boundary.
+- Seat viewer rendering: the SVG is parsed, sanitized and serialized once per SVG URL, floor and tier configuration. Realtime `seat-update` events only patch the attributes of seats whose visual state changed on the mounted DOM; they never re-parse the SVG or replace `innerHTML`. The desktop MiniMap is a static tier-color copy.
+
 ## 9. Observability And Operations
 
 - Sentry is initialized in both web and API.
