@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
@@ -98,6 +100,19 @@ function makeMockUpdateChain(returningRows: Array<{ id: string }> = [{ id: rando
   return { set, where, returning };
 }
 
+/** Valkey stand-in for the per-code email verification attempt counter (INCR script). */
+function createAttemptCounter() {
+  const counts = new Map<string, number>();
+  return {
+    counts,
+    eval: vi.fn(async (_script: string, _numKeys: number, key: string) => {
+      const next = (counts.get(key) ?? 0) + 1;
+      counts.set(key, next);
+      return next;
+    }),
+  };
+}
+
 function containsPrimitiveValue(value: unknown, needle: unknown, seen = new Set<object>()): boolean {
   if (value === needle) return true;
   if (value === null || typeof value !== 'object') return false;
@@ -152,6 +167,7 @@ describe('AuthService', () => {
     claimPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
   let releasePhoneClaim: ReturnType<typeof vi.fn>;
+  let attemptCounter: ReturnType<typeof createAttemptCounter>;
 
   beforeAll(async () => {
     preHashedPassword = await argon2.hash('Test1234!', {
@@ -226,6 +242,8 @@ describe('AuthService', () => {
       captureConsent: vi.fn().mockResolvedValue(undefined),
     };
 
+    attemptCounter = createAttemptCounter();
+
     // Instantiate AuthService directly (no NestJS DI overhead)
     authService = new AuthService(
       mockJwtService as unknown as JwtService,
@@ -235,6 +253,7 @@ describe('AuthService', () => {
       mockEmailService as any,
       mockDb as any,
       mockConsentService as unknown as ConsentService,
+      attemptCounter as never,
     );
   });
 
@@ -1419,6 +1438,108 @@ describe('AuthService', () => {
       await expect(
         authEmailVerificationApi().verifyEmailVerificationCode(email, code),
       ).rejects.toThrow(/인증번호가 만료되었습니다/);
+    });
+
+    function signupCodeRecord(email: string, code: string) {
+      return {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(email, code),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date(),
+      };
+    }
+
+    it('refuses even the right code once five guesses were used and expires the code (audit #12)', async () => {
+      const email = 'guess@test.com';
+      const code = '135790';
+      const record = signupCodeRecord(email, code);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+      const invalidation = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(invalidation);
+
+      for (let guess = 1; guess <= 4; guess += 1) {
+        await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, `00000${guess}`))
+          .rejects.toThrow(/인증번호가 일치하지 않습니다/);
+      }
+      // The fifth wrong guess uses up the code.
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, '000005'))
+        .rejects.toThrow(GoneException);
+      expect(invalidation.set).toHaveBeenCalledWith({ expiresAt: expect.any(Date) });
+      // A sixth wrong guess and then the right code are both refused.
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, '000006'))
+        .rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      // The user was never marked verified.
+      expect(invalidation.set).not.toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+      expect(attemptCounter.eval).toHaveBeenLastCalledWith(
+        expect.stringContaining('INCR'),
+        1,
+        `auth:email-verification-attempts:${record.id}`,
+        expect.any(Number),
+      );
+    });
+
+    it('still accepts the right code within the guess limit', async () => {
+      const email = 'guess-ok@test.com';
+      const code = '246802';
+      const record = signupCodeRecord(email, code);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+
+      for (let guess = 1; guess <= 4; guess += 1) {
+        await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, `11111${guess}`))
+          .rejects.toThrow(BadRequestException);
+      }
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .resolves.toEqual({ verified: true });
+    });
+
+    it('applies the same guess limit to account email changes', async () => {
+      const email = 'new-address@test.com';
+      const code = '864209';
+      const record = {
+        ...signupCodeRecord(email, code),
+        purpose: 'account_email',
+        tokenHash: hashEmailCode(email, code, 'account_email'),
+      };
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+      const update = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(update);
+
+      for (let guess = 1; guess <= 5; guess += 1) {
+        await expect(
+          authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, `22222${guess}`),
+        ).rejects.toThrow(guess < 5 ? BadRequestException : GoneException);
+      }
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      expect(update.set).not.toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+    });
+
+    it('fails closed when the attempt counter is unavailable', async () => {
+      const email = 'counter-down@test.com';
+      const code = '975310';
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([signupCodeRecord(email, code)]) }),
+      });
+      attemptCounter.eval.mockRejectedValueOnce(new Error('Connection is closed.'));
+
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .rejects.toThrow(ServiceUnavailableException);
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it('accepts an unused code that was issued to a mixed-case address before emails were lower-cased', async () => {
@@ -2948,6 +3069,7 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
         assertRequiredConsents: vi.fn(),
         captureConsent: vi.fn(),
       } as any,
+      createAttemptCounter() as never,
     );
   });
 

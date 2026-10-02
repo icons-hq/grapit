@@ -208,7 +208,10 @@ describe('AuthCallbackPage email verification pending states', () => {
     });
   });
 
-  it('sends a new social account with an unverified provider email to email verification', async () => {
+  it('sends email verification when complete-registration returns the unverified password account it linked by identity', async () => {
+    // complete-registration linked the social login to an existing password
+    // account (verified phone + birth date + name) whose own email was never
+    // verified. A brand-new social-only sign-up is created verified instead.
     mocks.searchParams = new URLSearchParams('status=needs_registration&registrationToken=registration-token');
     mocks.apiPost.mockResolvedValue({
       accessToken: 'social-access-token',

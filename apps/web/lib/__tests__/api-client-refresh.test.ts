@@ -138,6 +138,24 @@ describe('session refresh on 401', () => {
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
+  it('keeps the buyer signed in when the edge answers the refresh with 403', async () => {
+    // A WAF block/challenge or a missing edge secret is not a session verdict:
+    // the API answers a bad refresh cookie only with 401.
+    const fetchMock = respondByPath({
+      '/api/v1/reservations': [() => json({ message: 'expired' }, 401)],
+      '/api/v1/auth/refresh': [() => new Response('<html>Access denied</html>', { status: 403 })],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await settle(apiClient.get('/api/v1/reservations'));
+
+    expect((result as { reason: ApiClientError }).reason.statusCode).toBe(503);
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: 'expired-access', user: buyer });
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    // Treated as temporary: retried with backoff, not rechecked as a rejection.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(3);
+  });
+
   it('signs out only when the refresh session itself is rejected', async () => {
     vi.stubGlobal('fetch', respondByPath({
       '/api/v1/reservations': [() => json({}, 401)],
