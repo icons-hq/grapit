@@ -45,7 +45,7 @@ Auth must protect scarce booking resources and admin surfaces.
 - Social login supports Kakao, Naver, and Google callback flows.
 - Email verification and SMS/phone verification are required before ordinary buyers can book.
 - Refresh-token state supports device-family management and logout.
-- Itemized consent capture is shared by signup, social completion, and booking flows.
+- Itemized consent capture is shared by signup, social completion, and booking flows. Each row records the version and language of the legal document actually shown; booking records only the booking terms and privacy notice rows it displays.
 - Legal pages are public and linked through the frontend legal routes.
 - Account profile update and withdrawal are available from My Page/user endpoints.
 

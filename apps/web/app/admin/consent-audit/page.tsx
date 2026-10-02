@@ -11,7 +11,16 @@ import { useAdminConsentAudit } from '@/hooks/use-admin';
 export default function AdminConsentAuditPage() {
   const [filters, setFilters] = useState<ConsentAuditFilters>({});
   const [selectedRow, setSelectedRow] = useState<ConsentAuditRow | null>(null);
-  const { data, isLoading, isError } = useAdminConsentAudit(filters);
+  const {
+    data,
+    isLoading,
+    isError,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useAdminConsentAudit(filters);
+  const auditRows = data?.pages.flatMap((page) => page.items) ?? [];
+  const defaultWindowFrom = data?.pages[0]?.defaultWindowFrom ?? null;
 
   return (
     <div>
@@ -23,9 +32,15 @@ export default function AdminConsentAuditPage() {
       </div>
 
       <ConsentAuditTable
-        auditRows={data ?? []}
+        auditRows={auditRows}
         isLoading={isLoading}
         isError={isError}
+        hasMore={hasNextPage}
+        isLoadingMore={isFetchingNextPage}
+        onLoadMore={() => {
+          void fetchNextPage();
+        }}
+        defaultWindowFrom={defaultWindowFrom}
         onSearch={(nextFilters) => {
           setSelectedRow(null);
           setFilters(nextFilters);

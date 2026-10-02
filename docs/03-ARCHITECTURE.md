@@ -247,7 +247,7 @@ Admin bypass exists for controlled tests and operational flows, not for normal b
 
 - booking flag,
 - account verification,
-- required consent rows,
+- required consent rows (booking requires `terms` and `privacy` on an active document version; see the [consent document versions runbook](runbooks/consent-document-versions.md)),
 - duplicate seats,
 - showtime booking context,
 - booking policy,
@@ -455,6 +455,8 @@ Shared admin capability bundles include:
 - `admin`
 
 Scanner-only accounts can verify/consume/sync field scan attempts but must not gain broad admin, finance, support, user, security, refund, or raw export authority.
+
+`GET /api/v1/admin/consent-audit` requires `audit.read` and returns keyset-paginated pages (default 100, maximum 500 rows); without a period or user/email/IP filter it reads only the last 7 days.
 
 ### 10.3 Data Redaction
 

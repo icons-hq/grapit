@@ -90,14 +90,21 @@ describe('Full revamp migration — existing account, payment and entitlement pr
     const before = await snapshot();
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     const after = await snapshot();
+    // Additive reference seeds introduced after the boundary; every pre-existing row must stay untouched.
+    const addedSeedRows: Partial<Record<(typeof protectedTables)[number], (row: Record<string, unknown>) => boolean>> = {
+      consent_items: (row) => row.version === '2026-05-11' && (row.key === 'privacy' || row.key === 'pipa_required'),
+    };
     for (const table of protectedTables) {
       const originalRows = before[table]!;
-      expect(after[table], table).toHaveLength(originalRows.length);
+      const isAddedSeed = addedSeedRows[table];
+      const retainedRows = isAddedSeed ? after[table]!.filter((row) => !isAddedSeed(row)) : after[table]!;
+      expect(retainedRows, table).toHaveLength(originalRows.length);
       originalRows.forEach((row, index) => {
-        const retained = Object.fromEntries(Object.keys(row).map((key) => [key, after[table]![index]![key]]));
+        const retained = Object.fromEntries(Object.keys(row).map((key) => [key, retainedRows[index]![key]]));
         expect(retained, `${table}: existing record`).toEqual(row);
       });
     }
+    expect(after.consent_items!.filter(addedSeedRows.consent_items!)).toHaveLength(8);
     expect((await pool.query('SELECT sum(amount)::int AS amount, sum(provider_charge_amount_minor)::int AS minor FROM payments')).rows[0])
       .toEqual({ amount: 104000, minor: 8000 });
     expect((await pool.query("SELECT count(*)::int AS n FROM tickets WHERE status='active'")).rows[0].n).toBe(1);

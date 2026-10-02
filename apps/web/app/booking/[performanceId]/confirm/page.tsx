@@ -39,8 +39,11 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { apiClient } from '@/lib/api-client';
 import {
+  BOOKING_CONSENT_ITEM_KEYS,
+  CONSENT_DOCUMENT_VERSIONS,
   TICKET_SERVICE_FEE_KRW,
   isSameCheckoutPaymentMethod,
+  resolveConsentDocumentLanguage,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
 } from '@grabit/shared';
 import type { FloorAwareSeatSelection, PrepareReservationResponse, SeatSelection } from '@grabit/shared';
@@ -53,13 +56,6 @@ function generateOrderId(): string {
 const LOCK_FAILURE_MESSAGES = [
   '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
   '이미 다른 사용자가 선택한 좌석입니다.',
-] as const;
-
-const BOOKING_CONSENT_VERSION = '2026-04-28';
-const BOOKING_CONSENT_KEYS = [
-  'terms',
-  'privacy',
-  'pipa_required',
 ] as const;
 
 const LEGACY_FLOOR_KEY = 'default';
@@ -361,10 +357,11 @@ function ConfirmPageContent() {
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats.map(toFloorAwareSeatSelection),
         amount: totalPrice,
-        consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
+        // Only the rows TermsAgreement shows, in the document language it renders.
+        consentItems: BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
           key,
-          version: BOOKING_CONSENT_VERSION,
-          language: locale,
+          version: CONSENT_DOCUMENT_VERSIONS[key],
+          language: resolveConsentDocumentLanguage(locale),
           accepted: true,
           sourceFlow: 'booking' as const,
         })),
