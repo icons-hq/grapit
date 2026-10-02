@@ -40,6 +40,7 @@ describe('PgBossShutdownService', () => {
     expect(boss.stop).toHaveBeenCalledWith({
       graceful: true,
       timeout: PGBOSS_SHUTDOWN_TIMEOUT_MS,
+      close: false,
     });
     expect(boss.isAvailable).toBe(false);
   });
@@ -55,11 +56,14 @@ describe('PgBossShutdownService', () => {
     expect(boss.stop).toHaveBeenCalledTimes(2);
   });
 
-  it('enables Nest shutdown hooks in the API entrypoint before listening', async () => {
+  it('enables Nest shutdown hooks for termination signals only, before listening', async () => {
     const source = await readFile(resolve(__dirname, '../../main.ts'), 'utf8');
-    const hookIndex = source.indexOf('app.enableShutdownHooks()');
+    const hookIndex = source.indexOf("app.enableShutdownHooks(['SIGTERM', 'SIGINT'])");
     const listenIndex = source.indexOf('await app.listen(');
 
+    // The no-argument form subscribes Nest's whole ShutdownSignal list,
+    // including SIGSEGV/SIGBUS/SIGFPE/SIGILL.
+    expect(source).not.toContain('app.enableShutdownHooks()');
     expect(hookIndex).toBeGreaterThan(-1);
     expect(listenIndex).toBeGreaterThan(hookIndex);
   });

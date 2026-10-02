@@ -122,10 +122,16 @@ export interface PgBossConstructorOptions {
   queueCacheIntervalSeconds?: number;
 }
 
+interface PgBossDbHandle {
+  opened?: boolean;
+  close?(): Promise<void>;
+}
+
 export type StartablePgBoss = PgBossContract & {
   start(): Promise<unknown>;
   on?(event: 'error' | 'warning', handler: (event: unknown) => void): unknown;
-  getDb?(): { opened?: boolean; close?(): Promise<void> } | undefined;
+  removeAllListeners?(event?: string): unknown;
+  getDb?(): PgBossDbHandle | undefined;
 };
 
 type PgBossConstructor = new (options: PgBossConstructorOptions) => StartablePgBoss;
@@ -266,6 +272,13 @@ export class PgBossInitializationError extends Error {
   }
 }
 
+async function closePgBossDb(boss: { getDb?(): PgBossDbHandle | undefined }): Promise<void> {
+  const db = boss.getDb?.();
+  if (db?.opened && typeof db.close === 'function') {
+    await db.close();
+  }
+}
+
 async function disposeFailedPgBoss(boss: StartablePgBoss): Promise<void> {
   // A started instance (queue bootstrap failed) stops and closes its pool.
   // pg-boss ignores stop() when start() threw, so close that pool directly
@@ -277,13 +290,21 @@ async function disposeFailedPgBoss(boss: StartablePgBoss): Promise<void> {
   }
 
   try {
-    const db = boss.getDb?.();
-    if (db?.opened && typeof db.close === 'function') {
-      await db.close();
-    }
+    await closePgBossDb(boss);
   } catch (error) {
     logger.warn(`pg-boss cleanup after failed start could not close its pool: ${describeError(error)}`);
   }
+
+  // Known limit: when start() fails after pg-boss started its internal timers
+  // (queue cache, supervise, cron), those timers cannot be cleared because
+  // stop() is a no-op after a failed start. They keep firing against the
+  // closed pool, so the discarded instance is muted (a no-op `error` listener
+  // is still required: an unobserved EventEmitter `error` would crash the
+  // process). The bounded worker forces its exit after cleanup for the same
+  // reason (see scheduleForcedWorkerExit).
+  boss.removeAllListeners?.('error');
+  boss.removeAllListeners?.('warning');
+  boss.on?.('error', () => undefined);
 }
 
 function defaultPgBossRetryDelayMs(failedAttempt: number): number {
@@ -362,7 +383,7 @@ export async function initializePgBoss(
  * 15-minute expiration.
  */
 export async function stopPgBossForShutdown(
-  boss: PgBossContract,
+  boss: PgBossContract & { getDb?(): PgBossDbHandle | undefined },
   timeoutMs = PGBOSS_SHUTDOWN_TIMEOUT_MS,
 ): Promise<void> {
   if (!boss.isAvailable) {
@@ -370,16 +391,28 @@ export async function stopPgBossForShutdown(
   }
 
   try {
-    await boss.stop({ graceful: true, timeout: timeoutMs });
+    // Keep the pool open while workers drain and failWip runs, so producers
+    // that already checked isAvailable can still enqueue.
+    await boss.stop({ graceful: true, timeout: timeoutMs, close: false });
   } catch (error) {
     logger.error(
       'pg-boss graceful shutdown failed',
       error instanceof Error ? error.stack : String(error),
     );
-  } finally {
-    // The pool is closed after stop(); report unavailable so late producers
-    // take their existing "not enqueued" path instead of throwing.
-    boss.isAvailable = false;
+  }
+
+  // Mark unavailable before closing the pool: late producers then take their
+  // existing "not enqueued" path instead of pg-boss's "Database not opened"
+  // assertion.
+  boss.isAvailable = false;
+
+  try {
+    await closePgBossDb(boss);
+  } catch (error) {
+    logger.error(
+      'pg-boss pool close during shutdown failed',
+      error instanceof Error ? error.stack : String(error),
+    );
   }
 }
 

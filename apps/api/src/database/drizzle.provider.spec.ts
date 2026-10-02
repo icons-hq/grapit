@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 vi.mock('pg', async () => {
@@ -92,6 +93,7 @@ describe('drizzleProvider', () => {
     };
 
     expect(db.pool.listenerCount('error')).toBeGreaterThanOrEqual(1);
+    expect(db.pool.listenerCount('connect')).toBeGreaterThanOrEqual(1);
     expect(() =>
       db.pool.emit(
         'error',
@@ -118,6 +120,44 @@ describe('drizzleProvider', () => {
     } finally {
       await unprotected.end();
       await protectedPool.end();
+    }
+  });
+
+  it('observes errors on checked-out clients that pg-pool leaves without an error listener', async () => {
+    const { Pool: RealPool } = await vi.importActual<typeof import('pg')>('pg');
+    const pool = new RealPool({ max: 1 });
+    attachDatabasePoolErrorListener(pool, 'test');
+    const loggerError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const lostSession = new Error('terminating connection due to administrator command');
+
+    try {
+      expect(pool.listenerCount('connect')).toBeGreaterThanOrEqual(1);
+
+      // Control: pg-pool removes its idle listener at checkout, so a checked-out
+      // client without our listener rethrows the session loss (process crash).
+      const unprotectedClient = new EventEmitter();
+      expect(() => unprotectedClient.emit('error', lostSession)).toThrow(
+        /administrator command/,
+      );
+
+      const client = new EventEmitter();
+      pool.emit('connect', client);
+      pool.emit('acquire', client);
+      expect(() => client.emit('error', lostSession)).not.toThrow();
+      expect(loggerError).toHaveBeenCalledTimes(1);
+      expect(loggerError.mock.calls[0]?.[0]).toMatch(/checked-out test pool client/);
+
+      // Once released (idle), pg-pool's own idle listener re-emits on the pool;
+      // the client listener stays silent so the loss is logged only once.
+      pool.emit('release', undefined, client);
+      expect(() => client.emit('error', lostSession)).not.toThrow();
+      expect(loggerError).toHaveBeenCalledTimes(1);
+      pool.emit('error', lostSession, client);
+      expect(loggerError).toHaveBeenCalledTimes(2);
+      expect(loggerError.mock.calls[1]?.[0]).toMatch(/idle client error in test pool/);
+    } finally {
+      loggerError.mockRestore();
+      await pool.end();
     }
   });
 

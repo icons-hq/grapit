@@ -1,4 +1,4 @@
-import { Pool, type PoolConfig } from 'pg';
+import { Pool, type PoolClient, type PoolConfig } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -57,21 +57,55 @@ export function buildDatabasePoolConfig(
   return poolConfig;
 }
 
+function describePoolError(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
 /**
- * pg-pool emits `error` when an idle pooled client loses its server session
- * (Cloud SQL failover/maintenance, pg_terminate_backend, network reset). The
- * pool has already discarded that client, so the event only needs to be
- * observed; an EventEmitter `error` without a listener would crash the process.
+ * A lost server session (Cloud SQL failover/maintenance, pg_terminate_backend,
+ * network reset) surfaces as an EventEmitter `error`, and an unobserved
+ * `error` is an uncaught exception that kills the process. Two emitters need a
+ * listener:
+ *
+ * - the pool, for idle clients: pg-pool's idle listener discards the client and
+ *   re-emits the error on the pool;
+ * - each client while it is checked out: pg-pool removes its idle listener at
+ *   checkout, and drizzle `transaction()` holds a `pool.connect()` client with
+ *   no per-query listener. pg emits `error` on that client whether or not a
+ *   query is running (for example while the transaction awaits a Toss call).
+ *
+ * Observing is enough: pg marks the client unqueryable, so the in-flight query
+ * and the transaction reject, and pg-pool discards the client on release.
  */
 export function attachDatabasePoolErrorListener(
   pool: Pick<Pool, 'on'>,
   poolName: string,
 ): void {
+  const checkedOutClients = new WeakSet<PoolClient>();
+
   pool.on('error', (error: Error) => {
     logger.error(
       `PostgreSQL idle client error in ${poolName} pool; the client was discarded and will be replaced on demand`,
-      error instanceof Error ? error.stack : String(error),
+      describePoolError(error),
     );
+  });
+  pool.on('acquire', (client: PoolClient) => {
+    checkedOutClients.add(client);
+  });
+  pool.on('release', (_error: Error | undefined, client: PoolClient) => {
+    checkedOutClients.delete(client);
+  });
+  pool.on('connect', (client: PoolClient) => {
+    client.on('error', (error: Error) => {
+      // Idle-client errors are reported once, by the pool listener above.
+      if (!checkedOutClients.has(client)) {
+        return;
+      }
+      logger.error(
+        `PostgreSQL connection lost on a checked-out ${poolName} pool client; its query or transaction fails and the client is discarded on release`,
+        describePoolError(error),
+      );
+    });
   });
 }
 

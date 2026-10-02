@@ -5,9 +5,10 @@ import { Pool } from 'pg';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { sql } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { drizzleProvider } from '../src/database/drizzle.provider.js';
+import { seatInventories } from '../src/database/schema/seat-inventories.js';
 import {
   buildPgBossOptions,
   initializePgBoss,
@@ -76,6 +77,66 @@ describe('database runtime hardening (pool errors, pg-boss budget/startup/shutdo
     );
   });
 
+  async function terminateBackends(applicationName: string): Promise<void> {
+    const terminated = await admin.query<{ terminated: boolean }>(
+      `SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity
+       WHERE application_name = $1 AND pid <> pg_backend_pid()`,
+      [applicationName],
+    );
+    expect(terminated.rows).toEqual([{ terminated: true }]);
+  }
+
+  it('survives a session terminated while a transaction awaits outside the database (audit #57)', async () => {
+    const db = drizzleProvider.useFactory(
+      config({ DATABASE_URL: databaseUrl, DB_POOL_MAX: '2', DB_APPLICATION_NAME: 'grabit-it-tx-idle' }),
+    );
+    const appPool = (db as unknown as { $client: Pool }).$client;
+    cleanups.push(createPostgresPoolCleanup(appPool));
+
+    // The checked-out client has no pg-pool idle listener. Without a client
+    // `error` listener the session loss is an uncaught exception, which kills
+    // the API process (and fails this vitest run as an unhandled error).
+    const transaction = db.transaction(async (tx) => {
+      await tx.execute(sql`select 1`);
+      // Like a confirm/cancel transaction awaiting a Toss call.
+      await terminateBackends('grabit-it-tx-idle');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await tx.execute(sql`select 1`);
+    });
+
+    await expect(transaction).rejects.toThrow();
+    await vi.waitFor(() => expect(appPool.totalCount).toBe(0), { timeout: 5000 });
+    await expect(db.execute(sql`select 1 as ok`)).resolves.toEqual(
+      expect.objectContaining({ rows: [{ ok: 1 }] }),
+    );
+  });
+
+  it('survives a session terminated during an in-flight transaction query (audit #57)', async () => {
+    const db = drizzleProvider.useFactory(
+      config({ DATABASE_URL: databaseUrl, DB_POOL_MAX: '2', DB_APPLICATION_NAME: 'grabit-it-tx-busy' }),
+    );
+    const appPool = (db as unknown as { $client: Pool }).$client;
+    cleanups.push(createPostgresPoolCleanup(appPool));
+
+    const transaction = db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_sleep(10)`);
+    });
+    await vi.waitFor(async () => {
+      const { rows } = await admin.query<{ active: number }>(
+        `SELECT count(*)::int AS active FROM pg_stat_activity
+         WHERE application_name = 'grabit-it-tx-busy' AND state = 'active'`,
+      );
+      expect(rows[0]!.active).toBe(1);
+    }, { timeout: 5000 });
+    await terminateBackends('grabit-it-tx-busy');
+
+    await expect(transaction).rejects.toThrow();
+    await vi.waitFor(() => expect(appPool.totalCount).toBe(0), { timeout: 5000 });
+    await expect(db.execute(sql`select 1 as ok`)).resolves.toEqual(
+      expect.objectContaining({ rows: [{ ok: 1 }] }),
+    );
+  });
+
   it('serves reservation_seats and payments lookups from the new indexes (audit #59)', async () => {
     const userId = randomUUID();
     const performanceId = randomUUID();
@@ -134,6 +195,67 @@ describe('database runtime hardening (pool errors, pg-boss budget/startup/shutdo
     const paymentPlanText = JSON.stringify(paymentPlan.rows);
     expect(paymentPlanText).toContain('idx_payments_toss_order_id');
     expect(paymentPlanText).not.toContain('Seq Scan');
+  });
+
+  it('serves the seat status lookup from the existing showtime-prefixed unique index (audit #8 index decision)', async () => {
+    // seat_inventories rows exist only for sold/held_cancelled/disabled seats
+    // (plus seats released back to available), so a (showtime_id, status)
+    // partial index cannot filter much; the showtime_id prefix of the
+    // migrated unique index already bounds the scan to one showtime.
+    const performanceId = randomUUID();
+    await admin.query(
+      `INSERT INTO performances (id,title,genre,start_date,end_date,age_rating,publish_state)
+       VALUES ($1,'Seat status event','artist_celebrity','2099-12-02T10:00:00Z','2099-12-02T12:00:00Z','All ages','published')`,
+      [performanceId],
+    );
+    await admin.query(
+      `INSERT INTO showtimes (performance_id,date_time)
+       SELECT $1, '2099-12-02T10:00:00Z'::timestamptz + (g || ' minutes')::interval
+       FROM generate_series(1, 100) AS g`,
+      [performanceId],
+    );
+    await admin.query(
+      `INSERT INTO seat_inventories (showtime_id,seat_id,floor_key,seat_key,status)
+       SELECT s.id, 'A-' || g, '1F', '1F:A-' || g,
+         (CASE WHEN g % 100 < 90 THEN 'sold'
+               WHEN g % 100 < 93 THEN 'held_cancelled'
+               WHEN g % 100 < 95 THEN 'disabled'
+               ELSE 'available' END)::seat_status
+       FROM generate_series(1, 1000) AS g
+       CROSS JOIN (SELECT id FROM showtimes WHERE performance_id = $1) AS s`,
+      [performanceId],
+    );
+    await admin.query('ANALYZE seat_inventories');
+
+    const { rows: [target] } = await admin.query<{ id: string }>(
+      'SELECT id FROM showtimes WHERE performance_id = $1 ORDER BY date_time OFFSET 50 LIMIT 1',
+      [performanceId],
+    );
+    // Same predicate as BookingService.getSeatStatus.
+    const query = drizzle(admin)
+      .select({
+        seatId: seatInventories.seatId,
+        floorKey: seatInventories.floorKey,
+        seatKey: seatInventories.seatKey,
+        status: seatInventories.status,
+      })
+      .from(seatInventories)
+      .where(
+        and(
+          eq(seatInventories.showtimeId, target!.id),
+          or(
+            eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.status, 'disabled'),
+          ),
+        ),
+      )
+      .toSQL();
+
+    const plan = await admin.query(`EXPLAIN (FORMAT JSON) ${query.sql}`, query.params);
+    const planText = JSON.stringify(plan.rows);
+    expect(planText).toContain('idx_seat_inv_showtime_floor_seat_key');
+    expect(planText).not.toContain('Seq Scan');
   });
 
   describe('pg-boss runtime', () => {
@@ -263,6 +385,9 @@ describe('database runtime hardening (pool errors, pg-boss budget/startup/shutdo
       await stopPgBossForShutdown(boss!, 1_000);
       expect(Date.now() - startedAt).toBeLessThan(5_000);
       expect(boss!.isAvailable).toBe(false);
+      // stop(close:false) drained and failed the job; the pool is closed only
+      // after the boss was marked unavailable.
+      expect((boss as StartablePgBoss).getDb?.()?.opened).toBe(false);
       release();
 
       const { rows } = await admin.query<{ state: string }>(

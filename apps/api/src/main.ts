@@ -90,8 +90,10 @@ async function bootstrap() {
 
   // SIGTERM (Cloud Run scale-in/revision replacement) runs Nest shutdown hooks:
   // pg-boss stops gracefully and fails unfinished jobs back for retry, and
-  // worker intervals are cleared before the HTTP server is disposed.
-  app.enableShutdownHooks();
+  // worker intervals are cleared before the HTTP server is disposed. Only the
+  // termination signals are subscribed; Nest's default list also includes
+  // SIGSEGV/SIGBUS/SIGFPE/SIGILL, where running JS listeners is unsafe.
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
 
   const port = process.env['PORT'] ?? 8080;
   await app.listen(port);

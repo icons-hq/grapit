@@ -5,6 +5,7 @@ import { BackgroundWorkerModule } from './background-worker.module.js';
 import {
   resolveBackgroundWorkerWindowMs,
   runBackgroundWorkerWindow,
+  scheduleForcedWorkerExit,
 } from './background-worker-runtime.js';
 import { PendingPaymentExpirationWorker } from './modules/jobs/pending-payment-expiration.worker.js';
 import { DRIZZLE, type DrizzleDB } from './database/drizzle.provider.js';
@@ -57,10 +58,18 @@ async function bootstrap(): Promise<void> {
   );
 }
 
-void bootstrap().catch((error: unknown) => {
-  logger.error(
-    'Background worker run failed',
-    error instanceof Error ? error.stack : String(error),
-  );
-  process.exitCode = 1;
-});
+void bootstrap()
+  .catch((error: unknown) => {
+    logger.error(
+      'Background worker run failed',
+      error instanceof Error ? error.stack : String(error),
+    );
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    scheduleForcedWorkerExit({
+      onForcedExit: () => {
+        logger.warn('Background worker still had open handles after cleanup; forcing exit');
+      },
+    });
+  });

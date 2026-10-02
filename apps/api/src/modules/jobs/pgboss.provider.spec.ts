@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildPgBossOptions,
@@ -204,6 +206,45 @@ describe('initializePgBoss', () => {
     expect(boss.processesJobs).toBe(false);
   });
 
+  it('mutes a discarded instance whose leaked pg-boss timers keep emitting errors', async () => {
+    // pg-boss cannot stop() after a failed start(), so timers started before
+    // the failure keep running against the closed pool and emit `error`.
+    class LeakyFailedBoss extends EventEmitter {
+      isAvailable = false;
+      readonly stop = vi.fn(async () => undefined);
+      readonly send = vi.fn(async () => null);
+      readonly work = vi.fn(async () => undefined);
+      readonly createQueue = vi.fn(async () => undefined);
+
+      async start(): Promise<unknown> {
+        throw new Error('createQueue failed after the queue cache timer started');
+      }
+    }
+    const failed = new LeakyFailedBoss();
+    const healthy = new ScriptedBoss();
+    const created: StartablePgBoss[] = [failed, healthy];
+    const loggerError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    try {
+      await initializePgBoss({
+        createBoss: () => created.shift()!,
+        processesJobs: true,
+        maxAttempts: 2,
+        required: true,
+        sleep: async () => undefined,
+      });
+      loggerError.mockClear();
+
+      expect(() =>
+        failed.emit('error', { message: 'Database not opened. Call open() before executing SQL.' }),
+      ).not.toThrow();
+      expect(loggerError).not.toHaveBeenCalled();
+      expect(failed.listenerCount('warning')).toBe(0);
+    } finally {
+      loggerError.mockRestore();
+    }
+  });
+
   it('fails startup in production instead of serving with a permanently unavailable boss', async () => {
     const createBoss = vi.fn(() => new ScriptedBoss(new Error('remaining connection slots are reserved')));
 
@@ -254,25 +295,53 @@ describe('initializePgBoss', () => {
   });
 });
 
+function availableScriptedBoss(): ScriptedBoss {
+  const boss = new ScriptedBoss();
+  markBossAvailable(boss);
+  return boss;
+}
+
 describe('stopPgBossForShutdown', () => {
-  it('stops gracefully within the Cloud Run grace period and marks the boss unavailable', async () => {
-    const boss = markBossAvailable(new ScriptedBoss());
+  it('stops gracefully within the Cloud Run grace period, then marks the boss unavailable before closing its pool', async () => {
+    const boss = availableScriptedBoss();
+    boss.db.opened = true;
+    let availableWhenPoolClosed: boolean | undefined;
+    boss.db.close.mockImplementationOnce(async () => {
+      availableWhenPoolClosed = boss.isAvailable;
+      boss.db.opened = false;
+    });
 
     await stopPgBossForShutdown(boss);
 
+    // close:false keeps the pool open while workers drain and failWip runs.
     expect(boss.stop).toHaveBeenCalledWith({
       graceful: true,
       timeout: PGBOSS_SHUTDOWN_TIMEOUT_MS,
+      close: false,
     });
     expect(PGBOSS_SHUTDOWN_TIMEOUT_MS).toBeLessThan(10_000);
+    expect(boss.db.close).toHaveBeenCalledTimes(1);
+    expect(availableWhenPoolClosed).toBe(false);
     expect(boss.isAvailable).toBe(false);
   });
 
-  it('does not throw from a shutdown hook when stop fails', async () => {
-    const boss = markBossAvailable(new ScriptedBoss());
-    vi.mocked(boss.stop).mockRejectedValueOnce(new Error('pool already ended'));
+  it('does not throw from a shutdown hook when stop fails, and still closes the pool', async () => {
+    const boss = availableScriptedBoss();
+    boss.db.opened = true;
+    vi.mocked(boss.stop).mockRejectedValueOnce(new Error('failWip failed'));
 
     await expect(stopPgBossForShutdown(boss)).resolves.toBeUndefined();
+    expect(boss.isAvailable).toBe(false);
+    expect(boss.db.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close a pool that an explicit stop already closed (bounded worker path)', async () => {
+    const boss = availableScriptedBoss();
+    boss.db.opened = false;
+
+    await stopPgBossForShutdown(boss);
+
+    expect(boss.db.close).not.toHaveBeenCalled();
     expect(boss.isAvailable).toBe(false);
   });
 

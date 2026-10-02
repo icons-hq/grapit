@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKGROUND_WORKER_FORCED_EXIT_GRACE_MS,
   BackgroundWorkerQueueUnavailableError,
   DEFAULT_BACKGROUND_WORKER_WINDOW_MS,
   MAX_BACKGROUND_WORKER_WINDOW_MS,
   MIN_BACKGROUND_WORKER_WINDOW_MS,
   resolveBackgroundWorkerWindowMs,
   runBackgroundWorkerWindow,
+  scheduleForcedWorkerExit,
 } from './background-worker-runtime.js';
 
 function createRuntime() {
@@ -106,5 +108,48 @@ describe('background worker runtime', () => {
       'redis quit failed',
     );
     expect(runtime.closeDatabase).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('scheduleForcedWorkerExit', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not keep a cleanly finished worker process alive', () => {
+    const exit = vi.fn();
+    const timer = scheduleForcedWorkerExit({ exit });
+
+    try {
+      // unref'd: a clean run exits naturally before the grace period ends.
+      expect(timer.hasRef()).toBe(false);
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  it('forces the exit with the run status when leaked timers keep the event loop open', () => {
+    vi.useFakeTimers();
+    const exit = vi.fn();
+    const onForcedExit = vi.fn();
+
+    scheduleForcedWorkerExit({ exit, onForcedExit, getExitCode: () => 1 });
+    vi.advanceTimersByTime(BACKGROUND_WORKER_FORCED_EXIT_GRACE_MS - 1);
+    expect(exit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(onForcedExit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('keeps a successful run successful when it has to force the exit', () => {
+    vi.useFakeTimers();
+    const exit = vi.fn();
+
+    scheduleForcedWorkerExit({ exit, getExitCode: () => undefined, graceMs: 10 });
+    vi.advanceTimersByTime(10);
+
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });
