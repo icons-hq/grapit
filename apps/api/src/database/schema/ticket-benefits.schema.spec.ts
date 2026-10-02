@@ -84,7 +84,8 @@ describe('ticket benefit schema contracts', () => {
     }
   });
 
-  it('commits the 0029 migration journal entry without broad snapshot churn', () => {
+  // Snapshot coverage is checked once for the latest migration in migration-snapshot.schema.spec.ts.
+  it('commits the 0029 migration journal entry', () => {
     const migrationsDir = resolve(__dirname, '../migrations');
     const journal = JSON.parse(
       readFileSync(resolve(migrationsDir, 'meta/_journal.json'), 'utf8'),
@@ -101,12 +102,6 @@ describe('ticket benefit schema contracts', () => {
         idx: 31,
         tag: '0030_benefit_export_audit_actions',
       }),
-    );
-    expect(existsSync(resolve(migrationsDir, 'meta/0029_snapshot.json'))).toBe(
-      false,
-    );
-    expect(existsSync(resolve(migrationsDir, 'meta/0030_snapshot.json'))).toBe(
-      false,
     );
   });
 

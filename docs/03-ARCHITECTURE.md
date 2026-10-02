@@ -221,6 +221,10 @@ Use shared schemas for request/response validation and UI contract tests wheneve
 - Migration SQL is stored in `apps/api/src/database/migrations`.
 - CI and deploy workflows run Drizzle migration steps before production deploy.
 - Production migration should run through the workflow/runbook, not through ad hoc local mutation.
+- Author a schema change by editing `apps/api/src/database/schema/*.ts` first, then running `pnpm --filter @grabit/api exec drizzle-kit generate --name <name>` (generate does not connect; any `DATABASE_URL` value works). It writes the SQL, `meta/<NNNN>_snapshot.json` and the journal entry together. Hand-edit the generated SQL when needed (`IF NOT EXISTS`, `SET LOCAL lock_timeout`, backfills, comments), but keep its snapshot. A data-only migration uses `drizzle-kit generate --custom --name <name>`, which writes an empty SQL file and a copy of the previous snapshot.
+- The newest snapshot must describe the schema after the newest journal entry. `apps/api/src/database/schema/migration-snapshot.schema.spec.ts` fails when the last migration has no matching snapshot, when the snapshot `prevId` chain breaks, or when the TS schema differs from the snapshot (the next `generate` would re-create existing objects, audit #161). Snapshots stop at 0024 and resume at `0046_snapshot.json`, generated from the TS schema through 0046; the ones in between are not reconstructed.
+- drizzle-kit names a new migration after its journal `idx`, which runs one ahead of the file number because 0015 has two entries. The next generated file is therefore `0048_*`. Keep that name, or rename the SQL file, snapshot and journal tag together. Journal `when` values must keep increasing: the migrator applies only entries newer than the last applied one.
+- Do not use `drizzle-kit push` against shared databases. `performances.search_vector` and `idx_performances_search` exist only in SQL, and the database order of the `admin_audit_action` and `seat_status` enum values (from `ADD VALUE` history) differs from the TS order, so push would drop or re-create them.
 
 ### 5.4 Public Catalog Cache And View Counts
 

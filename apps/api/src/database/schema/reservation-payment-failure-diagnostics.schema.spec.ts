@@ -1,5 +1,5 @@
 import { getTableColumns } from 'drizzle-orm';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -43,7 +43,8 @@ describe('reservation_payment_failure_diagnostics schema', () => {
     expect(schemaSource).not.toContain('.references(() => payments.id');
   });
 
-  it('commits the 0028 migration journal entry without broad snapshot churn', () => {
+  // Snapshot coverage is checked once for the latest migration in migration-snapshot.schema.spec.ts.
+  it('commits the 0028 migration journal entry', () => {
     const migrationsDir = resolve(__dirname, '../migrations');
     const journal = JSON.parse(
       readFileSync(resolve(migrationsDir, 'meta/_journal.json'), 'utf8'),
@@ -54,9 +55,6 @@ describe('reservation_payment_failure_diagnostics schema', () => {
         idx: 29,
         tag: '0028_reservation_payment_failure_diagnostics',
       }),
-    );
-    expect(existsSync(resolve(migrationsDir, 'meta/0028_snapshot.json'))).toBe(
-      false,
     );
   });
 

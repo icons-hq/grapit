@@ -39,7 +39,7 @@ export const seatInventories = pgTable('seat_inventories', {
     table.floorKey,
     table.seatKey,
   ),
-  // Held-cancelled seat recovery sweep (migration 0044). Only held seats carry a reopen hold.
+  // Held-cancelled seat recovery sweep (migration 0043). Only held seats carry a reopen hold.
   index('idx_seat_inv_reopen_hold_until')
     .on(table.reopenHoldUntil)
     .where(sql`${table.reopenHoldUntil} IS NOT NULL`),

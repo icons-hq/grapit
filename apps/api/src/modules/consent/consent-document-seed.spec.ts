@@ -200,7 +200,7 @@ describe('consent document seed contract', () => {
   });
 
   it('adds privacy policy v1.2 rows without retiring the version open pages still submit', () => {
-    const source = readFileSync(join(migrationDir, '0046_privacy_policy_v1_2_consent_items.sql'), 'utf8');
+    const source = readFileSync(join(migrationDir, '0045_privacy_policy_v1_2_consent_items.sql'), 'utf8');
 
     expect(source).toContain('ON CONFLICT ("key", "version", "locale") DO NOTHING');
     expect(source).not.toMatch(/UPDATE\s+"consent_items"/i);

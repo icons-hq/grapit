@@ -71,7 +71,7 @@ WHERE u.account_status = 'active'
 
 ## Login Email Case
 
-- New signups, social sign-ups and email verification codes use the lower-case address. An unused code issued before this change (stored with the address as typed) is still accepted: when no lower-case row exists, the account's own codes are compared case-insensitively. Login, signup duplicate checks, password reset and email verification requests look up `lower(users.email)` (index `idx_users_email_lower`, migration slot 0051), preferring the exact spelling, then an active account, then the oldest account when legacy rows differ only by case.
+- New signups, social sign-ups and email verification codes use the lower-case address. An unused code issued before this change (stored with the address as typed) is still accepted: when no lower-case row exists, the account's own codes are compared case-insensitively. Login, signup duplicate checks, password reset and email verification requests look up `lower(users.email)` (index `idx_users_email_lower`, migration 0046), preferring the exact spelling, then an active account, then the oldest account when legacy rows differ only by case.
 - Existing rows are not rewritten and there is no case-insensitive unique constraint yet.
 
 ### Read-only duplicate check (run before adding a unique constraint)

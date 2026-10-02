@@ -97,17 +97,10 @@ export const ticketBenefitConfigurationChanges = pgTable(
   'ticket_benefit_configuration_changes',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    showtimeId: uuid('showtime_id')
-      .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
-    configurationId: uuid('configuration_id').references(
-      () => ticketBenefitConfigurations.id,
-      { onDelete: 'set null' },
-    ),
+    showtimeId: uuid('showtime_id').notNull(),
+    configurationId: uuid('configuration_id'),
     action: ticketBenefitConfigurationChangeActionEnum('action').notNull(),
-    actorUserId: uuid('actor_user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'restrict' }),
+    actorUserId: uuid('actor_user_id').notNull(),
     reason: text('reason'),
     beforeSnapshot: jsonb('before_snapshot').$type<JsonRecord>(),
     afterSnapshot: jsonb('after_snapshot').$type<JsonRecord>(),
@@ -121,6 +114,24 @@ export const ticketBenefitConfigurationChanges = pgTable(
       .notNull()
       .defaultNow(),
   },
+  // Migration 0029 names these FKs explicitly; keep the names so drizzle-kit diffs match.
+  (table) => [
+    foreignKey({
+      name: 'tbc_changes_showtime_id_fk',
+      columns: [table.showtimeId],
+      foreignColumns: [showtimes.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'tbc_changes_configuration_id_fk',
+      columns: [table.configurationId],
+      foreignColumns: [ticketBenefitConfigurations.id],
+    }).onDelete('set null'),
+    foreignKey({
+      name: 'tbc_changes_actor_user_id_fk',
+      columns: [table.actorUserId],
+      foreignColumns: [users.id],
+    }).onDelete('restrict'),
+  ],
 );
 
 export const ticketBenefits = pgTable(
@@ -258,21 +269,11 @@ export const ticketBenefitRedemptionRecords = pgTable(
   'ticket_benefit_redemption_records',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    showtimeId: uuid('showtime_id')
-      .notNull()
-      .references(() => showtimes.id, { onDelete: 'restrict' }),
+    showtimeId: uuid('showtime_id').notNull(),
     requestedShowtimeId: uuid('requested_showtime_id'),
-    ticketItemId: uuid('ticket_item_id')
-      .notNull()
-      .references(() => ticketItems.id, { onDelete: 'restrict' }),
-    benefitEntitlementId: uuid('benefit_entitlement_id')
-      .notNull()
-      .references(() => ticketBenefitEntitlements.id, {
-        onDelete: 'restrict',
-      }),
-    scannerUserId: uuid('scanner_user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'restrict' }),
+    ticketItemId: uuid('ticket_item_id').notNull(),
+    benefitEntitlementId: uuid('benefit_entitlement_id').notNull(),
+    scannerUserId: uuid('scanner_user_id').notNull(),
     deviceAttemptId: varchar('device_attempt_id', { length: 120 }).notNull(),
     redactedTokenRef: varchar('redacted_token_ref', { length: 160 }).notNull(),
     result: ticketBenefitRedemptionResultEnum('result').notNull(),
@@ -284,7 +285,28 @@ export const ticketBenefitRedemptionRecords = pgTable(
       .notNull()
       .defaultNow(),
   },
+  // Migration 0029 names these FKs explicitly; keep the names so drizzle-kit diffs match.
   (table) => [
+    foreignKey({
+      name: 'tbrr_showtime_id_fk',
+      columns: [table.showtimeId],
+      foreignColumns: [showtimes.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'tbrr_ticket_item_id_fk',
+      columns: [table.ticketItemId],
+      foreignColumns: [ticketItems.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'tbrr_benefit_entitlement_id_fk',
+      columns: [table.benefitEntitlementId],
+      foreignColumns: [ticketBenefitEntitlements.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'tbrr_scanner_user_id_fk',
+      columns: [table.scannerUserId],
+      foreignColumns: [users.id],
+    }).onDelete('restrict'),
     index('idx_tbrr_showtime_entitlement_created').on(
       table.showtimeId,
       table.benefitEntitlementId,
