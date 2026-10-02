@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Agent } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -29,6 +30,7 @@ function signAccessToken(sub: string, secret = JWT_SECRET): string {
  */
 describe('GET /booking/schedules/:showtimeId/seats', () => {
   let app: INestApplication;
+  let agent: Agent | undefined;
   const bookingService = {
     getSeatStatus: vi.fn(async (showtimeId: string) => ({ showtimeId, seats: {} })),
   };
@@ -53,9 +55,17 @@ describe('GET /booking/schedules/:showtimeId/seats', () => {
       .compile();
     app = module.createNestApplication();
     await app.init();
+    // One listening server and one keep-alive socket for the whole test. Without
+    // it supertest listens on and closes a new ephemeral port per request, and a
+    // pooled keep-alive socket from a closed server intermittently fails the
+    // ~180 requests here with "socket hang up".
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   afterEach(async () => {
+    agent?.destroy();
+    agent = undefined;
     await app?.close();
     vi.unstubAllEnvs();
   });
@@ -63,14 +73,16 @@ describe('GET /booking/schedules/:showtimeId/seats', () => {
   async function readSeats(headers: Record<string, string> = {}, times = 1): Promise<number[]> {
     const statuses: number[] = [];
     for (let i = 0; i < times; i++) {
-      const response = await request(app.getHttpServer()).get(SEATS_PATH).set(headers);
+      const response = await request(app.getHttpServer()).get(SEATS_PATH).agent(agent).set(headers);
       statuses.push(response.status);
     }
     return statuses;
   }
 
   it('rejects non-UUID showtime IDs before touching Valkey or the database', async () => {
-    const response = await request(app.getHttpServer()).get('/booking/schedules/not-a-uuid/seats');
+    const response = await request(app.getHttpServer())
+      .get('/booking/schedules/not-a-uuid/seats')
+      .agent(agent);
 
     expect(response.status).toBe(400);
     expect(bookingService.getSeatStatus).not.toHaveBeenCalled();
