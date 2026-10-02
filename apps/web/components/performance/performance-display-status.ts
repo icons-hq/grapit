@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { FetchStatus } from '@tanstack/react-query';
 import type { PerformanceCardData, PerformanceStatus } from '@grabit/shared';
 
 /** Browsers fire setTimeout immediately when the delay overflows a signed 32-bit int. */
@@ -90,26 +91,64 @@ function getClientRefetchJitterMs(): number {
   return clientRefetchJitterMs;
 }
 
+type CatalogRefetchCards = ReadonlyArray<
+  Pick<PerformanceCardData, 'status' | 'bookingStartsAt'>
+>;
+
 /**
- * TanStack Query refetchInterval for status-filtered catalog lists. Rows move
+ * Delay until the one refetch of a status-filtered catalog list. Rows move
  * between the upcoming and selling filters at their booking start, so the list
- * is refetched once shortly after the nearest future start in the current page.
+ * is refetched once, grace + per-client jitter after the nearest booking start
+ * that was still pending when the list was fetched.
+ *
+ * The target is anchored to `fetchedAtMs`, not to the current time: TanStack
+ * Query re-evaluates refetchInterval on every render, and a target derived from
+ * "the next start after now" would disappear once the start passes, cancelling
+ * the refetch whenever the page re-renders before it fires. A start within the
+ * grace window before the fetch still counts as pending, because the API cache
+ * may have served the pre-opening page right after the start.
  */
 export function getCatalogBookingStartRefetchDelay(
-  cards: ReadonlyArray<Pick<PerformanceCardData, 'status' | 'bookingStartsAt'>> | undefined,
+  cards: CatalogRefetchCards | undefined,
+  fetchedAtMs: number,
   nowMs: number = Date.now(),
   jitterMs: number = getClientRefetchJitterMs(),
 ): number | false {
-  if (!cards?.length) return false;
+  if (!cards?.length || !(fetchedAtMs > 0)) return false;
   const next = getNextBookingStartMs(
     cards
       .filter((card) => card.status !== 'ended')
       .map((card) => card.bookingStartsAt),
-    nowMs,
+    fetchedAtMs - CATALOG_BOOKING_START_REFETCH_GRACE_MS,
   );
   if (next === null) return false;
-  return Math.min(
-    next - nowMs + CATALOG_BOOKING_START_REFETCH_GRACE_MS + jitterMs,
-    MAX_TIMEOUT_MS,
+  const refetchAtMs = next + CATALOG_BOOKING_START_REFETCH_GRACE_MS + jitterMs;
+  // A target that already passed (for example a re-render after the tick was
+  // missed) fires on the next tick rather than being dropped.
+  return Math.min(Math.max(1, refetchAtMs - nowMs), MAX_TIMEOUT_MS);
+}
+
+type CatalogListQuery = {
+  state: {
+    data?: { data?: CatalogRefetchCards };
+    dataUpdatedAt: number;
+    errorUpdatedAt: number;
+    fetchStatus: FetchStatus;
+  };
+};
+
+/**
+ * TanStack Query refetchInterval for the status-filtered home list. The anchor
+ * is the last settled fetch (success or error), so the refetch result, even a
+ * failed one, moves the anchor past the start and polling stops.
+ */
+export function getCatalogListBookingStartRefetchInterval(
+  query: CatalogListQuery,
+): number | false {
+  // An in-flight or offline-paused fetch re-arms the timer when it settles.
+  if (query.state.fetchStatus !== 'idle') return false;
+  return getCatalogBookingStartRefetchDelay(
+    query.state.data?.data,
+    Math.max(query.state.dataUpdatedAt, query.state.errorUpdatedAt),
   );
 }

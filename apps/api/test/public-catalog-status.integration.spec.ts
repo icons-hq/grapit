@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
+import { PerformanceController } from '../src/modules/performance/performance.controller.js';
 import { SearchService } from '../src/modules/search/search.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
@@ -79,6 +80,16 @@ describe('Public catalog sale status — PostgreSQL', () => {
     expect(hot.map((card) => card.id)).not.toContain(ids.sellingBeforeStart);
     expect(hot.map((card) => card.id)).not.toContain(ids.closingBeforeStart);
     expect(hot.every((card) => card.status === 'selling')).toBe(true);
+    // The most viewed row opens in 20s; the hot list must expire then, not after the default TTL.
+    const hotTtl = cache.set.mock.calls.at(-1)?.[2] as number;
+    expect(hotTtl).toBeGreaterThan(0);
+    expect(hotTtl).toBeLessThanOrEqual(20);
+
+    const detail = new PerformanceController(catalog);
+    expect((await detail.getPerformance(ids.sellingBeforeStart)).status).toBe('upcoming');
+    expect((await detail.getPerformance(ids.closingBeforeStart)).status).toBe('upcoming');
+    expect((await detail.getPerformance(ids.upcomingOpened)).status).toBe('selling');
+    expect((await detail.getPerformance(ids.sellingOpen)).status).toBe('selling');
 
     const found = await new SearchService(db).search({ q: category, page: 1, limit: 20, ended: true });
     expect(found.data.find((card) => card.id === ids.sellingBeforeStart)?.status).toBe('upcoming');

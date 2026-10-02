@@ -5,11 +5,11 @@ import type { PerformanceWithDetails } from '@grabit/shared';
 import PerformanceDetailPage from '../page';
 
 const localeMock = vi.hoisted(() => ({ activeLocale: 'ko' }));
-const detailMock = vi.hoisted(() => ({ performance: null as unknown }));
+const detailMock = vi.hoisted(() => ({ performance: null as unknown, isLoading: false }));
 
 vi.mock('next-intl', () => ({ useLocale: () => localeMock.activeLocale }));
 vi.mock('@/hooks/use-performances', () => ({
-  usePerformanceDetail: () => ({ data: detailMock.performance, isLoading: false, isError: false }),
+  usePerformanceDetail: () => ({ data: detailMock.performance, isLoading: detailMock.isLoading, isError: false }),
 }));
 vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: () => ({
@@ -71,18 +71,22 @@ function performance(overrides: Partial<PerformanceWithDetails> & { bookingStart
   };
 }
 
-function renderDetail() {
+function detailTree() {
   const params = Promise.resolve({ id: 'perf-1' }) as Promise<{ id: string }> & {
     status: 'fulfilled';
     value: { id: string };
   };
   params.status = 'fulfilled';
   params.value = { id: 'perf-1' };
-  return render(
+  return (
     <Suspense fallback={<div>loading</div>}>
       <PerformanceDetailPage params={params} />
-    </Suspense>,
+    </Suspense>
   );
+}
+
+function renderDetail() {
+  return render(detailTree());
 }
 
 describe('PerformanceDetailPage sale status display', () => {
@@ -90,6 +94,7 @@ describe('PerformanceDetailPage sale status display', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     localeMock.activeLocale = 'ko';
+    detailMock.isLoading = false;
   });
 
   afterEach(() => {
@@ -112,6 +117,28 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
     expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+  });
+
+  it('keeps the badge, schedule and booking CTA on one verdict when the response lands after the start', () => {
+    // Mounted before the opening second; the detail response arrives two seconds after it.
+    detailMock.performance = undefined;
+    detailMock.isLoading = true;
+    const view = renderDetail();
+
+    vi.setSystemTime(Date.parse(OPEN) + 2_000);
+    // The API already reports the effective status once the booking start passed.
+    detailMock.performance = performance({ status: 'selling', bookingStartsAt: OPEN });
+    detailMock.isLoading = false;
+    view.rerender(detailTree());
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    // The CTA clock belongs to useBookingAvailability (#35 stale-clock fix is owned by
+    // the booking-time unit). Whatever it decides, badge and schedule must agree with it.
+    const ctaOpen = screen.queryAllByRole('link', { name: '예매하기' }).length > 0;
+    expect(screen.queryByLabelText('상태: 오픈예정') === null).toBe(ctaOpen);
+    expect(screen.queryByText(/KST$/) !== null).toBe(ctaOpen);
   });
 
   it('keeps a selling performance with a future booking start in the upcoming state', () => {

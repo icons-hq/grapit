@@ -5,6 +5,7 @@ import {
   publicCatalogStatusCondition,
   resolveEffectivePerformanceStatus,
   resolvePublicCatalogStatus,
+  withPublicCatalogStatus,
 } from '../catalog-card.js';
 
 const NOW = new Date('2026-10-01T10:59:00.000Z');
@@ -26,8 +27,9 @@ describe('resolvePublicCatalogStatus', () => {
     expect(resolvePublicCatalogStatus(status, startsAt, NOW)).toBe(expected);
   });
 
-  it('keeps the effective status used by detail and admin reads unchanged', () => {
-    // findById still exposes the stored selling status; the admin edit form saves it back (#145).
+  it('keeps the effective status used by the admin detail read unchanged', () => {
+    // findById computes the effective status for both reads; only the public
+    // controller applies the booking-start rule on top (withPublicCatalogStatus).
     expect(resolveEffectivePerformanceStatus('selling', FUTURE, NOW)).toBe('selling');
   });
 
@@ -57,5 +59,30 @@ describe('publicCatalogStatusCondition', () => {
   it('lists selling or closing soon rows with a future booking start as upcoming', () => {
     const { sql } = render('upcoming');
     expect(sql).toMatch(/"performances"\."status" in \(\$\d+, \$\d+\) and "booking_policies"\."booking_starts_at" > \$\d+/);
+  });
+});
+
+describe('withPublicCatalogStatus', () => {
+  const detail = (status: 'upcoming' | 'selling' | 'closing_soon' | 'ended', startsAt: Date | null) => ({
+    id: 'p1', status, bookingPolicy: { bookingStartsAt: startsAt?.toISOString() ?? null },
+  });
+
+  it('reads a selling detail with a future booking start as upcoming, like list cards', () => {
+    const source = detail('selling', FUTURE);
+    const mapped = withPublicCatalogStatus(source, NOW);
+    expect(mapped.status).toBe('upcoming');
+    expect(source.status).toBe('selling');
+    expect(withPublicCatalogStatus({ id: 'p2', status: 'selling' as const, bookingPolicy: null }, NOW).status)
+      .toBe('selling');
+  });
+
+  it.each([
+    ['upcoming', FUTURE], ['upcoming', PAST], ['upcoming', null],
+    ['selling', FUTURE], ['selling', PAST], ['selling', null],
+    ['closing_soon', FUTURE], ['closing_soon', PAST], ['ended', FUTURE],
+  ] as const)('matches the card status on top of the effective status (%s, %s)', (status, startsAt) => {
+    const effective = resolveEffectivePerformanceStatus(status, startsAt, NOW);
+    expect(withPublicCatalogStatus(detail(effective, startsAt), NOW).status)
+      .toBe(resolvePublicCatalogStatus(status, startsAt, NOW));
   });
 });

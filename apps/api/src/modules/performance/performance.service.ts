@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray, ne, gt } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -457,19 +457,37 @@ export class PerformanceService {
     const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.db
-      .select(publicCatalogCardSelection)
+    const queryTime = new Date();
+    const [rows, nextOpeningRows] = await Promise.all([
+      this.db
+        .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(
           and(
             eq(performances.publishState, 'published'),
-            publicCatalogStatusCondition('selling', new Date()),
+            publicCatalogStatusCondition('selling', queryTime),
           ),
         )
-      .orderBy(desc(performances.viewCount))
-      .limit(4);
+        .orderBy(desc(performances.viewCount))
+        .limit(4),
+      // Only opened rows are listed, so the next opening that may enter the hot
+      // list has to bound the cache TTL separately.
+      this.db
+        .select({
+          nextBookingStartsAt: sql<Date | string | null>`min(${bookingPolicies.bookingStartsAt})`,
+        })
+        .from(performances)
+        .innerJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(
+          and(
+            eq(performances.publishState, 'published'),
+            ne(performances.status, 'ended'),
+            gt(bookingPolicies.bookingStartsAt, queryTime),
+          ),
+        ),
+    ]);
 
     const cards: PerformanceCardData[] = rows.map(mapPublicCatalogCard);
     const result = await overlayReviewedCardTranslations(
@@ -478,11 +496,11 @@ export class PerformanceService {
       targetLocale,
     );
 
-    await this.cacheService.set(
-      cacheKey,
-      result,
-      cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
-    );
+    const nextBookingStartsAt = nextOpeningRows[0]?.nextBookingStartsAt;
+    const cacheTtl = nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
+      ? 1
+      : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...rows.map((row) => row.bookingStartsAt)]);
+    await this.cacheService.set(cacheKey, result, cacheTtl);
     return result;
   }
 

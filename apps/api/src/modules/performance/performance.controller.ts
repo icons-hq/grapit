@@ -14,6 +14,7 @@ import {
   type PerformanceQuery,
 } from './dto/performance.dto.js';
 import { PerformanceService } from './performance.service.js';
+import { withPublicCatalogStatus } from './catalog-card.js';
 
 @Public()
 @SkipThrottle()
@@ -42,7 +43,8 @@ export class PerformanceController {
     if (!result) {
       throw new NotFoundException('공연을 찾을 수 없습니다');
     }
-    return result;
+    // Same buyer-facing status as list and search cards: a future booking start reads as upcoming.
+    return withPublicCatalogStatus(result);
   }
 
   @Get('home/banners')

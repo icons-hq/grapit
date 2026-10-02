@@ -34,6 +34,20 @@ export function resolvePublicCatalogStatus(
   return resolveEffectivePerformanceStatus(status, bookingStartsAt, now);
 }
 
+/**
+ * Public detail response with the buyer-facing catalog status, so the detail
+ * API agrees with list and search cards. Applied at response time on the public
+ * read only; the admin detail read keeps its own status for the edit form.
+ * Idempotent on top of the effective status findById computes.
+ */
+export function withPublicCatalogStatus<T extends {
+  status: PerformanceStatus;
+  bookingPolicy?: { bookingStartsAt?: string | null } | null;
+}>(detail: T, now = new Date()): T {
+  const status = resolvePublicCatalogStatus(detail.status, detail.bookingPolicy?.bookingStartsAt, now);
+  return status === detail.status ? detail : { ...detail, status };
+}
+
 export function publicCatalogStatusCondition(status: PerformanceQuery['status'], now = new Date()) {
   if (status === 'selling') return or(
     and(inArray(performances.status, ['selling', 'closing_soon']),
