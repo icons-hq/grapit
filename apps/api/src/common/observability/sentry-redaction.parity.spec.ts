@@ -112,6 +112,7 @@ describe('API and web Sentry redaction parity', () => {
       `Failed query: q\nparams: ${PHONE}`,
       `GET /x?y=${SECRET}#z`,
       'Connection is closed.',
+      '?a/b x?y/z a/b?c/d?e',
     ];
     expect(texts.map(webRedaction.redactSensitiveText))
       .toEqual(texts.map(apiRedaction.redactSensitiveText));
@@ -119,7 +120,15 @@ describe('API and web Sentry redaction parity', () => {
     const urls = ['/a?b=1', 'https://h.test/p#f', '/plain'];
     expect(urls.map(webRedaction.stripUrlQuery)).toEqual(urls.map(apiRedaction.stripUrlQuery));
 
-    const headers = ['Authorization', 'x-csrf-token', 'x-request-id', 'Proxy-Authorization'];
+    const headers = [
+      'Authorization',
+      'x-csrf-token',
+      'x-request-id',
+      'Proxy-Authorization',
+      'x-forwarded-for',
+      'cf-connecting-ip',
+      'x-grabit-client-ip',
+    ];
     expect(headers.map(webRedaction.isSensitiveHeaderName))
       .toEqual(headers.map(apiRedaction.isSensitiveHeaderName));
     expect(webRedaction.SENTRY_FILTERED_VALUE).toBe(apiRedaction.SENTRY_FILTERED_VALUE);

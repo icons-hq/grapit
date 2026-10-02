@@ -274,6 +274,17 @@ describe('redactSensitiveText', () => {
     expect(redactSensitiveText(
       `fetch https://h.test/cb?token=${RESET_TOKEN} then /p?x=1#f done`,
     )).toBe('fetch https://h.test/cb then /p done');
+    // Same cut points as the previous regex: only after the first slash of a run.
+    expect(redactSensitiveText('?a/b x?y/z a/b?c/d?e')).toBe('?a/b x?y/z a/b');
+  });
+
+  it('stays linear on long slash-only text (u18b review: no quadratic backtracking)', () => {
+    const hostile = `${'/'.repeat(200_000)} ${'/a'.repeat(100_000)}`;
+    const startedAt = performance.now();
+
+    expect(redactSensitiveText(hostile)).toBe(hostile);
+    // The backtracking pattern took minutes on this input.
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
   });
 });
 
@@ -300,6 +311,13 @@ describe('redaction helpers', () => {
     'x-grabit-toss-webhook-secret',
     'x-api-key',
     'x-csrf-token',
+    // Visitor IP forwarded by Cloudflare, the edge proxy and Cloud Run.
+    'X-Forwarded-For',
+    'x-real-ip',
+    'cf-connecting-ip',
+    'true-client-ip',
+    'x-grabit-client-ip',
+    'forwarded',
   ])('treats %s as sensitive', (name) => {
     expect(isSensitiveHeaderName(name)).toBe(true);
   });

@@ -25,6 +25,21 @@ const SENSITIVE_HEADER_NAMES = new Set([
   'x-grabit-toss-webhook-secret',
 ]);
 
+// Client IP headers. The Cloudflare edge and Cloud Run forward the visitor IP
+// in these; an IP is personal data and never needed to debug an error.
+const CLIENT_IP_HEADER_NAMES = new Set([
+  'x-forwarded-for',
+  'x-real-ip',
+  'x-client-ip',
+  'x-cluster-client-ip',
+  'x-grabit-client-ip',
+  'cf-connecting-ip',
+  'cf-connecting-ipv6',
+  'true-client-ip',
+  'fastly-client-ip',
+  'forwarded',
+]);
+
 // Header or cookie names that carry credentials, sessions or webhook secrets.
 const SENSITIVE_NAME_PATTERN =
   /auth|token|secret|session|cookie|passw|api[-_]?key|signature|csrf|xsrf/i;
@@ -64,12 +79,14 @@ const QUERY_PARAMETER_PREFIXES = ['db.query.parameter.'];
 const DRIZZLE_QUERY_PARAMS_PATTERN = /(Failed query: [\s\S]*?\n)params: [\s\S]*$/;
 
 // A URL or path followed by a query string or fragment inside free text.
-const URL_QUERY_IN_TEXT_PATTERN = /(\/[^\s?#]*)[?#]\S*/g;
+const NON_WHITESPACE_RUN_PATTERN = /\S+/g;
+const QUERY_OR_FRAGMENT_START_PATTERN = /[?#]/;
 
 export function isSensitiveHeaderName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   return (
     SENSITIVE_HEADER_NAMES.has(normalized)
+    || CLIENT_IP_HEADER_NAMES.has(normalized)
     || SENSITIVE_NAME_PATTERN.test(normalized)
   );
 }
@@ -87,7 +104,20 @@ export function stripUrlQuery(url: string): string {
 export function redactSensitiveText(text: string): string {
   return text
     .replace(DRIZZLE_QUERY_PARAMS_PATTERN, `$1params: ${SENTRY_FILTERED_VALUE}`)
-    .replace(URL_QUERY_IN_TEXT_PATTERN, '$1');
+    .replace(NON_WHITESPACE_RUN_PATTERN, stripQueryFromTextToken);
+}
+
+/**
+ * Within one whitespace-free run, drops the query/fragment that follows the
+ * first `/` (`https://host/p?x` and `/p?x` both become their path). Linear in
+ * the token length; a backtracking regex over the whole text was quadratic on
+ * long slash-only input (u18b review).
+ */
+function stripQueryFromTextToken(token: string): string {
+  const slash = token.indexOf('/');
+  if (slash === -1) return token;
+  const cut = token.slice(slash).search(QUERY_OR_FRAGMENT_START_PATTERN);
+  return cut === -1 ? token : token.slice(0, slash + cut);
 }
 
 function isQueryParameterKey(key: string): boolean {
