@@ -17,6 +17,7 @@ export type AsyncDoneCompensationKind =
   | 'ticket_limit'
   | 'amount_mismatch'
   | 'unsupported_provider'
+  | 'payment_method_not_allowed'
   | 'duplicate_payment_key';
 export type AsyncDoneCompensationState =
   | 'pending'
@@ -90,12 +91,28 @@ export const ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY = 'asyncDoneCompensationO
  */
 export const CONFIRM_COMPENSATION_CLAIM_METADATA_KEY = 'confirmCompensationClaim';
 
+/**
+ * The single ownership rule for an unfinished compensation row: payment
+ * confirm's `payment-confirm-reconcile` job owns a row it claimed
+ * (`confirmCompensationClaim: true`) that carries no async DONE compensation
+ * record; the async DONE recovery owns every other row (its own records, and
+ * legacy rows from before either marker existed). Each side resumes, re-cancels
+ * and records diagnostics only for rows it owns, so one row never gets two
+ * owners' attention or diagnostics.
+ */
+export function isConfirmCompensationClaimOwned(providerMetadata: unknown): boolean {
+  return isRecord(providerMetadata)
+    && providerMetadata[CONFIRM_COMPENSATION_CLAIM_METADATA_KEY] === true
+    && readAsyncDoneCompensation(providerMetadata) === null;
+}
+
 export const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
 export const ASYNC_DONE_COMPENSATION_REASONS: Record<AsyncDoneCompensationKind, string> = {
   seat_conflict: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
   ticket_limit: '예매 매수 제한 초과로 인한 자동 취소',
   amount_mismatch: '결제 금액 불일치로 인한 자동 취소',
   unsupported_provider: '지원하지 않는 결제수단으로 인한 자동 취소',
+  payment_method_not_allowed: '허용되지 않은 결제수단으로 인한 자동 취소',
   duplicate_payment_key: '중복 결제로 인한 자동 취소',
 };
 export const ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES: Record<AsyncDoneCompensationKind, string> = {
@@ -103,6 +120,7 @@ export const ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES: Record<AsyncDoneCompensat
   ticket_limit: 'ASYNC_DONE_TICKET_LIMIT_CANCELLED',
   amount_mismatch: 'ASYNC_DONE_AMOUNT_MISMATCH_CANCELLED',
   unsupported_provider: 'ASYNC_DONE_UNSUPPORTED_PROVIDER_CANCELLED',
+  payment_method_not_allowed: 'ASYNC_DONE_PAYMENT_METHOD_NOT_ALLOWED_CANCELLED',
   duplicate_payment_key: 'ASYNC_DONE_DUPLICATE_PAYMENT_CANCELLED',
 };
 
@@ -136,6 +154,11 @@ export function isSettledOrCompensatedPaymentState(input: {
 
 /** Cancel requests per charge (first request included) before operator attention. */
 export const ASYNC_DONE_COMPENSATION_MAX_ATTEMPTS = 5;
+/**
+ * A provider that keeps answering a compensation cancel with IN_PROGRESS is
+ * surfaced for operators once this long has passed since the first request.
+ */
+export const ASYNC_DONE_COMPENSATION_IN_PROGRESS_ATTENTION_MS = 24 * 60 * 60 * 1000;
 /**
  * A compensation whose provider query keeps failing (secret scope or key
  * misconfiguration, provider outage) is surfaced for operators once it has
@@ -192,6 +215,12 @@ export function buildCompensationRecord(input: {
   };
 }
 
+/** The compensation kind of a row without a record, from its stored cancel reason. */
+export function inferCompensationKindFromReason(reason: string | null | undefined): AsyncDoneCompensationKind {
+  return (Object.entries(ASYNC_DONE_COMPENSATION_REASONS) as Array<[AsyncDoneCompensationKind, string]>)
+    .find(([, candidate]) => candidate === reason)?.[0] ?? 'seat_conflict';
+}
+
 /** Historic cancel_pending rows predate the record; rebuild what the original request sent. */
 export function synthesizeLegacyCompensationRecord(
   payment: CompensationPaymentRow,
@@ -215,8 +244,7 @@ export function synthesizeLegacyCompensationRecord(
     idempotencyKey: `async-done-compensation-recovery:${payment.id}`,
     cancelRequestIdSeed: reservationId,
   });
-  const kind = (Object.entries(ASYNC_DONE_COMPENSATION_REASONS) as Array<[AsyncDoneCompensationKind, string]>)
-    .find(([, candidate]) => candidate === reason)?.[0] ?? 'seat_conflict';
+  const kind = inferCompensationKindFromReason(reason);
   const epoch = new Date(0).toISOString();
   return {
     version: 1,

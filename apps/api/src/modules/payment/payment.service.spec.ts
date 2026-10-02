@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { PaymentMethod } from '@grabit/shared';
+import { CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE, type PaymentMethod } from '@grabit/shared';
 import { ticketItems, ticketBenefitEntitlements, payments } from '../../database/schema/index.js';
 import { PaymentService } from './payment.service.js';
 import { LOCK_OTHER_OWNER_MESSAGE } from '../booking/booking.service.js';
@@ -117,6 +117,28 @@ function findJsonParam(predicate: unknown, key: string): Record<string, unknown>
   visit(predicate);
   return found;
 }
+
+/** A showtime still on sale and a policy allowing every checkout method. */
+const ALL_CHECKOUT_METHODS = ['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY'];
+const BRANCH_SALE_CONTEXT = {
+  showtimeStartsAt: new Date('2099-01-01T00:00:00.000Z'),
+  allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+};
+/** An async DONE order checked out with Alipay under a policy that allows it. */
+const ALIPAY_CHECKOUT: PaymentMethod = {
+  method: 'FOREIGN_EASY_PAY',
+  provider: 'ALIPAY_PLUS',
+  currency: 'USD',
+  pendingUrlRequired: true,
+};
+const ALIPAY_DONE_POLICY = {
+  checkoutPaymentMethod: ALIPAY_CHECKOUT,
+  allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+};
+const OVERSEAS_CARD_DONE_POLICY = {
+  checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'USD' } as PaymentMethod,
+  allowedPaymentMethods: ALL_CHECKOUT_METHODS,
+};
 
 describe('PaymentService', () => {
   let service: PaymentService;
@@ -443,6 +465,7 @@ describe('PaymentService', () => {
           showtimeId: 'showtime-branch-grace',
           status: 'PENDING_PAYMENT',
           checkoutPaymentMethod: createPaymentMethod(),
+          ...BRANCH_SALE_CONTEXT,
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -491,6 +514,7 @@ describe('PaymentService', () => {
           showtimeId: 'showtime-branch-cap',
           status: 'PENDING_PAYMENT',
           checkoutPaymentMethod: createPaymentMethod(),
+          ...BRANCH_SALE_CONTEXT,
           paymentDeadlineAt: new Date('2026-06-09T03:34:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -527,6 +551,7 @@ describe('PaymentService', () => {
         showtimeId: 'showtime-branch-expired',
         status: 'PENDING_PAYMENT',
           checkoutPaymentMethod: createPaymentMethod(),
+          ...BRANCH_SALE_CONTEXT,
         paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
         createdAt: new Date('2026-06-09T03:20:00.000Z'),
       }]));
@@ -575,6 +600,7 @@ describe('PaymentService', () => {
           showtimeId: 'showtime-branch-race',
           status: 'PENDING_PAYMENT',
           checkoutPaymentMethod: createPaymentMethod(),
+          ...BRANCH_SALE_CONTEXT,
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -616,6 +642,7 @@ describe('PaymentService', () => {
           showtimeId: 'showtime-branch-redis-fail',
           status: 'PENDING_PAYMENT',
           checkoutPaymentMethod: createPaymentMethod(),
+          ...BRANCH_SALE_CONTEXT,
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           admissionActiveUntilAt: new Date('2026-06-09T03:27:00.000Z'),
           reentryGraceUntilAt: new Date('2026-06-09T03:28:00.000Z'),
@@ -641,6 +668,105 @@ describe('PaymentService', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    function branchReservation(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'reservation-branch-policy',
+        userId: 'user-branch-policy',
+        showtimeId: 'showtime-branch-policy',
+        status: 'PENDING_PAYMENT',
+        checkoutPaymentMethod: createPaymentMethod(),
+        ...BRANCH_SALE_CONTEXT,
+        paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+        admissionActiveUntilAt: new Date('2026-06-09T03:27:00.000Z'),
+        reentryGraceUntilAt: new Date('2026-06-09T03:28:00.000Z'),
+        createdAt: new Date('2026-06-09T03:20:00.000Z'),
+        ...overrides,
+      };
+    }
+
+    async function branchAt(now: Date, reservation: Record<string, unknown>, paymentMethod = createPaymentMethod()) {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([reservation]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-1' }]));
+      try {
+        return await service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-POLICY',
+          userId: 'user-branch-policy',
+          paymentMethod,
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it.each([
+      ['a CARD-only policy', createPaymentMethod({ method: 'TRANSFER' }), ['CARD']],
+      ['a policy without foreign easy pay', createPaymentMethod({ method: 'SIMPLE_PAY', provider: 'TOSS_PAY' }), ['CARD', 'TRANSFER']],
+      ['a stored policy of non-checkout methods only', createPaymentMethod(), ['MOBILE_PHONE', 'VIRTUAL_ACCOUNT']],
+    ])('rejects a handoff whose method is outside %s before recording it (D1 #70)', async (_label, method, allowed) => {
+      mockDb.update.mockReturnValue(createMutationChain([{ id: 'reservation-branch-policy' }]));
+
+      await expect(branchAt(
+        new Date('2026-06-09T03:25:00.000Z'),
+        branchReservation({ checkoutPaymentMethod: method, allowedPaymentMethods: allowed }),
+        method,
+      )).rejects.toThrow(new ConflictException(CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE));
+
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+    });
+
+    it('uses the platform default (CARD) when the performance has no policy row', async () => {
+      const update = createMutationChain([{ id: 'reservation-branch-policy' }]);
+      mockDb.update.mockReturnValue(update);
+
+      await expect(branchAt(
+        new Date('2026-06-09T03:25:00.000Z'),
+        branchReservation({ allowedPaymentMethods: null }),
+      )).resolves.toMatchObject({ method: 'CARD' });
+      expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ checkoutStartedAt: expect.any(Date) }));
+    });
+
+    it('rejects a handoff once the showtime has started, before checkoutStartedAt is written (C1)', async () => {
+      mockDb.update.mockReturnValue(createMutationChain([{ id: 'reservation-branch-policy' }]));
+
+      await expect(branchAt(
+        new Date('2026-06-09T03:25:00.000Z'),
+        branchReservation({ showtimeStartsAt: new Date('2026-06-09T03:25:00.000Z') }),
+      )).rejects.toThrow(new ForbiddenException('이미 시작된 회차는 예매할 수 없습니다.'));
+
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+    });
+
+    it('caps the handoff deadline and seat lock extension at the showtime start (C1)', async () => {
+      const update = createMutationChain([{ id: 'reservation-branch-policy' }]);
+      mockDb.update.mockReturnValue(update);
+      const startsAt = new Date('2026-06-09T03:26:00.000Z');
+
+      const branch = await branchAt(
+        new Date('2026-06-09T03:25:00.000Z'),
+        branchReservation({ showtimeStartsAt: startsAt }),
+      );
+
+      expect(branch.paymentDeadlineAt).toBe(startsAt.toISOString());
+      expect(update.set).toHaveBeenCalledWith(expect.objectContaining({
+        paymentDeadlineAt: startsAt,
+        admissionActiveUntilAt: startsAt,
+        reentryGraceUntilAt: startsAt,
+      }));
+      expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(
+        'user-branch-policy',
+        'showtime-branch-policy',
+        ['1F:A-1'],
+        60,
+      );
     });
 
     it('routes USD card through overseas-card provider charge even when consent metadata is missing', async () => {
@@ -1061,6 +1187,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 154000,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
@@ -1352,6 +1479,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 150000,
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
@@ -1432,6 +1560,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 150000,
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
@@ -1528,6 +1657,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'FAILED',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 102000,
         }]))
         .mockReturnValueOnce(createSelectChain([{
@@ -1714,6 +1844,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...OVERSEAS_CARD_DONE_POLICY,
           totalAmount: 150000,
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
@@ -1796,12 +1927,14 @@ describe('PaymentService', () => {
           id: reservationId,
           userId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
         }]))
         .mockReturnValueOnce(createSelectChain([{
           id: reservationId,
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 150000,
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
@@ -3938,6 +4071,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 102000,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
@@ -4039,6 +4173,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'FAILED',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 102000,
         }]))
         .mockReturnValueOnce(createSelectChain([{
@@ -4151,6 +4286,7 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'FAILED',
+          ...ALIPAY_DONE_POLICY,
           totalAmount: 102000,
         }]))
         .mockReturnValueOnce(createSelectChain([{

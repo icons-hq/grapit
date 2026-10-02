@@ -30,6 +30,13 @@ const tossPaymentResponseSchema = z.object({
   totalAmount: z.number().finite(),
   currency: z.string().optional(),
   method: z.string().nullable().optional(),
+  // The Payment API answers an object; a string (webhook-style payload) is
+  // normalized to the same shape. An unexpected shape never fails the parse:
+  // the payment method policy then treats the easy pay provider as unknown.
+  easyPay: z.preprocess(
+    (value) => typeof value === 'string' ? { provider: value } : value,
+    z.object({ provider: z.string().nullable().optional() }).passthrough().nullable().optional(),
+  ).catch(undefined),
   approvedAt: z.string().nullable().optional(),
 }).passthrough();
 
@@ -47,6 +54,8 @@ export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;
   method?: string | null;
+  /** `Payment.easyPay`; `provider` is the 간편결제사 code (e.g. `토스페이`, `TOSSPAY`). */
+  easyPay?: { provider?: string | null } | null;
   isPartialCancelable?: boolean;
   totalAmount: number;
   currency?: string;

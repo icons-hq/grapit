@@ -209,7 +209,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 코드 후속이 필요하다. 오픈 판단 때 수용 여부를 기록한다.
 
-- confirm은 Toss 승인 응답의 실제 결제수단을 공연 정책과 대조하지 않고, 웹은 위젯의 가상계좌·휴대폰 결제를 `CARD`로 분류한다. 이 수단을 위젯에 켜지 않는 것(1.3)이 현재 방어선이다. #70 #74
+- 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 남은 위험은 구매자 경험이다. 웹이 위젯의 가상계좌·휴대폰 선택을 `CARD`로 보내면 구매자는 인증을 마친 뒤 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
 - seat-update 수신은 아직 이벤트마다 좌석 상태 cache를 갱신한다(rAF 또는 100–200ms 묶음 처리 미적용). web에는 `script-src` CSP가 없다. #11 #49
 - `scripts/phase26/infra-evidence.mjs`의 연결 수 추정은 pg-boss pool을 빼고 계산하며 템플릿 값(`${{ env.DB_POOL_MAX }}`)을 읽지 못한다. 연결 예산은 Deploy workflow의 database preflight 결과를 쓴다. #54

@@ -44,14 +44,21 @@ function chainResult<T>(rows: T[]) {
   return new Proxy({}, handler);
 }
 
-function executeResult(showtimeStartsAt: Date = FUTURE()) {
-  // One row answers both the ticket limit snapshot and the showtime cutoff.
+const ALL_CHECKOUT_METHODS = ['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY'];
+
+function executeResult(
+  showtimeStartsAt: Date = FUTURE(),
+  allowedPaymentMethods: string[] | null = ALL_CHECKOUT_METHODS,
+) {
+  // One row answers the ticket limit snapshot, the showtime cutoff and the
+  // performance payment method policy.
   return {
     rows: [{
       performance_id: 'performance-1',
       max_tickets_per_user: 999,
       active_ticket_count: 0,
       date_time: showtimeStartsAt,
+      allowed_payment_methods: allowedPaymentMethods,
     }],
   };
 }
@@ -167,6 +174,8 @@ function createDependencies(options: {
   reservation: ReservationRow;
   existingPayment?: Record<string, unknown>;
   showtimeStartsAt?: Date;
+  /** The performance's stored allowed payment methods (null: no policy row). */
+  allowedPaymentMethods?: string[] | null;
   /** Whether an earlier attempt already sent this order to Toss confirm. */
   providerConfirmSent?: boolean;
 } = { reservation: domesticReservation() }) {
@@ -188,7 +197,10 @@ function createDependencies(options: {
         };
       }),
     })),
-    execute: vi.fn().mockResolvedValue(executeResult(options.showtimeStartsAt)),
+    execute: vi.fn().mockResolvedValue(executeResult(
+      options.showtimeStartsAt,
+      options.allowedPaymentMethods === undefined ? ALL_CHECKOUT_METHODS : options.allowedPaymentMethods,
+    )),
     transaction: vi.fn(),
   };
   db.select
@@ -269,15 +281,29 @@ function createDependencies(options: {
   };
 }
 
-/** Captures the payment/reservation updates of a completed compensation record. */
-function withCompensationRecord(db: { transaction: ReturnType<typeof vi.fn> }) {
+/**
+ * Captures the payment/reservation updates of a completed compensation record.
+ * `claimStillOwned: false` models a claim row another path already settled or
+ * adopted (the guarded payment update matches no row).
+ */
+function withCompensationRecord(
+  db: { transaction: ReturnType<typeof vi.fn> },
+  options: { claimStillOwned?: boolean } = {},
+) {
   const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
   const inserts: unknown[] = [];
+  const claimStillOwned = options.claimStillOwned ?? true;
   const tx = {
     update: vi.fn((table: unknown) => ({
       set: vi.fn((values: Record<string, unknown>) => {
         updates.push({ table, values });
-        return { where: vi.fn().mockResolvedValue(undefined) };
+        return {
+          where: vi.fn(() => Object.assign(Promise.resolve(undefined), {
+            returning: vi.fn().mockResolvedValue(
+              table === payments && !claimStillOwned ? [] : [{ id: 'payment-claim-1' }],
+            ),
+          })),
+        };
       }),
     })),
     insert: vi.fn((table: unknown) => {
@@ -343,7 +369,7 @@ function withIssuance(db: { transaction: ReturnType<typeof vi.fn> }) {
 describe('ReservationFinalizationService provider approval validation (#1, #74)', () => {
   it('cancels a PayPal approval that Toss settled in KRW instead of the USD quote', async () => {
     const deps = createDependencies({ reservation: paypalReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     // Attack: the same orderId authenticated as a domestic KRW 108 payment.
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
       currency: 'KRW',
@@ -364,13 +390,14 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
       '결제 승인 정보 불일치로 인한 자동 취소',
       expect.objectContaining({ idempotencyKey: 'reservation-finalization-cancel:order-1' }),
     );
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    // pay-server-4: claimed with a DONE/cancel_pending row, then recorded.
+    expectRecordedCompensation(deps, record, '결제 승인 정보 불일치로 인한 자동 취소');
     expect(deps.qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
   });
 
   it('cancels a PayPal approval whose method is not foreign easy pay', async () => {
     const deps = createDependencies({ reservation: paypalReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
       currency: 'USD',
       method: '카드',
@@ -381,7 +408,7 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
       .rejects.toBeInstanceOf(BadRequestException);
 
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
   });
 
   it('issues a PayPal approval only when Toss settled the quoted USD amount', async () => {
@@ -433,7 +460,7 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
 
   it('cancels an overseas-card approval whose USD amount differs from the quote', async () => {
     const deps = createDependencies({ reservation: overseasCardReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
       currency: 'USD',
       method: 'CARD',
@@ -448,7 +475,7 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
       '결제 승인 정보 불일치로 인한 자동 취소',
       expect.objectContaining({ secretKeyScope: 'overseas-card' }),
     );
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '결제 승인 정보 불일치로 인한 자동 취소');
   });
 
   it('accepts the MUSD currency label used by the foreign merchant for an overseas-card approval', async () => {
@@ -467,19 +494,19 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
 
   it('cancels a domestic approval settled in a foreign currency', async () => {
     const deps = createDependencies({ reservation: domesticReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ currency: 'USD' }));
 
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBeInstanceOf(BadRequestException);
 
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '결제 승인 정보 불일치로 인한 자동 취소');
   });
 
   it('does not issue tickets for a virtual account waiting for deposit and cancels it', async () => {
     const deps = createDependencies({ reservation: domesticReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
       status: 'WAITING_FOR_DEPOSIT',
       method: '가상계좌',
@@ -494,20 +521,20 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
       '결제 미완료 상태로 인한 자동 취소',
       expect.objectContaining({ secretKeyScope: 'default' }),
     );
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '결제 미완료 상태로 인한 자동 취소');
     expect(deps.qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
   });
 
   it('rejects a DONE approval made with a payment method that checkout does not sell', async () => {
     const deps = createDependencies({ reservation: domesticReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '문화상품권' }));
 
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBeInstanceOf(BadRequestException);
 
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
   });
 });
 
@@ -663,7 +690,7 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
 
   it('still validates a recovered approval and cancels a mismatching one', async () => {
     const deps = createDependencies({ reservation: paypalReservation() });
-    withIssuance(deps.db);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.confirmPayment.mockRejectedValue(
       new TossPaymentError('ALREADY_PROCESSED_PAYMENT', '이미 처리된 결제 입니다.', 400),
     );
@@ -676,7 +703,7 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
     await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '결제 승인 정보 불일치로 인한 자동 취소');
   });
 
   it('returns 503 without cancelling when neither confirm nor lookup can prove the outcome', async () => {
@@ -752,8 +779,10 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
     };
     deps.db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
 
-    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
-      .rejects.toBe(rejection);
+    // pay-server-7: the provider's definite rejection is the buyer's answer.
+    const result = deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1');
+    await expect(result).rejects.toBeInstanceOf(BadRequestException);
+    await expect(result).rejects.toMatchObject({ cause: rejection });
 
     expect(failureInserts).toEqual([{
       table: payments,
@@ -780,15 +809,39 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
   });
 
-  it('keeps a definitive rejection unchanged when the provider still reports it in progress', async () => {
+  it('answers a definite card rejection as a 400 with the provider reason, not a retried 502 (pay-server-7)', async () => {
     const deps = createDependencies({ reservation: domesticReservation() });
     const rejection = new TossPaymentError('REJECT_CARD_COMPANY', '카드사 거절', 403);
     deps.tossClient.confirmPayment.mockRejectedValue(rejection);
     deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({ status: 'IN_PROGRESS' }));
 
+    const error = await deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1')
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getStatus()).toBe(400);
+    expect((error as BadRequestException).getResponse()).toEqual({
+      message: '카드사 거절',
+      code: 'REJECT_CARD_COMPANY',
+    });
+    expect((error as BadRequestException).cause).toBe(rejection);
+    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(reconcileJobs(deps)).toEqual([]);
+  });
+
+  it.each([
+    ['UNAUTHORIZED_KEY', 401],
+    ['FORBIDDEN_REQUEST', 403],
+    ['INVALID_API_KEY', 400],
+  ])('keeps a merchant configuration rejection %s as the TossPaymentError (502 and Sentry)', async (code, status) => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const rejection = new TossPaymentError(code, '가맹점 설정 오류', status);
+    deps.tossClient.confirmPayment.mockRejectedValue(rejection);
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({ status: 'IN_PROGRESS' }));
+
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBe(rejection);
-    expect(deps.db.transaction).not.toHaveBeenCalled();
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
   });
 });
@@ -866,13 +919,20 @@ describe('ReservationFinalizationService transient DB failure after approval (#1
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBeInstanceOf(InternalServerErrorException);
 
-    expect(deps.db.transaction).toHaveBeenCalledTimes(3);
+    // Three issuance attempts, then the (also failing, best effort) record
+    // of the completed compensation cancel.
+    expect(deps.db.transaction).toHaveBeenCalledTimes(4);
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
       'payment-key-1',
       '서버 오류로 인한 자동 취소',
       expect.anything(),
     );
+    // The approval was claimed before the cancel (pay-server-4).
+    expect(deps.rootInserts).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({ status: 'DONE', asyncStatus: 'cancel_pending' }),
+    });
   });
 
   it('does not retry a non-transient failure', async () => {
@@ -882,7 +942,8 @@ describe('ReservationFinalizationService transient DB failure after approval (#1
 
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBeInstanceOf(InternalServerErrorException);
-    expect(deps.db.transaction).toHaveBeenCalledOnce();
+    // One issuance attempt plus the compensation record.
+    expect(deps.db.transaction).toHaveBeenCalledTimes(2);
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
   });
 });
@@ -1326,7 +1387,8 @@ describe('ReservationFinalizationService unverifiable commit (#17)', () => {
 
     await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
       .rejects.toBeInstanceOf(InternalServerErrorException);
-    expect(deps.db.transaction).toHaveBeenCalledTimes(3);
+    // Three issuance attempts plus the compensation record.
+    expect(deps.db.transaction).toHaveBeenCalledTimes(4);
     expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
   });
 });
@@ -1617,5 +1679,329 @@ describe('ReservationFinalizationService client-independent reconcile scheduling
     expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
       payload: expect.objectContaining({ reason: 'duplicate_cancel_failed', paymentKey: 'payment-key-1' }),
     })]);
+  });
+});
+
+describe('ReservationFinalizationService payment method policy at confirm (D1 #70, pay-server-1)', () => {
+  it('compensates and never issues a mobile phone approval under a CARD-only policy', async () => {
+    const deps = createDependencies({ reservation: domesticReservation(), allowedPaymentMethods: ['CARD'] });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-1',
+      '허용되지 않은 결제수단으로 인한 자동 취소',
+      expect.anything(),
+    );
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+    expect(deps.qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    expect(deps.bookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+  });
+
+  it('compensates an easy pay approved with another provider than the frozen checkout method', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation({
+        checkoutPaymentMethod: { method: 'SIMPLE_PAY', provider: 'TOSS_PAY', currency: 'KRW' },
+      }),
+    });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
+      method: '간편결제',
+      easyPay: { provider: '카카오페이', amount: 0, discountAmount: 0 },
+    }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+  });
+
+  it('compensates an easy pay provider checkout does not sell (PAYCO) even for a card checkout', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
+      method: '간편결제',
+      easyPay: { provider: '페이코' },
+    }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+  });
+
+  it('compensates a method removed from the policy after prepare (frozen checkout method no longer allowed)', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation({
+        checkoutPaymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
+      }),
+      allowedPaymentMethods: ['CARD'],
+    });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '계좌이체' }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+  });
+
+  it('applies the policy to an approval recovered by lookup at the sales cutoff', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation(),
+      showtimeStartsAt: PAST(),
+      allowedPaymentMethods: ['CARD'],
+    });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({ method: 'MOBILE_PHONE' }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+  });
+
+  it.each([
+    ['a card', { method: 'CARD', provider: 'CARD', currency: 'KRW' }, { method: '카드' }],
+    ['a transfer', { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' }, { method: '계좌이체' }],
+    [
+      'Toss Pay',
+      { method: 'SIMPLE_PAY', provider: 'TOSS_PAY', currency: 'KRW' },
+      { method: '간편결제', easyPay: { provider: '토스페이' } },
+    ],
+  ])('issues %s approval that matches the checkout method and the policy', async (_label, checkout, approval) => {
+    const deps = createDependencies({
+      reservation: domesticReservation({ checkoutPaymentMethod: checkout }),
+      allowedPaymentMethods: ['CARD', 'TRANSFER', 'SIMPLE_PAY'],
+    });
+    withIssuance(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval(approval));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .resolves.toEqual({ reservationId: 'reservation-1' });
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['PayPal', paypalReservation()],
+    ['overseas card', overseasCardReservation()],
+  ])('rejects a domestic confirm for a %s checkout before calling Toss', async (_label, reservation) => {
+    const deps = createDependencies({ reservation });
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.providerConfirmMarkers.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReservationFinalizationService claimed compensation of a new approval (pay-server-4)', () => {
+  it('claims, cancels and records an approval whose seat hold was lost after the approval', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.bookingService.assertOwnedSeatLocks.mockRejectedValue(
+      new ConflictException('좌석 점유 시간이 만료되었습니다.'),
+    );
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ConflictException);
+    expectRecordedCompensation(deps, record, '좌석 점유 만료로 인한 자동 취소');
+  });
+
+  it('claims, cancels and records an approval whose issuance hit a sold seat', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.db.transaction.mockRejectedValueOnce(new ConflictException('판매 불가능한 좌석입니다'));
+    const record = { updates: [] as Array<{ table: unknown; values: Record<string, unknown> }>, inserts: [] as unknown[] };
+    const tx = {
+      update: vi.fn((table: unknown) => ({
+        set: vi.fn((values: Record<string, unknown>) => {
+          record.updates.push({ table, values });
+          return {
+            where: vi.fn(() => Object.assign(Promise.resolve(undefined), {
+              returning: vi.fn().mockResolvedValue([{ id: 'payment-claim-1' }]),
+            })),
+          };
+        }),
+      })),
+      insert: vi.fn(),
+    };
+    deps.db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow('판매 불가능한 좌석입니다');
+    expectRecordedCompensation(deps, record, '판매 불가능 좌석으로 인한 자동 취소');
+  });
+
+  it('keeps the claim cancel_pending and schedules the reconcile job when the cancel is IN_PROGRESS', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+    deps.tossClient.cancelPayment.mockResolvedValue({
+      paymentKey: 'payment-key-1',
+      orderId: 'order-1',
+      status: 'DONE',
+      totalAmount: TOTAL_KRW,
+      cancels: [{ cancelStatus: 'IN_PROGRESS' }],
+    });
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+
+    expect(deps.rootInserts).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+        providerMetadata: expect.objectContaining({ confirmCompensationClaim: true }),
+      }),
+    });
+    // Nothing recorded as completed yet: the CANCELED webhook or the job does it.
+    expect(record.updates).toEqual([]);
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'compensation_cancel_pending', paymentKey: 'payment-key-1' }),
+    })]);
+  });
+
+  it('keeps the claim (late DONE answers DONE_CANCEL_PENDING) and schedules the job when the cancel fails', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+    deps.tossClient.cancelPayment.mockRejectedValue(new TossPaymentError('PROVIDER_ERROR', 'down', 500));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(deps.rootInserts).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({ status: 'DONE', asyncStatus: 'cancel_pending' }),
+    });
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'compensation_cancel_failed' }),
+    })]);
+  });
+
+  it('falls back to a provider-only cancel plus the reconcile job when the claim row cannot be written', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+    const insert = deps.db.insert.getMockImplementation()!;
+    deps.db.insert.mockImplementation((table: unknown) => {
+      if (table === payments) {
+        return {
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => Promise.reject(new Error('Connection terminated unexpectedly')),
+            }),
+          }),
+        };
+      }
+      return insert(table);
+    });
+    deps.tossClient.cancelPayment.mockResolvedValue({
+      paymentKey: 'payment-key-1',
+      orderId: 'order-1',
+      status: 'DONE',
+      totalAmount: TOTAL_KRW,
+      cancels: [{ cancelStatus: 'IN_PROGRESS' }],
+    });
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'compensation_cancel_pending' }),
+    })]);
+  });
+
+  it('writes no reservation update or diagnostic when the claim was settled by its other owner meanwhile', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const record = withCompensationRecord(deps.db, { claimStillOwned: false });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({ method: '휴대폰' }));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(BadRequestException);
+    expect(record.updates).toEqual([{ table: payments, values: expect.objectContaining({ status: 'CANCELED' }) }]);
+    expect(deps.rootInserts).not.toContainEqual(expect.objectContaining({ table: reservationPaymentFailureDiagnostics }));
+  });
+
+  it('records a payment the provider shows already cancelled after a failed confirm and answers 409', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockRejectedValue(
+      new TossPaymentError('ALREADY_PROCESSED_PAYMENT', '이미 처리된 결제 입니다.', 400),
+    );
+    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({
+      status: 'CANCELED',
+      cancels: [{ cancelAmount: TOTAL_KRW, cancelReason: '좌석 점유 만료로 인한 자동 취소', canceledAt: '2026-10-01T10:05:00.000Z', cancelStatus: 'DONE' }],
+    }));
+    const inserted: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const updated: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const tx = {
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn((values: Record<string, unknown>) => {
+          inserted.push({ table, values });
+          return {
+            onConflictDoNothing: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 'payment-cancelled-1' }]),
+            }),
+          };
+        }),
+      })),
+      update: vi.fn((table: unknown) => ({
+        set: vi.fn((values: Record<string, unknown>) => {
+          updated.push({ table, values });
+          return { where: vi.fn().mockResolvedValue(undefined) };
+        }),
+      })),
+    };
+    deps.db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ConflictException);
+
+    expect(inserted).toEqual([{
+      table: payments,
+      values: expect.objectContaining({
+        status: 'CANCELED',
+        asyncStatus: 'compensation_cancelled',
+        cancelReason: '좌석 점유 만료로 인한 자동 취소',
+        cancelledAt: new Date('2026-10-01T10:05:00.000Z'),
+      }),
+    }]);
+    expect(updated).toEqual([{ table: reservations, values: expect.objectContaining({ status: 'FAILED' }) }]);
+    expect(deps.rootInserts).toContainEqual({
+      table: reservationPaymentFailureDiagnostics,
+      values: expect.objectContaining({
+        paymentId: 'payment-cancelled-1',
+        diagnosticCode: 'CONFIRM_APPROVAL_COMPENSATED',
+        diagnosticSource: 'payment_confirm',
+      }),
+    });
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReservationFinalizationService outcome-unknown observability (pay-server-8)', () => {
+  it('links the Toss 5xx as the cause of the 503 so Sentry reports the provider error', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const providerError = new TossPaymentError('FAILED_INTERNAL_SYSTEM_PROCESSING', 'Toss down', 500);
+    deps.tossClient.confirmPayment.mockRejectedValue(providerError);
+    deps.tossClient.queryPayment.mockRejectedValue(new Error('fetch failed'));
+
+    const error = await deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1')
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    expect((error as ServiceUnavailableException).cause).toBe(providerError);
+    expect((error as ServiceUnavailableException).cause).toBeInstanceOf(TossPaymentError);
+  });
+
+  it('links a provider timeout as the cause as well', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    const timeout = new TossPaymentError('PROVIDER_TIMEOUT', 'timeout');
+    deps.tossClient.confirmPayment.mockRejectedValue(timeout);
+    deps.tossClient.queryPayment.mockRejectedValue(new Error('fetch failed'));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toMatchObject({ cause: timeout });
   });
 });

@@ -308,7 +308,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );
@@ -532,7 +535,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );
@@ -746,6 +752,66 @@ describe('PaymentWebhookController', () => {
       }),
       'ABORTED',
       'payment_status_changed:aborted',
+    );
+  });
+
+  it('accepts a domestic easy pay callback whose easyPay is the Payment object (D1 #70)', () => {
+    const parsed = tossWebhookSchema.parse({
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      data: {
+        paymentKey: 'pay_toss_pay',
+        orderId: 'GRP-TOSS-PAY',
+        status: 'DONE',
+        method: '간편결제',
+        easyPay: { provider: '토스페이', amount: 0, discountAmount: 0 },
+        currency: 'KRW',
+        totalAmount: 52000,
+      },
+    });
+
+    expect(parsed.data.easyPay).toBe('토스페이');
+  });
+
+  it('hands the service the provider-verified method, never the callback one (pay-server-2)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_CANCEL_PENDING');
+    // The callback says a foreign wallet; the provider says a mobile phone payment.
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '휴대폰',
+      currency: 'KRW',
+    }));
+
+    await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerVerified: { method: '휴대폰', easyPayProvider: null },
+        data: expect.objectContaining({ method: '휴대폰' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('takes the easy pay provider and the foreign wallet from the provider lookup', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    // The callback claims Alipay; the provider lookup shows TrueMoney.
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '해외간편결제',
+      easyPay: { provider: '트루머니' },
+    }));
+
+    await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerVerified: { method: '해외간편결제', easyPayProvider: '트루머니' },
+        data: expect.objectContaining({ easyPay: '트루머니', provider: 'TRUEMONEY' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
     );
   });
 
@@ -1077,7 +1143,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );
