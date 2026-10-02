@@ -5,8 +5,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import type IORedis from 'ioredis';
 import { AppModule } from './app.module.js';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
-import { TossPaymentExceptionFilter } from './common/filters/toss-payment-exception.filter.js';
+import { createGlobalExceptionFilters } from './common/filters/global-exception-filters.js';
 import { ZodValidationPipe } from './common/pipes/zod-validation.pipe.js';
 import { RedisIoAdapter } from './modules/booking/providers/redis-io.adapter.js';
 import { REDIS_CLIENT } from './modules/booking/providers/redis.provider.js';
@@ -83,7 +82,7 @@ async function bootstrap() {
   }));
   app.use(cookieParser());
 
-  app.useGlobalFilters(new HttpExceptionFilter(), new TossPaymentExceptionFilter());
+  app.useGlobalFilters(...createGlobalExceptionFilters());
   app.useGlobalPipes(new ZodValidationPipe());
 
   app.setGlobalPrefix('api/v1');

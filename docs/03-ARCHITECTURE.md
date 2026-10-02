@@ -143,7 +143,11 @@ Admin screens are dense operational tools. Public pages can be more visual, but 
 - `JwtAuthGuard` is global; public endpoints use the `@Public` decorator.
 - Admin authorization uses role and capability guards.
 - Global validation uses the Zod validation pipe.
-- Global filters include generic HTTP exception formatting and Toss payment exception formatting.
+- Global exception filters are registered through `createGlobalExceptionFilters()` (`apps/api/src/common/filters/`): a catch-all HTTP exception filter first, then the Toss payment exception filter, because Nest matches global filters from the last registered.
+  - `HttpException` responses keep every extra field of an object response (`code`, `blockers`, `retryAfterMs`, `errors`, `errorCode`, ...) next to `statusCode`, `message` and `timestamp`.
+  - Any other error answers `500 {"statusCode":500,"message":"Internal server error"}` without its internal message; 4xx errors that carry an HTTP status (body-parser 413) keep that status.
+  - 5xx responses, including unexpected errors and Toss provider failures answered with `502`, are reported to Sentry. The unexpected-error log line redacts bound SQL parameters and appends the cause chain (pool timeout, deadlock).
+  - A failed public `GET /api/v1/health` answers `503` with the Terminus result (`status`, `info`, `error`, `details`): the same Redis/Valkey metadata the `200` body already exposes plus the sanitized indicator message, so probes and smoke scripts can see which dependency is down.
 - CORS origins are derived from `FRONTEND_URL`, with production requiring HTTPS origins.
 - `helmet` and `cookie-parser` are installed at bootstrap.
 
@@ -422,6 +426,8 @@ SVG seat maps are product-critical and must be treated as data with validation/s
 ## 9. Observability And Operations
 
 - Sentry is initialized in both web and API.
+- Sentry redaction contract (API `apps/api/src/common/observability/`, web `apps/web/lib/sentry-redaction.ts`; `sentry-redaction.parity.spec.ts` keeps the two copies on the same results, and only the web copy also handles the Next.js request path): request bodies, cookies and query strings are never attached; `Authorization`, `Cookie`, Toss webhook secret and other credential-named headers are replaced with `[Filtered]`; query strings are stripped from request URLs, `Referer`, span URL attributes, breadcrumbs, the Next.js request path and URLs inside free text (exception values, messages, transaction and span names, console breadcrumbs); bound SQL parameter values (`DrizzleQueryError` `params: ...`, `drizzle.query.params`, `db.query.parameter.*`) become `[Filtered]`. Redaction is name- and pattern-based, so other personal data inside a free-form error message is not removed. Sentry project Data Scrubbers are the second layer; confirming them is a Gate 11 pre-research item in `docs/runbooks/ticketing-open-evidence-gates-2026-06-03.md`.
+- API 5xx and Toss `502` responses create Sentry events; Cloud Run 5xx rate alerts are a separate Cloud Monitoring policy.
 - Cloud Run stdout/stderr and Cloud Logging are the primary runtime log stream.
 - Health endpoint includes Redis/Valkey health evidence.
 - Phase 26/27 scripts under `scripts/phase26` and `scripts/phase27` provide gate validation, infra evidence, load evidence recording, field scan smoke, and retrospective validation.

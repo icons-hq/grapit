@@ -625,6 +625,19 @@ during the first 24 hours.
 - [ ] Confirm named primary owner and backup contact.
 - [ ] Confirm alert routing for Sentry, Cloud Run, Cloud SQL, Valkey,
       Cloudflare, payment provider, SMS provider, and business metrics.
+- [ ] Confirm the Sentry API and web projects keep Data Scrubber and Use
+      Default Scrubbers on, with `phone`, `paymentKey`, `refreshToken` and
+      `tossWebhookSecret` in Additional Sensitive Fields (second layer behind
+      the code redaction in `docs/03-ARCHITECTURE.md` section 9).
+- [ ] Create and dry-run Sentry alert rules for new API events tagged
+      `http.status_code:500` and for spikes of events tagged `toss.code`
+      (Toss failures answered with `502`); check spike protection and rate
+      limits so an incident burst does not exhaust the quota.
+- [ ] Create a Cloud Monitoring alert policy on the Cloud Run API 5xx ratio,
+      separate from Sentry.
+- [ ] After the API and web deploy, trigger the admin Sentry test endpoint
+      and confirm in the Sentry UI that the event arrives and `Authorization`
+      and `Cookie` show `[Filtered]`.
 - [ ] Confirm dashboard links and access.
 - [ ] Confirm close-booking, rollback, provider incident, and customer support
       escalation paths.
@@ -644,7 +657,10 @@ during the first 24 hours.
 
 - [ ] Owner schedule and backup.
 - [ ] Dashboard/access confirmation.
-- [ ] Alert delivery test.
+- [ ] Alert delivery test, including the Sentry 500/`toss.code` rules and the
+      Cloud Run 5xx policy.
+- [ ] Sentry Data Scrubber settings and a redacted test event (masked
+      screenshot or event ID).
 - [ ] First-24h checklist artifact.
 - [ ] Incident decision log, even if no incidents occurred.
 
