@@ -9,6 +9,7 @@ import {
   PERFORMANCE_ALLOWED_PAYMENT_METHODS,
   isCheckoutPaymentMethodAllowed,
   type PerformanceAllowedPaymentMethod,
+  type PerformancePreparation,
   type PerformanceWithDetails,
 } from '@grabit/shared';
 
@@ -64,6 +65,15 @@ if (typeof ResizeObserver === 'undefined') {
     unobserve() {}
     disconnect() {}
   };
+}
+
+/** The admin detail API sends no publishState; the form reads it from the preparation. */
+function mockPreparation(publishState: PerformancePreparation['publishState']) {
+  vi.mocked(apiClient.get).mockImplementation(async (path) => (
+    path === '/api/v1/admin/performances/perf-payment-methods-1/preparation'
+      ? { publishState, locales: [], checks: [], canPublish: false }
+      : { locales: [], checks: [], canPublish: false }
+  ));
 }
 
 function renderForm(allowedPaymentMethods: PerformanceAllowedPaymentMethod[]) {
@@ -215,5 +225,94 @@ describe('PerformanceForm allowed payment methods (audit #70)', () => {
     for (const method of CHECKOUT_CONFIGURABLE_PAYMENT_METHODS) {
       expect(isCheckoutPaymentMethodAllowed({ method }, [method])).toBe(true);
     }
+  });
+
+  it('opens a stored policy with only unsupported methods unchecked and blocks saving until one is chosen (audit #70)', async () => {
+    const user = userEvent.setup();
+    renderForm(['VIRTUAL_ACCOUNT']);
+
+    for (const label of ['카드 결제(국내/해외)', '계좌이체', '국내 간편결제', '해외 간편결제']) {
+      expect(screen.getByRole('checkbox', { name: label })).not.toBeChecked();
+    }
+    expect(screen.getByRole('note')).toHaveTextContent('기존 정책의 미지원 결제수단(가상계좌)은 저장되지 않습니다.');
+
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
+
+    expect(await screen.findAllByText('최소 1개의 결제 수단이 필요합니다')).not.toHaveLength(0);
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('PerformanceForm removing a payment method from a public performance (audit #70)', () => {
+  const WARNING = /판매 중 공연에서 결제수단을 빼면 이미 그 수단으로 결제를 시작한 주문은 승인 뒤 자동 환불되고 좌석이 풀립니다/;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: { id: '11111111-1111-4111-8111-111111111111', role: 'admin', adminCapabilityBundle: 'operator' } as never });
+    vi.mocked(apiClient.post).mockImplementation(async (path, data) => path.endsWith('/apply')
+      ? { id: 'draft-1', revision: 1, performanceId: 'perf-payment-methods-1', appliedAt: '2026-09-21T00:00:00.000Z' }
+      : { id: 'draft-1', revision: 1, performanceId: 'perf-payment-methods-1', data: (data as { data: unknown }).data, updatedAt: '2026-09-21T00:00:00.000Z' });
+  });
+
+  it('warns when CARD is unchecked and keeps apply disabled until the impact is confirmed', async () => {
+    const user = userEvent.setup();
+    mockPreparation('published');
+    renderForm(['CARD', 'TRANSFER']);
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith(
+      '/api/v1/admin/performances/perf-payment-methods-1/preparation',
+    ));
+
+    await user.click(screen.getByRole('checkbox', { name: '카드 결제(국내/해외)' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(WARNING);
+    expect(screen.getByRole('alert')).toHaveTextContent('빼는 결제수단: 카드 결제(국내/해외)');
+
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    const apply = screen.getByRole('button', { name: '공연 정보에 반영' });
+    expect(screen.getByRole('alert')).toHaveTextContent(WARNING);
+    expect(apply).toBeDisabled();
+
+    await user.click(screen.getByRole('checkbox', { name: '확인했습니다' }));
+    expect(apply).toBeEnabled();
+
+    await expect(applyAndReadSavedPaymentMethods(user)).resolves.toEqual(['TRANSFER']);
+  });
+
+  it('asks again when another method is removed after the confirmation', async () => {
+    const user = userEvent.setup();
+    mockPreparation('published');
+    renderForm(['CARD', 'TRANSFER', 'SIMPLE_PAY']);
+    await user.click(await screen.findByRole('checkbox', { name: '카드 결제(국내/해외)' }));
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(await screen.findByRole('checkbox', { name: '확인했습니다' }));
+    expect(screen.getByRole('button', { name: '공연 정보에 반영' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /2\s*회차·좌석·가격/ }));
+    await user.click(screen.getByRole('checkbox', { name: '계좌이체' }));
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+
+    expect(screen.getByRole('checkbox', { name: '확인했습니다' })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '공연 정보에 반영' })).toBeDisabled();
+  });
+
+  it('shows no warning for an unpublished performance or when a method is only added', async () => {
+    const user = userEvent.setup();
+    mockPreparation('draft');
+    const { unmount } = renderForm(['CARD', 'TRANSFER']);
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+    await user.click(screen.getByRole('checkbox', { name: '카드 결제(국내/해외)' }));
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '공연 정보에 반영' })).toBeEnabled();
+    unmount();
+
+    mockPreparation('published');
+    renderForm(['CARD']);
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole('checkbox', { name: '국내 간편결제' }));
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+    await expect(applyAndReadSavedPaymentMethods(user)).resolves.toEqual(['CARD', 'SIMPLE_PAY']);
   });
 });

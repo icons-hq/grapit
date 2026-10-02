@@ -1,9 +1,14 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PerformanceDraft, PerformanceWithDetails } from '@grabit/shared';
+import type {
+  PerformanceDraft,
+  PerformancePreparation,
+  PerformancePreparationStep,
+  PerformanceWithDetails,
+} from '@grabit/shared';
 
 import { apiClient } from '@/lib/api-client';
 import { PerformanceForm } from '../performance-form';
@@ -55,7 +60,10 @@ if (typeof ResizeObserver === 'undefined') {
   };
 }
 
-function renderForm(performance: PerformanceWithDetails) {
+function renderForm(
+  performance: PerformanceWithDetails,
+  initialStep: PerformancePreparationStep = 'basic',
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -63,7 +71,7 @@ function renderForm(performance: PerformanceWithDetails) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   }
   return render(
-    <PerformanceForm mode="edit" initialStep="basic" initialData={performance} performanceId={performance.id} />,
+    <PerformanceForm mode="edit" initialStep={initialStep} initialData={performance} performanceId={performance.id} />,
     { wrapper: Wrapper },
   );
 }
@@ -190,5 +198,110 @@ describe('PerformanceForm legacy draft payment methods (audit #70)', () => {
     const [, body] = vi.mocked(apiClient.put).mock.calls[0]!;
     expect((body as { data: { bookingPolicy: { allowedPaymentMethods: string[] } } }).data.bookingPolicy.allowedPaymentMethods)
       .toEqual(['CARD']);
+  });
+});
+
+/** jsdom has no segmented datetime-local UI, so the browser's badInput report is stubbed. */
+function reportBadInput(input: HTMLInputElement, badInput: boolean) {
+  Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
+}
+
+const ELAPSED_START_WARNING = '입력한 판매 시작 시각이 이미 지났습니다. 반영하거나 공개하면 바로 판매가 열립니다.';
+const PUBLISHED_START_CHANGE = /공개 중인 공연의 판매 시작 일시가 바뀝니다/;
+
+describe('PerformanceForm publish state from the preparation read', () => {
+  // The admin detail API (findById) sends no publishState, like this fixture.
+  function mockPreparation(publishState: PerformancePreparation['publishState']) {
+    let resolve!: (value: unknown) => void;
+    const preparation = new Promise((done) => { resolve = done; });
+    vi.mocked(apiClient.get).mockImplementation((path) => (
+      path === '/api/v1/admin/performances/perf-status-hint-1/preparation'
+        ? preparation
+        : Promise.resolve({ locales: [], checks: [], canPublish: false })
+    ) as never);
+    return () => resolve({ publishState, locales: [], checks: [], canPublish: false });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: { id: '11111111-1111-4111-8111-111111111111', role: 'admin', adminCapabilityBundle: 'operator' } as never });
+  });
+
+  it('does not warn about an elapsed sale start for a public, already selling performance that was only opened', async () => {
+    const loadPreparation = mockPreparation('published');
+    const performance = performanceFixture('selling', '2026-01-01T00:00:00.000Z');
+    expect(performance).not.toHaveProperty('publishState');
+    renderForm(performance, 'seats');
+
+    // No flash of the warning while the publish state is still loading.
+    expect(screen.queryByText(ELAPSED_START_WARNING)).not.toBeInTheDocument();
+    loadPreparation();
+    const input = screen.getByLabelText('판매 시작 일시');
+
+    // A changed elapsed start warns, and review names the public schedule change
+    // once the preparation reports the performance as published.
+    fireEvent.change(input, { target: { value: '2026-01-02T09:00' } });
+    expect(screen.getByText(ELAPSED_START_WARNING)).toBeInTheDocument();
+    expect(await screen.findByText(PUBLISHED_START_CHANGE)).toBeInTheDocument();
+
+    // Back to the stored start: opening a public, selling performance warns about nothing.
+    fireEvent.change(input, { target: { value: '2026-01-01T09:00' } });
+    expect(screen.queryByText(ELAPSED_START_WARNING)).not.toBeInTheDocument();
+    expect(screen.queryByText(PUBLISHED_START_CHANGE)).not.toBeInTheDocument();
+  });
+
+  it('still warns about an elapsed sale start on an unpublished performance once the state is known', async () => {
+    const loadPreparation = mockPreparation('draft');
+    renderForm(performanceFixture('selling', '2026-01-01T00:00:00.000Z'), 'seats');
+
+    expect(screen.queryByText(ELAPSED_START_WARNING)).not.toBeInTheDocument();
+    loadPreparation();
+    expect(await screen.findByText(ELAPSED_START_WARNING)).toBeInTheDocument();
+  });
+
+  it('warns in review when the sale start of a public performance changes', async () => {
+    const loadPreparation = mockPreparation('published');
+    renderForm(performanceFixture('selling', '2026-01-01T00:00:00.000Z'), 'seats');
+    loadPreparation();
+    await act(async () => {});
+
+    fireEvent.change(screen.getByLabelText('판매 시작 일시'), { target: { value: '2099-02-01T10:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+
+    expect(await screen.findByText(PUBLISHED_START_CHANGE)).toHaveTextContent(
+      '2026-01-01 09:00 KST → 2099-02-01 10:00 KST',
+    );
+  });
+});
+
+describe('PerformanceForm unfinished sale start summary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: { id: '11111111-1111-4111-8111-111111111111', role: 'admin', adminCapabilityBundle: 'operator' } as never });
+    vi.mocked(apiClient.get).mockResolvedValue({ locales: [], checks: [], canPublish: false });
+  });
+
+  it('lists one operator message instead of the schema ISO message when only the date was typed', async () => {
+    const performance = {
+      ...performanceFixture('upcoming', null),
+      priceTiers: [{ id: 'tier-1', performanceId: 'perf-status-hint-1', tierName: 'VIP', price: 88000, sortOrder: 0 }],
+    };
+    renderForm(performance, 'seats');
+    const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
+
+    // Typing only the date into an empty input: Chromium keeps the value '' with
+    // validity.badInput and sends no input event; leaving the input commits it.
+    fireEvent.focus(input);
+    reportBadInput(input, true);
+    fireEvent.keyDown(input, { key: '2' });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    fireEvent.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
+
+    const summary = (await screen.findByText(/입력이 필요한 단계/)).closest('div')!;
+    expect(summary).not.toHaveTextContent('ISO datetime');
+    expect(within(summary).getAllByRole('listitem').map((item) => item.textContent))
+      .toEqual(['판매 시작 일시를 끝까지 입력하거나 모두 지워주세요']);
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

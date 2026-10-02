@@ -287,6 +287,8 @@ export function useUpdateAdminUserPermissions() {
           reason: reason.trim(),
           confirmed,
         },
+        // The permission editor reports a rejection itself (one toast and an inline alert).
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminUsersQueryKey });

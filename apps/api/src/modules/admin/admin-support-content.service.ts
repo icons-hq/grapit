@@ -673,6 +673,7 @@ export class AdminSupportContentService {
           '노출 종료 시각이 지난 공지는 게시할 수 없습니다. 종료 시각을 고친 뒤 게시해주세요',
         );
       }
+      await this.assertPublishableInTranslationGroup(db, existing);
       const next = await this.updateNoticeRow(db, id, {
         status: 'published',
         reviewState: 'published',
@@ -840,6 +841,32 @@ export class AdminSupportContentService {
         '이미 같은 언어의 번역본이 있습니다. 그 번역본을 보관한 뒤 보관 해제해주세요',
       );
     }
+  }
+
+  /**
+   * Publishing is the last guard of one live version per locale in a group.
+   * Join and restore already refuse a second unarchived version, but a row
+   * from before those checks (or an edit that used to un-archive) can still
+   * meet another one of its locale here.
+   */
+  private async assertPublishableInTranslationGroup(
+    db: SupportContentStore,
+    row: NoticeRow,
+  ): Promise<void> {
+    const groupId = noticeGroupKey(row);
+    await this.lockTranslationGroupRoot(db, groupId, row.id);
+    const duplicate = await this.findActiveGroupMember(
+      db,
+      groupId,
+      row.locale as SupportContentLocale,
+      row.id,
+    );
+    if (!duplicate) return;
+    throw new BadRequestException(
+      duplicate.reviewState === 'published'
+        ? '같은 언어의 게시 중인 번역본이 있습니다. 그 번역본을 보관한 뒤 게시해주세요'
+        : '같은 언어의 번역본이 이미 있습니다. 하나를 보관한 뒤 게시해주세요',
+    );
   }
 
   /**
@@ -1253,7 +1280,9 @@ function initialReviewState(
 /**
  * Review/publish state after an operator edit. Operator-authored (ko/en or
  * manual) edits keep published content live; only an assisted translation edit
- * needs another review and therefore leaves the public page.
+ * needs another review and therefore leaves the public page. An archived row
+ * stays archived: the only way back is `보관 해제` (review), which checks the
+ * translation group for another live version of the locale.
  */
 function resolveEditTransition(
   existing: Pick<
@@ -1268,7 +1297,7 @@ function resolveEditTransition(
     now: Date;
   },
 ): ReviewTransition {
-  if (!edit.contentChanged) {
+  if (!edit.contentChanged || existing.reviewState === 'archived') {
     return {
       reviewState: existing.reviewState as SupportContentReviewState,
       reviewedByUserId: existing.reviewedByUserId,

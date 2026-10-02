@@ -24,7 +24,7 @@
 
 | 점검 | 쿼리·절차 | 0행이 아닐 때 | 감사 |
 | --- | --- | --- | --- |
-| 공연 허용 결제수단 | [결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)의 LEFT JOIN 쿼리. 먼저 Toss 위젯 `DEFAULT`·`uspay`에서 켜진 수단으로 기준 목록을 정한다(2026-09-21 기준 `CARD`·`TRANSFER`·`FOREIGN_EASY_PAY`). 이어서 공연 `booking_policies`와 미반영 `performance_drafts.data`의 `allowedPaymentMethods`에 `VIRTUAL_ACCOUNT`·`MOBILE_PHONE`이 있는지 확인한다: `SELECT performance_id, allowed_payment_methods FROM booking_policies WHERE allowed_payment_methods ? 'VIRTUAL_ACCOUNT' OR allowed_payment_methods ? 'MOBILE_PHONE';`와 `SELECT id, performance_id, owner_user_id FROM performance_drafts WHERE applied_at IS NULL AND (data->'bookingPolicy'->'allowedPaymentMethods' ? 'VIRTUAL_ACCOUNT' OR data->'bookingPolicy'->'allowedPaymentMethods' ? 'MOBILE_PHONE');` | 관리자 공연 편집에서 결제수단 저장. 정책 행이 없으면 `CARD`만 허용된다. 국내 간편결제는 배포 직후(2.2). 배포 후 서버는 관리자 화면에 없는 `VIRTUAL_ACCOUNT`·`MOBILE_PHONE`을 저장하지 않는다(400). 두 수단이 남은 공연은 다시 저장하고, 남은 초안은 작성자가 열어 다시 저장한 뒤 반영한다(그대로 반영하면 400, 화면이 두 수단을 지운다) | #70 |
+| 공연 허용 결제수단 | [결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)의 LEFT JOIN 쿼리. 먼저 Toss 위젯 `DEFAULT`·`uspay`에서 켜진 수단으로 기준 목록을 정한다(2026-09-21 기준 `CARD`·`TRANSFER`·`FOREIGN_EASY_PAY`). 이어서 공연 `booking_policies`와 미반영 `performance_drafts.data`의 `allowedPaymentMethods`에 `VIRTUAL_ACCOUNT`·`MOBILE_PHONE`이 있는지 확인한다: `SELECT performance_id, allowed_payment_methods FROM booking_policies WHERE allowed_payment_methods ? 'VIRTUAL_ACCOUNT' OR allowed_payment_methods ? 'MOBILE_PHONE';`와 `SELECT id, performance_id, owner_user_id FROM performance_drafts WHERE applied_at IS NULL AND (data->'bookingPolicy'->'allowedPaymentMethods' ? 'VIRTUAL_ACCOUNT' OR data->'bookingPolicy'->'allowedPaymentMethods' ? 'MOBILE_PHONE');` | 관리자 공연 편집에서 결제수단 저장. 정책 행이 없으면 `CARD`만 허용된다. 국내 간편결제는 배포 직후(2.2). 배포 후 서버는 관리자 화면에 없는 `VIRTUAL_ACCOUNT`·`MOBILE_PHONE`을 저장하지 않는다(400). 두 수단이 남은 공연은 다시 저장하고(두 수단만 있는 정책은 폼이 체크 없이 열리므로 판매할 수단을 골라 저장한다), 남은 초안은 작성자가 열어 다시 저장한 뒤 반영한다(그대로 반영하면 400, 화면이 두 수단을 지운다) | #70 |
 | admission token 원문 | `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';` | 많으면 승인된 DB 절차로 batch 선변환([migration 0039](show-relaunch-reliability.md#migration-0039-6268)) | #68 |
 | 결제 기한이 지난 고아 handoff | [First rollout of the review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement)의 후보 쿼리 | 운영자가 건수를 승인한 뒤 review 활성화 | #9 |
 | 금액 불일치로 거절된 과거 async DONE | [Read-Only Query Shapes](live-foreign-payment-cancel-uat-2026-06-03.md#read-only-query-shapes)의 async DONE 쿼리(`async_status='payment_amount_mismatch'`) | Toss 조회가 `DONE`이면 수동 환불 여부 결정. 이미 처리된 ledger라 배포만으로 자동 환불되지 않는다 | #75 |
@@ -35,7 +35,7 @@
 | 과거 경합으로 남은 QR | `SELECT t.id, t.ticket_item_id, ti.status FROM tickets t JOIN ticket_items ti ON ti.id = t.ticket_item_id WHERE t.status = 'active' AND ti.status <> 'active';` | [취소 대조 runbook](ticket-cancellation-reconciliation.md)으로 건별 정리 | #110 |
 | QR keyring 범위 | `SELECT secret_version, status, count(*) FROM tickets WHERE status IN ('active','used') GROUP BY 1,2;` | 모든 version이 `qr-ticket-secret-keyring-json`(또는 현재 version)에 있는지, keyring의 현재 version 값이 `qr-ticket-secret`과 같은지 확인 | #109 |
 | 좁힌 목록을 가진 superuser | `role='admin' AND admin_capability_bundle='admin' AND admin_capabilities <> '[]'` 계정, 특히 공용 scanner 계정 | 승인된 절차로 `scanner` 등 비-admin 번들로 변경(배포 후에는 관리자 화면에서 가능) | #42 #25 |
-| 권한 위임 보유자 | `security.manage`를 가진 비-superuser 계정 | 배포 후에는 자기에게 없는 권한 부여와 superuser 변경이 막힌다. 담당자에게 알린다 | #120 |
+| 권한 위임 보유자 | `security.manage`를 가진 비-superuser 계정 | 배포 후에는 자기에게 없는 권한 부여와 superuser 변경이 막힌다(서버 403). 회원 관리 화면도 자기에게 없는 권한·전체 관리자 묶음을 고를 수 없게 하고, 그런 권한을 가진 계정의 편집을 잠근다. 담당자에게 알린다 | #120 |
 | custom 현장 계정 | `field.scan.sync`만 있고 `field.scan.consume`이 없는 계정 | 오프라인 동기화가 403이 되므로 두 권한을 함께 부여 | #111 |
 | 대시보드 권한 | 번들 없이 custom capability만 있고 `reservations.read`가 없는 관리자 | `/admin/dashboard/*`가 403이 된다. 필요하면 권한 추가 | #38 |
 | 특전 상호배타 설정 | 아래 SQL | 다음 live run 전에 해당 회차 특전 설정을 다시 저장 | #130 |
@@ -46,6 +46,7 @@
 | 편집으로 바뀐 판매 상태 | `SELECT p.id, p.title, p.status, bp.booking_starts_at FROM performances p JOIN booking_policies bp ON bp.performance_id = p.id WHERE p.status = 'selling' AND bp.booking_starts_at IS NOT NULL;`. 배포 전 폼이 파생 상태 `selling`으로 저장한 미반영 초안도 찾는다: `SELECT d.id, d.performance_id, d.owner_user_id FROM performance_drafts d JOIN performances p ON p.id = d.performance_id WHERE d.applied_at IS NULL AND d.data->>'status' = 'selling' AND p.status = 'upcoming';` | `admin_audit_logs`의 `event.update`와 대조해 의도치 않은 것은 `판매 예정`으로 되돌림. 찾은 초안은 반영하면 `upcoming`이 `selling`으로 바뀌므로, 반영 전에 작성자가 판매 상태를 `판매 예정`으로 고치거나 초안을 폐기한다 | #145 |
 | 배너 노출 집합 | `SELECT id, placement, status, starts_at, ends_at, is_active FROM banners ORDER BY sort_order;` | 배포 후 paused/draft/expired·기간 밖·홈 외 placement는 사라지고, 시작 시각이 지난 `scheduled`는 새로 보인다. 운영자 확인 | #51 |
 | 원문 복사 번역 초안 | 아래 SQL | `published` 원문 복사본(marker 없음)을 먼저 다시 번역해 게시. marker 초안은 공개 화면에서 무시되고 한국어가 보인다 | #149 |
+| 편집으로 보관이 풀린 공지·FAQ | `SELECT 'notice' AS kind, id, locale, review_state FROM support_notices WHERE archived_at IS NOT NULL AND review_state <> 'archived' UNION ALL SELECT 'faq', id, locale, review_state FROM support_faqs WHERE archived_at IS NOT NULL AND review_state <> 'archived';`와, 한 번역 그룹·언어에 보관되지 않은 공지가 둘 이상인 경우: `SELECT COALESCE(translation_group_id, id) AS group_id, locale, count(*) FROM support_notices WHERE review_state <> 'archived' GROUP BY 1, 2 HAVING count(*) > 1;` | 이전 편집 동작은 보관된 행을 수정하면 보관을 풀었다. 공개할 것이 아니면 관리자에서 다시 `보관`한다. 한 그룹·언어에 둘 이상이면 하나를 보관한다. 배포 후에는 그 상태의 공지 게시가 400으로 막히고, 보관된 행은 `보관 해제` 전에는 수정할 수 없다 | #133 #168 |
 
 ```sql
 -- 특전: runner가 이제 거부하는 상호배타 설정
@@ -160,6 +161,7 @@ ORDER BY p.created_at;
 
 - [ ] 지난 회차의 seat lock·prepare가 403이다. #2
 - [ ] 정책에 없는 결제수단을 고르면 좌석을 유지한 채 결제 단계 안내가 나오고 다른 수단으로 결제할 수 있다. 위젯에 켜진 가상계좌·휴대폰·PAYCO 등 미지원 수단도 정책과 관계없이 같은 안내가 나온다. 관리자 공연 편집에 결제수단 체크박스가 4개(국내 간편결제 포함)다. #70
+- [ ] 관리자 공연 편집으로 공개 중이고 판매 시작이 지난 공연을 열면 `입력한 판매 시작 시각이 이미 지났습니다` 경고가 없다. 저장된 결제수단 체크를 해제하면 자동 환불 경고가 나오고, 검수 단계에서 `확인했습니다`를 체크하기 전에는 `공연 정보에 반영`이 비활성이다. 저장하지 않고 나간다. #70 #135
 - [ ] 같은 인증 휴대폰의 두 번째 계정은 첫 계정이 결제 진행 중일 때 lock이 409다. #62
 - [ ] `/th` 경로 confirm 결과 화면에 번역된 공연명이 보인다. #88
 - [ ] 판매 전 공용 scanner 계정의 `POST /api/v1/queue/performances/:id/enter`가 403이다. Admin Pre-Open Booking Smoke 계정은 `admin` 번들이거나 번들·명시 capability가 없는 legacy admin이다. #25
@@ -259,7 +261,7 @@ ORDER BY p.created_at;
 
 코드 후속이 필요하다. 오픈 판단 때 수용 여부를 기록한다.
 
-- 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. #70 #74
+- 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. 관리자 공연 편집은 공개 공연에서 저장된 수단을 빼면 경고하고 확인을 받지만, 서버는 정책을 handoff 시점에 고정하지 않는다. 수단은 진행 중 결제가 없을 때 뺀다. #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
 - web에는 `script-src` CSP가 없다. seat-update는 이제 frame 단위로 묶어 반영하지만, 저사양 Android 실기기 INP는 아직 측정하지 않았다(3.3). #11 #49
 - 새 runtime env 예시(`PGBOSS_POOL_MAX`, `PGBOSS_START_MAX_ATTEMPTS`, `DB_APPLICATION_NAME`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`)를 `.env.example`에 넣는 작업은 감사 작업 환경에서 `.env*` 접근이 막혀 하지 못했다. 로컬 설정 담당자가 확인한다. 기본값과 의미는 [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration)와 [Optional runtime settings](managed-demo-cost-floor.md#optional-runtime-settings)에 있다. #54 #55

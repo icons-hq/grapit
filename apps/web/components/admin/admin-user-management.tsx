@@ -64,6 +64,8 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/cn';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import {
   ADMIN_CAPABILITIES,
@@ -757,13 +759,16 @@ function UserDetailPanel({
       {user ? (
         <>
           <AccountOverview user={user} />
-          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="space-y-4">
+          {/* An explicit minmax(0,1fr) track below 2xl: an implicit auto track grows to the
+              reservation table's min-content and the page's overflow-x-hidden clips the
+              permission and account panels. The table scrolls inside its own container. */}
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="min-w-0 space-y-4">
               <ReservationContext user={user} />
               <SupportContext user={user} />
               <AuditContext user={user} />
             </div>
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <PermissionEditor user={user} />
               <AccountLifecyclePanel user={user} onDeleted={onDeleted} />
             </div>
@@ -977,9 +982,30 @@ function AuditContext({ user }: { user: AdminUserDetail }) {
   );
 }
 
+const DELEGATION_CEILING_HINT = '내 권한 밖이라 위임할 수 없습니다';
+
+/**
+ * The capabilities the signed-in admin may grant or change, mirroring the API
+ * delegation ceiling (audit #120): null when unrestricted (a superuser, or an
+ * actor this screen does not know, in which case the server still decides).
+ */
+function useDelegationCeiling(): ReadonlySet<AdminCapability> | null {
+  const actor = useAuthStore((state) => state.user);
+  if (!actor) return null;
+  const access = resolveAdminCapabilitySnapshot(actor);
+  return access.superuser ? null : new Set(access.capabilities);
+}
+
 function PermissionEditor({ user }: { user: AdminUserDetail }) {
   const mutation = useUpdateAdminUserPermissions();
+  const delegationCeiling = useDelegationCeiling();
+  // The API rejects any change to an account whose access (superuser included) is
+  // outside the actor's own capabilities, so the editor is locked up front.
+  const targetOutsideCeiling = delegationCeiling !== null
+    && (user.adminSuperuser === true
+      || user.adminCapabilities.some((capability) => !delegationCeiling.has(capability)));
   const isInactiveAccount = user.accountStatus === 'withdrawn' || user.accountStatus === 'merged';
+  const editorLocked = isInactiveAccount || targetOutsideCeiling;
   const detailCapabilitiesKey = user.adminCapabilities.join('|');
   const [role, setRole] = useState<AdminUserRole>(user.role);
   const [bundle, setBundle] = useState<BundleSelectValue>(
@@ -1017,12 +1043,17 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   const isUserRole = role === 'user';
   const isSuperuserBundle = !isUserRole && bundle === 'admin';
   const capabilityInputsDisabled =
-    isInactiveAccount || isUserRole || bundle === 'none' || isSuperuserBundle;
+    editorLocked || isUserRole || bundle === 'none' || isSuperuserBundle;
+  const canDelegate = (capability: AdminCapability) =>
+    delegationCeiling === null || delegationCeiling.has(capability);
+  const canDelegateBundle = (value: AdminCapabilityBundle) =>
+    delegationCeiling === null
+    || (value !== 'admin' && ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[value].some(canDelegate));
   const validationMessage = permissionValidationMessage(role, bundle, capabilities);
   const effectiveSummary = effectivePermissionSummary(role, bundle, capabilities);
 
   const canSubmit =
-    !isInactiveAccount &&
+    !editorLocked &&
     reason.trim().length > 0 &&
     impactConfirmed &&
     changedFields.length > 0 &&
@@ -1041,7 +1072,9 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
 
   function handleBundleChange(value: BundleSelectValue) {
     setBundle(value);
-    setCapabilities(value === 'none' ? [] : [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[value]]);
+    setCapabilities(value === 'none'
+      ? []
+      : ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[value].filter(canDelegate));
   }
 
   function handleCapabilityChange(
@@ -1059,7 +1092,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   }
 
   async function handleConfirm() {
-    if (isInactiveAccount || validationMessage !== null) return;
+    if (editorLocked || validationMessage !== null) return;
 
     const nextBundle = isUserRole || bundle === 'none' ? null : bundle;
     try {
@@ -1077,8 +1110,9 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
       setReason('');
       setImpactConfirmed(false);
       setConfirmOpen(false);
-    } catch {
-      toast.error('회원 권한 변경에 실패했습니다. 사유와 권한을 확인하세요.');
+    } catch (error) {
+      // The request skips the API client's toast, so this is the only one.
+      toast.error(errorMessage(error) ?? '회원 권한 변경에 실패했습니다. 사유와 권한을 확인하세요.');
     }
   }
 
@@ -1093,6 +1127,14 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
       <p className="mt-2 text-sm text-gray-600">
         권한 변경은 `security.manage`가 필요하며 reason과 확인을 함께 전송합니다.
       </p>
+      {targetOutsideCeiling && !isInactiveAccount && (
+        <p
+          className="mt-3 rounded-lg bg-[#FFFBEB] px-3 py-2 text-sm font-semibold text-[#8B6306]"
+          data-testid="admin-user-delegation-locked"
+        >
+          이 계정은 내 권한 밖의 권한(전체 관리자 포함)을 가지고 있어 변경할 수 없습니다. 전체 관리자에게 요청하세요.
+        </p>
+      )}
 
       <div className="mt-4 space-y-4">
         <div className="space-y-2">
@@ -1100,7 +1142,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <Select
             value={role}
             onValueChange={(value) => handleRoleChange(value as AdminUserRole)}
-            disabled={isInactiveAccount}
+            disabled={editorLocked}
           >
             <SelectTrigger id="admin-user-role" aria-label="Role" className="h-11 w-full bg-white">
               <SelectValue />
@@ -1117,7 +1159,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <Select
             value={bundle}
             onValueChange={(value) => handleBundleChange(value as BundleSelectValue)}
-            disabled={isInactiveAccount || isUserRole}
+            disabled={editorLocked || isUserRole}
           >
             <SelectTrigger id="admin-user-bundle" aria-label="Capability bundle" className="h-11 w-full bg-white">
               <SelectValue />
@@ -1125,8 +1167,9 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
             <SelectContent>
               <SelectItem value="none">없음</SelectItem>
               {ADMIN_CAPABILITY_BUNDLES.map((item) => (
-                <SelectItem key={item} value={item}>
+                <SelectItem key={item} value={item} disabled={!canDelegateBundle(item)}>
                   {BUNDLE_LABELS[item]}
+                  {!canDelegateBundle(item) && ' (위임 불가)'}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1166,7 +1209,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
                     handleCapabilityChange(capability, checked)
                   }
                   aria-label={CAPABILITY_LABELS[capability]}
-                  disabled={capabilityInputsDisabled}
+                  disabled={capabilityInputsDisabled || !canDelegate(capability)}
                 />
                 <span>
                   <span className="block font-semibold text-gray-900">
@@ -1175,6 +1218,11 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
                   <code className="mt-0.5 block text-xs text-gray-500">
                     {capability}
                   </code>
+                  {!editorLocked && !canDelegate(capability) && (
+                    <span className="mt-0.5 block text-xs text-[#8B6306]">
+                      {DELEGATION_CEILING_HINT}
+                    </span>
+                  )}
                 </span>
               </label>
             ))}
@@ -1190,7 +1238,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
             placeholder="권한 변경 사유를 입력하세요"
             aria-label="권한 변경 사유"
             className="min-h-28"
-            disabled={isInactiveAccount}
+            disabled={editorLocked}
           />
         </div>
 
@@ -1199,14 +1247,14 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
             checked={impactConfirmed}
             onCheckedChange={(checked) => setImpactConfirmed(checked === true)}
             aria-label="권한 변경 영향 확인"
-            disabled={isInactiveAccount}
+            disabled={editorLocked}
           />
           <span className="font-semibold">
             권한 변경이 관리자 접근과 감사 책임에 영향을 준다는 점을 확인했습니다.
           </span>
         </label>
 
-        {validationMessage && !isInactiveAccount && (
+        {validationMessage && !editorLocked && (
           <p
             className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-sm font-semibold text-[#8B6306]"
             data-testid="admin-user-permission-validation"

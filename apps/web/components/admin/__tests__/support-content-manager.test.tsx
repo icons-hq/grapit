@@ -641,3 +641,89 @@ describe('SupportContentManager edit safety', () => {
     });
   });
 });
+
+describe('SupportContentManager unsaved input and archived rows', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(supportContentResponse);
+    (apiClient.patch as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  });
+
+  it('asks before another row replaces an edit with unsaved input and keeps the input on cancel', async () => {
+    const user = userEvent.setup();
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(
+      await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' }),
+    );
+    await user.type(screen.getByLabelText('내용'), ' 추가');
+
+    await user.click(screen.getByRole('button', { name: 'จองอย่างไร' }));
+
+    expect(
+      await screen.findByRole('alertdialog', { name: '작성 중인 내용을 버리고 다른 항목을 열까요?' }),
+    ).toHaveTextContent('저장하지 않은 내용은 버려집니다');
+    await user.click(screen.getByRole('button', { name: '계속 수정' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '콘텐츠 수정' })).toBeInTheDocument();
+    expect(screen.getByLabelText('내용')).toHaveValue('좌석을 선택하고 결제하면 예매됩니다. 추가');
+
+    // The same guard covers the other ways of leaving the form.
+    await user.click(screen.getByRole('tab', { name: '공지' }));
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '계속 수정' }));
+    expect(screen.getByLabelText('내용')).toHaveValue('좌석을 선택하고 결제하면 예매됩니다. 추가');
+
+    await user.click(screen.getByRole('button', { name: 'จองอย่างไร' }));
+    await user.click(await screen.findByRole('button', { name: '작성 내용 버리고 열기' }));
+
+    expect(screen.queryByLabelText('내용')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '선택 항목' })).toBeInTheDocument();
+    expect(screen.getByText('เลือกที่นั่งและชำระเงิน')).toBeInTheDocument();
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it('asks before leaving a new FAQ with typed input, and opens another row at once when nothing changed', async () => {
+    const user = userEvent.setup();
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await screen.findByText('예매는 어떻게 하나요?');
+
+    await user.click(screen.getByRole('button', { name: 'FAQ 등록' }));
+    await user.click(screen.getByRole('button', { name: 'จองอย่างไร' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByText('เลือกที่นั่งและชำระเงิน')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'FAQ 등록' }));
+    await user.type(screen.getByLabelText('제목'), '새 질문');
+    await user.click(screen.getByRole('button', { name: '공지 등록' }));
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '계속 수정' }));
+    expect(screen.getByLabelText('제목')).toHaveValue('새 질문');
+
+    await user.click(screen.getByRole('button', { name: '예매는 어떻게 하나요? 수정' }));
+    await user.click(await screen.findByRole('button', { name: '작성 내용 버리고 열기' }));
+    expect(screen.getByLabelText('제목')).toHaveValue('예매는 어떻게 하나요?');
+  });
+
+  it('disables 수정 on archived rows until they are restored with 보관 해제', async () => {
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [
+        {
+          ...supportContentResponse.faqs[0],
+          reviewState: 'archived',
+          canPublish: false,
+          archivedAt: '2026-05-15T01:00:00.000Z',
+        },
+        supportContentResponse.faqs[1],
+      ],
+      notices: [],
+    });
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+
+    const archivedEdit = await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' });
+    expect(archivedEdit).toBeDisabled();
+    expect(archivedEdit).toHaveAttribute('title', '보관 해제 후 수정하세요');
+    expect(screen.getByText(/보관 해제 후 수정하세요\. 보관 해제하면 게시 전 상태로 돌아갑니다/))
+      .toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'จองอย่างไร 수정' })).toBeEnabled();
+  });
+});

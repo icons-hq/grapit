@@ -102,6 +102,8 @@ const REVIEW_STATE_LABELS = {
   archived: '보관됨',
 };
 
+const ARCHIVED_EDIT_HINT = '보관 해제 후 수정하세요';
+
 /** Must match LOCALE_FALLBACK_NOTICE_CATEGORIES in the API. */
 const LOCALE_FALLBACK_CATEGORIES = new Set<SupportNoticeCategory>([
   'urgent',
@@ -175,7 +177,14 @@ export function SupportContentManager() {
   const [actionError, setActionError] = useState<{ itemId: string; message: string } | null>(null);
   const [confirmUnpublishOpen, setConfirmUnpublishOpen] = useState(false);
   const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
+  // The form values a new FAQ/notice/translation started from, to tell an edited form.
+  const [createBaseline, setCreateBaseline] = useState<FormState | null>(null);
+  // Navigation that would close a form with unsaved input waits for confirmation.
+  const [pendingDiscard, setPendingDiscard] = useState<(() => void) | null>(null);
   const isEditing = editTarget !== null;
+  const formDirty = editTarget
+    ? formChanged(editTarget.original, form)
+    : isCreating && createBaseline !== null && formChanged(createBaseline, form);
 
   const supportContent = useAdminSupportContent({ includeArchived: true });
   const createFaq = useCreateSupportFaq();
@@ -225,16 +234,28 @@ export function SupportContentManager() {
     setIsCreating(false);
     setEditTarget(null);
     setTranslationSource(null);
+    setCreateBaseline(null);
     setSaveError(null);
     setConfirmUnpublishOpen(false);
     setConfirmReloadOpen(false);
   }
 
+  /** Runs navigation that closes the form now, or after confirming unsaved input is dropped. */
+  function leaveForm(navigate: () => void) {
+    if (formDirty) {
+      setPendingDiscard(() => navigate);
+      return;
+    }
+    navigate();
+  }
+
   function startCreate(type: SupportContentType) {
+    const initial = type === 'faq' ? initialFaqForm : initialNoticeForm;
     closeForm();
     setActiveType(type);
     setIsCreating(true);
-    setForm(type === 'faq' ? initialFaqForm : initialNoticeForm);
+    setForm(initial);
+    setCreateBaseline(initial);
   }
 
   function startCreateTranslation(source: AdminSupportNotice) {
@@ -245,18 +266,20 @@ export function SupportContentManager() {
       LOCALE_OPTIONS.find((option) => !existingLocales.has(option.value))
         ?.value ?? source.locale;
 
-    closeForm();
-    setActiveType('notice');
-    setIsCreating(true);
-    setTranslationSource(source);
-    setForm({
+    const initial: FormState = {
       ...initialNoticeForm,
       locale,
       category: source.category,
       priority: source.priority,
       scheduledAt: toDatetimeLocal(source.scheduledAt),
       endsAt: toDatetimeLocal(source.endsAt),
-    });
+    };
+    closeForm();
+    setActiveType('notice');
+    setIsCreating(true);
+    setTranslationSource(source);
+    setForm(initial);
+    setCreateBaseline(initial);
   }
 
   function startEdit(item: SupportContentItem) {
@@ -438,10 +461,10 @@ export function SupportContentManager() {
                   ? 'bg-primary text-white'
                   : 'text-gray-700 hover:bg-gray-50',
               )}
-              onClick={() => {
+              onClick={() => leaveForm(() => {
                 closeForm();
                 setActiveType(type);
-              }}
+              })}
             >
               {type === 'faq' ? 'FAQ' : '공지'}
             </button>
@@ -449,14 +472,14 @@ export function SupportContentManager() {
         </div>
 
         <div className="flex gap-2">
-          <Button type="button" onClick={() => startCreate('faq')}>
+          <Button type="button" onClick={() => leaveForm(() => startCreate('faq'))}>
             <Plus className="h-4 w-4" aria-hidden="true" />
             FAQ 등록
           </Button>
           <Button
             type="button"
             variant="outline"
-            onClick={() => startCreate('notice')}
+            onClick={() => leaveForm(() => startCreate('notice'))}
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             공지 등록
@@ -501,10 +524,10 @@ export function SupportContentManager() {
                 <button
                   type="button"
                   className="min-w-0 text-left font-semibold text-gray-900 hover:text-primary"
-                  onClick={() => {
+                  onClick={() => leaveForm(() => {
                     closeForm();
                     setSelectedId(item.id);
-                  }}
+                  })}
                   aria-label={item.type === 'faq' ? item.question : item.title}
                 >
                   <span className="line-clamp-2">
@@ -520,12 +543,15 @@ export function SupportContentManager() {
                 <span>
                   <ReviewStateBadge state={item.reviewState} />
                 </span>
+                {/* An archived row is edited only after 보관 해제 (the API keeps it archived). */}
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   aria-label={`${item.type === 'faq' ? item.question : item.title} 수정`}
-                  onClick={() => startEdit(item)}
+                  disabled={item.reviewState === 'archived'}
+                  title={item.reviewState === 'archived' ? ARCHIVED_EDIT_HINT : undefined}
+                  onClick={() => leaveForm(() => startEdit(item))}
                 >
                   <Pencil className="h-4 w-4" aria-hidden="true" />
                   수정
@@ -839,8 +865,8 @@ export function SupportContentManager() {
                 </Button>
                 {selectedItem.reviewState === 'archived' && (
                   <p className="text-sm text-gray-600">
-                    보관 해제하면 게시 전 상태로 돌아갑니다. 공개하려면 이어서 게시하세요.
-                    자동 번역 검수본은 다시 검수해야 합니다.
+                    {ARCHIVED_EDIT_HINT}. 보관 해제하면 게시 전 상태로 돌아갑니다. 공개하려면
+                    이어서 게시하세요. 자동 번역 검수본은 다시 검수해야 합니다.
                   </p>
                 )}
                 {actionError?.itemId === selectedItem.id && (
@@ -875,6 +901,35 @@ export function SupportContentManager() {
               onClick={() => void handleSave({ confirmedUnpublish: true })}
             >
               저장하고 게시 내리기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingDiscard !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDiscard(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>작성 중인 내용을 버리고 다른 항목을 열까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              저장하지 않은 내용은 버려집니다. 필요하면 먼저 복사해 두세요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>계속 수정</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const navigate = pendingDiscard;
+                setPendingDiscard(null);
+                navigate?.();
+              }}
+            >
+              작성 내용 버리고 열기
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -986,6 +1041,18 @@ function formFromItem(item: SupportContentItem): FormState {
     scheduledAt: item.type === 'notice' ? toDatetimeLocal(item.scheduledAt) : '',
     endsAt: item.type === 'notice' ? toDatetimeLocal(item.endsAt) : '',
   };
+}
+
+/** True when the form holds input the operator would lose by closing it. */
+function formChanged(original: FormState, form: FormState): boolean {
+  return (
+    contentChanged(original, form) ||
+    form.locale !== original.locale ||
+    form.category !== original.category ||
+    form.priority !== original.priority ||
+    form.scheduledAt !== original.scheduledAt ||
+    form.endsAt !== original.endsAt
+  );
 }
 
 function contentChanged(original: FormState, form: FormState): boolean {

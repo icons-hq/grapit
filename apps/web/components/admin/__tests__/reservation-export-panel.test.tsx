@@ -1,18 +1,24 @@
+import type { ReactNode } from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { ReservationExportPanel } from '../reservation-export-panel';
 
 const mocks = vi.hoisted(() => ({
-  exportMutate: vi.fn(),
+  apiRaw: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
 }));
 
-vi.mock('@/hooks/use-reservations', () => ({
-  useReservationExport: () => ({
-    mutate: mocks.exportMutate,
-    isPending: false,
-  }),
+// The real export hook runs; only the network edge is mocked.
+vi.mock('@/lib/api-client', () => ({
+  apiClient: { raw: mocks.apiRaw },
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
 
 type ActiveManifestContext = {
@@ -22,7 +28,29 @@ type ActiveManifestContext = {
 };
 
 function renderPanel(activeManifestContext?: ActiveManifestContext) {
-  render(<ReservationExportPanel activeManifestContext={activeManifestContext} />);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  }
+  render(<ReservationExportPanel activeManifestContext={activeManifestContext} />, { wrapper: Wrapper });
+}
+
+function csvResponse() {
+  return new Response('"reservationNumber"\n"GRP-1"', {
+    status: 200,
+    headers: { 'content-disposition': 'attachment; filename="reservation-export-raw.csv"' },
+  });
+}
+
+/** The export payload the panel sent, as the API receives it. */
+function sentPayload(callIndex = 0) {
+  const call = mocks.apiRaw.mock.calls[callIndex];
+  expect(call?.[0]).toBe('POST');
+  expect(call?.[1]).toBe('/api/v1/admin/bookings/export');
+  expect(call?.[3]).toEqual({ showErrorToast: false });
+  return call?.[2] as Record<string, unknown>;
 }
 
 describe('ReservationExportPanel', () => {
@@ -40,10 +68,19 @@ describe('ReservationExportPanel', () => {
       configurable: true,
     });
     Element.prototype.scrollIntoView = function scrollIntoView() {};
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:http://localhost/reservation-export'),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+    // jsdom does not navigate for the download anchor.
+    HTMLAnchorElement.prototype.click = function click() {};
   });
 
   beforeEach(() => {
-    mocks.exportMutate.mockReset();
+    mocks.apiRaw.mockReset().mockImplementation(async () => csvResponse());
+    mocks.toastSuccess.mockReset();
+    mocks.toastError.mockReset();
   });
 
   it('shows all seven D-14 filters before export confirmation', () => {
@@ -87,16 +124,71 @@ describe('ReservationExportPanel', () => {
     await user.click(screen.getByRole('button', { name: '예약자 원본 CSV 내보내기' }));
     await user.type(screen.getByLabelText('내보내기 사유'), '정산 대조');
 
-    expect(mocks.exportMutate).not.toHaveBeenCalled();
+    expect(mocks.apiRaw).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
 
-    expect(mocks.exportMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exportType: 'raw_pii',
-        reason: '정산 대조',
-      }),
-    );
+    await waitFor(() => expect(mocks.apiRaw).toHaveBeenCalledTimes(1));
+    expect(sentPayload()).toEqual(expect.objectContaining({
+      exportType: 'raw_pii',
+      reason: '정산 대조',
+    }));
+  });
+
+  it('closes the dialog and confirms the download once the CSV arrives', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByRole('button', { name: '예약자 원본 CSV 내보내기' }));
+    await user.type(screen.getByLabelText('내보내기 사유'), '정산 대조');
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('CSV 파일을 내려받았습니다.');
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it('shows the server message and keeps the dialog open when the export fails (503)', async () => {
+    const user = userEvent.setup();
+    mocks.apiRaw.mockResolvedValueOnce(new Response(
+      JSON.stringify({ statusCode: 503, message: '예매 내보내기 조회가 시간 초과로 중단되었습니다.' }),
+      { status: 503, headers: { 'content-type': 'application/json' } },
+    ));
+    renderPanel();
+
+    await user.click(screen.getByRole('button', { name: '예약자 원본 CSV 내보내기' }));
+    await user.type(screen.getByLabelText('내보내기 사유'), '정산 대조');
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+
+    expect(await screen.findByText('예매 내보내기 조회가 시간 초과로 중단되었습니다.', { selector: '[role="alert"]' }))
+      .toBeInTheDocument();
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).toHaveBeenCalledWith('예매 내보내기 조회가 시간 초과로 중단되었습니다.');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('내보내기 사유')).toHaveValue('정산 대조');
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+
+    // A retry that succeeds clears the error and closes the dialog.
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('CSV 파일을 내려받았습니다.');
+  });
+
+  it('reports a network failure with the fallback message', async () => {
+    const user = userEvent.setup();
+    mocks.apiRaw.mockRejectedValueOnce(new Error(''));
+    renderPanel();
+
+    await user.click(screen.getByRole('button', { name: '실패/만료/취소 고객 CSV 내보내기' }));
+    await user.type(screen.getByLabelText('내보내기 사유'), '실패 고객 안내');
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+
+    const fallback = 'CSV 내보내기에 실패했습니다. 잠시 후 다시 시도해주세요.';
+    expect(await screen.findByText(fallback, { selector: '[role="alert"]' })).toBeInTheDocument();
+    expect(mocks.toastError).toHaveBeenCalledWith(fallback);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('exports failed/cancelled contacts through the dedicated contact export button', async () => {
@@ -124,16 +216,16 @@ describe('ReservationExportPanel', () => {
     await user.type(screen.getByLabelText('내보내기 사유'), '실패 고객 안내');
     await user.click(confirmButton);
 
-    expect(mocks.exportMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exportType: 'failed_cancelled_contacts',
-        reason: '실패 고객 안내',
-      }),
-    );
-    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('reservationStatus');
-    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('funnelStatus');
-    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('tierName');
-    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('zoneFloor');
+    await waitFor(() => expect(mocks.apiRaw).toHaveBeenCalledTimes(1));
+    const payload = sentPayload();
+    expect(payload).toEqual(expect.objectContaining({
+      exportType: 'failed_cancelled_contacts',
+      reason: '실패 고객 안내',
+    }));
+    expect(payload).not.toHaveProperty('reservationStatus');
+    expect(payload).not.toHaveProperty('funnelStatus');
+    expect(payload).not.toHaveProperty('tierName');
+    expect(payload).not.toHaveProperty('zoneFloor');
   });
 
   it('exports payment failed and expired rows through the admin funnel status filter', async () => {
@@ -146,14 +238,14 @@ describe('ReservationExportPanel', () => {
     await user.type(screen.getByLabelText('내보내기 사유'), '실패 고객 안내');
     await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
 
-    expect(mocks.exportMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exportType: 'raw_pii',
-        reason: '실패 고객 안내',
-        funnelStatus: 'PAYMENT_FAILED',
-      }),
-    );
-    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('reservationStatus');
+    await waitFor(() => expect(mocks.apiRaw).toHaveBeenCalledTimes(1));
+    const payload = sentPayload();
+    expect(payload).toEqual(expect.objectContaining({
+      exportType: 'raw_pii',
+      reason: '실패 고객 안내',
+      funnelStatus: 'PAYMENT_FAILED',
+    }));
+    expect(payload).not.toHaveProperty('reservationStatus');
   });
 
   it('keeps active ticket manifest export disabled until a showtime is selected', () => {
@@ -187,12 +279,11 @@ describe('ReservationExportPanel', () => {
     await user.type(screen.getByLabelText('내보내기 사유'), '현장 운영 명단');
     await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
 
-    expect(mocks.exportMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        exportType: 'active_ticket_manifest',
-        showtimeId: '11111111-1111-4111-8111-000000000302',
-        reason: '현장 운영 명단',
-      }),
-    );
+    await waitFor(() => expect(mocks.apiRaw).toHaveBeenCalledTimes(1));
+    expect(sentPayload()).toEqual(expect.objectContaining({
+      exportType: 'active_ticket_manifest',
+      showtimeId: '11111111-1111-4111-8111-000000000302',
+      reason: '현장 운영 명단',
+    }));
   });
 });

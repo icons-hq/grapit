@@ -270,15 +270,21 @@ function copyVisibilityChipClasses(visible: boolean): string {
     : 'border-gray-300 bg-gray-100 text-gray-700';
 }
 
+/**
+ * Only a missing policy falls back to the platform default. A stored list keeps just
+ * the methods the form can show, even when none is left (a legacy VIRTUAL_ACCOUNT or
+ * MOBILE_PHONE-only policy), so the "at least one method" validation blocks saving
+ * instead of the form silently storing CARD (audit #70). Same rule as drafts.
+ */
 function normalizeAllowedBookingPaymentMethods(
   methods: readonly PerformanceAllowedPaymentMethod[] | null | undefined,
 ): ActiveBookingPaymentMethod[] {
-  const filtered = (methods ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods)
+  return (methods ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods)
     .filter(isActiveBookingPaymentMethod);
+}
 
-  return filtered.length > 0
-    ? filtered
-    : DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods.filter(isActiveBookingPaymentMethod);
+function paymentMethodLabels(methods: readonly PerformanceAllowedPaymentMethod[]): string {
+  return methods.map((method) => PAYMENT_METHOD_LABELS[method]).join('·');
 }
 
 /**
@@ -363,6 +369,15 @@ function mapToFormValues(
   };
 }
 
+function PaymentMethodRemovalWarning({ methods }: { methods: readonly PerformanceAllowedPaymentMethod[] }) {
+  return (
+    <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      판매 중 공연에서 결제수단을 빼면 이미 그 수단으로 결제를 시작한 주문은 승인 뒤 자동 환불되고 좌석이 풀립니다. 진행 중 결제가 없을 때 변경하세요.
+      <span className="mt-1 block font-semibold">빼는 결제수단: {paymentMethodLabels(methods)}</span>
+    </p>
+  );
+}
+
 interface PerformanceFormProps {
   mode: 'create' | 'edit';
   initialData?: PerformanceWithDetails;
@@ -380,11 +395,28 @@ function fieldStep(field: string): PerformancePreparationStep {
   if (['description', 'salesInfo'].includes(field)) return 'content';
   return 'basic';
 }
-function validationMessages(errors: unknown): string[] {
+const BOOKING_START_INCOMPLETE_MESSAGE = '판매 시작 일시를 끝까지 입력하거나 모두 지워주세요';
+
+/**
+ * Operator copy for a summary entry. The shared schema's ISO format message is meant
+ * for API callers; on the form it only means the sale start input is unfinished.
+ */
+function operatorValidationMessage(path: string, error: { message: string; type?: unknown }): string {
+  if (path === 'bookingPolicy.bookingStartsAt' && error.type === 'invalid_string') {
+    return BOOKING_START_INCOMPLETE_MESSAGE;
+  }
+  return error.message;
+}
+
+function validationMessages(errors: unknown, path = ''): string[] {
   if (!errors || typeof errors !== 'object') return [];
   const fields = errors as Record<string, unknown>;
-  if (typeof fields.message === 'string') return [fields.message];
-  return Object.entries(fields).flatMap(([key, value]) => key === 'ref' ? [] : validationMessages(value));
+  if (typeof fields.message === 'string') {
+    return [operatorValidationMessage(path, fields as { message: string; type?: unknown })];
+  }
+  return Object.entries(fields).flatMap(([key, value]) => key === 'ref'
+    ? []
+    : validationMessages(value, path ? `${path}.${key}` : key));
 }
 function editableDraftData(values: CreatePerformanceFormInput) {
   const data = { ...values } as Record<string, unknown>;
@@ -472,9 +504,29 @@ export function PerformanceForm({
   const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
   const detailImages = normalizeDetailImagesForSave(form.watch('detailImages'));
   const watchedValues = form.watch();
-  const isPublished = initialData?.publishState === 'published';
+  // GET /admin/performances/:id does not carry publishState; the preparation read does.
+  const publishState = preparation.data?.publishState ?? initialData?.publishState;
+  const isPublished = publishState === 'published';
+  // A new performance is never public; an existing one is known once preparation loads.
+  const publishStateKnown = !performanceId || publishState !== undefined;
   const persistedBookingStartsAt = initialData?.bookingPolicy?.bookingStartsAt ?? null;
   const editedBookingStartsAt = watchedValues.bookingPolicy?.bookingStartsAt ?? null;
+  const storedPaymentMethods = initialData?.bookingPolicy?.allowedPaymentMethods ?? [];
+  const unsupportedStoredPaymentMethods = storedPaymentMethods.filter(
+    (method) => !isActiveBookingPaymentMethod(method),
+  );
+  const editedPaymentMethods = watchedValues.bookingPolicy?.allowedPaymentMethods ?? [];
+  // Confirm and async DONE judge the method against the policy at approval time, so a
+  // method removed from a public performance refunds payments already started with it.
+  const removedPaymentMethods = isPublished
+    ? storedPaymentMethods.filter(
+      (method) => isActiveBookingPaymentMethod(method) && !editedPaymentMethods.includes(method),
+    )
+    : [];
+  const paymentRemovalKey = removedPaymentMethods.join('|');
+  const [confirmedPaymentRemovalKey, setConfirmedPaymentRemovalKey] = useState<string | null>(null);
+  const paymentRemovalUnconfirmed = removedPaymentMethods.length > 0
+    && confirmedPaymentRemovalKey !== paymentRemovalKey;
   const publishReviewSummary = buildPublishReviewSummary(
     watchedValues,
     form.formState.dirtyFields,
@@ -633,6 +685,11 @@ export function PerformanceForm({
 
   async function onSubmit(data: CreatePerformanceInput) {
     setServerSaveError(null);
+    if (paymentRemovalUnconfirmed) {
+      setStep('review');
+      toast.error('결제수단을 빼는 영향을 확인한 뒤 반영해주세요.');
+      return;
+    }
     const payload: CreatePerformanceInput = {
       ...data,
       detailImages: normalizeDetailImagesForSave(data.detailImages),
@@ -1160,7 +1217,9 @@ export function PerformanceForm({
         <Controller control={form.control} name="bookingPolicy.bookingStartsAt" render={({ field }) => <label className="mb-6 block space-y-2 text-sm font-semibold">
           <span>판매 시작 일시 · 한국 시간 (KST)</span>
           <KstDateTimeInput aria-label="판매 시작 일시" value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
-          {isElapsedInstant(field.value) && (!isPublished || field.value !== persistedBookingStartsAt) && <span role="status" className="block text-xs font-normal text-amber-800">입력한 판매 시작 시각이 이미 지났습니다. 반영하거나 공개하면 바로 판매가 열립니다.</span>}
+          {/* An unchanged start only warns once the performance is known to be unpublished. */}
+          {isElapsedInstant(field.value)
+            && (field.value !== persistedBookingStartsAt || (publishStateKnown && !isPublished)) && <span role="status" className="block text-xs font-normal text-amber-800">입력한 판매 시작 시각이 이미 지났습니다. 반영하거나 공개하면 바로 판매가 열립니다.</span>}
           <span className="block text-xs font-normal text-gray-500">비워두면 판매 중 상태일 때 공개 즉시 판매하고, 판매 예정 상태일 때는 판매 상태를 판매 중으로 바꿀 때까지 판매가 열리지 않습니다.</span>
         </label>} />
         <div className="space-y-3">
@@ -1337,6 +1396,14 @@ export function PerformanceForm({
                   <p className="text-sm text-red-500">
                     {form.formState.errors.bookingPolicy.allowedPaymentMethods.message}
                   </p>
+                )}
+                {unsupportedStoredPaymentMethods.length > 0 && (
+                  <p role="note" className="text-sm text-gray-600">
+                    기존 정책의 미지원 결제수단({paymentMethodLabels(unsupportedStoredPaymentMethods)})은 저장되지 않습니다.
+                  </p>
+                )}
+                {removedPaymentMethods.length > 0 && (
+                  <PaymentMethodRemovalWarning methods={removedPaymentMethods} />
                 )}
               </div>
 
@@ -1571,6 +1638,16 @@ export function PerformanceForm({
         {isPublished && editedBookingStartsAt !== persistedBookingStartsAt && <p role="alert" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           공개 중인 공연의 판매 시작 일시가 바뀝니다: {formatKstMinute(persistedBookingStartsAt)} → {formatKstMinute(editedBookingStartsAt)}. 반영하는 즉시 구매자 판매 일정에 적용됩니다.
         </p>}
+        {removedPaymentMethods.length > 0 && <div className="mb-4 space-y-3">
+          <PaymentMethodRemovalWarning methods={removedPaymentMethods} />
+          <label className="flex min-h-11 items-center gap-3 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900">
+            <Checkbox
+              checked={!paymentRemovalUnconfirmed}
+              onCheckedChange={(checked) => setConfirmedPaymentRemovalKey(checked === true ? paymentRemovalKey : null)}
+            />
+            <span>확인했습니다</span>
+          </label>
+        </div>}
         <p className="mb-5 rounded-lg bg-slate-50 p-4 text-sm leading-6">초안 저장은 공개된 공연에 영향을 주지 않습니다. ‘공연 정보에 반영’은 운영 정보에 적용되며, 이미 공개된 공연의 안내도 변경됩니다. 새 공연의 공개는 승인 권한으로 별도 진행합니다.</p>
         {canPublish && (form.formState.isDirty || Boolean(savedDraft && !savedDraft.appliedAt)) && <p className="mb-4 text-sm text-amber-800">아직 반영하지 않은 변경이 있습니다. 공연 정보에 반영한 뒤 최신 내용으로 공개를 승인해주세요.</p>}
         {performanceId && (preparation.isError ? <p role="alert" className="mb-4 text-sm text-red-700">서버의 준비 상태를 조회하지 못했습니다. <button type="button" className="underline" onClick={() => void preparation.refetch()}>다시 불러오기</button></p>
@@ -1647,7 +1724,7 @@ export function PerformanceForm({
         </Button>
         {stepIndex > 0 && <Button type="button" variant="outline" onClick={() => setStep(PREPARATION_STEPS[stepIndex - 1]!.id)}>이전 단계</Button>}
         <Button type="button" variant="outline" onClick={saveIncompleteDraft} disabled={isSubmitting}>초안 저장</Button>
-        {step !== 'review' ? <Button key="next-step" type="button" onClick={(event) => { event.preventDefault(); setStep(PREPARATION_STEPS[stepIndex + 1]!.id); }}>다음 단계</Button> : <Button key="apply" type="submit" disabled={isSubmitting}>
+        {step !== 'review' ? <Button key="next-step" type="button" onClick={(event) => { event.preventDefault(); setStep(PREPARATION_STEPS[stepIndex + 1]!.id); }}>다음 단계</Button> : <Button key="apply" type="submit" disabled={isSubmitting || paymentRemovalUnconfirmed}>
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
