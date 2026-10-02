@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { apiClient } from '@/lib/api-client';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getCatalogListBookingStartRefetchInterval } from '@/components/performance/performance-display-status';
 import {
   PERFORMANCE_QUERY_MAX_PAGE,
   type PerformanceListResponse,
@@ -25,11 +26,18 @@ export function clampCatalogPage(page: number): number {
 export function useBrowsePerformances(status: NonNullable<PerformanceQuery['status']>, page: number) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const requestPage = clampCatalogPage(page);
+  // Rows move between the upcoming and on-sale filters at their booking start.
+  // The unfiltered list keeps its rows, so its badges only flip on the client.
+  const refetchAtBookingStart = status === 'selling' || status === 'upcoming';
   return useQuery({
     queryKey: ['performances', 'browse', status, requestPage, locale],
     queryFn: () => apiClient.get<PerformanceListResponse>(`/api/v1/performances?${new URLSearchParams({
       genre: 'artist_celebrity', status, page: String(requestPage), limit: '12', ended: 'true', locale,
     })}`),
+    refetchInterval: refetchAtBookingStart ? getCatalogListBookingStartRefetchInterval : false,
+    // The refetch is one-shot and window focus does not refetch (providers.tsx),
+    // so a background tab must not skip it.
+    refetchIntervalInBackground: refetchAtBookingStart,
   });
 }
 

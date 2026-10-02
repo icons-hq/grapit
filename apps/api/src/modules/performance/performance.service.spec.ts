@@ -1004,6 +1004,25 @@ describe('PerformanceService', () => {
     });
   });
 
+  describe('controller public detail status', () => {
+    it('reads a selling performance with a future booking start as upcoming, like list cards', async () => {
+      const detail = {
+        id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+        status: 'selling',
+        bookingPolicy: { bookingStartsAt: new Date(Date.now() + 60_000).toISOString() },
+      } as unknown as PerformanceWithDetails;
+      const controller = new PerformanceController({
+        findById: vi.fn().mockResolvedValue(detail),
+      } as unknown as PerformanceService);
+
+      const result = await controller.getPerformance(PHASE23_I18N_SMOKE_PERFORMANCE_ID);
+      expect(result.status).toBe('upcoming');
+
+      detail.bookingPolicy!.bookingStartsAt = new Date(Date.now() - 60_000).toISOString();
+      expect((await controller.getPerformance(PHASE23_I18N_SMOKE_PERFORMANCE_ID)).status).toBe('selling');
+    });
+  });
+
   describe('getHomeBanners', () => {
     function bannerRow(overrides: Record<string, unknown> = {}) {
       return {
@@ -1117,6 +1136,17 @@ describe('PerformanceService', () => {
 
       const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
       expect(hasPublishStatePublishedFilter(whereCondition)).toBe(true);
+    });
+
+    it('expires the hot list at the next opening that is not listed yet', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-21T10:00:00Z'));
+      try {
+        mockDb.select.mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([{ nextBookingStartsAt: new Date('2026-09-21T10:00:20Z') }]));
+        await service.getHotPerformances();
+        expect(mockCache.set).toHaveBeenCalledWith(expect.any(String), [], 20);
+      } finally { vi.useRealTimers(); }
     });
   });
 

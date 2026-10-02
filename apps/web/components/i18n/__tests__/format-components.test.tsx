@@ -16,6 +16,21 @@ describe('KstTime', () => {
     expect(screen.getByText('2026.07.04 18:00 KST')).toBeDefined();
     expect(screen.getByText(/local time/i)).toBeDefined();
   });
+
+  it('localizes the local time label and keeps the Gregorian year for Thai viewers', () => {
+    render(
+      <KstTime
+        value="2026-09-30T15:00:00.000Z"
+        locale="th"
+        localTimeZone="Asia/Bangkok"
+      />,
+    );
+
+    const local = screen.getByText(/เวลาท้องถิ่น/);
+    expect(local.textContent).toContain('2026');
+    expect(local.textContent).not.toContain('2569');
+    expect(screen.queryByText(/local time/i)).toBeNull();
+  });
 });
 
 describe('CurrencyDisplay', () => {

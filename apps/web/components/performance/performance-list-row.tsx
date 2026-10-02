@@ -1,3 +1,5 @@
+'use client';
+
 import Image from 'next/image';
 import Link from 'next/link';
 import { CalendarDays, ChevronRight, MapPin, Ticket } from 'lucide-react';
@@ -7,17 +9,25 @@ import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
+import {
+  parseBookingStartMs,
+  resolveTimeAwarePerformanceStatus,
+  useBookingStartClock,
+} from './performance-display-status';
 
 export function PerformanceListRow({ performance, locale, bookingEnabled }: {
   performance: PerformanceCardData; locale: SupportedLocale; bookingEnabled: boolean;
 }) {
   const copy = getVisibleCopy(locale).home;
-  const status = getDisplayPerformanceStatus(performance.status, bookingEnabled);
+  const nowMs = useBookingStartClock([performance.bookingStartsAt]);
+  const saleStatus = resolveTimeAwarePerformanceStatus(performance.status, performance.bookingStartsAt, nowMs);
+  const status = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
   const validStart = Boolean(performance.startDate) && Number.isFinite(Date.parse(performance.startDate));
   const start = formatCatalogDateRange(performance.startDate, performance.endDate, locale) ?? copy.dateUnknown;
   const price = performance.minPrice == null ? copy.priceUnknown
     : copy.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(locale).format(performance.minPrice)}`);
-  const opensAt = performance.status === 'upcoming' && performance.bookingStartsAt
+  // Shown for every row still waiting for its booking start, including ones the operator already marked selling.
+  const opensAt = saleStatus === 'upcoming' && performance.bookingStartsAt && parseBookingStartMs(performance.bookingStartsAt) !== null
     ? formatEventTimeWithKstAnchor(performance.bookingStartsAt, locale, { includeLocalTime: false }).kst : null;
 
   return <li className="border-b border-border last:border-b-0">

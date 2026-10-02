@@ -36,6 +36,7 @@ The public surface supports a focused catalog rather than a large category marke
 - Home surfaces include banners, hot events, new events, genre entry points, and localized shell navigation.
 - Search supports keyword search with genre, locale, ended-state, page, and limit query contracts.
 - Performance detail surfaces show title, venue, schedule, price tiers, castings, detail images, sales information, booking availability, and localized fallback indicators.
+- Buyer-facing sale status on list, search, and detail is judged against the booking start time: a booking start still in the future reads as upcoming even when the operator status is selling or closing soon, and an upcoming performance whose booking start has passed reads as on sale. The API list/search cards, catalog status filters, hot list, and the public detail API use the same rule; the admin detail read is a separate endpoint and does not apply it. Open pages switch the badge and schedule at the booking start without a reload, the detail page using the same clock as the booking button. A closing-soon performance whose booking start is still in the future therefore reads as upcoming and, right after its start, as on sale until the page fetches it again. The on-sale and upcoming home filters refetch once, 5–60 seconds (per-client jitter) after the nearest booking start that was pending when the page was fetched, also in a background tab; the unfiltered list relies on the client-side switch. The hot list cache expires at the next booking start of any published performance, since a newly opened performance can enter it.
 
 ### 3.2 Auth, Verification, And Consent
 
@@ -211,6 +212,8 @@ Admin is an operational console, not a marketing CMS.
 - Public UI supports `ko`, `en`, `th`, and `zh-CN`.
 - Korean routes are prefixless; foreign locales use locale-prefixed routes where the routing layer applies them.
 - Localized date/time/currency formatting should be used for buyer-facing flows.
+- The performance period is date-only: it is shown as KST calendar dates in the Gregorian calendar for every locale. Viewer-local time conversion is only for exact instants such as showtimes, and it also uses the Gregorian calendar.
+- Every explicit language change (language switcher or the suggestion banner) stores the preference (cookie, and `preferredLocale` when signed in) and does a full page navigation so the next-intl provider locale and `<html lang>` follow the new URL.
 - Booking, auth, QR, legal, and field-operation copy must avoid relying on color alone.
 - Critical buttons and scanner workflows must remain usable on mobile browsers.
 

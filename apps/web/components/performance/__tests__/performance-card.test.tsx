@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
 import type { PerformanceCardData } from '@grabit/shared';
 import { PerformanceCard } from '../performance-card';
 
@@ -46,6 +46,34 @@ describe('PerformanceCard', () => {
   beforeEach(() => {
     localeMock.activeLocale = 'ko';
     runtimeFlagsMock.bookingEnabled = true;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the upcoming badge for a selling performance until its booking start, then the dates', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-01T10:59:00.000Z'));
+    render(
+      <PerformanceCard
+        performance={{
+          ...basePerformance,
+          status: 'selling',
+          bookingStartsAt: '2026-07-01T11:00:00.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText('상태: 오픈예정')).toBeDefined();
+    expect(screen.queryByText('2026. 7. 18. KST')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
+    expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
   });
 
   it('shows 오픈예정 instead of stored dates for upcoming performances', () => {

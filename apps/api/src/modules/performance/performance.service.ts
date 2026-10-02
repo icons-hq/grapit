@@ -307,7 +307,7 @@ export class PerformanceService {
             join booking_policies next_policy on next_policy.performance_id = next_performance.id
             where next_performance.publish_state = 'published'
               and next_performance.genre = ${genre}
-              and next_performance.status = 'upcoming'
+              and next_performance.status <> 'ended'
               and next_policy.booking_starts_at > ${queryTime}
               ${sub ? sql`and next_performance.subcategory = ${sub}` : sql``}
           )`,
@@ -571,25 +571,37 @@ export class PerformanceService {
   private async loadHotPerformances(
     targetLocale: string,
   ): Promise<CacheLoadResult<PerformanceCardData[]>> {
-    const rows = await this.db
-      .select(publicCatalogCardSelection)
+    const queryTime = new Date();
+    const [rows, nextOpeningRows] = await Promise.all([
+      this.db
+        .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(
           and(
             eq(performances.publishState, 'published'),
-            or(
-              inArray(performances.status, ['selling', 'closing_soon']),
-              and(
-                eq(performances.status, 'upcoming'),
-                lte(bookingPolicies.bookingStartsAt, new Date()),
-              ),
-            ),
+            publicCatalogStatusCondition('selling', queryTime),
           ),
         )
-      .orderBy(desc(performances.viewCount))
-      .limit(4);
+        .orderBy(desc(performances.viewCount))
+        .limit(4),
+      // Only opened rows are listed, so the next opening that may enter the hot
+      // list has to bound the cache TTL separately.
+      this.db
+        .select({
+          nextBookingStartsAt: sql<Date | string | null>`min(${bookingPolicies.bookingStartsAt})`,
+        })
+        .from(performances)
+        .innerJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(
+          and(
+            eq(performances.publishState, 'published'),
+            ne(performances.status, 'ended'),
+            gt(bookingPolicies.bookingStartsAt, queryTime),
+          ),
+        ),
+    ]);
 
     const cards: PerformanceCardData[] = rows.map(mapPublicCatalogCard);
     const result = await overlayReviewedCardTranslations(
@@ -598,9 +610,12 @@ export class PerformanceService {
       targetLocale,
     );
 
+    const nextBookingStartsAt = nextOpeningRows[0]?.nextBookingStartsAt;
     return {
       value: result,
-      ttlSeconds: cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
+      ttlSeconds: nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
+        ? 1
+        : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...rows.map((row) => row.bookingStartsAt)]),
     };
   }
 
