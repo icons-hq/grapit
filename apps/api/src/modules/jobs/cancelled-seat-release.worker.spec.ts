@@ -111,7 +111,7 @@ describe('CancelledSeatReleaseWorker', () => {
 
     await worker.onModuleInit();
     const handler = boss.work.mock.calls[0]?.[1] as (
-      jobs: Array<{ data: typeof payload }>,
+      jobs: Array<{ id: string; data: typeof payload }>,
     ) => Promise<void>;
     await handler([{ id: 'release-job-1', data: payload }]);
 
