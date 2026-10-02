@@ -8,6 +8,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '@grabit/shared';
 import type { PaymentMethod, PrepareReservationRequest } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
@@ -24,7 +25,10 @@ import {
 } from '../src/modules/payment/abandoned-payment-handoff.service.js';
 import { PAYMENT_HANDOFF_RELEASE_WINDOW_MS } from '../src/modules/payment/payment-handoff-policy.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
-import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
+import {
+  PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE,
+  ReservationFinalizationService,
+} from '../src/modules/reservation/reservation-finalization.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
 import type { TossTransactionRow } from '../src/modules/payment/toss-payments.client.js';
@@ -113,7 +117,9 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
     const [performance] = await db.insert(performances).values({ title: 'Fixture', genre: 'artist_celebrity',
       venueId: venue!.id, ageRating: '전체관람가', status: 'selling', publishState: 'published',
       startDate: new Date('2099-01-01'), endDate: new Date('2099-01-02') }).returning();
-    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4 });
+    // Every checkout category is allowed so prepare's policy gate (audit #70) admits each fixture method.
+    await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4,
+      allowedPaymentMethods: [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS] });
     const [showtime] = await db.insert(showtimes).values({ performanceId: performance!.id,
       dateTime: new Date('2099-01-01') }).returning();
     await db.insert(schema.priceTiers).values({ performanceId: performance!.id, tierName: 'VIP', price: 50000 });
@@ -197,20 +203,26 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
     const f = await checkout();
     await f.paymentService.prepareTossPaymentBranch(f.branch);
     const markerKey = `{payment-confirm-attempt}:${f.prepared.orderId}`;
+    const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
     const confirmPayment = vi.fn(async () => {
       // The attempt is recorded before the provider is asked to approve.
       expect(await redis.get(markerKey)).toBe('1');
-      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      throw timeout();
+    });
+    // The same-key lookup that resolves an unknown confirm outcome (audit #18) also times out.
+    const queryPayment = vi.fn(async () => {
+      throw timeout();
     });
     const finalization = new ReservationFinalizationService(
-      db, { confirmPayment, cancelPayment: vi.fn() } as never, locks as never,
+      db, { confirmPayment, queryPayment, cancelPayment: vi.fn() } as never, locks as never,
       { broadcastSeatUpdate: vi.fn() } as never, qr,
     );
 
+    // The outcome stays unknown: a retryable 503 without a Payment row or a cancel.
     await expect(finalization.confirmAndCreateReservation(
       { orderId: f.prepared.orderId, paymentKey: `test-${randomUUID()}`, amount: 52000 },
       f.userId,
-    )).rejects.toThrow('timeout');
+    )).rejects.toThrow(PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE);
     expect(confirmPayment).toHaveBeenCalledTimes(1);
     expect(await heldConfirmLeases()).toEqual([]);
     expect(await db.select().from(payments).where(eq(payments.reservationId, f.prepared.reservationId))).toEqual([]);

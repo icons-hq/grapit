@@ -321,8 +321,9 @@ test('keeps the per-buyer throttle model aligned with the API throttles', async 
     assert.equal(Number(block[1].replaceAll('_', '')), BUYER_THROTTLES[name].ttlSeconds * 1000, `${name} ttl`);
     assert.equal(Number(block[2]), BUYER_THROTTLES[name].limit, `${name} limit`);
   }
-  const app = await readFile(new URL('../../apps/api/src/app.module.ts', import.meta.url), 'utf8');
-  const fallback = /name: 'default',\s*ttl: ([\d_]+),\s*limit: (\d+),/.exec(app);
+  // The global default throttler is defined with the policies (TrafficDefenseService
+  // .getThrottlerModuleConfig, audit #5); comment lines may sit between its fields.
+  const fallback = /name: 'default',(?:\s*\/\/[^\n]*)*\s*ttl: ([\d_]+),\s*limit: (\d+),/.exec(policies);
   assert.ok(fallback, 'default throttler found');
   assert.equal(Number(fallback[1].replaceAll('_', '')), BUYER_THROTTLES.default.ttlSeconds * 1000);
   assert.equal(Number(fallback[2]), BUYER_THROTTLES.default.limit);
