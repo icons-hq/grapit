@@ -514,6 +514,8 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
     assert.ok(block.includes('actions/checkout@'), `${job} checks out the guard script`);
     assert.ok(block.includes(`gcloud run services describe "\${${service}}"`), `${job} reads its own service`);
     assert.ok(recheck > 0 && recheck < deploy, `${job} re-checks before deploy-cloudrun`);
+    // u20 review: a transient describe error is retried before the guard decides.
+    assert.match(block, /for attempt in 1 2 3; do\n\s+if gcloud run services describe/);
     assert.match(block, /BOOKING_ENABLED=\$\{\{ steps\.booking_gate\.outputs\.booking_enabled \}\}/);
     assert.doesNotMatch(block, /BOOKING_ENABLED=\$\{\{ env\.BOOKING_ENABLED \}\}/);
   }

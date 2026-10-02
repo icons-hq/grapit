@@ -296,12 +296,18 @@ jobs:
         env:
           ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
         run: |
-          if ! gcloud run services describe "${API_SERVICE}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --format=json > "${RUNNER_TEMP}/live-service.json"; then
+          # Migrations already ran; retry a transient describe error instead of
+          # failing this job and leaving the deploy half done.
+          for attempt in 1 2 3; do
+            if gcloud run services describe "${API_SERVICE}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format=json > "${RUNNER_TEMP}/live-service.json"; then
+              break
+            fi
             : > "${RUNNER_TEMP}/live-service.json"
-          fi
+            if [ "${attempt}" -lt 3 ]; then sleep 5; fi
+          done
           node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
             --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json"
       - name: Resolve optional API runtime settings
@@ -450,12 +456,18 @@ jobs:
         env:
           ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
         run: |
-          if ! gcloud run services describe "${WEB_SERVICE}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --format=json > "${RUNNER_TEMP}/live-service.json"; then
+          # Migrations already ran; retry a transient describe error instead of
+          # failing this job and leaving the deploy half done.
+          for attempt in 1 2 3; do
+            if gcloud run services describe "${WEB_SERVICE}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format=json > "${RUNNER_TEMP}/live-service.json"; then
+              break
+            fi
             : > "${RUNNER_TEMP}/live-service.json"
-          fi
+            if [ "${attempt}" -lt 3 ]; then sleep 5; fi
+          done
           node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
             --service "${WEB_SERVICE}=${RUNNER_TEMP}/live-service.json"
       - uses: google-github-actions/deploy-cloudrun@v3
