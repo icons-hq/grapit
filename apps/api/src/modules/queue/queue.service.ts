@@ -21,6 +21,7 @@ import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { performances } from '../../database/schema/performances.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
+import { SHOWTIME_STARTED_MESSAGE } from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
 import {
   COUNT_VALID_LOCKED_SEATS_LUA,
@@ -67,7 +68,6 @@ export const QUEUE_ETA_MAX_SECONDS = 3 * 60 * 60;
 const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
 const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
 const PERFORMANCE_NOT_FOUND_MESSAGE = '공연을 찾을 수 없습니다';
-const SHOWTIME_ALREADY_STARTED_MESSAGE = '이미 시작된 회차는 예매할 수 없습니다.';
 const NO_SHOWTIME_MESSAGE = '예매 가능한 회차가 없습니다.';
 
 export const QUEUE_ENTRY_ERROR_CODES = {
@@ -460,7 +460,8 @@ export class QueueService {
    * Queue entry gate. Runs before any queue key is created so unknown, hidden,
    * ended or fully started performances never get a waiting session.
    * Sales cutoff (C1): a showtime is sellable only while now < showtimes.date_time,
-   * and the cutoff has no admin bypass.
+   * and the cutoff has no admin bypass. The SQL `date_time > now` below is the
+   * set form of isShowtimeSalesClosed (booking/showtime-sales-cutoff.ts).
    */
   private async assertPerformanceBookingOpen(
     performanceId: string,
@@ -498,7 +499,7 @@ export class QueueService {
       throw new ForbiddenException({
         message:
           Number(row.showtimeCount ?? 0) > 0
-            ? SHOWTIME_ALREADY_STARTED_MESSAGE
+            ? SHOWTIME_STARTED_MESSAGE
             : NO_SHOWTIME_MESSAGE,
         errorCode: QUEUE_ENTRY_ERROR_CODES.noBookableShowtime,
       });

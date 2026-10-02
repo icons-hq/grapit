@@ -38,6 +38,10 @@ import {
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import {
+  SHOWTIME_STARTED_MESSAGE,
+  isShowtimeSalesClosed as isShowtimeSalesClosedAt,
+} from '../booking/showtime-sales-cutoff.js';
+import {
   BookingService,
   PAYMENT_CONFIRM_LOCK_TTL,
   buildMaxTicketsPerUserExceededMessage,
@@ -234,7 +238,8 @@ function providerConfirmMarkerKey(orderId: string): string {
 export const PAYMENT_CONFIRM_IN_PROGRESS_MESSAGE = '결제 확인이 이미 진행 중입니다.';
 export const PAYMENT_CONFIRM_OUTCOME_PENDING_MESSAGE =
   '결제 승인 결과를 확인하고 있습니다. 잠시 후 예매 내역에서 다시 확인해주세요.';
-export const SHOWTIME_SALES_CLOSED_MESSAGE = '이미 시작된 회차는 예매할 수 없습니다.';
+/** C1 cutoff message; one source with seat lock and prepare (showtime-sales-cutoff.ts). */
+export const SHOWTIME_SALES_CLOSED_MESSAGE = SHOWTIME_STARTED_MESSAGE;
 const PAYMENT_APPROVAL_MISMATCH_MESSAGE =
   '결제 승인 정보가 주문과 일치하지 않아 결제 자동 취소를 요청했습니다. 다시 시도해주세요.';
 const PAYMENT_APPROVAL_NOT_DONE_MESSAGE =
@@ -1860,7 +1865,7 @@ export class ReservationFinalizationService {
     if (!startsAt) {
       throw new NotFoundException('회차를 찾을 수 없습니다');
     }
-    return now.getTime() >= startsAt.getTime();
+    return isShowtimeSalesClosedAt(startsAt, now);
   }
 
   /**

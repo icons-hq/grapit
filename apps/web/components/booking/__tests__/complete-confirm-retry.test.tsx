@@ -57,7 +57,8 @@ describe('Payment return confirm delivery', () => {
 
     expect(await screen.findByText('Confirmed ticket')).toBeInTheDocument();
     expect(boundary.post).toHaveBeenCalledTimes(2);
-    expect(boundary.post).toHaveBeenLastCalledWith('/api/v1/payments/confirm', {
+    // The confirm carries the display locale for the returned detail (audit #88).
+    expect(boundary.post).toHaveBeenLastCalledWith(expect.stringMatching(/^\/api\/v1\/payments\/confirm\?locale=/), {
       paymentKey: 'test-return', orderId: 'GRP-return', amount: 52000,
     }, { showErrorToast: false });
     expect(boundary.toastError).not.toHaveBeenCalled();

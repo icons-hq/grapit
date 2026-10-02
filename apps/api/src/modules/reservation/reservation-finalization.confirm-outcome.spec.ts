@@ -213,6 +213,8 @@ function createDependencies(options: {
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
     refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
     releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
+    // Provider Handoff release guard (audit #9), recorded under the confirm lease.
+    markPaymentConfirmAttempted: vi.fn().mockResolvedValue(undefined),
     extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
     assertOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
     consumeOwnedSeatLocks: vi.fn().mockResolvedValue({ consumedSeatIds: [] }),
