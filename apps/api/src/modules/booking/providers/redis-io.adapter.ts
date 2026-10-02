@@ -32,8 +32,12 @@ function duplicateSocketSubscriber(pubClient: IORedis | Cluster): IORedis | Clus
     return pubClient.duplicate(undefined, {
       enableReadyCheck: false,
       // The shared client drops its offline queue every few reconnect attempts
-      // so requests fail fast during an outage. The subscriber must not: its
-      // queued (P)SUBSCRIBE commands are what restores cross-instance delivery.
+      // so requests fail fast during an outage. The subscriber must not.
+      // Subscriptions confirmed before a disconnect are re-sent after reconnect
+      // by ioredis itself (autoResubscribe; the cluster subscriber), but a
+      // (P)SUBSCRIBE issued while disconnected, such as the adapter's own on an
+      // instance that starts during an outage, exists only in the offline
+      // queue until it succeeds.
       clusterRetryStrategy: redisReconnectDelay,
       redisOptions: {
         ...(pubClient.options.redisOptions ?? {}),
