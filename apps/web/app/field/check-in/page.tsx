@@ -107,6 +107,8 @@ function ActiveScan({ ticketToken, showtimeId, eventId, recordPending }: {
   const verifyQuery = useFieldCheckInVerify({
     token: ticketToken,
     showtimeId,
+    // Same attempt as consume: the server records one rejected scan per attempt.
+    deviceAttemptId,
     enabled: isInitialized && Boolean(accessToken) && hasScannerAccess && ticketToken.length > 0,
   });
   const consumeMutation = useFieldCheckInConsume();

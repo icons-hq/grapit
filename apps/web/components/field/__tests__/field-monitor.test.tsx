@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FieldMonitor } from '../field-monitor';
 import {
@@ -128,8 +129,6 @@ describe('FieldMonitor', () => {
     expect(within(kpiGrid).getByText('입장률')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('중복 스캔')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('거절 스캔')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('동기화 대기')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('2')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('동기화 완료')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('12')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('최근 이상 알림')).toBeInTheDocument();
@@ -138,6 +137,32 @@ describe('FieldMonitor', () => {
     expect(
       kpiGrid.compareDocumentPosition(logTable) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it('does not present a server count as the device offline backlog (audit #119)', async () => {
+    // Radix Select needs pointer capture APIs that jsdom does not implement.
+    for (const method of ['hasPointerCapture', 'setPointerCapture', 'releasePointerCapture']) {
+      Object.defineProperty(HTMLElement.prototype, method, { value: () => false, configurable: true });
+    }
+    Element.prototype.scrollIntoView = function scrollIntoView() {};
+    const user = userEvent.setup();
+    render(<FieldMonitor summary={{ ...monitorSummary, offlinePendingCount: 0 }} scanLogs={scanLogs} />);
+
+    const kpiGrid = screen.getByTestId('field-monitor-kpi-grid');
+    expect(within(kpiGrid).queryByText('동기화 대기')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('field-monitor-kpi-offline-pending')).not.toBeInTheDocument();
+
+    const notice = screen.getByTestId('field-monitor-device-backlog-notice');
+    expect(notice).toHaveTextContent('동기화 대기는 이 화면에 집계되지 않습니다.');
+    expect(notice).toHaveTextContent('각 현장 단말');
+    expect(
+      kpiGrid.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // The log filter cannot offer a server-side pending state that is never recorded.
+    await user.click(screen.getByRole('combobox', { name: '오프라인 상태 필터' }));
+    expect(screen.queryByRole('option', { name: '대기' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '동기화 완료' })).toBeInTheDocument();
   });
 
   it('surfaces all D-26 abnormal alerts before drill-down logs', () => {

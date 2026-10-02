@@ -74,6 +74,24 @@ describe('field operations contract', () => {
     }
   });
 
+  it('accepts an optional bounded scan attempt id on verify so rejected scans are recorded once per attempt', () => {
+    expect(
+      fieldCheckInVerifyRequestSchema.parse({
+        token: 'opaque-ticket-token',
+        showtimeId: VALID_SHOWTIME_ID,
+        deviceAttemptId: ' device-attempt-1 ',
+      }).deviceAttemptId,
+    ).toBe('device-attempt-1');
+    expect(fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token' })).not.toHaveProperty('deviceAttemptId');
+    // The server stores it namespaced in a 120-character column.
+    expect(() =>
+      fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token', deviceAttemptId: 'a'.repeat(101) }),
+    ).toThrow();
+    expect(() =>
+      fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token', deviceAttemptId: '   ' }),
+    ).toThrow();
+  });
+
   it('requires explicit manual consume fields and confirmed true after scanner review', () => {
     const parsed = fieldCheckInConsumeRequestSchema.parse({
       token: 'opaque-ticket-token',

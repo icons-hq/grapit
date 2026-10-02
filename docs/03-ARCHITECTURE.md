@@ -384,10 +384,11 @@ Credential validity and venue entry state are separate:
 
 `FieldOperationsModule` provides:
 
-- verify: parse token or QR URL, load ticket context, return processable outcome; a scanned Ticket Item in `cancellation_pending` keeps the `refunded_cancelled` outcome but returns `ticket.cancellationPending=true`, a `resultLabel` headline (`취소 처리 중 · 입장 불가`) that the scanner shows instead of the refunded label, and a distinct rejection reason (cancellation not yet confirmed, refuse entry and escalate) that is also stored on the scan event; consume and its receipt replay return the same fields,
+- showtimes: scanner showtime choices from the start of the current KST day (or 12 hours ago, whichever is earlier), nearest first,
+- verify: parse token or QR URL, load ticket context, return processable outcome; a non-processable or unverifiable result is recorded in `ticket_scan_events` once per scanner attempt (`deviceAttemptId`), skipping the re-check of an attempt consume already recorded; a scanned Ticket Item in `cancellation_pending` keeps the `refunded_cancelled` outcome but returns `ticket.cancellationPending=true`, a `resultLabel` headline (`취소 처리 중 · 입장 불가`) that the scanner shows instead of the refunded label, and a distinct rejection reason (cancellation not yet confirmed, refuse entry and escalate) that is also stored on the scan event; consume and its receipt replay return the same fields,
 - consume: manually process only the scanned Ticket Item after staff confirms, preserving companion seats and the buyer's QR access (ADR 0011),
-- offline sync: server-reverify pending attempts and return pending/synced/rejected state; transient failures remain pending,
-- monitor: KPI summary and scan logs.
+- offline sync: requires `field.scan.sync` and `field.scan.consume`; server-reverify pending attempts and return pending/synced/rejected state; transient failures remain pending,
+- monitor: KPI summary and scan logs. Admission counts come from valid Ticket Items; duplicate/rejection counts, alerts and logs come from `ticket_scan_events` attributed to the gate showtime (`requested_showtime_id`). Unverifiable QR scans have no ticket identity. Device-local pending attempts are not observable by the server.
 
 Scanner-only access is represented through admin capability bundles, not a separate auth stack.
 
