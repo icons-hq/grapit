@@ -9,7 +9,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import * as schema from '../src/database/schema/index.js';
@@ -22,6 +22,7 @@ import { PerformanceService } from '../src/modules/performance/performance.servi
 import { CacheService } from '../src/modules/performance/cache.service.js';
 import { CatalogFreshnessService } from '../src/modules/performance/catalog-freshness.service.js';
 import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { RolesGuard } from '../src/common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../src/common/guards/admin-capabilities.guard.js';
@@ -52,10 +53,9 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
   const unusedTranslationProvider = { translateText: async () => { throw new Error('not used'); } } as never;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'preparation_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'preparation_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'preparation_test', max: 5 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

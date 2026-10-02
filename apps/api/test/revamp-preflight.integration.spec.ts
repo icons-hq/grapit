@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 
@@ -42,9 +43,9 @@ describe('Revamp read-only release evidence', () => {
   let fakeProxy: string;
   let serverId: string;
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'grapit' }).withExposedPorts(5432).start();
-    connection = `postgresql://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/grapit`;
+    const postgres = await startPostgresContainer({ database: 'grapit' });
+    container = postgres.container;
+    connection = postgres.connectionString;
     pool = new Pool({ connectionString: connection });
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     work = await mkdtemp(join(tmpdir(), 'grabit-preflight-test-'));

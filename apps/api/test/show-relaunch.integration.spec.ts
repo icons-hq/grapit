@@ -3,6 +3,7 @@ import { FinanceLedgerService } from '../src/modules/admin/finance-ledger.servic
 import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
 import { RefundService } from '../src/modules/refund/refund.service.js';
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
@@ -13,7 +14,7 @@ import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
 import { repairIncludedBenefits } from '../src/ops/included-benefit-repair.js';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -52,10 +53,9 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
   let qr: QrTicketService;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'relaunch_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'relaunch_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'relaunch_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

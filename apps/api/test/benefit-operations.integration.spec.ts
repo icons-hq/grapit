@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool, type PoolClient } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { BenefitDefinition } from '@grabit/shared';
@@ -15,6 +15,7 @@ import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
 import { AdminBenefitsService } from '../src/modules/admin/admin-benefits.service.js';
 import { BenefitRunnerService } from '../src/modules/admin/benefit-runner.service.js';
 import { repairIncludedBenefits } from '../src/ops/included-benefit-repair.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 const { users, venues, performances, showtimes, reservations, payments, ticketItems,
@@ -40,10 +41,9 @@ describe('Benefit operations — PostgreSQL lock and volume regressions', () => 
   let runner: BenefitRunnerService;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'benefit_ops_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'benefit_ops_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'benefit_ops_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

@@ -7,7 +7,8 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import * as schema from '../src/database/schema/index.js';
@@ -37,10 +38,9 @@ describe('Phase 26 synthetic load buyers', () => {
   const realRefreshToken = 'real-buyer-refresh-token';
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'grapit' })
-      .withExposedPorts(5432).start();
-    databaseUrl = `postgresql://postgres:test@${container.getHost()}:${container.getMappedPort(5432)}/grapit`;
+    const postgres = await startPostgresContainer({ database: 'grapit' });
+    container = postgres.container;
+    databaseUrl = postgres.connectionString;
     pool = new Pool({ connectionString: databaseUrl });
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     db = drizzle(pool, { schema }) as unknown as DrizzleDB;

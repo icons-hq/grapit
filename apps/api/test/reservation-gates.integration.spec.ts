@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import {
   countBuyerActiveTicketsForPerformance,
@@ -47,10 +48,9 @@ describe('Reservation gates — PostgreSQL', () => {
   let adminId: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'reservation_gates_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'reservation_gates_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'reservation_gates_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

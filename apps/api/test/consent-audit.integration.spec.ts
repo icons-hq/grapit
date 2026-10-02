@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import {
@@ -10,6 +10,7 @@ import {
 } from '@grabit/shared';
 import * as schema from '../src/database/schema/index.js';
 import { ConsentService } from '../src/modules/consent/consent.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 // Real Postgres: keyset pagination must not skip or repeat rows across equal or
@@ -24,13 +25,11 @@ describe('Consent audit query and document versions on Postgres', () => {
   const now = new Date('2026-10-01T00:00:00.000Z');
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'consent_audit_test' })
-      .withExposedPorts(5432)
-      .start();
+    const postgres = await startPostgresContainer({ database: 'consent_audit_test' });
+    container = postgres.container;
     pool = new Pool({
-      host: container.getHost(),
-      port: container.getMappedPort(5432),
+      host: postgres.host,
+      port: postgres.port,
       user: 'postgres',
       password: 'test',
       database: 'consent_audit_test',
