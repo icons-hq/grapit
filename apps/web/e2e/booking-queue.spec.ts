@@ -10,9 +10,14 @@ const koMessages = JSON.parse(
         position: string;
         eta: string;
         remainingSeats: string;
+        soon: string;
+        etaRange: string;
+        opensIn: string;
       };
       status: {
+        notOpen: { title: string };
         waiting: { title: string };
+        closed: { title: string };
         retry: { title: string };
         challenge: { title: string };
         blocked: { title: string };
@@ -27,6 +32,7 @@ const waitingSnapshot = {
   position: 12,
   waitingCount: 48,
   etaSeconds: 165,
+  etaPending: false,
   remainingSeats: 24,
   autoEnter: false,
   admittedAt: null,
@@ -116,6 +122,76 @@ test.describe('booking queue route', () => {
     );
   });
 
+  test('queue entry before the booking opens shows a countdown and enters automatically at the open time', async ({
+    page,
+  }) => {
+    let enterCalls = 0;
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        enterCalls += 1;
+        if (enterCalls === 1) {
+          const serverNow = Date.now();
+          await fulfillJson(route, 403, {
+            statusCode: 403,
+            message: '예매는 추후 오픈 예정입니다',
+            errorCode: 'BOOKING_NOT_OPEN',
+            bookingStartsAt: new Date(serverNow + 3_000).toISOString(),
+            serverNow: new Date(serverNow).toISOString(),
+            timestamp: new Date(serverNow).toISOString(),
+          });
+          return;
+        }
+
+        await fulfillJson(route, 200, waitingSnapshot);
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.notOpen.title,
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId('queue-opens-in')).toContainText(
+      koMessages.booking.queue.metrics.opensIn,
+    );
+    await expect(
+      page.getByRole('heading', { name: koMessages.booking.queue.status.retry.title }),
+    ).toHaveCount(0);
+
+    // Booking open (3s) + up to 3s jitter: the hook re-enters without a click.
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.waiting.title,
+      }),
+    ).toBeVisible({ timeout: 15_000 });
+    expect(enterCalls).toBe(2);
+  });
+
+  test('queue entry for a performance without sellable showtimes shows the closed surface', async ({
+    page,
+  }) => {
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        await fulfillJson(route, 403, {
+          statusCode: 403,
+          message: '이미 시작된 회차는 예매할 수 없습니다.',
+          errorCode: 'NO_BOOKABLE_SHOWTIME',
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.closed.title,
+      }),
+    ).toBeVisible();
+  });
+
   for (const failureCase of failureCases) {
     test(`queue ${failureCase.name} state stays distinct from generic waiting errors`, async ({
       page,
@@ -140,17 +216,15 @@ test.describe('booking queue route', () => {
 
 function formatQueueEta(etaSeconds: number): string {
   if (etaSeconds <= 0) {
-    return '곧 입장';
+    return koMessages.booking.queue.metrics.soon;
   }
 
-  const minutes = Math.floor(etaSeconds / 60);
-  const seconds = etaSeconds % 60;
-
-  if (minutes <= 0) {
-    return `${seconds}s`;
-  }
-
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+  // Measured estimates are shown as a +/-20% minute range.
+  const lower = Math.max(1, Math.floor((etaSeconds * 0.8) / 60));
+  const upper = Math.max(lower, Math.ceil((etaSeconds * 1.2) / 60));
+  return koMessages.booking.queue.metrics.etaRange
+    .replace('{min}', String(lower))
+    .replace('{max}', String(upper));
 }
 
 async function mockAuthenticatedSession(page: Page) {

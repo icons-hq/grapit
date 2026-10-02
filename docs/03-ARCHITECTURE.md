@@ -241,6 +241,19 @@ Local development can use an in-memory Redis-compatible mock when Redis URL is a
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
 
+Queue entry validates the performance before any queue key is created:
+
+- a malformed `performanceId` is `400`; an unknown performance (or, for non-admins, an unpublished one) is `404` with `errorCode: PERFORMANCE_NOT_FOUND`;
+- an `ended` performance is `403` with `errorCode: BOOKING_ENDED` for every role;
+- when no showtime is still sellable (`now < showtimes.date_time`), entry is `403` with `errorCode: NO_BOOKABLE_SHOWTIME` for every role (`이미 시작된 회차는 예매할 수 없습니다.`, or `예매 가능한 회차가 없습니다.` without showtimes);
+- before the booking start, non-admin entry is `403` with `errorCode: BOOKING_NOT_OPEN`, `bookingStartsAt` and `serverNow`.
+
+The admission guard rejects a malformed `showtimeId` with `400` before it reaches the database.
+
+The waiting ETA is measured, not assumed: the first waiting snapshot stores the session's rank and time (`{queue:<performanceId>}:eta-origin:<queueSessionId>`, 2 hour TTL), and later snapshots divide the positions advanced since then by the elapsed time. Until the line has moved for at least 30 seconds the snapshot reports `etaPending: true` and `etaSeconds: 0`; the web shows the estimate as a minute range.
+
+The web booking route shows a countdown for `BOOKING_NOT_OPEN`, corrects it with the server time (`serverNow`, or the error body `timestamp`), and re-enters automatically at the open time plus up to 3 seconds of jitter. If the 403 body lacks `bookingStartsAt`, it reads the open time from the public performance detail. It shows a closed surface for the closed-sale codes, moves a waiting session whose status poll returns `404`/`403` to the re-entry surface, and closes the `/queue` Socket.IO connection once the booking screen is shown. While on the booking screen it confirms the end of the admission window with one status request at `activeUntilAt` (or `reentryGraceUntilAt` in payment recovery) instead of the socket event.
+
 ### 6.3 Reservation Prepare
 
 `ReservationService.prepareReservation` validates before writing a pending reservation:

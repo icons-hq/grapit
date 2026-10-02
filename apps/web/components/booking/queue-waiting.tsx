@@ -1,8 +1,11 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import {
   AlertTriangle,
+  CalendarClock,
+  CalendarX,
   CheckCircle2,
   Hourglass,
   ShieldAlert,
@@ -23,17 +26,23 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
+import { formatCopy } from '@/lib/i18n/client-copy';
 import { cn } from '@/lib';
 
 type QueueWaitingProps = {
   status: QueueStatus;
   position: number;
   etaSeconds: number;
+  // true while the server has not observed enough queue movement for an ETA.
+  etaPending?: boolean;
   remainingSeats: number;
   autoEnter: boolean;
+  // Booking open time on this device's clock (server-offset corrected).
+  bookingOpensAt?: number | null;
   showEnterNow?: boolean;
   onRetry?: () => void;
   onEnterNow?: () => void;
+  onBack?: () => void;
 };
 
 type SurfaceCopy = {
@@ -51,12 +60,22 @@ type QueueCopy = {
     remainingSeats: string;
     ready: string;
     soon: string;
+    etaCalculating: string;
+    etaUnderMinute: string;
+    etaAbout: string;
+    etaRange: string;
+    opensIn: string;
+    opening: string;
+    openTimeUnknown: string;
   };
   infoLabel: string;
   autoEnterInfo: string;
   safetyInfo: string;
+  etaInfo: string;
+  soldOutRisk: string;
   retryAction: string;
   enterNowAction: string;
+  backAction: string;
 };
 
 const FALLBACK_QUEUE_COPY: QueueCopy = {
@@ -66,6 +85,12 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
       title: '예매 대기열에서 입장 순서를 기다리고 있습니다',
       description: '예매 가능한 순번과 남은 좌석 수를 불러오고 있습니다.',
       helper: '대기열 상태는 잠시 후 자동으로 갱신됩니다.',
+    },
+    notOpen: {
+      badge: '오픈 전',
+      title: '예매 오픈 전입니다. 오픈 시각에 자동으로 대기열에 입장합니다',
+      description: '이 화면을 열어 두면 오픈 시각에 맞춰 자동으로 입장을 시도합니다.',
+      helper: '새로고침이나 반복 클릭은 필요하지 않습니다. 남은 시간은 서버 시각 기준입니다.',
     },
     waiting: {
       badge: '대기 중',
@@ -84,6 +109,12 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
       title: '입장 시간이 만료되었습니다. 대기열로 다시 이동합니다',
       description: '새로운 순번을 받아 다시 예매 대기열에 입장해주세요.',
       helper: '재입장 후에도 남은 좌석 수와 예상 대기 시간은 계속 확인할 수 있습니다.',
+    },
+    closed: {
+      badge: '예매 불가',
+      title: '지금 예매할 수 있는 회차가 없습니다',
+      description: '판매가 종료되었거나 모든 회차가 이미 시작되었습니다.',
+      helper: '공연 정보에서 다른 일정이나 판매 상태를 확인해주세요.',
     },
     authRequired: {
       badge: '로그인 필요',
@@ -118,20 +149,34 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
     remainingSeats: '남은 좌석',
     ready: '입장 가능',
     soon: '곧 입장',
+    etaCalculating: '계산 중',
+    etaUnderMinute: '1분 이내',
+    etaAbout: '약 {minutes}분',
+    etaRange: '약 {min}~{max}분',
+    opensIn: '오픈까지',
+    opening: '입장 시도 중',
+    openTimeUnknown: '오픈 시각 확인 중',
   },
   infoLabel: '안내',
   autoEnterInfo: '입장이 승인되면 자동으로 좌석 선택 화면으로 이어집니다.',
   safetyInfo:
     '대기열 순번, 예상 시간, 남은 좌석 수만 노출되며 내부 인증 정보는 표시되지 않습니다.',
+  etaInfo:
+    '예상 대기 시간은 최근 대기열이 줄어든 속도로 계산하며, 상황에 따라 달라질 수 있습니다.',
+  soldOutRisk:
+    '앞선 대기 인원이 남은 좌석보다 많아 순서가 오기 전에 매진될 수 있습니다.',
   retryAction: '다시 시도',
   enterNowAction: '지금 입장하기',
+  backAction: '공연 정보로 돌아가기',
 };
 
 const SURFACE_ICONS = {
   loading: Hourglass,
+  notOpen: CalendarClock,
   waiting: Hourglass,
   admitted: CheckCircle2,
   expired: TimerReset,
+  closed: CalendarX,
   authRequired: ShieldAlert,
   retry: AlertTriangle,
   challenge: ShieldAlert,
@@ -140,9 +185,11 @@ const SURFACE_ICONS = {
 
 const SURFACE_TONES = {
   loading: 'secondary',
+  notOpen: 'secondary',
   waiting: 'secondary',
   admitted: 'default',
   expired: 'outline',
+  closed: 'outline',
   authRequired: 'outline',
   retry: 'outline',
   challenge: 'destructive',
@@ -153,21 +200,100 @@ const QUEUE_METRIC_TEST_IDS = {
   position: 'queue-metric-position',
   eta: 'queue-metric-eta',
   remainingSeats: 'queue-metric-remaining-seats',
+  opensIn: 'queue-opens-in',
 } as const;
 
-function formatEta(etaSeconds: number, queueCopy: QueueCopy): string {
-  if (etaSeconds <= 0) {
-    return queueCopy.metrics.soon;
+// The estimate comes from measured queue movement, so it is shown as a range
+// rather than a to-the-second countdown.
+const ETA_RANGE_LOWER_RATIO = 0.8;
+const ETA_RANGE_UPPER_RATIO = 1.2;
+
+export function formatQueueEta(
+  params: { etaSeconds: number; etaPending?: boolean; position: number },
+  metrics: QueueCopy['metrics'],
+): string {
+  if (params.etaPending) {
+    return params.position === 1 ? metrics.soon : metrics.etaCalculating;
   }
 
-  const minutes = Math.floor(etaSeconds / 60);
-  const seconds = etaSeconds % 60;
-
-  if (minutes <= 0) {
-    return `${seconds}s`;
+  if (params.etaSeconds <= 0) {
+    return metrics.soon;
   }
 
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+  if (params.etaSeconds < 60) {
+    return metrics.etaUnderMinute;
+  }
+
+  const lowerMinutes = Math.max(
+    1,
+    Math.floor((params.etaSeconds * ETA_RANGE_LOWER_RATIO) / 60),
+  );
+  const upperMinutes = Math.max(
+    lowerMinutes,
+    Math.ceil((params.etaSeconds * ETA_RANGE_UPPER_RATIO) / 60),
+  );
+
+  if (lowerMinutes === upperMinutes) {
+    return formatCopy(metrics.etaAbout, { minutes: lowerMinutes });
+  }
+
+  return formatCopy(metrics.etaRange, { min: lowerMinutes, max: upperMinutes });
+}
+
+function formatCountdown(remainingMs: number): string {
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => value.toString().padStart(2, '0');
+
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function OpeningCountdown({
+  opensAt,
+  metrics,
+}: {
+  opensAt: number | null;
+  metrics: QueueCopy['metrics'];
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (opensAt === null) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+
+    return () => window.clearInterval(interval);
+  }, [opensAt]);
+
+  const remainingMs = opensAt === null ? null : opensAt - nowMs;
+  const value =
+    remainingMs === null
+      ? metrics.openTimeUnknown
+      : remainingMs > 0
+        ? formatCountdown(remainingMs)
+        : metrics.opening;
+
+  return (
+    <div
+      className="rounded-2xl bg-[#f5f5f7] p-4"
+      data-testid={QUEUE_METRIC_TEST_IDS.opensIn}
+      role="group"
+      aria-labelledby="queue-opens-in-label"
+    >
+      <p className="text-sm font-medium text-neutral-500" id="queue-opens-in-label">
+        {metrics.opensIn}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tabular-nums text-neutral-950" role="timer">
+        {value}
+      </p>
+    </div>
+  );
 }
 
 function metricValue(status: QueueStatus, value: number, fallback: string): string {
@@ -182,20 +308,28 @@ export function QueueWaiting({
   status,
   position,
   etaSeconds,
+  etaPending = false,
   remainingSeats,
   autoEnter,
+  bookingOpensAt = null,
   showEnterNow = false,
   onRetry,
   onEnterNow,
+  onBack,
 }: QueueWaitingProps) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const queueCopy =
     getVisibleCopy(locale).booking.queue ?? FALLBACK_QUEUE_COPY;
   const copy = queueCopy.status[status] ?? FALLBACK_QUEUE_COPY.status[status];
+  const metrics = { ...FALLBACK_QUEUE_COPY.metrics, ...queueCopy.metrics };
   const Icon = SURFACE_ICONS[status];
   const tone = SURFACE_TONES[status];
+  const showQueueMetrics = status !== 'notOpen' && status !== 'closed';
+  const showSoldOutRisk =
+    status === 'waiting' && position > 0 && position > remainingSeats;
   const isFailure =
     status === 'expired' ||
+    status === 'closed' ||
     status === 'authRequired' ||
     status === 'retry' ||
     status === 'challenge' ||
@@ -256,6 +390,15 @@ export function QueueWaiting({
                 <Ticket className="size-4 text-[#6c3ce0]" />
                 {queueCopy.infoLabel}
               </div>
+              {status === 'notOpen' && (
+                <OpeningCountdown opensAt={bookingOpensAt} metrics={metrics} />
+              )}
+              {status === 'closed' && (
+                <p className="whitespace-normal break-keep text-sm leading-6 text-neutral-700">
+                  {copy.helper}
+                </p>
+              )}
+              {showQueueMetrics && (
               <div className="grid gap-3 sm:grid-cols-3">
                 <div
                   className="rounded-2xl bg-[#f5f5f7] p-4"
@@ -267,7 +410,7 @@ export function QueueWaiting({
                     className="text-sm font-medium text-neutral-500"
                     id="queue-metric-position-label"
                   >
-                    {queueCopy.metrics.position}
+                    {metrics.position}
                   </p>
                   {status === 'loading' ? (
                     <Skeleton className="mt-3 h-8 w-16" />
@@ -287,15 +430,15 @@ export function QueueWaiting({
                     className="text-sm font-medium text-neutral-500"
                     id="queue-metric-eta-label"
                   >
-                    {queueCopy.metrics.eta}
+                    {metrics.eta}
                   </p>
                   {status === 'loading' ? (
                     <Skeleton className="mt-3 h-8 w-24" />
                   ) : (
-                    <p className="mt-3 text-3xl font-semibold text-neutral-950">
+                    <p className="mt-3 break-keep text-2xl font-semibold leading-tight text-neutral-950">
                       {status === 'admitted' && autoEnter
-                        ? queueCopy.metrics.ready
-                        : formatEta(etaSeconds, queueCopy)}
+                        ? metrics.ready
+                        : formatQueueEta({ etaSeconds, etaPending, position }, metrics)}
                     </p>
                   )}
                 </div>
@@ -309,7 +452,7 @@ export function QueueWaiting({
                     className="text-sm font-medium text-neutral-500"
                     id="queue-metric-remaining-seats-label"
                   >
-                    {queueCopy.metrics.remainingSeats}
+                    {metrics.remainingSeats}
                   </p>
                   {status === 'loading' ? (
                     <Skeleton className="mt-3 h-8 w-20" />
@@ -320,6 +463,7 @@ export function QueueWaiting({
                   )}
                 </div>
               </div>
+              )}
             </section>
 
             <section className="rounded-2xl border border-[#e7defd] bg-[#f9f6ff] p-5">
@@ -327,11 +471,18 @@ export function QueueWaiting({
                 {queueCopy.infoLabel}
               </p>
               <div className="mt-3 space-y-3 whitespace-normal break-keep text-sm leading-6 text-neutral-700">
-                <p>{copy.helper}</p>
+                {status !== 'closed' && <p>{copy.helper}</p>}
+                {showSoldOutRisk && (
+                  <p className="font-medium text-amber-800" data-testid="queue-sold-out-risk">
+                    {queueCopy.soldOutRisk ?? FALLBACK_QUEUE_COPY.soldOutRisk}
+                  </p>
+                )}
                 <p>
                   {status === 'admitted'
                     ? queueCopy.autoEnterInfo
-                    : queueCopy.safetyInfo}
+                    : status === 'waiting'
+                      ? queueCopy.etaInfo ?? FALLBACK_QUEUE_COPY.etaInfo
+                      : queueCopy.safetyInfo}
                 </p>
               </div>
             </section>
@@ -349,6 +500,11 @@ export function QueueWaiting({
             {status === 'admitted' && showEnterNow && (
               <Button size="lg" onClick={onEnterNow}>
                 {queueCopy.enterNowAction}
+              </Button>
+            )}
+            {status === 'closed' && onBack && (
+              <Button size="lg" variant="outline" onClick={onBack}>
+                {queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
               </Button>
             )}
           </CardFooter>

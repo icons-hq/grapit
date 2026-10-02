@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ExecutionContext } from '@nestjs/common';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdmissionGuard } from './guards/admission.guard.js';
 
@@ -103,6 +103,18 @@ describe('AdmissionGuard', () => {
       deviceSlotKey: 'family-1',
     });
   });
+
+  it.each(['not-a-uuid', "1' OR '1'='1", '550e8400-e29b-41d4-a716'])(
+    'rejects a malformed showtimeId with 400 before it reaches the uuid column query (%s)',
+    async (showtimeId) => {
+      const context = createExecutionContext({
+        body: { showtimeId },
+      });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(BadRequestException);
+      expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+    },
+  );
 
   it('allows admin booking tests without queue cookies and attaches bypass admission context', async () => {
     const context = createExecutionContext({

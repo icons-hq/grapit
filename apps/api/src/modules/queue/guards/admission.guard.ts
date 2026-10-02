@@ -1,15 +1,21 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { z } from 'zod';
 import {
   QueueService,
   readQueueAdmissionCookie,
   readRefreshCookie,
 } from '../queue.service.js';
+
+// Same rule as the lock/prepare DTOs. Guards run before body pipes, so the
+// showtime id must be validated here before it reaches a uuid column query.
+const showtimeIdSchema = z.string().uuid();
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -109,6 +115,9 @@ export class AdmissionGuard implements CanActivate {
     const showtimeId = this.readString(request.body, 'showtimeId');
     if (!showtimeId) {
       throw new ForbiddenException('대기열 입장 정보가 필요합니다');
+    }
+    if (!showtimeIdSchema.safeParse(showtimeId).success) {
+      throw new BadRequestException('올바른 회차 ID가 아닙니다');
     }
 
     return this.queueService.assertAdmissionForShowtime({

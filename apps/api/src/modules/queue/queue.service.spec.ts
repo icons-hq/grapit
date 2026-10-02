@@ -1,9 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { HttpException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  QUEUE_ETA_MIN_SAMPLE_MS,
   QueueService,
   RELEASE_QUEUE_RECONCILE_LOCK_LUA,
+  estimateQueueWaitSeconds,
 } from './queue.service.js';
 import type { QueueGateway } from './queue.gateway.js';
 
@@ -31,15 +34,54 @@ function createMockDb() {
   };
 }
 
+type PerformanceGateRow = {
+  status: string;
+  publishState?: string;
+  bookingStartsAt?: Date | null;
+  showtimeCount?: number;
+  sellableShowtimeCount?: number;
+};
+
 function mockPerformanceGate(
   mockDb: ReturnType<typeof createMockDb>,
-  row: { status: string; bookingStartsAt?: Date | null } | null,
+  row: PerformanceGateRow | null,
 ) {
-  const where = vi.fn().mockResolvedValue(row ? [row] : []);
+  const where = vi.fn().mockResolvedValue(
+    row
+      ? [
+          {
+            publishState: 'published',
+            bookingStartsAt: null,
+            showtimeCount: 1,
+            sellableShowtimeCount: 1,
+            ...row,
+          },
+        ]
+      : [],
+  );
   const leftJoin = vi.fn().mockReturnValue({ where });
   const from = vi.fn().mockReturnValue({ leftJoin, where });
   mockDb.select.mockReturnValue({ from });
   return { from, leftJoin, where };
+}
+
+type QueueGateAccess = {
+  assertPerformanceBookingOpen: (
+    targetPerformanceId: string,
+    actorRole?: string,
+  ) => Promise<void>;
+};
+
+async function captureRejection(promise: Promise<unknown>): Promise<HttpException> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error('expected the promise to reject');
 }
 
 function createMockGateway(): {
@@ -211,6 +253,261 @@ describe('QueueService', () => {
       vi.useRealTimers();
     }
   });
+
+  it('returns an identifiable not-open rejection with the booking start and server time', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-04T09:59:00.000Z'));
+      mockPerformanceGate(mockDb, {
+        status: 'selling',
+        bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+      });
+
+      const error = await captureRejection(
+        (service as unknown as QueueGateAccess).assertPerformanceBookingOpen(performanceId),
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(error.message).toBe('예매는 추후 오픈 예정입니다');
+      expect(error.getResponse()).toMatchObject({
+        errorCode: 'BOOKING_NOT_OPEN',
+        bookingStartsAt: '2026-06-04T10:00:00.000Z',
+        serverNow: '2026-06-04T09:59:00.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([undefined, 'admin'])(
+    'rejects unknown performance ids with 404 before creating queue keys (role: %s)',
+    async (actorRole) => {
+      mockPerformanceGate(mockDb, null);
+
+      const error = await captureRejection(
+        service.enterPerformanceQueue({ performanceId, identity, actorRole, bypassQueue: actorRole === 'admin' }),
+      );
+
+      expect(error.getStatus()).toBe(404);
+      expect(error.getResponse()).toMatchObject({ errorCode: 'PERFORMANCE_NOT_FOUND' });
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
+      expect(mockRedis.zadd).not.toHaveBeenCalled();
+    },
+  );
+
+  it('hides unpublished performances from public queue entry but keeps the admin test path', async () => {
+    mockPerformanceGate(mockDb, { status: 'selling', publishState: 'publish_ready' });
+    const gate = service as unknown as QueueGateAccess;
+
+    const publicError = await captureRejection(gate.assertPerformanceBookingOpen(performanceId));
+    expect(publicError.getStatus()).toBe(404);
+
+    await expect(gate.assertPerformanceBookingOpen(performanceId, 'admin')).resolves.toBeUndefined();
+  });
+
+  it.each([undefined, 'admin'])(
+    'blocks queue entry for ended performances without admin bypass (role: %s)',
+    async (actorRole) => {
+      mockPerformanceGate(mockDb, { status: 'ended' });
+
+      const error = await captureRejection(
+        (service as unknown as QueueGateAccess).assertPerformanceBookingOpen(performanceId, actorRole),
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(error.message).toBe('판매가 종료된 공연입니다');
+      expect(error.getResponse()).toMatchObject({ errorCode: 'BOOKING_ENDED' });
+    },
+  );
+
+  it.each([undefined, 'admin'])(
+    'blocks queue entry once every showtime has started, without admin bypass (role: %s)',
+    async (actorRole) => {
+      mockPerformanceGate(mockDb, {
+        status: 'selling',
+        showtimeCount: 3,
+        sellableShowtimeCount: 0,
+      });
+
+      const error = await captureRejection(
+        service.enterPerformanceQueue({ performanceId, identity, actorRole, bypassQueue: actorRole === 'admin' }),
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(error.message).toBe('이미 시작된 회차는 예매할 수 없습니다.');
+      expect(error.getResponse()).toMatchObject({ errorCode: 'NO_BOOKABLE_SHOWTIME' });
+      expect(mockRedis.zadd).not.toHaveBeenCalled();
+    },
+  );
+
+  it('blocks queue entry when the performance has no showtime to sell', async () => {
+    mockPerformanceGate(mockDb, {
+      status: 'selling',
+      showtimeCount: 0,
+      sellableShowtimeCount: 0,
+    });
+
+    const error = await captureRejection(
+      (service as unknown as QueueGateAccess).assertPerformanceBookingOpen(performanceId),
+    );
+
+    expect(error.getStatus()).toBe(403);
+    expect(error.message).toBe('예매 가능한 회차가 없습니다.');
+  });
+
+  it('allows queue entry while at least one showtime has not started', async () => {
+    mockPerformanceGate(mockDb, {
+      status: 'selling',
+      showtimeCount: 3,
+      sellableShowtimeCount: 1,
+    });
+
+    await expect(
+      (service as unknown as QueueGateAccess).assertPerformanceBookingOpen(performanceId),
+    ).resolves.toBeUndefined();
+  });
+
+  describe('wait estimate', () => {
+    it('derives ETA from measured line movement instead of a fixed per-position step', () => {
+      // ~1000 admissions per 10 minutes: rank 6000 -> 5000 in 600s.
+      const etaSeconds = estimateQueueWaitSeconds({
+        origin: { rank: 6_000, at: 0 },
+        currentRank: 4_999,
+        now: 600_000,
+      });
+
+      // 5000th in line at 1000 per 10 min is ~50 minutes, not 5000 * 5s (~6.9h).
+      expect(etaSeconds).toBeGreaterThanOrEqual(49 * 60);
+      expect(etaSeconds).toBeLessThanOrEqual(51 * 60);
+    });
+
+    it('stays pending until the line has moved over a minimum sample window', () => {
+      expect(
+        estimateQueueWaitSeconds({
+          origin: { rank: 600, at: 0 },
+          currentRank: 590,
+          now: QUEUE_ETA_MIN_SAMPLE_MS - 1,
+        }),
+      ).toBeNull();
+      expect(
+        estimateQueueWaitSeconds({
+          origin: { rank: 600, at: 0 },
+          currentRank: 600,
+          now: 20 * 60_000,
+        }),
+      ).toBeNull();
+    });
+
+    it('seeds the origin sample on the first waiting snapshot and reports the wait as pending', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+        const record = createWaitingRecord();
+        mockRedis.zrank.mockResolvedValueOnce(599);
+        mockRedis.zcard.mockResolvedValueOnce(2_000);
+        mockRedis.get.mockImplementation(async (key: string) =>
+          key.endsWith(':remaining-seats') ? '300' : null,
+        );
+
+        const snapshot = await buildSnapshot(service, record);
+
+        expect(snapshot).toMatchObject({
+          position: 600,
+          etaSeconds: 0,
+          etaPending: true,
+        });
+        expect(mockRedis.set).toHaveBeenCalledWith(
+          `{queue:${performanceId}}:eta-origin:${record.queueSessionId}`,
+          JSON.stringify({ rank: 599, at: Date.parse('2026-06-04T10:00:00.000Z') }),
+          'EX',
+          7_200,
+          'NX',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reports the measured wait once the line has advanced since the origin sample', async () => {
+      vi.useFakeTimers();
+      try {
+        const originAt = Date.parse('2026-06-04T10:00:00.000Z');
+        vi.setSystemTime(originAt + 10 * 60_000);
+        const record = createWaitingRecord();
+        // 300-seat sale: 900 waiting ahead -> 600 after 10 minutes (30/min).
+        mockRedis.zrank.mockResolvedValueOnce(599);
+        mockRedis.get.mockImplementation(async (key: string) => {
+          if (key.endsWith(':remaining-seats')) return '300';
+          if (key.includes(':eta-origin:')) return JSON.stringify({ rank: 899, at: originAt });
+          return null;
+        });
+
+        const snapshot = await buildSnapshot(service, record);
+
+        expect(snapshot.etaPending).toBe(false);
+        // 600 positions at 30/min is 20 minutes, not (600 - 1) * 5s.
+        expect(snapshot.etaSeconds).toBe(20 * 60);
+        expect(mockRedis.set).not.toHaveBeenCalledWith(
+          expect.stringContaining(':eta-origin:'),
+          expect.anything(),
+          'EX',
+          expect.any(Number),
+          'NX',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not compute a wait estimate for admitted sessions', async () => {
+      const record = {
+        ...createWaitingRecord(),
+        state: 'ADMITTED',
+        admittedAt: new Date().toISOString(),
+        activeUntilAt: new Date(Date.now() + 600_000).toISOString(),
+        reentryGraceUntilAt: new Date(Date.now() + 780_000).toISOString(),
+      };
+      mockRedis.zrank.mockResolvedValueOnce(null);
+      mockRedis.get.mockResolvedValue('10');
+
+      const snapshot = await buildSnapshot(service, record);
+
+      expect(snapshot).toMatchObject({ state: 'ADMITTED', etaSeconds: 0, etaPending: false });
+      expect(mockRedis.get).not.toHaveBeenCalledWith(expect.stringContaining(':eta-origin:'));
+    });
+  });
+
+  function createWaitingRecord() {
+    return {
+      queueSessionId: 'queue-session-eta',
+      performanceId,
+      userId: identity.userId,
+      refreshTokenFamilyId: identity.refreshTokenFamilyId,
+      deviceSlotId: identity.deviceSlotId,
+      admissionTokenHash: 'token-hash',
+      state: 'WAITING',
+      enteredAt: new Date('2026-06-04T09:59:00.000Z').toISOString(),
+      admittedAt: null as string | null,
+      activeUntilAt: null as string | null,
+      reentryGraceUntilAt: null as string | null,
+      paymentRecoveryUntilAt: null as string | null,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    };
+  }
+
+  function buildSnapshot(
+    target: QueueService,
+    record: ReturnType<typeof createWaitingRecord>,
+  ): Promise<{ state: string; position: number; etaSeconds: number; etaPending: boolean }> {
+    return (
+      target as unknown as {
+        buildSnapshot: (
+          value: ReturnType<typeof createWaitingRecord>,
+        ) => Promise<{ state: string; position: number; etaSeconds: number; etaPending: boolean }>;
+      }
+    ).buildSnapshot(record);
+  }
 
   it('locks the queue transport contract to cookie-only admission and realtime queue events', async () => {
     const controllerSource = await readFile(

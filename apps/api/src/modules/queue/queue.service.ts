@@ -29,11 +29,25 @@ export const QUEUE_REENTRY_GRACE_SECONDS = 180;
 const QUEUE_WAIT_SESSION_SECONDS = 1_800;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
-const QUEUE_POSITION_STEP_SECONDS = 5;
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
+// ETA is measured from how far this session's own line actually moved since it
+// was first observed waiting. Below the minimum sample the estimate stays pending.
+export const QUEUE_ETA_MIN_SAMPLE_MS = 30_000;
+const QUEUE_ETA_ORIGIN_TTL_SECONDS = 7_200;
 const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
+const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
+const PERFORMANCE_NOT_FOUND_MESSAGE = '공연을 찾을 수 없습니다';
+const SHOWTIME_ALREADY_STARTED_MESSAGE = '이미 시작된 회차는 예매할 수 없습니다.';
+const NO_SHOWTIME_MESSAGE = '예매 가능한 회차가 없습니다.';
+
+export const QUEUE_ENTRY_ERROR_CODES = {
+  performanceNotFound: 'PERFORMANCE_NOT_FOUND',
+  bookingNotOpen: 'BOOKING_NOT_OPEN',
+  bookingEnded: 'BOOKING_ENDED',
+  noBookableShowtime: 'NO_BOOKABLE_SHOWTIME',
+} as const;
 
 export const WAITING = 'WAITING';
 export const ADMITTED = 'ADMITTED';
@@ -50,6 +64,54 @@ return 0
 
 function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
   return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
+}
+
+type QueueWaitOrigin = {
+  rank: number;
+  at: number;
+};
+
+/**
+ * Estimates the remaining wait from the observed throughput of this session's
+ * own line: positions advanced since `origin` divided by the elapsed time.
+ * Returns null while there is not enough movement to estimate honestly.
+ */
+export function estimateQueueWaitSeconds(params: {
+  origin: QueueWaitOrigin;
+  currentRank: number;
+  now: number;
+}): number | null {
+  const elapsedMs = params.now - params.origin.at;
+  const advancedPositions = params.origin.rank - params.currentRank;
+  if (elapsedMs < QUEUE_ETA_MIN_SAMPLE_MS || advancedPositions <= 0) {
+    return null;
+  }
+
+  const positionsPerSecond = advancedPositions / (elapsedMs / 1000);
+  return Math.max(1, Math.ceil((params.currentRank + 1) / positionsPerSecond));
+}
+
+function parseQueueWaitOrigin(raw: string | null): QueueWaitOrigin | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<QueueWaitOrigin>;
+    if (
+      typeof parsed.rank === 'number' &&
+      Number.isInteger(parsed.rank) &&
+      parsed.rank >= 0 &&
+      typeof parsed.at === 'number' &&
+      Number.isFinite(parsed.at)
+    ) {
+      return { rank: parsed.rank, at: parsed.at };
+    }
+  } catch {
+    // Corrupt sample: start a new one.
+  }
+
+  return null;
 }
 
 export type QueueSessionState =
@@ -91,6 +153,8 @@ export type QueueSessionSnapshot = {
   position: number;
   waitingCount: number;
   etaSeconds: number;
+  // true while the waiting line has not moved enough to measure a wait time.
+  etaPending: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   admittedAt: string | null;
@@ -255,28 +319,68 @@ export class QueueService {
     };
   }
 
+  /**
+   * Queue entry gate. Runs before any queue key is created so unknown, hidden,
+   * ended or fully started performances never get a waiting session.
+   * Sales cutoff (C1): a showtime is sellable only while now < showtimes.date_time,
+   * and the cutoff has no admin bypass.
+   */
   private async assertPerformanceBookingOpen(
     performanceId: string,
     actorRole: string | undefined,
   ): Promise<void> {
-    if (actorRole === 'admin') {
-      return;
-    }
-
+    const now = new Date();
     const [row] = await this.db
       .select({
         status: performances.status,
+        publishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
+        showtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${eq(showtimes.performanceId, performances.id)})`,
+        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), gt(showtimes.dateTime, now))})`,
       })
       .from(performances)
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
       .where(eq(performances.id, performanceId));
 
-    if (row?.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt)) {
-      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+    const isAdmin = actorRole === 'admin';
+    if (!row || (!isAdmin && row.publishState !== 'published')) {
+      throw new NotFoundException({
+        message: PERFORMANCE_NOT_FOUND_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.performanceNotFound,
+      });
     }
-    if (row?.status === 'upcoming' && !isBookingStartReached(row.bookingStartsAt)) {
-      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+
+    if (row.status === 'ended') {
+      throw new ForbiddenException({
+        message: BOOKING_ENDED_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.bookingEnded,
+      });
+    }
+
+    if (Number(row.sellableShowtimeCount ?? 0) <= 0) {
+      throw new ForbiddenException({
+        message:
+          Number(row.showtimeCount ?? 0) > 0
+            ? SHOWTIME_ALREADY_STARTED_MESSAGE
+            : NO_SHOWTIME_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.noBookableShowtime,
+      });
+    }
+
+    if (isAdmin) {
+      return;
+    }
+
+    const bookingNotOpen =
+      (row.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt, now)) ||
+      (row.status === 'upcoming' && !isBookingStartReached(row.bookingStartsAt, now));
+    if (bookingNotOpen) {
+      throw new ForbiddenException({
+        message: BOOKING_NOT_OPEN_MESSAGE,
+        errorCode: QUEUE_ENTRY_ERROR_CODES.bookingNotOpen,
+        bookingStartsAt: row.bookingStartsAt?.toISOString() ?? null,
+        serverNow: now.toISOString(),
+      });
     }
   }
 
@@ -602,7 +706,7 @@ export class QueueService {
     const remainingSeats = await this.calculateRemainingSeats(record.performanceId);
     const state = this.resolveVisibleState(record);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
-    const etaSeconds = position > 1 ? (position - 1) * QUEUE_POSITION_STEP_SECONDS : 0;
+    const { etaSeconds, etaPending } = await this.resolveWaitEstimate(record, state, rank);
 
     return {
       queueSessionId: record.queueSessionId,
@@ -610,12 +714,51 @@ export class QueueService {
       position,
       waitingCount,
       etaSeconds,
+      etaPending,
       remainingSeats,
       autoEnter: state === ADMITTED,
       admittedAt: record.admittedAt,
       activeUntilAt: record.activeUntilAt,
       reentryGraceUntilAt: record.reentryGraceUntilAt,
     };
+  }
+
+  /**
+   * Wait estimate from measured line movement instead of a fixed per-position
+   * step. The first waiting observation is stored as the origin sample; later
+   * snapshots divide the positions advanced since then by the elapsed time.
+   */
+  private async resolveWaitEstimate(
+    record: QueueSessionRecord,
+    state: QueueSessionState,
+    rank: number | null,
+  ): Promise<{ etaSeconds: number; etaPending: boolean }> {
+    if (state !== WAITING) {
+      return { etaSeconds: 0, etaPending: false };
+    }
+
+    if (rank === null) {
+      return { etaSeconds: 0, etaPending: true };
+    }
+
+    const originKey = this.etaOriginKey(record.performanceId, record.queueSessionId);
+    const now = Date.now();
+    const origin = parseQueueWaitOrigin(await this.redis.get(originKey));
+
+    if (!origin || rank > origin.rank) {
+      const sample = JSON.stringify({ rank, at: now } satisfies QueueWaitOrigin);
+      if (origin) {
+        await this.redis.set(originKey, sample, 'EX', QUEUE_ETA_ORIGIN_TTL_SECONDS);
+      } else {
+        await this.redis.set(originKey, sample, 'EX', QUEUE_ETA_ORIGIN_TTL_SECONDS, 'NX');
+      }
+      return { etaSeconds: 0, etaPending: true };
+    }
+
+    const etaSeconds = estimateQueueWaitSeconds({ origin, currentRank: rank, now });
+    return etaSeconds === null
+      ? { etaSeconds: 0, etaPending: true }
+      : { etaSeconds, etaPending: false };
   }
 
   private resolveVisibleState(record: QueueSessionRecord): QueueSessionState {
@@ -869,6 +1012,10 @@ export class QueueService {
 
   private remainingSeatsCacheKey(performanceId: string): string {
     return `${this.queuePrefix(performanceId)}:remaining-seats`;
+  }
+
+  private etaOriginKey(performanceId: string, queueSessionId: string): string {
+    return `${this.queuePrefix(performanceId)}:eta-origin:${queueSessionId}`;
   }
 
   private sessionKey(performanceId: string, queueSessionId: string): string {

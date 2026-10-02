@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Req,
   Res,
@@ -29,7 +31,14 @@ export class QueueController {
   // POST /api/v1/queue/performances/:performanceId/enter
   @Post('performances/:performanceId/enter')
   async enterQueue(
-    @Param('performanceId') performanceId: string,
+    // Validate before any DB query or queue key: malformed ids are a 400, not a Postgres 500.
+    @Param(
+      'performanceId',
+      new ParseUUIDPipe({
+        exceptionFactory: () => new BadRequestException('올바른 공연 ID가 아닙니다'),
+      }),
+    )
+    performanceId: string,
     @Req() req: AuthenticatedRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -52,6 +61,7 @@ export class QueueController {
       position: result.position,
       waitingCount: result.waitingCount,
       etaSeconds: result.etaSeconds,
+      etaPending: result.etaPending,
       remainingSeats: result.remainingSeats,
       autoEnter: result.autoEnter,
       admittedAt: result.admittedAt,
@@ -84,6 +94,7 @@ export class QueueController {
         position: 0,
         waitingCount: 0,
         etaSeconds: 0,
+        etaPending: false,
         remainingSeats: 0,
         autoEnter: false,
         admittedAt: null,
