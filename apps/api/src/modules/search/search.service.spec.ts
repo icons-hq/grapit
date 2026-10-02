@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SearchResponse } from '@grabit/shared';
+import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { SearchService } from './search.service.js';
 
@@ -136,6 +137,34 @@ describe('SearchService', () => {
 
       // When GREEN, should verify WHERE status != 'ended'
       expect(result).toHaveProperty('data');
+    });
+
+    it('hides performances whose showtimes have all started, in the page and the count, when ended=false', async () => {
+      await service.search({ q: 'fanmeet', ended: false, page: 1, limit: 20 });
+
+      const dialect = new PgDialect();
+      const whereSql = mockDb._chainable.where.mock.calls.map(
+        ([condition]) => dialect.sqlToQuery(condition).sql,
+      );
+      expect(whereSql).toHaveLength(2);
+      for (const sql of whereSql) {
+        expect(sql).toContain('"performances"."status" <> $');
+        expect(sql).toMatch(/exists \(select 1 from "showtimes" where \("showtimes"\."performance_id" = "performances"\."id" and "showtimes"\."date_time" > \$\d+\)\)/);
+      }
+    });
+
+    it('reads a selling result whose showtimes have all started as ended', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([{
+          id: PHASE23_I18N_SMOKE_PERFORMANCE_ID, title: '2026 걸룰스 팬미팅', genre: 'artist_celebrity',
+          posterUrl: null, status: 'selling', bookingStartsAt: new Date('2026-07-01T00:00:00.000Z'),
+          startDate: new Date('2026-07-18T05:00:00.000Z'), endDate: new Date('2026-07-18T07:00:00.000Z'),
+          venueName: null, lastShowtimeAt: new Date(Date.now() - 60_000),
+        }]))
+        .mockReturnValueOnce(createChainableResult([{ count: 1 }]));
+
+      const result = await service.search({ q: '걸룰스', ended: true, page: 1, limit: 20 });
+      expect(result.data[0]?.status).toBe('ended');
     });
 
     it('filters public search results to published performances', async () => {

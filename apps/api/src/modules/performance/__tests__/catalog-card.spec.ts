@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import {
+  areAllShowtimesSalesClosed,
   mapPublicCatalogCard,
+  publicCatalogNotEndedCondition,
   publicCatalogStatusCondition,
   resolveEffectivePerformanceStatus,
   resolvePublicCatalogStatus,
@@ -42,9 +44,88 @@ describe('resolvePublicCatalogStatus', () => {
   });
 });
 
+// Audit: a performance whose showtimes have all started (endDate 2026-07-18,
+// operator status still selling) was listed with an on-sale badge and an active
+// booking CTA until the buyer reached the booking route.
+describe('showtime-aware ended status', () => {
+  it.each([
+    ['selling', PAST, 'ended'],
+    ['closing_soon', PAST, 'ended'],
+    ['upcoming', PAST, 'ended'],
+    // Nothing left to book even if the booking start is still ahead.
+    ['selling', null, 'ended'],
+  ] as const)('%s with a past booking start reads as ended once the last showtime started', (status, startsAt, expected) => {
+    expect(resolvePublicCatalogStatus(status, startsAt, NOW, PAST)).toBe(expected);
+  });
+
+  it('reads as ended even with a future booking start when every showtime already started', () => {
+    expect(resolvePublicCatalogStatus('selling', FUTURE, NOW, PAST)).toBe('ended');
+  });
+
+  it('closes at the last showtime start instant, like the C1 showtime sales cutoff', () => {
+    const bookingStartsAt = new Date('2026-07-01T00:00:00.000Z');
+    const lastShowtimeAt = new Date('2026-07-18T05:00:00.000Z');
+    const justBefore = new Date(lastShowtimeAt.getTime() - 1);
+    expect(resolvePublicCatalogStatus('selling', bookingStartsAt, justBefore, lastShowtimeAt)).toBe('selling');
+    expect(resolvePublicCatalogStatus('selling', bookingStartsAt, lastShowtimeAt, lastShowtimeAt)).toBe('ended');
+    expect(areAllShowtimesSalesClosed(lastShowtimeAt, justBefore)).toBe(false);
+    expect(areAllShowtimesSalesClosed(lastShowtimeAt, lastShowtimeAt)).toBe(true);
+  });
+
+  it('keeps the existing rule while a showtime is still on sale or there is no showtime yet', () => {
+    expect(resolvePublicCatalogStatus('selling', PAST, NOW, FUTURE)).toBe('selling');
+    expect(resolvePublicCatalogStatus('selling', FUTURE, NOW, FUTURE)).toBe('upcoming');
+    expect(resolvePublicCatalogStatus('selling', PAST, NOW, null)).toBe('selling');
+    expect(resolvePublicCatalogStatus('upcoming', null, NOW, undefined)).toBe('upcoming');
+    expect(areAllShowtimesSalesClosed(null, NOW)).toBe(false);
+    expect(areAllShowtimesSalesClosed('not-a-date', NOW)).toBe(false);
+  });
+
+  it('accepts the last showtime as the string a raw SQL subquery may return', () => {
+    expect(resolvePublicCatalogStatus('selling', PAST, NOW, '2026-07-18 05:00:00+00')).toBe('ended');
+  });
+
+  it('maps a selling card whose showtimes all started as ended', () => {
+    const card = mapPublicCatalogCard({
+      id: 'p1', title: 't', genre: 'artist_celebrity', posterUrl: null, status: 'selling',
+      startDate: new Date('2026-07-18T00:00:00.000Z'), endDate: new Date('2026-07-18T00:00:00.000Z'),
+      venueName: null, bookingStartsAt: new Date('2026-07-01T00:00:00.000Z'),
+      lastShowtimeAt: new Date(Date.now() - 60_000),
+    } as never);
+    expect(card.status).toBe('ended');
+    expect(card).not.toHaveProperty('lastShowtimeAt');
+
+    const onSale = mapPublicCatalogCard({
+      id: 'p2', title: 't', genre: 'artist_celebrity', posterUrl: null, status: 'selling',
+      startDate: null, endDate: null, venueName: null, bookingStartsAt: null,
+      lastShowtimeAt: new Date(Date.now() + 3_600_000),
+    } as never);
+    expect(onSale.status).toBe('selling');
+  });
+
+  it('reads the public detail as ended from its showtimes', () => {
+    const detail = (showtimes: Date[]) => ({
+      id: 'p1', status: 'selling' as const,
+      bookingPolicy: { bookingStartsAt: PAST.toISOString() },
+      showtimes: showtimes.map((dateTime, index) => ({ id: `s${index}`, dateTime: dateTime.toISOString() })),
+    });
+
+    expect(withPublicCatalogStatus(detail([PAST, new Date('2026-09-30T10:00:00.000Z')]), NOW).status)
+      .toBe('ended');
+    // One showtime still ahead keeps the performance on sale.
+    expect(withPublicCatalogStatus(detail([PAST, FUTURE]), NOW).status).toBe('selling');
+    expect(withPublicCatalogStatus(detail([]), NOW).status).toBe('selling');
+    // Idempotent on an already ended detail.
+    const ended = withPublicCatalogStatus(detail([PAST]), NOW);
+    expect(withPublicCatalogStatus(ended, NOW)).toBe(ended);
+  });
+});
+
 describe('publicCatalogStatusCondition', () => {
   const dialect = new PgDialect();
-  const render = (status: 'selling' | 'upcoming') => {
+  const ON_SALE_EXISTS = /exists \(select 1 from "showtimes" where \("showtimes"\."performance_id" = "performances"\."id" and "showtimes"\."date_time" > \$\d+\)\)/;
+  const ANY_SHOWTIME_EXISTS = /exists \(select 1 from "showtimes" where "showtimes"\."performance_id" = "performances"\."id"\)/;
+  const render = (status: 'selling' | 'upcoming' | 'ended') => {
     const condition = publicCatalogStatusCondition(status, NOW);
     if (!condition) throw new Error('missing condition');
     return dialect.sqlToQuery(condition);
@@ -59,6 +140,34 @@ describe('publicCatalogStatusCondition', () => {
   it('lists selling or closing soon rows with a future booking start as upcoming', () => {
     const { sql } = render('upcoming');
     expect(sql).toMatch(/"performances"\."status" in \(\$\d+, \$\d+\) and "booking_policies"\."booking_starts_at" > \$\d+/);
+  });
+
+  it.each(['selling', 'upcoming'] as const)(
+    'keeps %s rows only while a showtime is on sale or none is scheduled yet',
+    (status) => {
+      const { sql, params } = render(status);
+      expect(sql).toMatch(ON_SALE_EXISTS);
+      expect(sql).toMatch(new RegExp(`not ${ANY_SHOWTIME_EXISTS.source}`));
+      expect(params).toContainEqual(NOW.toISOString());
+    },
+  );
+
+  it('lists rows whose showtimes have all started as ended next to operator-ended rows', () => {
+    const { sql, params } = render('ended');
+    expect(sql).toMatch(/^\("performances"\."status" = \$\d+ or \(exists/);
+    expect(sql).toMatch(ANY_SHOWTIME_EXISTS);
+    expect(sql).toMatch(new RegExp(`not ${ON_SALE_EXISTS.source}`));
+    expect(params).toEqual(expect.arrayContaining(['ended', NOW.toISOString()]));
+  });
+
+  it('hides operator-ended rows and rows whose showtimes have all started from not-ended lists', () => {
+    const { sql, params } = dialect.sqlToQuery(publicCatalogNotEndedCondition(NOW));
+    expect(sql).toMatch(/^\("performances"\."status" <> \$\d+ and \(exists/);
+    expect(sql).toMatch(ON_SALE_EXISTS);
+    expect(sql).toMatch(new RegExp(`not ${ANY_SHOWTIME_EXISTS.source}`));
+    // No booking policy column: the not-joined count query of search can use it.
+    expect(sql).not.toContain('booking_policies');
+    expect(params).toEqual(['ended', NOW.toISOString()]);
   });
 });
 

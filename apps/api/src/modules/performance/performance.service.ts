@@ -26,7 +26,7 @@ import type {
   PerformanceQuery,
   SeatMap,
 } from '@grabit/shared';
-import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
+import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogNotEndedCondition, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
 import { CacheService, type CacheLoadResult } from './cache.service.js';
 import { CATALOG_CACHE_GENERATION_SCOPES } from './catalog-cache-keys.js';
 import { PerformanceViewCounter } from './performance-view-counter.service.js';
@@ -279,7 +279,9 @@ export class PerformanceService {
     const queryTime = new Date();
     const statusCondition = publicCatalogStatusCondition(status, queryTime);
     if (statusCondition) conditions.push(statusCondition);
-    else if (!ended) conditions.push(ne(performances.status, 'ended'));
+    // Hide what the cards would show as ended, including performances whose
+    // showtimes have all started while the operator status still says selling.
+    else if (!ended) conditions.push(publicCatalogNotEndedCondition(queryTime));
 
     const whereClause = and(...conditions);
 
@@ -332,7 +334,10 @@ export class PerformanceService {
     const nextBookingStartsAt = countResult[0]?.nextBookingStartsAt;
     const cacheTtl = nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
       ? 1
-      : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...data.map((row) => row.bookingStartsAt)]);
+      : cacheTtlUntilNextBookingStart([
+        nextBookingStartsAt,
+        ...data.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+      ]);
     return {
       value: result,
       ttlSeconds: data.length === 0
@@ -615,7 +620,11 @@ export class PerformanceService {
       value: result,
       ttlSeconds: nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
         ? 1
-        : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...rows.map((row) => row.bookingStartsAt)]),
+        // A listed row leaves the hot list once its last showtime starts.
+        : cacheTtlUntilNextBookingStart([
+          nextBookingStartsAt,
+          ...rows.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+        ]),
     };
   }
 
@@ -645,7 +654,7 @@ export class PerformanceService {
         .where(
           and(
             eq(performances.publishState, 'published'),
-          inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
+          publicCatalogNotEndedCondition(),
         ),
       )
       .orderBy(desc(performances.createdAt))
@@ -660,7 +669,9 @@ export class PerformanceService {
 
     return {
       value: result,
-      ttlSeconds: cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
+      ttlSeconds: cacheTtlUntilNextBookingStart(
+        rows.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+      ),
     };
   }
 }
