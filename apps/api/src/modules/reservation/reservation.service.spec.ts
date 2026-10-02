@@ -2185,6 +2185,7 @@ describe('ReservationService', () => {
   describe('prepareReservation - sale gates and order identity', () => {
     const cardPayment = { method: 'CARD' as const, provider: 'CARD' as const, currency: 'KRW' };
     const paypalPayment = { method: 'FOREIGN_EASY_PAY' as const, provider: 'PAYPAL' as const, currency: 'USD' };
+    const kakaoPayPayment = { method: 'SIMPLE_PAY' as const, provider: 'KAKAOPAY' as const, currency: 'KRW' };
     const fullAdmin = {
       role: 'admin',
       adminCapabilityBundle: 'admin',
@@ -2202,7 +2203,7 @@ describe('ReservationService', () => {
 
     function prepareDto(
       orderId: string,
-      paymentMethod: typeof cardPayment | typeof paypalPayment = cardPayment,
+      paymentMethod: typeof cardPayment | typeof paypalPayment | typeof kakaoPayPayment = cardPayment,
     ) {
       return {
         showtimeId: randomUUID(),
@@ -2313,6 +2314,24 @@ describe('ReservationService', () => {
 
       await expect(service.prepareReservation(dto, randomUUID()))
         .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-created' }));
+    });
+
+    it('accepts domestic easy pay (KAKAOPAY) when the policy lists SIMPLE_PAY (audit #70)', async () => {
+      const dto = prepareDto('GRP-SIMPLE-PAY-ALLOWED', kakaoPayPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD', 'SIMPLE_PAY'] });
+
+      await expect(service.prepareReservation(dto, randomUUID()))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-created' }));
+      expect(mockBookingService.setOwnedSeatLockTtl).toHaveBeenCalled();
+    });
+
+    it('rejects domestic easy pay when the policy omits SIMPLE_PAY (audit #70)', async () => {
+      const dto = prepareDto('GRP-SIMPLE-PAY-NOT-ALLOWED', kakaoPayPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD', 'TRANSFER', 'FOREIGN_EASY_PAY'] });
+
+      await expect(service.prepareReservation(dto, randomUUID())).rejects.toThrow(ConflictException);
+      expect(mockBookingService.setOwnedSeatLockTtl).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
     it('rejects switching an existing order to a disallowed method (audit #70)', async () => {

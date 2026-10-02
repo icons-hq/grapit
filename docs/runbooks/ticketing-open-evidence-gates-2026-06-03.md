@@ -244,7 +244,9 @@ Performance while ordinary Buyers remain blocked until public sale opens.
       Toss Pay/Naver Pay/Kakao Pay, `TRANSFER` covers bank transfer). Before the
       enforcing release, run the deploy-blocking check for every published
       performance in `show-relaunch-reliability.md` (missing policy rows count
-      as `CARD` only).
+      as `CARD` only). The admin performance form can save `SIMPLE_PAY` only
+      from that release on; the runbook gives the order when the widget shows
+      domestic easy pay.
 - [ ] Confirm current Toss live configuration for every method/provider path in
       the matrix.
 - [ ] Confirm deployed API/web revisions and environment flag state.

@@ -228,6 +228,30 @@ describe('Reservation gates — PostgreSQL', () => {
         client.release();
       }
     });
+
+    it('reads linked pending seats through idx_reservation_seats_reservation_id (migration 0039)', async () => {
+      const { performanceId, showtimeId } = await performanceWithShowtime(1);
+      const first = await user('+821077771234', true);
+      const second = await user('010-7777-1234', true);
+      await pendingPurchase(first.id, showtimeId, ['1F:G-1'], new Date(Date.now() + 5 * 60_000));
+      let captured: SQL | undefined;
+      await expect(countBuyerActiveTicketsForPerformance({
+        execute: async (query: SQL) => { captured = query; return db.execute(query); },
+      } as never, second.id, performanceId)).resolves.toBe(1);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SET LOCAL enable_seqscan = off');
+        const { sql, params } = rendered(captured!);
+        const plan = await client.query(`EXPLAIN ${sql}`, params);
+        expect(plan.rows.map((row) => String(row['QUERY PLAN'])).join('\n'))
+          .toContain('idx_reservation_seats_reservation_id');
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
+      }
+    });
   });
 
   describe('historical admission token cleanup (audit #68)', () => {

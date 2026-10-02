@@ -17,3 +17,8 @@ CREATE INDEX IF NOT EXISTS idx_users_verified_phone_suffix
 UPDATE reservations
 SET admission_token = 'sha256:' || encode(sha256(convert_to(admission_token, 'UTF8')), 'hex')
 WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';
+--> statement-breakpoint
+-- Audit #62: the lock/prepare pre-check sums a linked account's unexpired pending seats
+-- through reservation_seats.reservation_id. Same index as audit #59 (u18a slot 0038);
+-- IF NOT EXISTS keeps this a no-op when that migration already created it.
+CREATE INDEX IF NOT EXISTS "idx_reservation_seats_reservation_id" ON "reservation_seats" USING btree ("reservation_id");

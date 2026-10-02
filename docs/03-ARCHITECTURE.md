@@ -230,8 +230,9 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
   SQL narrows candidates through `idx_users_verified_phone_suffix` (last 8 digits) and the
   confirm-time advisory lock uses the same phone scope (`apps/api/src/database/ticket-limit.ts`).
   Seat lock and prepare also count seats the other accounts of that phone hold in unexpired
-  `PENDING_PAYMENT` reservations, so a second account stops before payment; the buyer's own
-  pending orders and the confirm-time snapshot stay on confirmed tickets.
+  `PENDING_PAYMENT` reservations (read through `idx_reservation_seats_reservation_id`), so a
+  second account stops before payment; the buyer's own pending orders and the confirm-time
+  snapshot stay on confirmed tickets.
 - Showtime sales close at `showtimes.date_time`: seat lock and prepare (new and retried
   orders) reject a started showtime with 403, including Admin Booking Bypass.
 - Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`.
@@ -279,7 +280,10 @@ return the `cookie-bound` marker instead. Migration 0039 replaced historical raw
 Checkout treats that 409 as a payment-method choice, not a seat failure: it keeps the seats
 and order identity and asks for another method. With the performance policy cached, it also
 disables payment for a method outside the policy before prepare. The Toss widget cannot hide
-individual methods, so the widget variant configuration must match the policy.
+individual methods, so the widget variant configuration must match the policy. The admin
+performance form offers `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS` from `@grabit/shared`
+(`CARD`, `TRANSFER`, `SIMPLE_PAY`, `FOREIGN_EASY_PAY`): exactly the categories the checkout
+widget mapping can submit, so every method prepare may reject is one an admin can allow.
 
 Reservation numbers are `GRP-<KST date>-<8 base32 CSPRNG chars>`. A unique collision
 regenerates the number (bounded retries); a concurrent prepare that lost the `toss_order_id`

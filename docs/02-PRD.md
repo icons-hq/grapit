@@ -60,7 +60,7 @@ Booking is gated by runtime feature flags and queue admission.
 - Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, allowed payment methods, and manual open rules.
 - The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Seat lock and reservation prepare also count seats another account of the same phone holds in an unexpired pending payment. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
 - Sales for a showtime close at its scheduled start time. Seat lock and reservation prepare reject a started showtime for every actor.
-- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods. Checkout keeps the selected seats and asks the buyer to choose another method.
+- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods. Checkout keeps the selected seats and asks the buyer to choose another method. The admin performance form offers exactly the categories checkout can submit: card (domestic and overseas), bank transfer, domestic easy pay (Toss Pay, Naver Pay, Kakao Pay) and foreign easy pay.
 
 ### 3.4 Seat Selection
 

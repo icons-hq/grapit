@@ -1,4 +1,18 @@
 import type { PaymentMethod } from './types/booking.types';
+import type { PerformanceAllowedPaymentMethod } from './types/performance.types';
+
+/**
+ * Payment method categories buyer checkout can submit: every Toss widget selection maps to
+ * one of these (VIRTUAL_ACCOUNT and MOBILE_PHONE are never submitted). Reservation prepare
+ * enforces a performance's allowedPaymentMethods, so the admin performance form offers
+ * exactly this list — a category checkout can send must also be one an admin can allow.
+ */
+export const CHECKOUT_CONFIGURABLE_PAYMENT_METHODS = [
+  'CARD',
+  'TRANSFER',
+  'SIMPLE_PAY',
+  'FOREIGN_EASY_PAY',
+] as const satisfies readonly PerformanceAllowedPaymentMethod[];
 
 export function isForeignCheckout(method: PaymentMethod): boolean {
   return method.method === 'FOREIGN_EASY_PAY'

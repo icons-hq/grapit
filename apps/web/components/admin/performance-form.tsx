@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  CHECKOUT_CONFIGURABLE_PAYMENT_METHODS,
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   createPerformanceSchema,
   type CreatePerformanceInput,
@@ -89,11 +90,8 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
   SIMPLE_PAY: '국내 간편결제',
 };
 
-const ACTIVE_BOOKING_PAYMENT_METHODS = [
-  'CARD',
-  'TRANSFER',
-  'FOREIGN_EASY_PAY',
-] as const satisfies readonly PerformanceAllowedPaymentMethod[];
+// Reservation prepare enforces the saved list, so offer every category checkout can submit.
+const ACTIVE_BOOKING_PAYMENT_METHODS = CHECKOUT_CONFIGURABLE_PAYMENT_METHODS;
 
 const ACTIVE_BOOKING_PAYMENT_METHOD_SET = new Set<PerformanceAllowedPaymentMethod>(
   ACTIVE_BOOKING_PAYMENT_METHODS,
