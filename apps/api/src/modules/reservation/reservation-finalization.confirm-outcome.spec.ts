@@ -167,6 +167,8 @@ function createDependencies(options: {
   reservation: ReservationRow;
   existingPayment?: Record<string, unknown>;
   showtimeStartsAt?: Date;
+  /** Whether an earlier attempt already sent this order to Toss confirm. */
+  providerConfirmSent?: boolean;
 } = { reservation: domesticReservation() }) {
   const rootInserts: Array<{ table: unknown; values: unknown }> = [];
   const db = {
@@ -177,7 +179,13 @@ function createDependencies(options: {
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((values: unknown) => {
         rootInserts.push({ table, values });
-        return { onConflictDoUpdate: vi.fn().mockResolvedValue(undefined) };
+        return {
+          onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+          // The compensation claim row.
+          onConflictDoNothing: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 'payment-claim-1' }]),
+          }),
+        };
       }),
     })),
     execute: vi.fn().mockResolvedValue(executeResult(options.showtimeStartsAt)),
@@ -215,6 +223,26 @@ function createDependencies(options: {
     parseProviderDecimalToMinor: vi.fn((value: string) => Math.round(Number(value) * 100)),
   };
 
+  const pgBoss = {
+    isAvailable: true,
+    processesJobs: true,
+    createQueue: vi.fn().mockResolvedValue(undefined),
+    send: vi.fn().mockResolvedValue('job-1'),
+    work: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+  };
+  const markerValues = new Map<string, string>();
+  if (options.providerConfirmSent ?? true) {
+    markerValues.set('{payment-provider-confirm}:order-1', 'payment-key-1');
+  }
+  const providerConfirmMarkers = {
+    set: vi.fn(async (key: string, value: string) => {
+      markerValues.set(key, value);
+      return 'OK';
+    }),
+    get: vi.fn(async (key: string) => markerValues.get(key) ?? null),
+  };
+
   const service = new ReservationFinalizationService(
     db as never,
     tossClient as never,
@@ -222,6 +250,8 @@ function createDependencies(options: {
     bookingGateway as never,
     qrTicketService as never,
     providerChargeQuoteService as never,
+    pgBoss as never,
+    providerConfirmMarkers as never,
   );
 
   return {
@@ -232,7 +262,72 @@ function createDependencies(options: {
     bookingService,
     bookingGateway,
     qrTicketService,
+    pgBoss,
+    providerConfirmMarkers,
   };
+}
+
+/** Captures the payment/reservation updates of a completed compensation record. */
+function withCompensationRecord(db: { transaction: ReturnType<typeof vi.fn> }) {
+  const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  const inserts: unknown[] = [];
+  const tx = {
+    update: vi.fn((table: unknown) => ({
+      set: vi.fn((values: Record<string, unknown>) => {
+        updates.push({ table, values });
+        return { where: vi.fn().mockResolvedValue(undefined) };
+      }),
+    })),
+    insert: vi.fn((table: unknown) => {
+      inserts.push(table);
+      throw new Error('a compensation record never inserts in its transaction');
+    }),
+  };
+  db.transaction.mockImplementation(async (cb: (value: typeof tx) => Promise<unknown>) => cb(tx));
+  return { updates, inserts };
+}
+
+function expectRecordedCompensation(
+  deps: ReturnType<typeof createDependencies>,
+  record: ReturnType<typeof withCompensationRecord>,
+  reason: string,
+  diagnosticSource = 'payment_confirm',
+) {
+  expect(deps.rootInserts).toContainEqual({
+    table: payments,
+    values: expect.objectContaining({
+      reservationId: 'reservation-1',
+      paymentKey: 'payment-key-1',
+      tossOrderId: 'order-1',
+      status: 'DONE',
+      asyncStatus: 'cancel_pending',
+      cancelReason: reason,
+    }),
+  });
+  expect(record.updates).toEqual([
+    {
+      table: payments,
+      values: expect.objectContaining({ status: 'CANCELED', asyncStatus: 'compensation_cancelled' }),
+    },
+    { table: reservations, values: expect.objectContaining({ status: 'FAILED' }) },
+  ]);
+  expect(record.inserts).toEqual([]);
+  expect(deps.rootInserts).toContainEqual({
+    table: reservationPaymentFailureDiagnostics,
+    values: expect.objectContaining({
+      paymentId: 'payment-claim-1',
+      diagnosticKind: 'payment_compensated_cancel',
+      diagnosticCode: 'CONFIRM_APPROVAL_COMPENSATED',
+      diagnosticMessage: reason,
+      diagnosticSource,
+    }),
+  });
+}
+
+function reconcileJobs(deps: ReturnType<typeof createDependencies>) {
+  return deps.pgBoss.send.mock.calls
+    .filter(([name]) => name === 'payment-confirm-reconcile')
+    .map(([, payload, options]) => ({ payload, options }));
 }
 
 function withIssuance(db: { transaction: ReturnType<typeof vi.fn> }) {
@@ -981,9 +1076,22 @@ describe('ReservationFinalizationService pre-approval gates after an unrecorded 
     await expect(first).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
     expect(deps.db.transaction).not.toHaveBeenCalled();
+    // The 503 also schedules the client-independent reconcile job.
+    expect(reconcileJobs(deps)).toEqual([{
+      payload: expect.objectContaining({
+        orderId: 'order-1',
+        paymentKey: 'payment-key-1',
+        reason: 'confirm_lease_lost',
+        attempt: 0,
+        expectation: { route: 'PAYPAL', currency: 'USD', amountMinor: 10800 },
+        providerCharge: expect.objectContaining({ currency: 'USD', amountMinor: 10800 }),
+      }),
+      options: expect.objectContaining({ singletonKey: 'order-1:payment-key-1' }),
+    }]);
 
     // Retry after the hold expired: no payment row exists, the gate must not
     // strand the USD charge.
+    const record = withCompensationRecord(deps.db);
     deps.db.select
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([paypalReservation({ admissionActiveUntilAt: PAST() })]))
@@ -1002,7 +1110,7 @@ describe('ReservationFinalizationService pre-approval gates after an unrecorded 
       '결제 유효 시간 초과로 인한 자동 취소',
       expect.objectContaining({ idempotencyKey: 'reservation-finalization-cancel:order-1' }),
     );
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    expectRecordedCompensation(deps, record, '결제 유효 시간 초과로 인한 자동 취소');
   });
 
   it.each(GATE_CASES)('cancels an earlier approval found at the $gate gate and keeps its rejection', async ({
@@ -1013,6 +1121,7 @@ describe('ReservationFinalizationService pre-approval gates after an unrecorded 
   }) => {
     const deps = createDependencies({ reservation: reservation() });
     arrange(deps);
+    const record = withCompensationRecord(deps.db);
     deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
 
     const result = deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1');
@@ -1026,7 +1135,10 @@ describe('ReservationFinalizationService pre-approval gates after an unrecorded 
       cancelReason,
       expect.anything(),
     );
-    expect(deps.db.transaction).not.toHaveBeenCalled();
+    // The claim row is written before the cancel and completed after it.
+    const claimOrder = deps.db.insert.mock.invocationCallOrder[0]!;
+    expect(claimOrder).toBeLessThan(deps.tossClient.cancelPayment.mock.invocationCallOrder[0]!);
+    expectRecordedCompensation(deps, record, cancelReason);
   });
 
   it.each(GATE_CASES)('keeps the $gate rejection without cancelling while the payment is unapproved', async ({
@@ -1276,5 +1388,227 @@ describe('ReservationFinalizationService order committed with another payment', 
     );
     expect(deps.db.transaction).not.toHaveBeenCalled();
     expect(deps.db.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReservationFinalizationService client-independent reconcile scheduling (#18)', () => {
+  it('schedules the reconcile job when neither confirm nor lookup proves the outcome', async () => {
+    const deps = createDependencies({ reservation: paypalReservation() });
+    deps.tossClient.confirmPayment.mockRejectedValue(new TossPaymentError('PROVIDER_TIMEOUT', 'timeout'));
+    deps.tossClient.queryPayment.mockRejectedValue(new Error('fetch failed'));
+    const before = Date.now();
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(reconcileJobs(deps)).toEqual([{
+      payload: {
+        orderId: 'order-1',
+        paymentKey: 'payment-key-1',
+        expectation: { route: 'PAYPAL', currency: 'USD', amountMinor: 10800 },
+        providerCharge: {
+          currency: 'USD',
+          amountMinor: 10800,
+          amountDecimal: '108.00',
+          rate: '0.00072',
+          quotedAt: '2026-09-30T10:00:00.000Z',
+        },
+        reason: 'provider_confirm_unresolved',
+        attempt: 0,
+      },
+      options: expect.objectContaining({ singletonKey: 'order-1:payment-key-1' }),
+    }]);
+    const [{ options }] = reconcileJobs(deps) as Array<{ options: { startAfter: Date } }>;
+    expect(options.startAfter.getTime()).toBeGreaterThanOrEqual(before + 60_000);
+    expect(deps.pgBoss.createQueue).toHaveBeenCalledWith('payment-confirm-reconcile', { policy: 'short' });
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('schedules the reconcile job when the seat hold cannot be verified after approval', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.bookingService.assertOwnedSeatLocks.mockRejectedValue(new Error('READONLY'));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'seat_lock_check_failed' }),
+    })]);
+  });
+
+  it('schedules the reconcile job for an unexpected failure after approval', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    const unexpected = new TypeError('unexpected');
+    vi.spyOn(deps.service as never as { commitFinalizationWithRetry: () => Promise<string> },
+      'commitFinalizationWithRetry').mockRejectedValue(unexpected);
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1')).rejects.toBe(unexpected);
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'unexpected_post_approval_error', paymentKey: 'payment-key-1' }),
+    })]);
+  });
+
+  it('does not schedule anything for a confirmed order', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    withIssuance(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .resolves.toEqual({ reservationId: 'reservation-1' });
+    expect(deps.pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it('records the provider confirm marker with the paymentKey right before Toss confirm', async () => {
+    const deps = createDependencies({ reservation: domesticReservation(), providerConfirmSent: false });
+    withIssuance(deps.db);
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+
+    await deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1');
+
+    expect(deps.providerConfirmMarkers.set).toHaveBeenCalledWith(
+      '{payment-provider-confirm}:order-1',
+      'payment-key-1',
+      'EX',
+      24 * 60 * 60,
+    );
+    expect(deps.providerConfirmMarkers.set.mock.invocationCallOrder[0]!)
+      .toBeLessThan(deps.tossClient.confirmPayment.mock.invocationCallOrder[0]!);
+  });
+
+  it('does not call Toss confirm when the provider confirm marker cannot be recorded', async () => {
+    const deps = createDependencies({ reservation: domesticReservation(), providerConfirmSent: false });
+    deps.providerConfirmMarkers.set.mockRejectedValue(new Error('READONLY'));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(deps.pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it.each(GATE_CASES)('keeps the $gate rejection without a provider lookup when Toss confirm was never sent', async ({
+    reservation,
+    arrange,
+    message,
+  }) => {
+    const deps = createDependencies({ reservation: reservation(), providerConfirmSent: false });
+    arrange(deps);
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1')).rejects.toThrow(message);
+    expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('looks up the provider at a gate when the marker cannot be read', async () => {
+    const deps = createDependencies({
+      reservation: paypalReservation({ admissionActiveUntilAt: PAST() }),
+      providerConfirmSent: false,
+    });
+    deps.providerConfirmMarkers.get.mockRejectedValue(new Error('timeout'));
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval({ status: 'IN_PROGRESS' }));
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+    expect(deps.tossClient.queryPayment).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a started showtime with 403 without a provider lookup when Toss confirm was never sent', async () => {
+    const deps = createDependencies({
+      reservation: domesticReservation(),
+      showtimeStartsAt: PAST(),
+      providerConfirmSent: false,
+    });
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .rejects.toThrow(SHOWTIME_SALES_CLOSED_MESSAGE);
+    expect(deps.tossClient.queryPayment).not.toHaveBeenCalled();
+    expect(deps.tossClient.confirmPayment).not.toHaveBeenCalled();
+  });
+
+  it('treats a malformed lookup body at a gate as an unknown outcome, not as proof of non-approval', async () => {
+    const deps = createDependencies({ reservation: paypalReservation({ admissionActiveUntilAt: PAST() }) });
+    // No orderId: proves nothing about this order.
+    deps.tossClient.queryPayment.mockResolvedValue({ paymentKey: 'payment-key-1', status: 'DONE', totalAmount: 108 });
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'pre_approval_admission_window_lookup_failed' }),
+    })]);
+  });
+
+  it('keeps the claim and schedules the reconcile job when the gate compensation is accepted asynchronously', async () => {
+    const deps = createDependencies({ reservation: paypalReservation({ admissionActiveUntilAt: PAST() }) });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
+    deps.tossClient.cancelPayment.mockResolvedValue(paypalApproval({ cancels: [{ cancelStatus: 'IN_PROGRESS' }] }));
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toThrow(HOLD_EXPIRED_MESSAGE);
+    expect(deps.rootInserts).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({ status: 'DONE', asyncStatus: 'cancel_pending' }),
+    });
+    expect(record.updates).toEqual([]);
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'compensation_cancel_pending' }),
+    })]);
+  });
+
+  it('keeps the claim and schedules the reconcile job when the gate compensation cancel fails', async () => {
+    const deps = createDependencies({ reservation: paypalReservation({ admissionActiveUntilAt: PAST() }) });
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
+    deps.tossClient.cancelPayment.mockRejectedValue(new TossPaymentError('PROVIDER_ERROR', 'down', 500));
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(deps.rootInserts).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({ status: 'DONE', asyncStatus: 'cancel_pending' }),
+    });
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'compensation_cancel_failed' }),
+    })]);
+  });
+
+  it('does not cancel at a gate once the confirm lease is lost; it answers 503 and schedules the job', async () => {
+    const deps = createDependencies({ reservation: paypalReservation({ admissionActiveUntilAt: PAST() }) });
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
+    // Owned at the start of the request, lost before the compensation.
+    deps.bookingService.refreshPaymentConfirmLock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(deps.rootInserts).toEqual([]);
+    expect(deps.tossClient.cancelPayment).not.toHaveBeenCalled();
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'confirm_lease_lost_before_compensation' }),
+    })]);
+  });
+
+  it('returns the confirmed reservation even when the duplicate approval cannot be cancelled', async () => {
+    const deps = createDependencies({ reservation: domesticReservation() });
+    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval());
+    deps.tossClient.cancelPayment.mockRejectedValue(new TossPaymentError('PROVIDER_ERROR', 'down', 500));
+    deps.db.transaction.mockRejectedValueOnce(new ConflictException('판매 불가능한 좌석입니다'));
+    deps.db.select
+      .mockReturnValueOnce(chainResult([{
+        id: 'payment-other',
+        reservationId: 'reservation-1',
+        paymentKey: 'payment-key-other',
+        tossOrderId: 'order-1',
+        status: 'DONE',
+        asyncStatus: 'sync',
+      }]))
+      .mockReturnValueOnce(chainResult([{ status: 'CONFIRMED' }]));
+
+    await expect(deps.service.confirmAndCreateReservation(DOMESTIC_DTO, 'user-1'))
+      .resolves.toEqual({ reservationId: 'reservation-1' });
+    expect(reconcileJobs(deps)).toEqual([expect.objectContaining({
+      payload: expect.objectContaining({ reason: 'duplicate_cancel_failed', paymentKey: 'payment-key-1' }),
+    })]);
   });
 });

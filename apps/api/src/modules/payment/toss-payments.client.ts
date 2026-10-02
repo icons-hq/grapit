@@ -33,6 +33,16 @@ const tossPaymentResponseSchema = z.object({
   approvedAt: z.string().nullable().optional(),
 }).passthrough();
 
+/**
+ * Returns the payment when the body has the minimal Toss payment shape
+ * (paymentKey, orderId, status, totalAmount), otherwise null. A malformed
+ * body proves nothing about the payment.
+ */
+export function parseTossPaymentResponse(data: unknown): TossPaymentResponse | null {
+  const parsed = tossPaymentResponseSchema.safeParse(data);
+  return parsed.success ? parsed.data as TossPaymentResponse : null;
+}
+
 export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;

@@ -270,13 +270,15 @@ window. A fail URL alone never cancels or replaces an order. See
 - payment confirm lock by order ID (contention or loss is a retryable 503, never a compensation cancel),
 - amount, payment identity and frozen checkout method checks,
 - lock extension before provider confirmation,
-- pre-approval rejections (expired hold, ticket limit, lost seat hold) on an order without a payment row first look up the same paymentKey; an approval left by an earlier attempt is compensated before the rejection, and a failed lookup is a 503,
+- a provider confirm marker (Valkey `{payment-provider-confirm}:<orderId>`, 24 hours) written right before every Toss confirm call; an order without it was never sent to Toss confirm, so the rejections below skip the provider lookup,
+- pre-approval rejections (expired hold, ticket limit, lost seat hold) on an order with the marker and without a payment row first look up the same paymentKey; an approval left by an earlier attempt is claimed with a `DONE`/`cancel_pending` payment row (so neither a commit nor a late DONE webhook can issue it), compensated and recorded before the rejection, and a failed lookup is a 503,
 - showtime sales cutoff (`now >= showtimes.date_time`) right before provider confirmation; an already approved payment is not rejected by it, and a failed provider lookup is a 503 rather than a 403,
 - provider approval validation (paymentKey/orderId, `DONE`, currency, amount in KRW or USD cents, allowed method) with immediate compensation cancel on mismatch,
 - bounded Toss timeouts; an unknown outcome is resolved by a provider lookup of the same paymentKey, otherwise answered with 503 without cancelling,
 - conditional sold transition in PostgreSQL, retried on transient DB failures after re-reading the committed state; a dropped connection whose commit cannot be read back is a 503, not a cancel,
 - compensation cancellation if provider confirmation succeeds but finalization definitively fails, or if the order was already committed with another payment,
-- best-effort QR ticket issuance after the commit (failures self-heal on the next read).
+- best-effort QR ticket issuance after the commit (failures self-heal on the next read),
+- a client-independent `payment-confirm-reconcile` pg-boss job for every approval that may be left unrecorded (unknown-outcome 503, failed or pending compensation cancel, failed duplicate cancel, unexpected post-approval error). It runs under the same order lease as confirm and the webhooks, never issues tickets, waits while a client confirm could still finalize the order, and then records the order, or claims, cancels and records the approval, retrying with backoff for about eight hours.
 
 The confirm contract and its operational alerts are detailed in the [show relaunch runbook](runbooks/show-relaunch-reliability.md#결제-승인-확인-계약-2026-09-30-오픈-감사-반영).
 
@@ -345,7 +347,7 @@ Production deploy uses two Cloud Run services and one bounded Cloud Run Job:
 
 Both images are built from the monorepo root so `packages/shared` can be built before app packages.
 
-During the no-sale managed-demo posture, Web and API use minimum instances `0`, request-based CPU, and maximum instances `4`. The API sets `BACKGROUND_PROCESSING_ENABLED=false`: pg-boss remains available for durable job enqueueing, while its scheduler, supervisor, queue workers, and the pending-payment interval do not run inside a CPU-throttled request service. Cloud Scheduler executes the bounded worker every five minutes with background processing explicitly enabled, so refund retries, QR reminders, cancelled-seat releases, and pending-payment expiration remain real without depending on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
+During the no-sale managed-demo posture, Web and API use minimum instances `0`, request-based CPU, and maximum instances `4`. The API sets `BACKGROUND_PROCESSING_ENABLED=false`: pg-boss remains available for durable job enqueueing, while its scheduler, supervisor, queue workers, and the pending-payment interval do not run inside a CPU-throttled request service. Cloud Scheduler executes the bounded worker every five minutes with background processing explicitly enabled, so refund retries, payment confirm reconciles, QR reminders, cancelled-seat releases, and pending-payment expiration remain real without depending on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
 
 `apps/edge-proxy` maps only `heygrabit.com`, `www.heygrabit.com`, and `api.heygrabit.com` to stable Cloud Run service origins. It streams requests/responses, preserves WebSocket upgrades, overwrites forwarded-host metadata, and rejects unknown hosts. Production Worker Routes are a separate, explicitly authenticated cutover and are not deployed by the GCP workflow.
 
