@@ -82,7 +82,7 @@ Optional environment:
   PHASE26_REHEARSAL_EVIDENCE             Evidence JSON path
   PHASE26_DATABASE_URL or DATABASE_URL    Database URL used through PGDATABASE for psql dry-run
   PHASE26_TEST_PAYMENT_KEY               Toss test paymentKey for confirm/refund branch
-  PHASE26_TEST_AMOUNT                    Override fixture amount in KRW
+  PHASE26_TEST_AMOUNT                    Override fixture seat price in KRW (the service fee is added to the prepare/confirm amount; prefer PHASE26_TEST_TIER_PRICE)
   PHASE26_TEST_TIER_NAME                 Override fixture tier name
   PHASE26_TEST_TIER_PRICE                Override fixture tier price in KRW
   PHASE26_TEST_TIER_COLOR                Override fixture tier color
@@ -318,7 +318,18 @@ function validateUuid(value, label) {
   }
 }
 
-function loadConfig() {
+// PHASE26_TEST_AMOUNT replaces the seat price; checkoutAmount() adds the
+// per-ticket service fee on top. An operator who enters the order total gets a
+// prepare that the server rejects as an amount mismatch, so say how it is read.
+export function amountOverrideWarning(amountOverride) {
+  return (
+    `Warning: PHASE26_TEST_AMOUNT=${amountOverride} is read as the seat price, not the order total. ` +
+    `prepare and confirm send ${amountOverride} + the service fee (TICKET_SERVICE_FEE_KRW). ` +
+    'Prefer PHASE26_TEST_TIER_PRICE.'
+  );
+}
+
+export function loadConfig() {
   const missing = missingRequiredEnv();
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
@@ -345,6 +356,11 @@ function loadConfig() {
     throw new Error('PHASE26_DATABASE_URL or DATABASE_URL is required before rehearsal mutations');
   }
 
+  const amountOverride = optionalInt(process.env.PHASE26_TEST_AMOUNT, 'PHASE26_TEST_AMOUNT');
+  if (amountOverride !== null) {
+    console.error(amountOverrideWarning(amountOverride));
+  }
+
   return {
     apiOrigin,
     performanceId,
@@ -354,7 +370,7 @@ function loadConfig() {
     testMarker,
     authHeaderFile: process.env.GRABIT_SMOKE_AUTH_HEADER_FILE,
     paymentKey: process.env.PHASE26_TEST_PAYMENT_KEY || '',
-    amountOverride: optionalInt(process.env.PHASE26_TEST_AMOUNT, 'PHASE26_TEST_AMOUNT'),
+    amountOverride,
     tierNameOverride: process.env.PHASE26_TEST_TIER_NAME || '',
     tierPriceOverride: optionalInt(process.env.PHASE26_TEST_TIER_PRICE, 'PHASE26_TEST_TIER_PRICE'),
     tierColorOverride: process.env.PHASE26_TEST_TIER_COLOR || '',
@@ -542,7 +558,7 @@ function assertFixtureSafe(performance, config) {
   }
 }
 
-function resolveSeatFixture(performance, config) {
+export function resolveSeatFixture(performance, config) {
   const requested = config.seatId;
   const floorAware = requested.includes(':');
   const [requestedFloor, requestedSeat] = floorAware
