@@ -131,6 +131,12 @@ export interface SeatUpdateEvent {
 export interface SeatStatusResponse {
   showtimeId: string;
   seats: Record<string, SeatState>;
+  /**
+   * Server time (epoch ms) at which the underlying snapshot was read. It can
+   * be up to about 1s old; a seat-update event received after this instant is
+   * newer than the snapshot for that seat. Optional for older servers.
+   */
+  generatedAt?: number;
 }
 
 export type ReservationStatus =

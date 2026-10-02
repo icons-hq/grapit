@@ -2,10 +2,15 @@ import { EventEmitter } from 'node:events';
 import { createServer, type Server, type Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { FactoryProvider } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type IORedis from 'ioredis';
 import type { Cluster } from 'ioredis';
 import {
+  clusterReconnectDelayWithQueueFlush,
+  REDIS_CLUSTER_UNAVAILABLE_MESSAGE,
+  REDIS_CONNECT_TIMEOUT_MS,
+  REDIS_MAX_RETRIES_PER_REQUEST,
   REDIS_RECONNECT_MAX_DELAY_MS,
   redisProvider,
   redisReconnectDelay,
@@ -19,6 +24,10 @@ import {
  */
 
 type UseFactory = (config: ConfigService) => IORedis | Cluster;
+
+function providerFactory(): UseFactory {
+  return (redisProvider as FactoryProvider).useFactory as UseFactory;
+}
 
 function createConfig(url: string, mode: 'standalone' | 'cluster'): ConfigService {
   return {
@@ -38,9 +47,12 @@ async function reserveClosedPort(): Promise<number> {
   return port;
 }
 
-/** Minimal RESP responder: enough for the ioredis handshake and PING. */
-function parseCommandNames(buffer: string): { names: string[]; rest: string } {
-  const names: string[] = [];
+/**
+ * Minimal RESP responder: enough for the ioredis standalone and cluster
+ * handshakes (INFO, CLUSTER SLOTS, CLUSTER INFO) and PING.
+ */
+function parseCommands(buffer: string): { commands: string[][]; rest: string } {
+  const commands: string[][] = [];
   let cursor = 0;
   while (cursor < buffer.length) {
     const header = buffer.indexOf('\r\n', cursor);
@@ -65,10 +77,14 @@ function parseCommandNames(buffer: string): { names: string[]; rest: string } {
       position = valueStart + length + 2;
     }
     if (!complete) break;
-    names.push((parts[0] ?? '').toLowerCase());
+    commands.push(parts.map((part) => part.toLowerCase()));
     cursor = position;
   }
-  return { names, rest: buffer.slice(cursor) };
+  return { commands, rest: buffer.slice(cursor) };
+}
+
+function bulkString(body: string): string {
+  return `$${Buffer.byteLength(body)}\r\n${body}\r\n`;
 }
 
 async function startRespStub(port: number): Promise<{ server: Server; sockets: Set<Socket> }> {
@@ -79,12 +95,18 @@ async function startRespStub(port: number): Promise<{ server: Server; sockets: S
     let pending = '';
     socket.on('data', (chunk) => {
       pending += chunk.toString('utf8');
-      const { names, rest } = parseCommandNames(pending);
+      const { commands, rest } = parseCommands(pending);
       pending = rest;
-      for (const name of names) {
+      for (const [name, subcommand] of commands) {
         if (name === 'info') {
-          const body = '# Server\r\nloading:0\r\n';
-          socket.write(`$${Buffer.byteLength(body)}\r\n${body}\r\n`);
+          socket.write(bulkString('# Server\r\nloading:0\r\n'));
+        } else if (name === 'cluster' && subcommand === 'slots') {
+          // One master owning every slot: this stub itself.
+          socket.write(`*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n${bulkString('127.0.0.1')}:${port}\r\n`);
+        } else if (name === 'cluster' && subcommand === 'info') {
+          socket.write(bulkString('cluster_state:ok\r\n'));
+        } else if (name === 'quit') {
+          socket.end('+OK\r\n');
         } else if (name === 'ping') {
           socket.write('+PONG\r\n');
         } else {
@@ -134,7 +156,7 @@ describe('redisReconnectDelay', () => {
   });
 
   it('is wired into both the standalone and cluster provider clients and their duplicates', () => {
-    const useFactory = redisProvider.useFactory as UseFactory;
+    const useFactory = providerFactory();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const standalone = useFactory(createConfig('redis://127.0.0.1:1', 'standalone')) as IORedis;
@@ -151,6 +173,14 @@ describe('redisReconnectDelay', () => {
     });
 
     try {
+      expect(standalone.options.maxRetriesPerRequest).toBe(REDIS_MAX_RETRIES_PER_REQUEST);
+      expect(standalone.options.connectTimeout).toBe(REDIS_CONNECT_TIMEOUT_MS);
+      expect(cluster.options.redisOptions).toMatchObject({
+        maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+        connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+      });
+      expect(cluster.options.clusterRetryStrategy).toBe(clusterReconnectDelayWithQueueFlush);
+
       for (const attempt of [6, 1_000]) {
         expect(typeof standalone.options.retryStrategy?.(attempt)).toBe('number');
         expect(typeof cluster.options.clusterRetryStrategy?.(attempt)).toBe('number');
@@ -171,6 +201,46 @@ describe('redisReconnectDelay', () => {
   });
 });
 
+describe('clusterReconnectDelayWithQueueFlush', () => {
+  it('drops the cluster offline queue with the standalone cadence and never gives up', () => {
+    const flushQueue = vi.fn();
+    const cluster = { flushQueue };
+
+    for (let attempt = 1; attempt <= 3 * (REDIS_MAX_RETRIES_PER_REQUEST + 1); attempt++) {
+      expect(clusterReconnectDelayWithQueueFlush.call(cluster, attempt))
+        .toBe(redisReconnectDelay(attempt));
+    }
+
+    expect(flushQueue).toHaveBeenCalledTimes(3);
+    expect(flushQueue).toHaveBeenCalledWith(new Error(REDIS_CLUSTER_UNAVAILABLE_MESSAGE));
+    // Called without a cluster (or with a mock lacking flushQueue): delay only.
+    expect(clusterReconnectDelayWithQueueFlush.call(undefined, 4)).toBe(redisReconnectDelay(4));
+    expect(clusterReconnectDelayWithQueueFlush.call({}, 8)).toBe(redisReconnectDelay(8));
+  });
+});
+
+type Settled<T> =
+  | { state: 'resolved'; value: T }
+  | { state: 'rejected'; error: unknown }
+  | { state: 'pending' };
+
+function settleWithin<T>(promise: Promise<T>, ms: number): Promise<Settled<T>> {
+  return Promise.race([
+    promise.then(
+      (value): Settled<T> => ({ state: 'resolved', value }),
+      (error: unknown): Settled<T> => ({ state: 'rejected', error }),
+    ),
+    new Promise<Settled<T>>((resolve) => {
+      setTimeout(() => resolve({ state: 'pending' }), ms);
+    }),
+  ]);
+}
+
+function rejectionMessage(outcome: Settled<unknown>): string | undefined {
+  if (outcome.state !== 'rejected') return undefined;
+  return outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+}
+
 describe('provider client recovery after a long Valkey outage', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -182,7 +252,7 @@ describe('provider client recovery after a long Valkey outage', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const port = await reserveClosedPort();
-    const useFactory = redisProvider.useFactory as UseFactory;
+    const useFactory = providerFactory();
     const endListener = vi.fn();
     let client: IORedis | undefined;
     let stub: Awaited<ReturnType<typeof startRespStub>> | undefined;
@@ -218,6 +288,131 @@ describe('provider client recovery after a long Valkey outage', () => {
       vi.useRealTimers();
       client?.disconnect();
       if (stub) await stopRespStub(stub);
+    }
+  });
+});
+
+describe('cluster client during a Valkey outage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fails queued commands within a bounded time, keeps reconnecting and serves commands once Valkey returns', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const cluster = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'cluster')) as Cluster;
+    const endListener = vi.fn();
+    cluster.on('end', endListener);
+    let stub: Awaited<ReturnType<typeof startRespStub>> | undefined;
+
+    try {
+      // A request issued while every node refuses connections (a throttler
+      // check, a seat lock) must fail instead of waiting for the outage to end
+      // and then running late.
+      const startedAt = Date.now();
+      const outcome = await settleWithin(cluster.get('seat-status-cache:outage'), 5_000);
+      expect(outcome.state).toBe('rejected');
+      expect(rejectionMessage(outcome)).toBe(REDIS_CLUSTER_UNAVAILABLE_MESSAGE);
+      // 200 + 400 + 600ms of backoff with refused connections.
+      expect(Date.now() - startedAt).toBeLessThan(4_000);
+
+      await nextEvent(cluster, 'reconnecting');
+      expect(cluster.status).not.toBe('end');
+      expect(endListener).not.toHaveBeenCalled();
+
+      const ready = nextEvent(cluster, 'ready');
+      stub = await startRespStub(port);
+      expect((await settleWithin(ready, 5_000)).state).toBe('resolved');
+      await expect(cluster.ping()).resolves.toBe('PONG');
+      expect(endListener).not.toHaveBeenCalled();
+    } finally {
+      cluster.disconnect();
+      if (stub) await stopRespStub(stub);
+    }
+  });
+});
+
+describe('quit() during a Valkey outage', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('fails queued commands and stops reconnecting so a bounded worker can exit (standalone)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const client = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'standalone')) as IORedis;
+
+    try {
+      await nextReconnect(client);
+      expect(client.status).toBe('reconnecting');
+      // e.g. a fire-and-forget seat-update publish still in the offline queue
+      const queued = client.publish('socket.io#/booking#', 'payload');
+
+      const afterQuit = vi.fn();
+      await expect(client.quit()).resolves.toBe('OK');
+      client.on('connecting', afterQuit);
+      client.on('reconnecting', afterQuit);
+      await expect(queued).rejects.toThrow('Connection is closed.');
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(afterQuit).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      client.disconnect();
+    }
+  });
+
+  it('fails queued commands and stops reconnecting (cluster)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const useFactory = providerFactory();
+    const cluster = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'cluster')) as Cluster;
+
+    try {
+      await nextEvent(cluster, 'reconnecting');
+      const queued = cluster.publish('socket.io#/booking#', 'payload');
+
+      const afterQuit = vi.fn();
+      await expect(cluster.quit()).resolves.toBe('OK');
+      cluster.on('connecting', afterQuit);
+      cluster.on('reconnecting', afterQuit);
+
+      const outcome = await settleWithin(queued, 1_000);
+      expect(outcome.state).toBe('rejected');
+      expect(rejectionMessage(outcome)).toBe('Connection is closed.');
+      await new Promise((resolve) => setTimeout(resolve, REDIS_RECONNECT_MAX_DELAY_MS + 200));
+      expect(afterQuit).not.toHaveBeenCalled();
+    } finally {
+      cluster.disconnect();
+    }
+  });
+
+  it('keeps the graceful quit() while the link is up', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const port = await reserveClosedPort();
+    const stub = await startRespStub(port);
+    const useFactory = providerFactory();
+    const client = useFactory(createConfig(`redis://127.0.0.1:${port}`, 'standalone')) as IORedis;
+
+    try {
+      await nextEvent(client, 'ready');
+      const ended = nextEvent(client, 'end');
+      await expect(client.quit()).resolves.toBe('OK');
+      await ended;
+      expect(client.status).toBe('end');
+    } finally {
+      client.disconnect();
+      await stopRespStub(stub);
     }
   });
 });

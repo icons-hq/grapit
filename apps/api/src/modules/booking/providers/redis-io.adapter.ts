@@ -4,7 +4,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis, { Cluster } from 'ioredis';
 import type { ServerOptions } from 'socket.io';
-import { registerRedisClientGuards } from './redis.provider.js';
+import { redisReconnectDelay, registerRedisClientGuards } from './redis.provider.js';
 
 const SOCKET_IO_REDIS_READY_TIMEOUT_MS = 5000;
 
@@ -31,6 +31,10 @@ function duplicateSocketSubscriber(pubClient: IORedis | Cluster): IORedis | Clus
   if (pubClient instanceof Cluster) {
     return pubClient.duplicate(undefined, {
       enableReadyCheck: false,
+      // The shared client drops its offline queue every few reconnect attempts
+      // so requests fail fast during an outage. The subscriber must not: its
+      // queued (P)SUBSCRIBE commands are what restores cross-instance delivery.
+      clusterRetryStrategy: redisReconnectDelay,
       redisOptions: {
         ...(pubClient.options.redisOptions ?? {}),
         maxRetriesPerRequest: null,

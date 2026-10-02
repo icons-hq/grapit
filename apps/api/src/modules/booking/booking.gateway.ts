@@ -25,6 +25,8 @@ export function showtimeRoom(showtimeId: string): string {
   return `showtime:${showtimeId}`;
 }
 
+export type SeatUpdateListener = (showtimeId: string, seatId: string, status: SeatState) => void;
+
 @WebSocketGateway({
   namespace: BOOKING_SOCKET_NAMESPACE,
   cors: {
@@ -35,6 +37,7 @@ export function showtimeRoom(showtimeId: string): string {
 export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(BookingGateway.name);
   private readonly redisPublisher: SocketIoRedisPublisher | null;
+  private readonly seatUpdateListeners = new Set<SeatUpdateListener>();
 
   @WebSocketServer()
   server?: Server;
@@ -79,6 +82,18 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   /**
+   * Observes every seat update this process sends, before it is emitted.
+   * BookingService uses it to apply the change to the seat status snapshot it
+   * serves (audit #8). Returns an unsubscribe function.
+   */
+  onSeatUpdate(listener: SeatUpdateListener): () => void {
+    this.seatUpdateListeners.add(listener);
+    return () => {
+      this.seatUpdateListeners.delete(listener);
+    };
+  }
+
+  /**
    * Broadcasts a seat status update to all clients in the showtime room.
    *
    * The room is joined without authentication, so the payload carries only the
@@ -102,6 +117,7 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * (audit #151). Resolves false when nothing could be sent; never rejects.
    */
   async publishSeatUpdate(showtimeId: string, seatId: string, status: SeatState): Promise<boolean> {
+    this.notifySeatUpdateListeners(showtimeId, seatId, status);
     const payload: SeatUpdateEvent = { seatId, status };
     const room = showtimeRoom(showtimeId);
 
@@ -129,6 +145,19 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
         `Seat update publish failed without a Socket.IO server. showtimeId=${showtimeId}, seatId=${seatId}, status=${status}: ${sanitizeRedisErrorMessage(message)}`,
       );
       return false;
+    }
+  }
+
+  private notifySeatUpdateListeners(showtimeId: string, seatId: string, status: SeatState): void {
+    for (const listener of this.seatUpdateListeners) {
+      try {
+        listener(showtimeId, seatId, status);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Seat update listener failed. showtimeId=${showtimeId}, seatId=${seatId}, status=${status}: ${message}`,
+        );
+      }
     }
   }
 }

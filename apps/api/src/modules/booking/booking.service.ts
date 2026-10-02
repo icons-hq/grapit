@@ -220,8 +220,12 @@ export const SEAT_STATUS_CACHE_TTL_MS = 1_000;
 /** Per-instance snapshot lifetime; never outlives the shared snapshot. */
 export const SEAT_STATUS_LOCAL_CACHE_TTL_MS = 500;
 const SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES = 256;
-/** Local change markers outlive every snapshot and computation they guard. */
-const SEAT_STATUS_CHANGE_RETENTION_MS = 10_000;
+/**
+ * A seat change sent by this instance overrides any snapshot not generated
+ * clearly after it. Snapshots can come from another instance, so "clearly"
+ * allows this much wall clock difference between instances.
+ */
+export const SEAT_STATUS_CLOCK_SKEW_MS = 100;
 /** At most one stale locked-seats sweep per showtime per interval, cluster-wide. */
 export const LOCKED_SEATS_SWEEP_INTERVAL_MS = 10_000;
 
@@ -437,21 +441,32 @@ export class BookingService {
   private readonly logger = new Logger(BookingService.name);
   private readonly seatStatusLocalCache = new Map<
     string,
-    { expiresAt: number; response: SeatStatusResponse }
+    { expiresAt: number; snapshot: SeatStatusSnapshot }
   >();
   private readonly seatStatusInFlight = new Map<
     string,
-    { startSeq: number; promise: Promise<SeatStatusResponse> }
+    { startedAt: number; promise: Promise<SeatStatusSnapshot> }
   >();
-  private readonly seatStatusLocalChanges = new Map<string, { seq: number; at: number }>();
-  private seatStatusChangeSeq = 0;
+  /** showtimeId -> seatKey -> latest state this instance sent, by insertion order. */
+  private readonly seatStatusLocalChanges = new Map<
+    string,
+    Map<string, { state: SeatState; at: number }>
+  >();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly gateway: BookingGateway,
     private readonly featureFlags: FeatureFlagsService,
-  ) {}
+  ) {
+    // Every seat update this process broadcasts (lock, payment, cancellation,
+    // admin seat operations) is also applied to the seat status it serves.
+    if (typeof this.gateway.onSeatUpdate === 'function') {
+      this.gateway.onSeatUpdate((showtimeId, seatId, status) => {
+        this.recordSeatStatusChange(showtimeId, seatId, status);
+      });
+    }
+  }
 
   private async getSeatLockPolicy(showtimeId: string): Promise<{
     performanceId: string | null;
@@ -618,7 +633,7 @@ export class BookingService {
       throw new ConflictException('이미 다른 사용자가 선택한 좌석입니다');
     }
 
-    this.markSeatStatusChanged(showtimeId);
+    this.recordSeatStatusChange(showtimeId, seatId, 'locked');
     // The room is unauthenticated: never broadcast who holds the seat (audit #92).
     this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'locked');
     const luaLockTtlSeconds = Number(result[3]);
@@ -693,7 +708,7 @@ export class BookingService {
       return false;
     }
 
-    this.markSeatStatusChanged(showtimeId);
+    this.recordSeatStatusChange(showtimeId, seatId, 'available');
     this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
     return true;
   }
@@ -756,7 +771,6 @@ export class BookingService {
     const conflict = this.lockConflictFromResult(result);
     if (conflict) throw conflict;
 
-    this.markSeatStatusChanged(showtimeId);
     return { consumedSeatIds: seatIds };
   }
 
@@ -830,11 +844,7 @@ export class BookingService {
       ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 
-    const acquired = result[0] === 1;
-    if (acquired) {
-      this.markSeatStatusChanged(showtimeId);
-    }
-    return { acquired };
+    return { acquired: result[0] === 1 };
   }
 
   async releaseRecoverySeatLocks(
@@ -858,7 +868,6 @@ export class BookingService {
       ownerToken,
       ...runtimeSeatIds,
     );
-    this.markSeatStatusChanged(showtimeId);
   }
 
   async forceReleaseSeatLock(showtimeId: string, seatId: string): Promise<void> {
@@ -873,7 +882,6 @@ export class BookingService {
     if (owner) {
       await this.redis.srem(`{${showtimeId}}:user-seats:${owner}`, runtimeSeatId);
     }
-    this.markSeatStatusChanged(showtimeId);
   }
 
   async acquirePaymentConfirmLock(orderId: string, lockToken: string): Promise<boolean> {
@@ -997,60 +1005,124 @@ export class BookingService {
    * live changes reach clients through seat-update events, and lock/prepare
    * decisions never read this snapshot.
    *
-   * A lock change made by this instance is never hidden from a later read on
-   * this instance: snapshots and computations that started before the change
-   * are not reused, so the client that just locked or released a seat and
-   * re-reads (session affinity) sees its own change.
+   * Seat changes this instance sent (its own lock/unlock and every seat-update
+   * it broadcast) are applied on top of any snapshot not generated clearly
+   * after them, so the client that just locked or released a seat and re-reads
+   * (session affinity) sees its own change without forcing a recomputation.
+   * `generatedAt` is the server time the underlying snapshot was read.
    */
   async getSeatStatus(showtimeId: string): Promise<SeatStatusResponse> {
+    const snapshot = await this.getSeatStatusSnapshot(showtimeId);
+    return this.applyLocalSeatChanges(showtimeId, snapshot);
+  }
+
+  private getSeatStatusSnapshot(showtimeId: string): Promise<SeatStatusSnapshot> {
     const local = this.readLocalSeatStatus(showtimeId);
-    if (local) return local;
+    if (local) return Promise.resolve(local);
 
     const inFlight = this.seatStatusInFlight.get(showtimeId);
-    if (inFlight && this.isSeatStatusCurrent(showtimeId, inFlight.startSeq)) {
-      return inFlight.promise;
-    }
+    if (inFlight) return inFlight.promise;
 
-    const startSeq = this.seatStatusChangeSeq;
-    const promise: Promise<SeatStatusResponse> = this.loadSeatStatus(showtimeId, startSeq).finally(() => {
+    const startedAt = Date.now();
+    const promise: Promise<SeatStatusSnapshot> = this.loadSeatStatus(showtimeId).finally(() => {
       if (this.seatStatusInFlight.get(showtimeId)?.promise === promise) {
         this.seatStatusInFlight.delete(showtimeId);
       }
     });
-    this.seatStatusInFlight.set(showtimeId, { startSeq, promise });
+    this.seatStatusInFlight.set(showtimeId, { startedAt, promise });
     return promise;
   }
 
-  /** Records that this instance changed seat state for the showtime. */
-  private markSeatStatusChanged(showtimeId: string): void {
-    const now = Date.now();
-    this.seatStatusChangeSeq += 1;
-    this.seatStatusLocalChanges.delete(showtimeId);
-    this.seatStatusLocalChanges.set(showtimeId, { seq: this.seatStatusChangeSeq, at: now });
-    this.seatStatusLocalCache.delete(showtimeId);
+  /**
+   * Local changes made before this instant can no longer apply to any
+   * snapshot this instance may still serve: cached and shared snapshots are
+   * younger than SEAT_STATUS_CACHE_TTL_MS, and a running computation (however
+   * slow) started at or after `startedAt`.
+   */
+  private localSeatChangeHorizon(showtimeId: string, now: number, oldestSnapshotAt = Infinity): number {
+    const inFlightStartedAt = this.seatStatusInFlight.get(showtimeId)?.startedAt ?? Infinity;
+    return Math.min(now - SEAT_STATUS_CACHE_TTL_MS, inFlightStartedAt, oldestSnapshotAt)
+      - SEAT_STATUS_CLOCK_SKEW_MS;
+  }
 
-    if (this.seatStatusLocalChanges.size > SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) {
-      for (const [key, change] of this.seatStatusLocalChanges) {
-        if (now - change.at < SEAT_STATUS_CHANGE_RETENTION_MS) break;
-        this.seatStatusLocalChanges.delete(key);
+  /** Remembers a seat state this instance set or broadcast. */
+  private recordSeatStatusChange(showtimeId: string, seatId: string, state: SeatState): void {
+    const seatKey = normalizeSeatIdentity({ seatId }).seatKey;
+    const now = Date.now();
+    let changes = this.seatStatusLocalChanges.get(showtimeId);
+    if (!changes) {
+      this.pruneLocalSeatChanges(now);
+      changes = new Map();
+      this.seatStatusLocalChanges.set(showtimeId, changes);
+    } else {
+      // Entries are in change order: drop the head no snapshot can need.
+      const horizon = this.localSeatChangeHorizon(showtimeId, now);
+      for (const [key, change] of changes) {
+        if (change.at >= horizon) break;
+        changes.delete(key);
       }
+    }
+    changes.delete(seatKey);
+    changes.set(seatKey, { state, at: now });
+  }
+
+  private pruneLocalSeatChanges(now: number): void {
+    if (this.seatStatusLocalChanges.size < SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) return;
+    for (const [showtimeId, changes] of this.seatStatusLocalChanges) {
+      let latestAt = -Infinity;
+      for (const change of changes.values()) latestAt = Math.max(latestAt, change.at);
+      if (latestAt < this.localSeatChangeHorizon(showtimeId, now)) {
+        this.seatStatusLocalChanges.delete(showtimeId);
+      }
+    }
+    while (this.seatStatusLocalChanges.size >= SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.seatStatusLocalChanges.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.seatStatusLocalChanges.delete(oldestKey);
     }
   }
 
-  /** True when no local change to the showtime happened after `startSeq`. */
-  private isSeatStatusCurrent(showtimeId: string, startSeq: number): boolean {
-    const change = this.seatStatusLocalChanges.get(showtimeId);
-    return change === undefined || change.seq <= startSeq;
+  private applyLocalSeatChanges(
+    showtimeId: string,
+    snapshot: SeatStatusSnapshot,
+  ): SeatStatusResponse {
+    let seats = snapshot.response.seats;
+    const changes = this.seatStatusLocalChanges.get(showtimeId);
+    if (changes) {
+      const horizon = this.localSeatChangeHorizon(showtimeId, Date.now(), snapshot.generatedAt);
+      let copied = false;
+      for (const [seatKey, change] of changes) {
+        if (change.at < horizon) {
+          changes.delete(seatKey);
+          continue;
+        }
+        // The snapshot was read clearly after the change: it already reflects
+        // the change, or a later one made elsewhere.
+        if (snapshot.generatedAt > change.at + SEAT_STATUS_CLOCK_SKEW_MS) continue;
+        if (!copied) {
+          seats = { ...seats };
+          copied = true;
+        }
+        if (change.state === 'available') {
+          delete seats[seatKey];
+        } else {
+          seats[seatKey] = change.state;
+        }
+      }
+      if (changes.size === 0) this.seatStatusLocalChanges.delete(showtimeId);
+    }
+
+    return { showtimeId: snapshot.response.showtimeId, seats, generatedAt: snapshot.generatedAt };
   }
 
-  private readLocalSeatStatus(showtimeId: string): SeatStatusResponse | null {
+  private readLocalSeatStatus(showtimeId: string): SeatStatusSnapshot | null {
     const entry = this.seatStatusLocalCache.get(showtimeId);
     if (!entry) return null;
     if (entry.expiresAt <= Date.now()) {
       this.seatStatusLocalCache.delete(showtimeId);
       return null;
     }
-    return entry.response;
+    return entry.snapshot;
   }
 
   private writeLocalSeatStatus(showtimeId: string, snapshot: SeatStatusSnapshot): void {
@@ -1072,10 +1144,10 @@ export class BookingService {
         this.seatStatusLocalCache.delete(oldestKey);
       }
     }
-    this.seatStatusLocalCache.set(showtimeId, { expiresAt, response: snapshot.response });
+    this.seatStatusLocalCache.set(showtimeId, { expiresAt, snapshot });
   }
 
-  private async loadSeatStatus(showtimeId: string, startSeq: number): Promise<SeatStatusResponse> {
+  private async loadSeatStatus(showtimeId: string): Promise<SeatStatusSnapshot> {
     const cacheKey = seatStatusCacheKey(showtimeId);
     let shared: SeatStatusSnapshot | null = null;
     try {
@@ -1085,26 +1157,14 @@ export class BookingService {
         `Seat status cache read failed for showtimeId=${showtimeId}: ${describeError(error)}`,
       );
     }
-    const localChangeAt = this.seatStatusLocalChanges.get(showtimeId)?.at;
-    if (
-      shared
-      && Date.now() - shared.generatedAt < SEAT_STATUS_CACHE_TTL_MS
-      && (localChangeAt === undefined || shared.generatedAt > localChangeAt)
-    ) {
-      if (this.isSeatStatusCurrent(showtimeId, startSeq)) {
-        this.writeLocalSeatStatus(showtimeId, shared);
-      }
-      return shared.response;
+    if (shared && Date.now() - shared.generatedAt < SEAT_STATUS_CACHE_TTL_MS) {
+      this.writeLocalSeatStatus(showtimeId, shared);
+      return shared;
     }
 
+    // Taken before reading: any change after this instant may be missing.
     const generatedAt = Date.now();
     const response = await this.computeSeatStatus(showtimeId);
-    if (!this.isSeatStatusCurrent(showtimeId, startSeq)) {
-      // Seats changed on this instance while computing: answer the callers
-      // that asked before the change, but do not publish an outdated snapshot.
-      return response;
-    }
-
     const snapshot: SeatStatusSnapshot = { generatedAt, response };
     try {
       await this.redis.set(cacheKey, JSON.stringify(snapshot), 'PX', SEAT_STATUS_CACHE_TTL_MS);
@@ -1113,10 +1173,8 @@ export class BookingService {
         `Seat status cache write failed for showtimeId=${showtimeId}: ${describeError(error)}`,
       );
     }
-    if (this.isSeatStatusCurrent(showtimeId, startSeq)) {
-      this.writeLocalSeatStatus(showtimeId, snapshot);
-    }
-    return response;
+    this.writeLocalSeatStatus(showtimeId, snapshot);
+    return snapshot;
   }
 
   /**

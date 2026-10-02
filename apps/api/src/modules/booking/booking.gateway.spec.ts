@@ -37,7 +37,10 @@ function deliverToApiInstance(channel: string, message: Buffer, joinedRoom: stri
     .mockImplementation(() => {});
 
   try {
-    adapter.onmessage(null, channel, message);
+    // onmessage is private in the adapter typings; it is what Valkey pub/sub drives.
+    (adapter as unknown as {
+      onmessage(pattern: null, channel: string, message: Buffer): void;
+    }).onmessage(null, channel, message);
     return localBroadcast.mock.calls as unknown as Array<
       [{ type: number; data: unknown[]; nsp: string }, { rooms: Set<string> }]
     >;
@@ -72,6 +75,34 @@ describe('BookingGateway', () => {
     expect(emit).toHaveBeenNthCalledWith(1, 'seat-update', { seatId: '1F:A-1', status: 'locked' });
     expect(emit).toHaveBeenNthCalledWith(2, 'seat-update', { seatId: '1F:A-2', status: 'sold' });
     expect(JSON.stringify(emit.mock.calls)).not.toContain(BUYER_ID);
+  });
+
+  it('tells seat update listeners about every update before emitting it, isolating their failures', async () => {
+    const gateway = new BookingGateway();
+    const { server, emit } = createServerStub();
+    gateway.server = server as never;
+    const order: string[] = [];
+    emit.mockImplementation(() => order.push('emit'));
+    const listener = vi.fn(() => order.push('listener'));
+    const failing = vi.fn(() => {
+      throw new Error('listener bug');
+    });
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    gateway.onSeatUpdate(failing);
+    const unsubscribe = gateway.onSeatUpdate(listener);
+
+    gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-1', 'sold', BUYER_ID);
+    await gateway.publishSeatUpdate(SHOWTIME_ID, '1F:A-2', 'available');
+
+    expect(listener).toHaveBeenNthCalledWith(1, SHOWTIME_ID, '1F:A-1', 'sold');
+    expect(listener).toHaveBeenNthCalledWith(2, SHOWTIME_ID, '1F:A-2', 'available');
+    expect(order).toEqual(['listener', 'emit', 'listener', 'emit']);
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Seat update listener failed'));
+
+    unsubscribe();
+    gateway.broadcastSeatUpdate(SHOWTIME_ID, '1F:A-3', 'locked');
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it('prefers the Socket.IO server over the Redis publisher inside the API process', async () => {

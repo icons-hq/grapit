@@ -648,7 +648,8 @@ function parseRedisUrl(url: string): URL {
 
 function buildRedisOptions(parsedUrl: URL): RedisOptions {
   return {
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
     ...(parsedUrl.username ? { username: decodeURIComponent(parsedUrl.username) } : {}),
     ...(parsedUrl.password ? { password: decodeURIComponent(parsedUrl.password) } : {}),
     ...(parsedUrl.protocol === 'rediss:' ? { tls: {} } : {}),
@@ -692,6 +693,16 @@ let redisWarned = false;
 export const REDIS_RECONNECT_BASE_DELAY_MS = 200;
 export const REDIS_RECONNECT_MAX_DELAY_MS = 1_000;
 export const REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS = 1_000;
+/** Commands queued while disconnected fail after this many reconnect attempts + 1. */
+export const REDIS_MAX_RETRIES_PER_REQUEST = 3;
+/**
+ * TCP/TLS connect budget per attempt (ioredis default 10s). Valkey is in the
+ * same region, so a slower connect is an outage; failing the attempt sooner
+ * keeps the offline-queue flush cycle short when packets are dropped.
+ */
+export const REDIS_CONNECT_TIMEOUT_MS = 3_000;
+export const REDIS_CLUSTER_UNAVAILABLE_MESSAGE =
+  'Valkey cluster is unavailable; command dropped while reconnecting';
 
 /**
  * Reconnect delay shared by the standalone `retryStrategy` and the cluster
@@ -702,12 +713,42 @@ export const REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS = 1_000;
  * state as soon as the strategy returns null, so a Valkey failover or network
  * flap longer than the retry budget used to leave the API instance unable to
  * lock seats, admit queue sessions or broadcast until it was recycled.
- * Requests issued during an outage still fail quickly: standalone commands are
- * flushed every `maxRetriesPerRequest + 1` reconnect attempts.
+ * Requests issued during an outage still fail: standalone ioredis flushes its
+ * offline queue every `maxRetriesPerRequest + 1` reconnect attempts, and the
+ * cluster client does the same through `clusterReconnectDelayWithQueueFlush`.
  */
 export function redisReconnectDelay(times: number): number {
   const attempt = Number.isFinite(times) && times > 0 ? Math.floor(times) : 1;
   return Math.min(attempt * REDIS_RECONNECT_BASE_DELAY_MS, REDIS_RECONNECT_MAX_DELAY_MS);
+}
+
+type FlushableRedisClient = { flushQueue?: (error: Error) => void };
+
+function flushOfflineCommands(client: unknown, error: Error): void {
+  if (typeof client !== 'object' || client === null) return;
+  const flushable = client as FlushableRedisClient;
+  if (typeof flushable.flushQueue === 'function') {
+    flushable.flushQueue(error);
+  }
+}
+
+/**
+ * `clusterRetryStrategy` for the shared cluster client. ioredis Cluster parks
+ * every command in its offline queue while it is not ready and, unlike the
+ * standalone client, applies no `maxRetriesPerRequest` to that queue: with a
+ * strategy that never gives up, requests issued during a Valkey outage would
+ * wait until it ended (or the HTTP timeout) and then all run at once on
+ * recovery, including seat locks for clients that already left. This drops
+ * the queued commands every `REDIS_MAX_RETRIES_PER_REQUEST + 1` attempts, the
+ * same cadence as standalone, and keeps reconnecting.
+ *
+ * ioredis invokes the strategy with the Cluster as `this`.
+ */
+export function clusterReconnectDelayWithQueueFlush(this: unknown, times: number): number {
+  if (Number.isInteger(times) && times > 0 && times % (REDIS_MAX_RETRIES_PER_REQUEST + 1) === 0) {
+    flushOfflineCommands(this, new Error(REDIS_CLUSTER_UNAVAILABLE_MESSAGE));
+  }
+  return redisReconnectDelay(times);
 }
 
 type GuardableRedisClient = {
@@ -720,16 +761,38 @@ type GuardableRedisClient = {
 const intentionallyClosedRedisClients = new WeakSet<object>();
 const endRecoveryRegisteredClients = new WeakSet<object>();
 
+/**
+ * Statuses in which the link to Valkey is down and ioredis would park QUIT in
+ * the offline queue behind other commands while its reconnect timer keeps the
+ * process alive.
+ */
+const REDIS_LINK_DOWN_STATUSES = new Set(['connecting', 'reconnecting', 'close']);
+
+function isRedisLinkDown(client: object): boolean {
+  const status = (client as { status?: unknown }).status;
+  return typeof status === 'string' && REDIS_LINK_DOWN_STATUSES.has(status);
+}
+
 function markIntentionalCloseOnShutdownCalls(client: GuardableRedisClient): void {
   const originalQuit = client.quit;
+  const originalDisconnect = client.disconnect;
   if (typeof originalQuit === 'function') {
     client.quit = (...args: unknown[]) => {
       intentionallyClosedRedisClients.add(client);
+      if (typeof originalDisconnect === 'function' && isRedisLinkDown(client)) {
+        // Nothing can be flushed to Valkey gracefully: fail what is queued
+        // and stop reconnecting so a bounded worker can exit during an outage.
+        flushOfflineCommands(client, new Error('Connection is closed.'));
+        originalDisconnect.call(client, false);
+        const callback = args.find((arg): arg is (err: null, result: 'OK') => void =>
+          typeof arg === 'function');
+        callback?.(null, 'OK');
+        return Promise.resolve('OK');
+      }
       return originalQuit.apply(client, args);
     };
   }
 
-  const originalDisconnect = client.disconnect;
   if (typeof originalDisconnect === 'function') {
     client.disconnect = (reconnect?: boolean) => {
       // ioredis treats disconnect(true) as "drop and reconnect"; only a plain
@@ -840,7 +903,7 @@ export const redisProvider: Provider = {
         scaleReads: 'master',
         enableReadyCheck: true,
         redisOptions,
-        clusterRetryStrategy: redisReconnectDelay,
+        clusterRetryStrategy: clusterReconnectDelayWithQueueFlush,
       });
 
       attachRedisRuntimeMetadata(client, {
@@ -854,7 +917,8 @@ export const redisProvider: Provider = {
     }
 
     const client = new IORedis(url, {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
       lazyConnect: true,
       retryStrategy: redisReconnectDelay,
     });

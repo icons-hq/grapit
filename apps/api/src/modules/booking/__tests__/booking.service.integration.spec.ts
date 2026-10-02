@@ -220,6 +220,7 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
       .toEqual({
         showtimeId,
         seats: { [seatKey]: 'locked' },
+        generatedAt: expect.any(Number),
       });
   });
 
@@ -235,6 +236,7 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     await expect(service.getSeatStatus(showtimeId)).resolves.toEqual({
       showtimeId,
       seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
     });
     expect(await redis.smembers(lockedSeatsKey)).toEqual(
       expect.arrayContaining([runtimeSeatId, staleRuntimeSeatId]),
@@ -257,6 +259,7 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
       showtimeId,
       seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
     });
     // Released after the snapshot was taken: a reader may see the snapshot
     // for at most SEAT_STATUS_CACHE_TTL_MS.
@@ -264,17 +267,26 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     await expect(second.getSeatStatus(showtimeId)).resolves.toEqual({
       showtimeId,
       seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
     });
-    // The instance that applied the change never serves the older snapshot.
+    // The instance that applied the change applies it on top of the older
+    // snapshot instead of recomputing.
     await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
       showtimeId,
       seats: {},
+      generatedAt: expect.any(Number),
     });
+    // No recomputation: the shared snapshot is still the pre-release one.
+    const shared = JSON.parse((await redis.get(seatStatusCacheKey(showtimeId))) ?? 'null') as {
+      response: { seats: Record<string, string> };
+    } | null;
+    expect(shared?.response.seats).toEqual({ [seatKey]: 'locked' });
 
     await new Promise((resolve) => setTimeout(resolve, SEAT_STATUS_CACHE_TTL_MS + 50));
     await expect(createBookingService(redis).getSeatStatus(showtimeId)).resolves.toEqual({
       showtimeId,
       seats: {},
+      generatedAt: expect.any(Number),
     });
   });
 
