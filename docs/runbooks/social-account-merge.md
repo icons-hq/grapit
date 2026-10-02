@@ -90,7 +90,7 @@ Apply checks that the report path is writable before the merge transaction start
 
 After the transaction commits, apply prints the `batchId` to stderr, then runs verify and saves the result to the ledger batch (`verified` or `failed`). The protected apply report contains the database target and server fingerprint, sales-activity snapshot, reviewed dry-run, allowlist hash, apply result, minimized row-change snapshots, ticket-limit warnings, and verification summary. Apply exits non-zero when verification fails. In that case the merge is committed: investigate with the report and the ledger, and do not re-run apply. If verify itself errors after the commit (for example a dropped connection), apply still writes the report with `verification: null` and `verifyError`, prints `stage: verify_failed`, and exits non-zero; the batch stays `applied` until `verify --batch-id` succeeds.
 
-`ticketLimitWarnings` lists merge targets that now hold more active tickets for a performance than its per-buyer limit. The merge keeps every purchase. Decide follow-up (for example, contacting the buyer) under the sales policy.
+`ticketLimitWarnings` lists merge targets whose own account now holds more active tickets for a performance than its per-buyer limit. The warning counts one account. The purchase limit itself is enforced per verified phone number: it already adds up every account that verified the same number (`database/ticket-limit.ts`), so merging those accounts does not change what the buyer may still buy. The merge keeps every purchase. Decide follow-up (for example, contacting the buyer) under the sales policy.
 
 ## Verify
 

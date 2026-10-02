@@ -852,7 +852,11 @@ export class AccountMergeService {
     tx: AccountMergeTx,
     group: MergeGroup,
   ): Promise<AccountMergeTicketLimitWarning[]> {
-    // Same active-ticket definition as database/ticket-limit.ts.
+    // Same active-ticket definition as database/ticket-limit.ts, counted for
+    // the target account alone. This is a report for the operator: the purchase
+    // limit is enforced per verified phone number (ticket-limit.ts sums every
+    // account that verified the same number), so merging accounts that share
+    // that number does not change what the buyer may still buy.
     const rows = normalizeRows<{
       performanceId: string;
       activeTicketCount: number;
