@@ -5,6 +5,7 @@ import { io, type Socket } from 'socket.io-client';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
+import { getServerNowMs } from '@/lib/server-clock';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
@@ -815,8 +816,10 @@ export function useQueue({
       }, delayMs);
     };
 
+    // activeUntilAt is a server instant: compare it with the server-corrected
+    // clock, or a device clock running behind delays the expiry notice.
     scheduleCheck(
-      Math.max(0, admissionCheckAt - Date.now()) + QUEUE_ADMISSION_CHECK_GRACE_MS,
+      Math.max(0, admissionCheckAt - getServerNowMs()) + QUEUE_ADMISSION_CHECK_GRACE_MS,
     );
 
     return () => {

@@ -54,6 +54,7 @@ vi.mock('@/lib/api-client', () => ({
 }));
 
 import { useQueue } from '../use-queue';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -155,6 +156,49 @@ describe('useQueue', () => {
     expect(result.current.status).toBe('admitted');
     expect(result.current.isReady).toBe(true);
     expect(result.current.remainingSeats).toBe(21);
+  });
+
+  it('checks the admission end on the server clock when the device clock runs behind (u05b x w2b)', async () => {
+    const deviceNow = Date.parse('2026-05-08T09:00:00.000Z');
+    vi.setSystemTime(deviceNow);
+    // The server is 30s ahead of this device.
+    recordServerTimeSample({
+      serverNowMs: deviceNow + 30_000,
+      requestStartedAtMs: deviceNow - 5,
+      responseReceivedAtMs: deviceNow + 5,
+    });
+    try {
+      postMock.mockResolvedValueOnce({ queueSessionId: 'queue-session-skew' });
+      const admitted = {
+        queueSessionId: 'queue-session-skew',
+        state: 'ADMITTED',
+        position: 0,
+        waitingCount: 0,
+        etaSeconds: 0,
+        remainingSeats: 17,
+        autoEnter: true,
+        admittedAt: new Date(deviceNow + 30_000 - 540_000).toISOString(),
+        // 60s left on the server clock (90s on the device clock).
+        activeUntilAt: new Date(deviceNow + 90_000).toISOString(),
+        reentryGraceUntilAt: new Date(deviceNow + 270_000).toISOString(),
+      };
+      getMock.mockResolvedValue(admitted);
+
+      const { result } = renderHook(() => useQueue({ performanceId: 'performance-skew' }), {
+        wrapper: createWrapper(),
+      });
+      await flushQueueEffects();
+      expect(result.current.isReady).toBe(true);
+      const callsAfterAdmission = getMock.mock.calls.length;
+
+      // 60s of server time plus the 2s grace: the single status check is sent.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(62_000);
+      });
+      expect(getMock.mock.calls.length).toBe(callsAfterAdmission + 1);
+    } finally {
+      resetServerClockForTests();
+    }
   });
 
   it('moves to expired state when queue:expired arrives over the socket contract', async () => {
