@@ -66,7 +66,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 ### 1.3 공급자 콘솔과 알림
 
 - [ ] Toss: 국내·해외카드·해외간편결제 MID 모두에 `PAYMENT_STATUS_CHANGED` webhook URL과 서명 secret이 등록·일치하는지, 최근 `EXPIRED/ABORTED` 이벤트가 `payment_webhook_events`에 처리 완료로 쌓이는지 확인한다. 고아 handoff review의 45분 grace는 이 webhook을 전제로 한다. #73 #9
-- [ ] Toss: 위젯 variant(`DEFAULT`, `uspay`)에 가상계좌 등 비동기 입금 수단을 켜지 않는다. `uspay`의 TrueMoney·PayPay는 비활성으로 둔다. #74 #86
+- [ ] Toss: 위젯 variant(`DEFAULT`, `uspay`)에 가상계좌 등 비동기 입금 수단을 켜지 않는다. `uspay`의 TrueMoney·PayPay는 비활성으로 둔다. 웹은 가상계좌·휴대폰·PAYCO 같은 미지원 수단을 고르면 결제 단계에서 거절하고, prepare도 가상계좌·휴대폰을 모든 공연 정책에서 409로 거절하지만, 켜 두면 구매자가 고른 뒤에야 안내를 본다. #74 #86 #70
 - [ ] Toss: 설정된 모든 secret key(`TOSS_SECRET_KEY`, `TOSS_OVERSEAS_CARD_SECRET_KEY`, `TOSS_FOREIGN_EASY_PAY_SECRET_KEY`)로 `GET /v1/transactions`가 200 배열과 응답 시간을 돌려주는지 테스트 상점에서 확인한다. 권한이 없으면 review는 아무 주문도 실패 처리하지 않고 30분마다 미루기만 한다. #9
 - [ ] Toss에 문의해 기록한다: ABORTED된 해외간편결제 취소를 새 `cancelRequestId`(`-r<n>`)로 다시 요청해도 되는지, 한 orderId에 서로 다른 paymentKey 두 건이 승인될 수 있는지. #76 #85
 - [ ] Twilio: Verify rate limit, 잔액·사용량·비용 알림, 상한 있는 자동 충전, 좁은 Geo Permissions를 확인한다. #36
@@ -112,7 +112,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 ### 2.3 live smoke
 
 - [ ] 지난 회차의 seat lock·prepare가 403이다. #2
-- [ ] 정책에 없는 결제수단을 고르면 좌석을 유지한 채 결제 단계 안내가 나오고 다른 수단으로 결제할 수 있다. 관리자 공연 편집에 결제수단 체크박스가 4개(국내 간편결제 포함)다. #70
+- [ ] 정책에 없는 결제수단을 고르면 좌석을 유지한 채 결제 단계 안내가 나오고 다른 수단으로 결제할 수 있다. 위젯에 켜진 가상계좌·휴대폰·PAYCO 등 미지원 수단도 정책과 관계없이 같은 안내가 나온다. 관리자 공연 편집에 결제수단 체크박스가 4개(국내 간편결제 포함)다. #70
 - [ ] 같은 인증 휴대폰의 두 번째 계정은 첫 계정이 결제 진행 중일 때 lock이 409다. #62
 - [ ] `/th` 경로 confirm 결과 화면에 번역된 공연명이 보인다. #88
 - [ ] 판매 전 공용 scanner 계정의 `POST /api/v1/queue/performances/:id/enter`가 403이다. Admin Pre-Open Booking Smoke 계정은 `admin` 번들이거나 번들·명시 capability가 없는 legacy admin이다. #25
@@ -166,6 +166,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 - [ ] 명시 승인된 계정·금액으로 해외카드·PayPal의 승인·조회 응답 currency 표기(USD/`MUSD`)와 조회 API의 `NOT_FOUND_PAYMENT` 응답 형식을 실측한다. 코드는 USD와 `MUSD`를 모두 받는다. [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md). #1 #18
 - [ ] Toss sandbox 실기기(데스크톱·모바일)에서 카드사를 고르지 않고 결제하기(`NEED_CARD_PAYMENT_DETAIL`) → handoff 해제 → 같은 주문 재결제를 확인한다. #9
+- [ ] 같은 sandbox에서 위젯 `DEFAULT`·`uspay`에 켜 둔 결제수단을 하나씩 골라 결제 화면이 정상 결제 버튼을 보이는지 확인한다. 웹은 위젯이 알려 주는 코드를 명시 표(`CARD`/`카드`, `TRANSFER`/`계좌이체`, `TOSSPAY`·`NAVERPAY`·`KAKAOPAY`와 한글 이름, `PAYPAL`·`ALIPAY`·`TRUEMONEY`, 해외 위젯의 `CARD`·`OVERSEAS_CARD`·카드 브랜드)로만 분류하고, 표에 없는 코드(카드사·은행 바로가기 코드 포함)는 `다른 결제수단을 선택해 주세요`로 막는다. 켜 둔 수단이 막히면 위젯 설정을 바꾸거나 코드 표를 갱신한다. #70
 - [ ] 판매 중 수동 대조 기준을 정한다: `checkout_started_at` 이후 30분 넘게 결제 행이 없는 `PENDING_PAYMENT` 예약은 먼저 `payment-confirm-reconcile` job이 맡고 있는지 확인하고, 아니면 orderId로 국내·외화 상점 키 각각 Toss 주문 조회를 한다. [남은 gate](show-relaunch-reliability.md#새-공연-오픈의-남은-gate). #18 #73
 
 ### 3.5 현장 실기기
@@ -202,14 +203,14 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - [ ] 관리자 IP allowlist를 강제할지: guard 또는 edge 규칙, deploy에 `ADMIN_IP_ALLOWLIST_CIDRS` 반영, IP가 바뀌는 현장 scanner 경로(`/field`, `field.scan.*`) 예외 정책을 먼저 정한다. 그 전까지 관리자 계정은 비밀번호와 감사 모니터링으로만 보호되며 MFA는 수용된 위험이다. #43
 - [ ] `run.app` 직접 접근 차단(ingress 제한 또는 edge secret 없는 요청 403). 먼저 OAuth callback(`CLOUD_RUN_API_URL` 기반), Toss webhook URL, Scheduler·prewarm, smoke script가 `run.app`을 쓰지 않는지 확인한다. #152
 - [ ] Cloud Run·LB 요청 로그가 최초 `GET /field/check-in?ticket=...`의 query를 그대로 남긴다. 로그 보존·접근 범위를 점검하고, QR URL을 fragment(`#ticket=`)로 바꾸는 안을 ADR로 검토한다(기존 `?ticket=` QR은 계속 지원). 단절 중 새 QR까지 검증하려면 공개키 기반 로컬 검증 ADR이 필요하다. #118 #40
-- [ ] 기존 `seat_maps.svg_url`·`venue_layout_floors.svg_url` SVG를 운영 DB·R2에서 모두 받아 `hasUnsafeSvgPayload` 기준(주석, PI, `<`/`>`가 든 CDATA, HTML breakout tag, SMIL, `on*` 속성)으로 점검하고, 걸리면 교체한다. 렌더 sanitizer가 막지만 변조 파일은 찾아야 한다. `svgUrl`을 `R2_PUBLIC_URL` 도메인으로 제한할지는 기존 행의 host·상대 경로를 확인한 뒤 정한다. #49
+- [ ] 기존 `seat_maps.svg_url`·`venue_layout_floors.svg_url` SVG를 운영 DB·R2에서 모두 받아 `hasUnsafeSvgPayload` 기준(주석, PI, `<`/`>`가 든 CDATA, HTML breakout tag, SMIL, `on*` 속성, 표현 속성의 `image-set()` 같은 외부 이미지 함수)으로 점검하고, 걸리면 교체한다. 렌더 sanitizer가 막지만 변조 파일은 찾아야 한다. `svgUrl`을 `R2_PUBLIC_URL` 도메인으로 제한할지는 기존 행의 host·상대 경로를 확인한 뒤 정한다. #49
 - [ ] 선택: 판매 중인 공연에서 같은 인증 휴대폰을 쓰는 다계정의 과거 구매를 조회한다. 기존 확정 구매는 소급 취소하지 않고 새 구매부터 합산 제한이 적용된다. #62
 
 ## 5. 운영 조치로 해결되지 않는 잔여 위험
 
 코드 후속이 필요하다. 오픈 판단 때 수용 여부를 기록한다.
 
-- confirm은 Toss 승인 응답의 실제 결제수단을 공연 정책과 대조하지 않고, 웹은 위젯의 가상계좌·휴대폰 결제를 `CARD`로 분류한다. 이 수단을 위젯에 켜지 않는 것(1.3)이 현재 방어선이다. #70 #74
+- confirm은 Toss 승인 응답의 실제 결제수단을 공연 정책과 대조하지 않는다(API 후속). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 그래도 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌는 경로는 confirm 대조만 막을 수 있으므로, 이 수단을 위젯에 켜지 않는 것(1.3)이 남은 방어선이다. #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
 - seat-update 수신은 아직 이벤트마다 좌석 상태 cache를 갱신한다(rAF 또는 100–200ms 묶음 처리 미적용). web에는 `script-src` CSP가 없다. #11 #49
 - `scripts/phase26/infra-evidence.mjs`의 연결 수 추정은 pg-boss pool을 빼고 계산하며 템플릿 값(`${{ env.DB_POOL_MAX }}`)을 읽지 못한다. 연결 예산은 Deploy workflow의 database preflight 결과를 쓴다. #54

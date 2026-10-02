@@ -138,7 +138,7 @@ WHERE p.publish_state = 'published' AND p.status <> 'ended'
 ROLLBACK;
 ```
 
-- 웹은 위젯의 가상계좌·휴대폰 결제 선택을 아직 `CARD`로 분류한다. 이 두 수단을 위젯에 노출하는 동안에는 공연별 제한이 적용되지 않는다. confirm은 Toss 승인 응답의 실제 결제수단을 정책과 대조하지 않는다(통합 후속).
+- 웹은 위젯이 알려 주는 결제수단 코드를 명시 표로 분류한다. 가상계좌·휴대폰은 정확히 분류한 뒤 모든 공연 정책에서 거절하고(prepare도 `isCheckoutPaymentMethodAllowed`로 409), PAYCO·삼성페이·상품권·카드사 바로가기·미지의 코드는 미지원으로 표시해 서버로 보내지 않는다. 기본 `CARD` 분류는 없다. 관리자 화면의 허용 목록 4종(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`)이 서버가 받는 집합과 같다. confirm은 Toss 승인 응답의 실제 결제수단을 공연 정책과 대조하지 않는다(통합 후속).
 
 ### migration 0039 (#62·#68)
 
