@@ -3,6 +3,7 @@ import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
   REFUND_CANCEL_ATTENTION_RETRY_COUNT,
   REFUND_CANCEL_POST_WINDOW_MS,
+  REFUND_RETRY_WINDOW_EXPIRED_CODE,
   refundCancelRetryDelaySeconds,
 } from '../refund/refund.service.js';
 import { RefundCancelRetryWorker } from './refund-cancel-retry.worker.js';
@@ -398,7 +399,46 @@ describe('RefundCancelRetryWorker', () => {
     expect(finalFailureSpy).toHaveBeenCalledWith('refund-1', expect.objectContaining({ code: 'BALANCE_RECONCILIATION_REQUIRED' }));
   });
 
-  it('stops resending a frozen command after the provider idempotency window', async () => {
+  it('stops resending a frozen command after the provider idempotency window and records it apart from a balance mismatch', async () => {
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 132000,
+        balanceAmount: 132000, isPartialCancelable: true, cancels: [] }),
+      cancelPayment: vi.fn(),
+    };
+    const updates: Array<Record<string, unknown>> = [];
+    const db = { update: vi.fn(() => ({ set: (values: Record<string, unknown>) => {
+      updates.push(values);
+      return { where: vi.fn().mockResolvedValue(undefined) };
+    } })) };
+    const worker = new RefundCancelRetryWorker(db as never, tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never);
+    const context = createRetryContext();
+    context.refund.requestedAt = new Date(Date.now() - REFUND_CANCEL_POST_WINDOW_MS);
+    // The frozen ledger still matches the PG balance: only the window closed.
+    context.refund.providerMetadata = {
+      cancelReason: '단순 변심',
+      cancelRequest: { paymentKey: 'pay-key-1', reason: '단순 변심 [refund-1]',
+        options: { idempotencyKey: 'refund-cancel:refund-1', secretKeyScope: 'default' } },
+      providerRefund: { currency: 'KRW', amountMinor: 132000, originalAmountMinor: 132000, balanceBeforeMinor: 132000 },
+    } as never;
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+    const finalFailureSpy = vi.spyOn(worker as never, 'markFinalFailure');
+    const restoreSpy = vi.spyOn(worker as never, 'restoreRejectedRights');
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 1 });
+
+    expect(result.status).toBe('failed');
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(restoreSpy).not.toHaveBeenCalled();
+    expect(finalFailureSpy).toHaveBeenCalledWith('refund-1', expect.objectContaining({ code: REFUND_RETRY_WINDOW_EXPIRED_CODE }));
+    expect(updates).toEqual([expect.objectContaining({
+      status: 'failed',
+      resultCode: 'REFUND_RETRY_WINDOW_EXPIRED',
+      customerServiceCtaVisible: true,
+    })]);
+  });
+
+  it('keeps a legacy refund without a frozen ledger as a balance reconciliation case after the window', async () => {
     const tossPaymentsClient = {
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 132000,
         balanceAmount: 132000, isPartialCancelable: true, cancels: [] }),
@@ -415,7 +455,7 @@ describe('RefundCancelRetryWorker', () => {
 
     expect(result.status).toBe('failed');
     expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
-    expect(finalFailureSpy).toHaveBeenCalled();
+    expect(finalFailureSpy).toHaveBeenCalledWith('refund-1', expect.objectContaining({ code: 'BALANCE_RECONCILIATION_REQUIRED' }));
   });
 
   it('uses a long backoff and surfaces attention after repeated ambiguous attempts', () => {

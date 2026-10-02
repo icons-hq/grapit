@@ -29,6 +29,7 @@ import {
   REFUND_CANCEL_ATTEMPT_LEASE_MS,
   REFUND_CANCEL_POST_WINDOW_MS,
   REFUND_NOT_PARTIAL_CANCELABLE_CODE,
+  REFUND_RETRY_WINDOW_EXPIRED_CODE,
   sendRefundCancelRetryJob,
   type RefundCancelRetryScheduleOptions,
 } from '../refund/refund.service.js';
@@ -432,7 +433,16 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
         throw new TossPaymentError(REFUND_BALANCE_RECONCILIATION_CODE, '취소 요청과 결제사 잔액을 대조해야 합니다');
       }
       if (Date.now() - context.refund.requestedAt.getTime() >= REFUND_CANCEL_POST_WINDOW_MS) {
-        throw new TossPaymentError(REFUND_BALANCE_RECONCILIATION_CODE, '취소 요청의 결제사 재전송 기한이 지나 대조가 필요합니다');
+        if (!amountSnapshot) {
+          // A legacy refund without a frozen ledger: the balance cannot be proven unchanged.
+          throw new TossPaymentError(REFUND_BALANCE_RECONCILIATION_CODE, '취소 요청의 결제사 재전송 기한이 지나 대조가 필요합니다');
+        }
+        // The balance matches the frozen ledger; only the provider idempotency window closed. Recorded apart
+        // from a balance mismatch so triage sends it to the admin refund recovery (rights restore + new quote).
+        throw new TossPaymentError(
+          REFUND_RETRY_WINDOW_EXPIRED_CODE,
+          '취소 요청의 결제사 재전송 기한(15일)이 지났습니다. 관리자 환불 처리로 재조정해주세요',
+        );
       }
       if (command.options.cancelAmount !== undefined && queried.isPartialCancelable !== true) {
         definitePreflightRejection = queried.isPartialCancelable === false

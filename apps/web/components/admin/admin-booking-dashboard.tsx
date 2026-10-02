@@ -139,6 +139,15 @@ function formatWon(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`;
 }
 
+const REFUND_RESULT_UNKNOWN_MESSAGE =
+  '환불 요청 결과를 확인하지 못했습니다. 예매 상세에서 환불 상태를 확인한 뒤 다시 시도해주세요.';
+
+/** ApiClientError (and its test doubles) carry the HTTP status of a server answer. */
+function hasServerStatus(error: unknown): error is Error & { statusCode: number } {
+  return error instanceof Error
+    && typeof (error as { statusCode?: unknown }).statusCode === 'number';
+}
+
 function formatSeats(count: number): string {
   return `${count.toLocaleString('ko-KR')}석`;
 }
@@ -229,7 +238,7 @@ export function AdminBookingDashboard() {
     performanceId !== 'all' ? performanceId : '',
   );
 
-  const { data, isLoading, isError, error, refetch } = useAdminBookings({
+  const { data, isLoading, isFetching, isError, error, refetch } = useAdminBookings({
     performanceId: performanceId !== 'all' ? performanceId : undefined,
     showtimeId: showtimeId !== 'all' ? showtimeId : undefined,
     funnelStatus,
@@ -276,10 +285,12 @@ export function AdminBookingDashboard() {
           }
         },
         onError: (error) => {
+          // Only a server answer (ApiClientError carries its HTTP status) says what happened.
+          // A network failure may have reached the PG, so never present it as "not refunded".
           toast.error(
-            error instanceof Error && error.message
+            hasServerStatus(error) && error.message
               ? error.message
-              : '환불 처리에 실패했습니다. 잠시 후 다시 시도해주세요.',
+              : REFUND_RESULT_UNKNOWN_MESSAGE,
           );
         },
       },
@@ -367,12 +378,12 @@ export function AdminBookingDashboard() {
     : undefined;
 
   // A 503 means the server stopped a too-broad aggregate (statement timeout);
-  // its message tells the operator how to narrow the range.
-  const listErrorHint = error instanceof Error
-    && (error as Error & { statusCode?: number }).statusCode === 503
+  // its message tells the operator how to narrow the range with the filters
+  // above, so the header and filters stay in place and only the results area
+  // shows the error.
+  const listErrorHint = hasServerStatus(error) && error.statusCode === 503
     ? error.message
     : null;
-  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매·취소</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p>{listErrorHint && <p className="text-sm text-muted-foreground">{listErrorHint}</p>}<Button onClick={() => void refetch()}>다시 조회</Button></section>;
 
   return (
     <div className="admin-booking-workspace">
@@ -494,16 +505,49 @@ export function AdminBookingDashboard() {
       {/* Booking table */}
 
 
-      <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">{isLoading ? '예매를 조회하고 있습니다.' : `검색 결과 ${total.toLocaleString('ko-KR')}건`}</p>
-      <div className="mt-3">
-        <AdminBookingTable
-          bookings={bookings}
-          isLoading={isLoading}
-          onRowClick={handleBookingDetailOpen}
-        />
-      </div>
+      {isError ? (
+        <section
+          role="alert"
+          aria-label="예매 조회 오류"
+          className="mt-5 space-y-3 rounded-lg border border-[#F3C8C8] bg-[#FEF2F2] p-4"
+        >
+          <p className="text-sm font-semibold text-[#C62828]">
+            예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.
+          </p>
+          {listErrorHint && <p className="text-sm text-gray-700">{listErrorHint}</p>}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            {isFetching ? '다시 조회 중...' : '다시 조회'}
+          </Button>
+        </section>
+      ) : (
+        <>
+          <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">
+            {isLoading ? '예매를 조회하고 있습니다.' : (
+              <>
+                {`검색 결과 ${total.toLocaleString('ko-KR')}건`}
+                <span className="ml-2 text-xs">
+                  · 건수와 통계는 같은 조건에서 최대 30초 전 집계를 재사용합니다.
+                </span>
+              </>
+            )}
+          </p>
+          <div className="mt-3">
+            <AdminBookingTable
+              bookings={bookings}
+              isLoading={isLoading}
+              onRowClick={handleBookingDetailOpen}
+            />
+          </div>
+        </>
+      )}
 
-      {total > PAGE_SIZE && (
+      {!isError && total > PAGE_SIZE && (
         <div className="mt-4 flex items-center justify-end gap-3">
           <Button
             type="button"
@@ -529,9 +573,9 @@ export function AdminBookingDashboard() {
         </div>
       )}
 
-      <details className="admin-disclosure mt-6"><summary>좌석 등급별 통계와 결제 실패 분석</summary><div className="admin-disclosure-body">      <p className="mb-3 text-xs text-muted-foreground">통계와 검색 결과 건수는 같은 조건에서 최대 30초 전 집계를 재사용합니다.</p>
+      <details className="admin-disclosure mt-6"><summary>좌석 등급별 통계와 결제 실패 분석</summary><div className="admin-disclosure-body">
       {/* Stats cards */}
-      {isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
+      {isError ? <p className="text-sm text-muted-foreground">예매를 조회하지 못해 통계를 표시하지 않습니다.</p> : isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <AdminStatCard
           icon={TicketCheck}
@@ -561,7 +605,7 @@ export function AdminBookingDashboard() {
 
       </>}
 
-<PaymentFailureBreakdown stats={stats} /><TierStatsTable tierStats={tierStats} /></div></details>
+{!isError && <><PaymentFailureBreakdown stats={stats} /><TierStatsTable tierStats={tierStats} /></>}</div></details>
       {(permissions.superuser || permissions.capabilities.includes('reservations.export_raw')) && <details className="admin-disclosure mt-3"><summary>예매 명단 내려받기</summary><div className="admin-disclosure-body"><ReservationExportPanel activeManifestContext={activeManifestContext} /></div></details>}
 
       {/* Detail modal */}

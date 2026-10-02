@@ -116,34 +116,15 @@ function isoWeekLabelForKstDay(kstDayStartMs: number): string {
 }
 
 /**
- * ISO week bucket list (e.g. "2026-W17") for the last `weeks` weeks in KST.
- * Postgres `to_char(..., 'IYYY-"W"IW')` 결과와 동일한 형식을 목표로 한다.
- *
- * NOTE: 매출 추이처럼 `kstBoundaryToUtc(days)` 윈도우와 맞춰야 하는 경우에는
- * `buildWeeklyBucketSkeletonForWindow(days)` 를 사용한다. `ceil(days / 7)` 주를
- * 오늘부터 7일 간격으로 세면 윈도우 시작일이 속한 가장 오래된 부분 주가 빠진다.
- */
-export function buildWeeklyBucketSkeleton(weeks: number): string[] {
-  const nowKstMs = Date.now() + KST_OFFSET_MS;
-  const todayStartMs = Math.floor(nowKstMs / DAY_MS) * DAY_MS;
-  const buckets: string[] = [];
-  const seen = new Set<string>();
-  for (let i = weeks - 1; i >= 0; i -= 1) {
-    const label = isoWeekLabelForKstDay(todayStartMs - i * 7 * DAY_MS);
-    if (!seen.has(label)) {
-      seen.add(label);
-      buckets.push(label);
-    }
-  }
-  return buckets;
-}
-
-/**
  * Every ISO week (ASC) that overlaps the `days`-day KST window ending today,
  * i.e. the same window as `kstBoundaryToUtc(days)`. The oldest bucket is the
  * (possibly partial) week containing `today - (days - 1)`.
  *
  * review MEDIUM 6: 90d period에서 빈 주 0 revenue 채움용.
+ *
+ * The former week-count variant (`buildWeeklyBucketSkeleton(weeks)`) stepped
+ * back 7 days at a time from today and dropped the oldest partial week of the
+ * window (audit #131). It had no callers and was removed; use this function.
  */
 export function buildWeeklyBucketSkeletonForWindow(days: number): string[] {
   if (!Number.isInteger(days) || days < 1) {

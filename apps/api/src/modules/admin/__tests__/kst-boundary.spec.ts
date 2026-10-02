@@ -131,6 +131,11 @@ describe('kst-boundary', () => {
     it('rejects non-positive windows', () => {
       expect(() => buildWeeklyBucketSkeletonForWindow(0)).toThrow(RangeError);
     });
+
+    it('offers only the window-aligned weekly skeleton (the week-count variant dropped the oldest partial week, #131)', async () => {
+      const kstBoundary = await import('../kst-boundary.js');
+      expect(Object.keys(kstBoundary)).not.toContain('buildWeeklyBucketSkeleton');
+    });
   });
 
   describe('buildDailyBucketSkeleton alignment with kstBoundaryToUtc', () => {

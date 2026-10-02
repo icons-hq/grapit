@@ -1199,8 +1199,10 @@ export class AdminBookingService {
     const aggregateCacheKey = adminBookingAggregateCacheKey(params);
     const cachedAggregates = await this.readCachedBookingAggregates(aggregateCacheKey);
 
-    const result = await this.runBoundedAdminRead((db) =>
-      this.readBookingsPage(db, params, whereClause, cachedAggregates));
+    const result = await this.runBoundedAdminRead(
+      (db) => this.readBookingsPage(db, params, whereClause, cachedAggregates),
+      { aggregateCacheKey, page: params.page ?? 1, aggregatesCached: Boolean(cachedAggregates) },
+    );
 
     if (!cachedAggregates) {
       await this.cache?.set(
@@ -1414,7 +1416,11 @@ export class AdminBookingService {
    * statement timeout, so one broad admin query cannot hold primary CPU that
    * seat locking and payment confirmation share during an open.
    */
-  private async runBoundedAdminRead<T>(run: (db: AdminReadDb) => Promise<T>): Promise<T> {
+  private async runBoundedAdminRead<T>(
+    run: (db: AdminReadDb) => Promise<T>,
+    scope: { aggregateCacheKey: string; page: number; aggregatesCached: boolean },
+  ): Promise<T> {
+    const startedAt = Date.now();
     try {
       return await this.db.transaction(async (tx) => {
         await tx.execute(
@@ -1424,8 +1430,14 @@ export class AdminBookingService {
       }, { accessMode: 'read only' });
     } catch (error) {
       if (isPostgresQueryCanceled(error)) {
+        // Evidence for which scopes exceed the budget during an open. The cache key is the hashed filter
+        // set (never the raw search text), so repeated timeouts of one scope can be counted.
+        this.logger.warn(
+          `Admin booking read hit statement_timeout=${ADMIN_BOOKING_QUERY_TIMEOUT_MS}ms after ${Date.now() - startedAt}ms `
+          + `aggregateKey=${scope.aggregateCacheKey} page=${scope.page} aggregatesCached=${scope.aggregatesCached}`,
+        );
         throw new ServiceUnavailableException(
-          '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 기간을 선택해 범위를 좁혀주세요',
+          '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 예매·결제 상태를 선택해 범위를 좁혀주세요',
         );
       }
       throw error;

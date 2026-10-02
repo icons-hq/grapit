@@ -10,7 +10,7 @@ import {
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { SQL } from 'drizzle-orm';
-import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   ADMIN_BOOKING_AGGREGATE_CACHE_TTL_SECONDS,
   ADMIN_BOOKING_QUERY_TIMEOUT_MS,
@@ -2740,6 +2740,40 @@ describe('AdminBookingService', () => {
 
       await expect(service.getBookings({})).rejects.toBeInstanceOf(ServiceUnavailableException);
       await expect(service.getBookings({})).resolves.toBeDefined();
+    });
+
+    it('asks to narrow by filters the dashboard actually offers (it has no date filter)', async () => {
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      const error = await service.getBookings({}).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      const message = (error as ServiceUnavailableException).message;
+      expect(message).toContain('공연·회차나 예매·결제 상태를 선택해 범위를 좁혀주세요');
+      expect(message).not.toContain('기간');
+    });
+
+    it('logs the hashed scope, elapsed time and page of a timed-out read without the raw search text', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+
+      await expect(service.getBookings({ search: '01055551234', page: 3 }))
+        .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = String(warnSpy.mock.calls[0]?.[0]);
+      expect(message).toMatch(/aggregateKey=cache:admin:bookings:aggregates:v1:[0-9a-f]{64}\b/);
+      expect(message).toMatch(/after \d+ms/);
+      expect(message).toContain('page=3');
+      expect(message).toContain('aggregatesCached=false');
+      expect(message).not.toContain('01055551234');
     });
 
     it('reuses cached stats and tier stats across pages of the same filter instead of re-aggregating', async () => {

@@ -37,6 +37,8 @@ import { CacheService } from '../src/modules/performance/cache.service.js';
 import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { SearchService } from '../src/modules/search/search.service.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
+import type { TossWebhookRequestBody } from '../src/modules/payment/payment.service.js';
+import type { RefundCancelRetryJobPayload } from '../src/modules/jobs/pgboss.provider.js';
 
 const { users, venues, performances, showtimes, reservations, reservationSeats, payments,
   ticketItems, seatInventories, ticketBenefitConfigurations, ticketBenefits, ticketBenefitEntitlements, tickets } = schema;
@@ -465,7 +467,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       });
       const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)) };
       const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
-      const send = vi.fn(async (_name: string, _payload: { refundId: string }) => randomUUID());
+      const send = vi.fn(async (_name: string, _payload: RefundCancelRetryJobPayload) => randomUUID());
       const service = new RefundService(db, provider as never, finalizer, { isAvailable: true, send } as never);
       const pending = await service.requestRefund(f.first.reservationId, f.userId, 'Fee-retaining cancellation');
       expect(pending.refundTimeline?.currentState).toBe('SENT_TO_PG');
@@ -906,7 +908,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
       provider: 'ALIPAY_PLUS' as const, method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
-    } };
+    } } satisfies TossWebhookRequestBody;
     await service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done');
     await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
     for (const staleStatus of ['IN_PROGRESS', 'ABORTED', 'EXPIRED'] as const) {
@@ -997,7 +999,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS' as const,
       method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
-    } };
+    } } satisfies TossWebhookRequestBody;
     const results = await Promise.allSettled([
       service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done'),
       service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done'),
@@ -1064,7 +1066,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
       provider: 'ALIPAY_PLUS' as const, method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
-    } };
+    } } satisfies TossWebhookRequestBody;
     expect(await service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done')).toBe('DONE_CANCEL_PENDING');
     await db.update(ticketItems).set({ status: 'cancelled' }).where(eq(ticketItems.id, owner!.id));
     await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
@@ -1454,7 +1456,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const redemption = new BenefitRedemptionService(db, qr);
     const redemptions = await Promise.all([1, 2].map(() => redemption.redeem({
       token: credentials[0]!.token, showtimeId: f.showtimeId, benefitEntitlementId: entitlement!.id,
-      deviceAttemptId: randomUUID(),
+      deviceAttemptId: randomUUID(), confirmed: true,
     }, context)));
     expect(redemptions.map((r) => r.outcome).sort()).toEqual(['duplicate', 'redeemed']);
     console.info(`Local PostgreSQL verify + concurrent seat entry + read-back + concurrent redemption: ${Math.round(performance.now() - start)}ms (not production capacity evidence)`);

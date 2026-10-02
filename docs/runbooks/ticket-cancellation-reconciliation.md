@@ -65,7 +65,8 @@ Read-only triage queries:
 -- Refunds still being retried or needing review, oldest first.
 SELECT id, reservation_id, status, retry_count, result_code,
        provider_metadata->'refundCancelRetry'->>'nextAttemptAt' AS next_attempt_at,
-       provider_metadata->>'manualReviewRequired' AS manual_review
+       provider_metadata->>'manualReviewRequired' AS manual_review,
+       provider_metadata->>'manualReviewReason' AS manual_review_reason
 FROM refunds
 WHERE status IN ('requested', 'sent_to_pg', 'processing_at_pg', 'failed')
   AND provider_metadata->>'rightsRestoredAt' IS NULL
@@ -83,15 +84,26 @@ FROM seat_inventories
 WHERE status = 'held_cancelled' AND reopen_hold_until < now() - interval '15 minutes';
 ```
 
+`failed` refunds with rights still revoked, by `result_code` (also in `manualReviewReason`):
+
+- `REFUND_RETRY_WINDOW_EXPIRED`: the 15-day provider idempotency window closed while the PG balance still matched the frozen ledger. No money moved for this command; recover it in admin (below), which restores the rights and asks for a freshly quoted refund.
+- `BALANCE_RECONCILIATION_REQUIRED`: the PG balance is lower than the frozen ledger (an unknown cancellation), or a legacy refund without a frozen ledger cannot be proven untouched (window closed or provider-aborted cancel). Compare the Toss cancellation history first.
+- `CANCEL_COMMAND_UNAVAILABLE`: a legacy refund whose cancel command cannot be rebuilt. Reconcile manually.
+- `RETRY_EXHAUSTED` (legacy three-attempt budget) and other provider codes: recover it in admin (below).
+
 Recovery rules:
 
 - A non-terminal refund without a live retry job is re-driven automatically by the background sweep (10 minutes after its `nextAttemptAt`, or 20 minutes after the last update when no schedule was recorded). No manual action is needed while the provider is down. The sweep pushes each row it takes 30 minutes ahead first, so a row it cannot move is retried later instead of blocking the batch. A legacy refund without a frozen command whose command cannot be rebuilt becomes `failed` with `CANCEL_COMMAND_UNAVAILABLE` (rights stay revoked); reconcile it manually.
-- A `failed` refund whose rights are still revoked (no `rightsRestoredAt`, for example a legacy `RETRY_EXHAUSTED`) is recovered by pressing **환불 처리** again in admin with the `refund.admin_refund` capability. The API first queries the provider:
+- A `failed` refund whose rights are still revoked (no `rightsRestoredAt`, for example a legacy `RETRY_EXHAUSTED` or `REFUND_RETRY_WINDOW_EXPIRED`) is recovered in admin with the `refund.admin_refund` capability: open the booking detail, press **환불 처리** and enter a reason. The preview shows "이전 환불 재조정" with the stored refund amount and the recorded failure (fee overrides are hidden because the stored quote is reused); press **환불 확인**. If the preview shows a manual-reconciliation message instead (stored quote, ledger or command missing, or ticket items no longer `cancellation_pending`), reconcile in the Toss dashboard first. A refund still `requested`/`sent_to_pg`/`processing_at_pg` cannot be recovered from the form; wait for the retry or the sweep. The API first queries the provider (503 "결제사 결제 상태를 확인하지 못했습니다…" if it cannot; nothing changes, retry later):
   - matching completed cancel: finalized without another POST;
   - untouched balance inside the 15-day window: the same frozen command is resent;
-  - untouched balance after the window, or a provider-aborted async cancel: rights are restored and the request stops with 409 ("환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요"). Reopen the refund form, check the recalculated amount (the fee schedule may have moved on since the original request) and press **환불 처리** again;
+  - untouched balance after the window, or a provider-aborted async cancel: rights are restored and the request stops with 409 ("환불 미리보기를 다시 확인한 뒤 환불을 요청해주세요"). The form reloads the preview with the recalculated amount (the fee schedule may have moved on since the original request). Before pressing **환불 확인** again:
+    - compare it with the original quote: `provider_metadata->'cancellationQuote'` of the restored refund (after the next request it moves to `provider_metadata->'previousAttempts'`, one entry per earlier attempt with its `cancellationQuote`);
+    - if the delay was caused by Grabit or the PG (for example a provider outage), not by the buyer, decide whether to use the Administrative Full Refund Override (수수료 없이 전액 환불). The override refunds ticket price and service fee in full, which can exceed the original quote, so record the decision in the reason;
+    - after the Cancellation Window (`cancel_deadline`) a default admin refund is blocked, so only the override can refund; add Entered Ticket Override for entered tickets.
   - provider balance higher than the frozen ledger: rights are restored without a POST;
   - provider balance lower than the frozen ledger (unknown cancellation) or ticket items no longer `cancellation_pending`: the API refuses with 409. Reconcile in the Toss dashboard first.
+- A new admin refund needs the PG: if the provider payment cannot be queried, the preview shows an amber "결제사 결제 상태를 확인하지 못했습니다" warning with **다시 조회** and the request answers 503 without revoking any ticket. Press **다시 조회** once the PG answers. A network error without a server answer is shown as "환불 요청 결과를 확인하지 못했습니다…"; check the refund state in the booking detail before retrying.
 - After a seat-level cancellation, refund the remaining balance through the app (admin refund), not the Toss console. A console cancel is reconciled by webhook only for still-valid Ticket Items; earlier seat cancellations keep their own fee and refund, and the console amount is reconciled automatically when it can be: with one remaining item the item records the provider amount as its refund (`ATTRIBUTED`); with several items, or a non-KRW payment, the payment carries `quotelessCancellationReconciliation` (`UNATTRIBUTED`/`UNVERIFIED`) and finance must attribute the difference using the query above.
 - Held seats whose release job never ran (pg-boss unavailable, crash, `JOB_ENQUEUE_FAILED`) are released by the background sweep 15 minutes after their hold expires, with the same ownership and showtime guards as the release worker. Seats within 5 minutes of showtime stay held. Manual open is still available for cancelled reservations.
 - After the Cancellation Window only the Administrative Full Refund Override can refund (show cancellation, company fault). Add Entered Ticket Override for entered tickets.

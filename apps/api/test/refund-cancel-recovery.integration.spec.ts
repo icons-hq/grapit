@@ -287,6 +287,13 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     await db.update(refunds).set({ status: 'failed', resultCode: 'RETRY_EXHAUSTED', retryCount: 3, failedAt: new Date() })
       .where(eq(refunds.reservationId, f.reservation.id));
     expect((await service.requestRefund(f.reservation.id, f.userId, 'again')).idempotent).toBe(true);
+    // The admin preview offers this attempt for recovery with its stored quote instead of blocking it.
+    expect(await service.getAdminRefundPreview(f.reservation.id)).toMatchObject({
+      canRequestRefund: false,
+      adminRecoveryAvailable: true,
+      blockedReason: null,
+      cancellationQuote: { refundableAmount: 100000 },
+    });
 
     const healthy = provider(f.snapshot);
     let releaseCancel!: () => void;
@@ -358,6 +365,40 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const credentials = await db.select().from(tickets).where(eq(tickets.reservationId, f.reservation.id));
     expect(credentials.every((ticket) => ticket.status === 'active')).toBe(true);
     expect(toss.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('refuses an admin refund with 503 and revokes nothing while the PG payment cannot be queried (#80, fail closed)', async () => {
+    const f = await purchase();
+    const toss = provider(f.snapshot);
+    toss.queryPayment.mockRejectedValue(new Error('fetch failed'));
+    const service = new RefundService(db, toss as never, finalizer());
+
+    const preview = await service.getAdminRefundPreview(f.reservation.id);
+    expect(preview).toMatchObject({ canRequestRefund: false, providerCheckUnavailable: true,
+      blockedReason: '결제사 결제 상태를 확인하지 못했습니다. 잠시 후 미리보기를 다시 조회해주세요.' });
+
+    const audit = { write: vi.fn().mockResolvedValue(undefined) };
+    const adminBooking = new AdminBookingService(db, { broadcastSeatUpdate: vi.fn() } as never, service, audit as never);
+    const request = adminBooking.refundBooking(f.reservation.id, adminId, 'PG 장애 중 환불', {
+      expectedRefundableAmount: preview.cancellationQuote!.refundableAmount,
+    });
+    await expect(request).rejects.toMatchObject({ status: 503 });
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ action: 'refund.admin_refund', status: 'failed' }));
+
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+    expect(await db.select().from(refunds).where(eq(refunds.reservationId, f.reservation.id))).toHaveLength(0);
+    const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.reservation.id));
+    expect(items.every((item) => item.status === 'active')).toBe(true);
+    const credentials = await db.select().from(tickets).where(eq(tickets.reservationId, f.reservation.id));
+    expect(credentials.length).toBeGreaterThan(0);
+    expect(credentials.every((ticket) => ticket.status === 'active')).toBe(true);
+
+    // Once the PG answers again the same refund goes through.
+    toss.queryPayment.mockImplementation(async () => structuredClone(f.snapshot));
+    const result = await adminBooking.refundBooking(f.reservation.id, adminId, 'PG 복구 후 환불', {
+      expectedRefundableAmount: preview.cancellationQuote!.refundableAmount,
+    });
+    expect(result.outcome).toBe('completed');
   });
 
   it('cancels a 0 KRW tier locally for both full and single-seat cancellation (#82)', async () => {

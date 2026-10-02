@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
+  ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE,
   isTossCancelCompleted,
   toRefundTimeline,
   RefundService,
@@ -607,7 +608,7 @@ describe('RefundService', () => {
     expect(queryPayment).toHaveBeenCalledWith('pay-key-1', expect.any(Object));
   });
 
-  it('keeps the admin refund preview requestable with the PG cancel amount when the PG query fails', async () => {
+  it('blocks the admin refund preview until the PG payment can be queried (fail closed, audit #80)', async () => {
     vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
     const service = new RefundService(
       {} as never,
@@ -621,11 +622,63 @@ describe('RefundService', () => {
 
     const result = await service.getAdminRefundPreview('reservation-1');
 
-    // A PG outage must not stop an admin refund from entering the retry path; the operator still
-    // confirms the PG cancel amount that requestAdminRefund compares against.
-    expect(result.canRequestRefund).toBe(true);
-    expect(result.blockedReason).toBeNull();
-    expect(result.providerRefund).toMatchObject({ currency: 'KRW', amountMinor: 140000 });
+    // Without a PG answer the ledger cannot be compared with the PG balance, so the operator must
+    // re-check the preview instead of revoking rights on an unverified payment.
+    expect(result.canRequestRefund).toBe(false);
+    expect(result.providerCheckUnavailable).toBe(true);
+    expect(result.blockedReason).toBe(ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE);
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+  });
+
+  it('refuses a new admin refund with 503 before revoking any right when the PG payment cannot be queried (audit #80)', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+      queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    // insertRequestedRefund is the transaction that revokes QR credentials and benefits.
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+    const request = service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불', {
+      expectedRefundableAmount: 140000,
+    });
+
+    await expect(request).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(request).rejects.toThrow(ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE);
+    expect(tossPaymentsClient.queryPayment).toHaveBeenCalledTimes(1);
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it('keeps the buyer request path tolerant of a failed PG pre-check (the frozen preflight re-checks it)', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+      queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund')
+      .mockResolvedValue(createRefund({ status: 'completed' }) as never);
+
+    await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(insertSpy).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -988,6 +1041,10 @@ describe('RefundService', () => {
     vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
 
     const tossPaymentsClient = {
+      // Admin refunds verify the PG balance before revoking rights (fail closed).
+      queryPayment: vi.fn().mockResolvedValue({
+        totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+      }),
       cancelPayment: vi.fn().mockResolvedValue({
         paymentKey: 'pay-key-1',
         totalAmount: 204000,
@@ -1213,6 +1270,64 @@ describe('RefundService', () => {
     expect(failedSpy).not.toHaveBeenCalled();
     expect(result.retryEnqueued).toBe(false);
     expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
+  });
+
+  it('polls a matching asynchronous cancel the PG accepted without raising the customer-service CTA', async () => {
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({ totalAmount: 132000, balanceAmount: 132000, isPartialCancelable: true }),
+      // The POST answer carries this exact cancel (same reason and amount) still IN_PROGRESS at the PG.
+      cancelPayment: vi.fn().mockResolvedValue({
+        status: 'DONE',
+        totalAmount: 132000,
+        cancels: [{
+          cancelAmount: 132000,
+          cancelReason: '단순 변심',
+          canceledAt: '2026-07-01T05:00:01.000Z',
+          cancelStatus: 'IN_PROGRESS',
+        }],
+      }),
+    };
+    const pgBoss = { isAvailable: true, send: vi.fn().mockResolvedValue('job-refund-retry-async') };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
+    const context = createContext();
+    // Past the attention threshold: without the awaiting-provider flag this poll would raise the CTA.
+    const processingRefund = createRefund({
+      status: 'processing_at_pg',
+      requestedAt: new Date('2026-07-01T05:00:00.000Z'),
+      processingAtPgAt: new Date('2026-07-01T05:00:01.000Z'),
+      resultCode: 'DONE',
+      retryCount: 4,
+    });
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'insertRequestedRefund').mockResolvedValue(createRefund() as never);
+    vi.spyOn(service as never, 'markRefundProcessing').mockResolvedValue(processingRefund as never);
+    const recordScheduleSpy = vi.spyOn(service as never, 'recordRefundCancelRetrySchedule');
+    const updateSpy = vi.spyOn(service as never, 'updateRefund').mockImplementation((async (
+      _refundId: string,
+      values: Record<string, unknown>,
+    ) => createRefund({ ...processingRefund, ...values })) as never);
+
+    const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledTimes(1);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, 'job-refund-retry-async', { awaitingProvider: true });
+    expect(updateSpy).toHaveBeenCalledWith(
+      'refund-1',
+      expect.objectContaining({
+        customerServiceCtaVisible: false,
+        providerMetadata: expect.objectContaining({ manualReviewRequired: false }),
+      }),
+      undefined,
+    );
+    expect(result.retryEnqueued).toBe(true);
+    expect(result.refundTimeline?.customerServiceCtaVisible).toBe(false);
   });
 
   it('uses policy-built Alipay full-cancel options and finalizes through the shared finalizer', async () => {
