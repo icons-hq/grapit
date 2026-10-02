@@ -17,6 +17,7 @@ import type {
   AdminBookingFunnelStatus,
   AdminBookingListResponse,
   AdminReservationExportFilter,
+  AdminRefundRequest,
   AdminRefundResult,
   PaymentStatus,
   RefundPreviewResponse,
@@ -228,6 +229,8 @@ export function useAdminRefundPreview(
       });
       return apiClient.get<RefundPreviewResponse>(
         `/api/v1/admin/bookings/${id}/refund-preview?${searchParams.toString()}`,
+        // The refund form shows a failed preview inline with a re-check button.
+        { showErrorToast: false },
       );
     },
     enabled: Boolean(id) && enabled,
@@ -244,14 +247,7 @@ export function useAdminRefund() {
       enteredTicketOverride,
       expectedRefundableAmount,
       expectedProviderRefundAmountMinor,
-    }: {
-      id: string;
-      reason: string;
-      fullRefundOverride?: boolean;
-      enteredTicketOverride?: boolean;
-      expectedRefundableAmount?: number;
-      expectedProviderRefundAmountMinor?: number;
-    }) =>
+    }: { id: string } & AdminRefundRequest) =>
       apiClient.post<AdminRefundResult>(
         `/api/v1/admin/bookings/${id}/refund`,
         {
@@ -260,7 +256,7 @@ export function useAdminRefund() {
           enteredTicketOverride,
           expectedRefundableAmount,
           expectedProviderRefundAmountMinor,
-        },
+        } satisfies AdminRefundRequest,
         // The dashboard shows one outcome-specific message per attempt.
         { showErrorToast: false },
       ),

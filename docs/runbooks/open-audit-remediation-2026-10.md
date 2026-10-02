@@ -27,7 +27,7 @@
 | admission token 원문 | `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';` | 많으면 승인된 DB 절차로 batch 선변환([migration 0039](show-relaunch-reliability.md#migration-0039-6268)) | #68 |
 | 결제 기한이 지난 고아 handoff | [First rollout of the review](managed-demo-cost-floor.md#relaunch-incident-regression-requirement)의 후보 쿼리 | 운영자가 건수를 승인한 뒤 review 활성화 | #9 |
 | 금액 불일치로 거절된 과거 async DONE | [Read-Only Query Shapes](live-foreign-payment-cancel-uat-2026-06-03.md#read-only-query-shapes)의 async DONE 쿼리(`async_status='payment_amount_mismatch'`) | Toss 조회가 `DONE`이면 수동 환불 여부 결정. 이미 처리된 ledger라 배포만으로 자동 환불되지 않는다 | #75 |
-| 권리 미복원 `failed` 환불 | [Refund retry triage](ticket-cancellation-reconciliation.md#refund-retry-recovery-and-held-seats-2026-10) 첫 쿼리(`failed`, `rightsRestoredAt` 없음) | 건별로 관리자 `환불 처리` 재실행 여부 결정. sweep은 이전 `failed`를 자동 재개하지 않는다 | #22 #53 |
+| 권리 미복원 `failed` 환불 | [Refund retry triage](ticket-cancellation-reconciliation.md#refund-retry-recovery-and-held-seats-2026-10) 첫 쿼리(`failed`, `rightsRestoredAt` 없음). `result_code`로 나눈다: `REFUND_RETRY_WINDOW_EXPIRED`는 잔액이 그대로이고 15일 기한만 지난 건, `BALANCE_RECONCILIATION_REQUIRED`는 잔액 대조가 필요한 건이다 | 건별로 결제사 내역을 확인하고, 관리자 예매 상세의 `환불 처리` 미리보기가 "이전 환불 재조정"(저장 금액·이전 실패 기록)을 보여 주면 `환불 확인`으로 재조정한다. 수동 대조 문구가 나오면 runbook대로 처리한다. 409로 권리가 복원되면 원 견적과 귀책을 보고 override 여부를 정한다. sweep은 이전 `failed`를 자동 재개하지 않는다 | #22 #53 #80 |
 | 과거 경합으로 남은 QR | `SELECT t.id, t.ticket_item_id, ti.status FROM tickets t JOIN ticket_items ti ON ti.id = t.ticket_item_id WHERE t.status = 'active' AND ti.status <> 'active';` | [취소 대조 runbook](ticket-cancellation-reconciliation.md)으로 건별 정리 | #110 |
 | QR keyring 범위 | `SELECT secret_version, status, count(*) FROM tickets WHERE status IN ('active','used') GROUP BY 1,2;` | 모든 version이 `qr-ticket-secret-keyring-json`(또는 현재 version)에 있는지, keyring의 현재 version 값이 `qr-ticket-secret`과 같은지 확인 | #109 |
 | 좁힌 목록을 가진 superuser | `role='admin' AND admin_capability_bundle='admin' AND admin_capabilities <> '[]'` 계정, 특히 공용 scanner 계정 | 승인된 절차로 `scanner` 등 비-admin 번들로 변경(배포 후에는 관리자 화면에서 가능) | #42 #25 |
@@ -125,7 +125,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 - [ ] background worker Job 실행 시간을 본다. 고아 handoff 검토 예산 65초와 처리 창 30초가 Job timeout 120초 안에 들어가도록 설계됐다. #9 #154
 - [ ] 429 비율과 `Retry-After` 분포, 대기열 진입 400/404/403 `errorCode` 분포를 본다. 잘못된 ID가 더 이상 500을 내지 않아야 한다. `/api/v1/support-content`(추적 단위당 분당 120회)의 공유 NAT 사용자 429도 본다. #5 #158 #90 #132
 - [ ] `<provider> OAuth callback rejected: <reason>` warn 로그를 reason별로 본다. 모바일에서 `missing_nonce_cookie` 비중이 계속 높으면 인앱 브라우저 전환이 로그인을 깨는 것이다. #37
-- [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. 조건 없는 조회가 자주 503이면 운영자에게 공연·회차를 먼저 고르도록 안내한다. #127
+- [ ] `GET /api/v1/admin/bookings`의 503과 지연을 본다. API warn 로그 `Admin booking read hit statement_timeout`의 `aggregateKey`(필터 해시, 검색어 원문 없음)·`page`·경과 시간으로 같은 범위가 반복해서 5초를 넘는지 센다. 조건 없는 조회가 자주 503이면 운영자에게 공연·회차나 예매·결제 상태를 먼저 고르도록 안내한다. #127
 - [ ] Valkey active set 크기와 confirm 403 비율이 줄었는지, 이전 build의 `{queue:*}:eta-origin:*` 키가 남지 않았는지 본다(남아도 2시간 안에 만료). #4 #26 #91
 - [ ] worker 로그에서 같은 jobId의 `QR reminder claimed` 뒤에 `QR reminder sent`가 없는 건(유실된 reminder)을 본다. `superseded job`, `claimed by another worker` skip은 무해하다. #107
 - [ ] Valkey 메모리: `{payment-confirm-attempt}:*`(confirm마다 30분), `{payment-handoff-review}:*`, `cache:admin:bookings:aggregates:v1:*`(30초), `seat-status-cache:*`(1초) 키와 seat-status 재계산 빈도(인스턴스·회차당 초당 1회 이하)를 지표에 넣는다. #9 #127 #8

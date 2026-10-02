@@ -105,6 +105,15 @@ export interface RefundPreviewResponse {
   cancellationQuote: FullReservationCancellationQuote | null;
   providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
   blockedReason?: string | null;
+  /** Admin preview only: the PG payment could not be queried, so the refund is blocked until a re-check. */
+  providerCheckUnavailable?: boolean;
+  /**
+   * Admin preview only: a failed refund whose rights are still revoked can be reconciled by requesting the
+   * admin refund again (recoverExistingRefundForAdmin). `cancellationQuote` is then the stored quote.
+   */
+  adminRecoveryAvailable?: boolean;
+  /** Admin preview only: the recorded failure of the refund offered for recovery. */
+  adminRecoveryReason?: string | null;
 }
 
 export interface RefundRequestResponse extends RefundPreviewResponse {
@@ -170,10 +179,20 @@ const DEFINITE_TOSS_CANCEL_REJECTION_CODES = new Set([
 /** Local preflight decisions. They are resolved explicitly, never by the generic retry path. */
 export const REFUND_BALANCE_RECONCILIATION_CODE = 'BALANCE_RECONCILIATION_REQUIRED';
 export const REFUND_NOT_PARTIAL_CANCELABLE_CODE = 'NOT_PARTIAL_CANCELABLE';
+/**
+ * The frozen command passed the 15-day provider idempotency window with an unchanged balance. Nothing needs
+ * balance reconciliation; the admin refund recovery restores the rights so a freshly quoted refund can follow.
+ */
+export const REFUND_RETRY_WINDOW_EXPIRED_CODE = 'REFUND_RETRY_WINDOW_EXPIRED';
 const LOCAL_REFUND_PREFLIGHT_CODES = new Set([
   REFUND_BALANCE_RECONCILIATION_CODE,
   REFUND_NOT_PARTIAL_CANCELABLE_CODE,
+  REFUND_RETRY_WINDOW_EXPIRED_CODE,
 ]);
+
+/** Admin refunds fail closed: without a PG answer neither the preview nor the request may revoke rights. */
+export const ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE =
+  '결제사 결제 상태를 확인하지 못했습니다. 잠시 후 미리보기를 다시 조회해주세요.';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const seoulDateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -495,6 +514,14 @@ export class RefundService {
     const existingRefund = await this.findExistingRefund(reservationId);
 
     if (
+      existingRefund
+      && !hasRestoredRefundRights(existingRefund)
+      && existingRefund.status !== 'completed'
+    ) {
+      return this.buildAdminUnrestoredRefundPreview(context, existingRefund);
+    }
+
+    if (
       context.reservation.status === 'CONFIRMED'
       && (!existingRefund || hasRestoredRefundRights(existingRefund))
     ) {
@@ -522,9 +549,9 @@ export class RefundService {
     const preview = this.buildPreview(context, existingRefund, options);
     if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
     // Same provider amount and PG balance check as the buyer preview, so the operator confirms the exact
-    // PG cancel amount (incl. USD minor units) that requestAdminRefund later compares against. A PG query
-    // failure does not block (the request path keeps the refund retryable), but a quote that cannot become
-    // a PG cancel command would be rejected by the request path too, so the preview says so up front.
+    // PG cancel amount (incl. USD minor units) that requestAdminRefund later compares against. A quote that
+    // cannot become a PG cancel command would be rejected by the request path too, so the preview says so
+    // up front. A PG query failure blocks as well: the request path refuses (503) before revoking any right.
     const providerCheck = await this.checkProviderRefundBalance(context, preview.cancellationQuote, {
       audience: 'admin',
       tolerateQueryFailure: true,
@@ -537,12 +564,80 @@ export class RefundService {
         blockedReason: '이 결제는 자동 환불 금액을 만들 수 없습니다. 전액 환불 여부를 확인하거나 결제사에서 직접 처리해주세요.',
       };
     }
+    if (providerCheck.providerCheckUnavailable) {
+      return {
+        ...preview,
+        providerRefund: providerCheck.providerRefund,
+        canRequestRefund: false,
+        blockedReason: ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE,
+        providerCheckUnavailable: true,
+      };
+    }
     return {
       ...preview,
       providerRefund: providerCheck.providerRefund,
       blockedReason: providerCheck.blockedReason,
       canRequestRefund: !providerCheck.blockedReason,
     };
+  }
+
+  /**
+   * Admin preview of a refund attempt that still holds the revoked rights. `canRequestRefund` keeps its
+   * meaning (false: no new refund can start) because the admin refund outcome relies on it. A `failed`
+   * attempt is offered for recovery instead: requesting the admin refund again reconciles it with the PG
+   * (recoverExistingRefundForAdmin) using the stored quote, so the preview shows that quote and the reason
+   * the attempt failed. A refund still in progress at the PG cannot be recovered and stays blocked.
+   */
+  protected buildAdminUnrestoredRefundPreview(
+    context: ReservationRefundContext,
+    refund: RefundRecord,
+  ): RefundPreviewResponse {
+    const preview = this.buildPreview(context, refund);
+    if (refund.status !== 'failed') {
+      return {
+        ...preview,
+        adminRecoveryAvailable: false,
+        blockedReason: '이미 환불이 결제사에서 진행 중입니다. 자동 재확인 결과를 기다리거나 예매 상세에서 환불 상태를 확인해주세요.',
+      };
+    }
+
+    const blocker = this.findAdminRecoveryBlocker(context, refund);
+    if (blocker) {
+      return { ...preview, adminRecoveryAvailable: false, blockedReason: blocker };
+    }
+
+    return {
+      ...preview,
+      adminRecoveryAvailable: true,
+      adminRecoveryReason: [refund.resultCode, refund.failureReason ?? refund.resultMessage]
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join(' · ') || null,
+      blockedReason: null,
+    };
+  }
+
+  /**
+   * Preconditions shared by the recovery preview and recoverExistingRefundForAdmin: the stored quote, the
+   * frozen ledger snapshot and command, and the revoked items of that attempt must all still be present.
+   */
+  protected findAdminRecoveryBlocker(
+    context: Pick<ReservationRefundContext, 'ticketItems'>,
+    refund: RefundRecord,
+  ): string | null {
+    const quote = getStoredCancellationQuote(refund);
+    const amountSnapshot = getRefundProviderMetadata(refund.providerMetadata).providerRefund;
+    if (!quote || !amountSnapshot) {
+      return '이전 환불 요청의 견적과 금액 기록을 확인할 수 없어 수동 대조가 필요합니다';
+    }
+    const quotedIds = new Set(quote.items.map((item) => item.ticketItemId));
+    const quotedItems = context.ticketItems.filter((item) => quotedIds.has(item.id));
+    if (quotedItems.length !== quotedIds.size || quotedItems.some((item) => item.status !== 'cancellation_pending')) {
+      return '환불 요청 이후 티켓 상태가 바뀌어 수동 대조가 필요합니다';
+    }
+    if (quote.refundableAmount !== 0 && !readStoredPaymentCancelRequest(refund.providerMetadata)) {
+      return '이전 환불 요청의 취소 명령을 확인할 수 없어 수동 대조가 필요합니다';
+    }
+    return null;
   }
 
   /**
@@ -922,17 +1017,13 @@ export class RefundService {
       return this.respondToExistingRefund(context, refund);
     }
 
-    const quote = getStoredCancellationQuote(refund);
+    const blocker = this.findAdminRecoveryBlocker(context, refund);
+    if (blocker) {
+      throw new ConflictException(blocker);
+    }
+    const quote = getStoredCancellationQuote(refund)!;
     const command = readStoredPaymentCancelRequest(refund.providerMetadata);
     const amountSnapshot = getRefundProviderMetadata(refund.providerMetadata).providerRefund;
-    if (!quote || !amountSnapshot) {
-      throw new ConflictException('이전 환불 요청의 견적과 금액 기록을 확인할 수 없어 수동 대조가 필요합니다');
-    }
-    const quotedIds = new Set(quote.items.map((item) => item.ticketItemId));
-    const quotedItems = context.ticketItems.filter((item) => quotedIds.has(item.id));
-    if (quotedItems.length !== quotedIds.size || quotedItems.some((item) => item.status !== 'cancellation_pending')) {
-      throw new ConflictException('환불 요청 이후 티켓 상태가 바뀌어 수동 대조가 필요합니다');
-    }
     const storedReason = getRefundProviderMetadata(refund.providerMetadata).cancelReason;
     const reason = typeof storedReason === 'string' ? storedReason : (command?.reason ?? 'Admin refund recovery');
 
@@ -941,6 +1032,7 @@ export class RefundService {
       return this.finalizeLocalOnlyRefund(context, reopened, quote, reason, actor);
     }
     if (!command) {
+      // findAdminRecoveryBlocker already refuses a provider refund without its frozen command.
       throw new ConflictException('이전 환불 요청의 취소 명령을 확인할 수 없어 수동 대조가 필요합니다');
     }
 
@@ -989,7 +1081,7 @@ export class RefundService {
       }
 
       return this.restoreRightsForReviewedRetry(context, refund, {
-        code: 'REFUND_RETRY_WINDOW_EXPIRED',
+        code: REFUND_RETRY_WINDOW_EXPIRED_CODE,
         message: '이전 취소 명령의 결제사 재전송 기한이 지나 티켓 권리를 복원했습니다',
       });
     }
@@ -1089,9 +1181,11 @@ export class RefundService {
 
   /**
    * Refuses before any right is revoked when the provider balance already disagrees with the local ledger
-   * (for example a seat cancelled only in Grabit). A failed provider query does not block: the frozen
-   * preflight after revocation re-checks and keeps the refund retryable. Partial-cancel support keeps its
-   * existing post-revocation handling (rights are restored when the provider refuses partial cancels).
+   * (for example a seat cancelled only in Grabit). A failed provider query blocks a new admin refund with
+   * 503 (fail closed: the operator re-checks the preview once the PG answers). For a buyer it does not
+   * block: the frozen preflight after revocation re-checks and keeps the refund retryable. Partial-cancel
+   * support keeps its existing post-revocation handling (rights are restored when the provider refuses
+   * partial cancels).
    */
   protected async assertProviderBalanceBeforeRevocation(
     context: ReservationRefundContext,
@@ -1103,6 +1197,9 @@ export class RefundService {
       tolerateQueryFailure: true,
       balanceOnly: true,
     });
+    if (check.providerCheckUnavailable && actor.kind === 'admin') {
+      throw new ServiceUnavailableException(ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE);
+    }
     if (check.blockedReason) {
       throw new ConflictException(check.blockedReason);
     }
@@ -1113,14 +1210,22 @@ export class RefundService {
     cancellationQuote: FullReservationCancellationQuote,
     options: {
       audience: 'user' | 'admin';
+      /**
+       * Report a failed command build or provider query instead of throwing. A failed query is reported as
+       * `providerCheckUnavailable` so each caller decides whether it blocks.
+       */
       tolerateQueryFailure?: boolean;
       /** Block only on a provider balance that is known and differs from the ledger. */
       balanceOnly?: boolean;
     },
-  ): Promise<{ providerRefund: ReturnType<typeof describePaymentCancellation> | null; blockedReason: string | null }> {
+  ): Promise<{
+    providerRefund: ReturnType<typeof describePaymentCancellation> | null;
+    blockedReason: string | null;
+    providerCheckUnavailable: boolean;
+  }> {
     const snapshot = withCompletedRefunds(context.payment, context.ticketItems);
     if (cancellationQuote.refundableAmount === 0) {
-      return { providerRefund: describeLocalOnlyCancellation(snapshot), blockedReason: null };
+      return { providerRefund: describeLocalOnlyCancellation(snapshot), blockedReason: null, providerCheckUnavailable: false };
     }
 
     let command: ReturnType<typeof buildFullReservationPaymentCancelRequest>;
@@ -1137,7 +1242,7 @@ export class RefundService {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return { providerRefund: null, blockedReason: null };
+      return { providerRefund: null, blockedReason: null, providerCheckUnavailable: false };
     }
     let provider: TossPaymentResponse;
     try {
@@ -1146,11 +1251,11 @@ export class RefundService {
     } catch (error) {
       if (!options.tolerateQueryFailure) throw error;
       this.logger.warn(
-        `Provider balance check skipped because the payment query failed. reservationId=${context.reservation.id}: ${
+        `Provider balance check unavailable because the payment query failed. audience=${options.audience} reservationId=${context.reservation.id}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return { providerRefund, blockedReason: null };
+      return { providerRefund, blockedReason: null, providerCheckUnavailable: true };
     }
 
     const scale = providerRefund.currency === 'USD' ? 100 : 1;
@@ -1170,7 +1275,7 @@ export class RefundService {
         : '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
     }
 
-    return { providerRefund, blockedReason };
+    return { providerRefund, blockedReason, providerCheckUnavailable: false };
   }
 
   protected buildPreview(

@@ -195,10 +195,24 @@ function canManualOpenCancelledSeats(booking: AdminBookingDetail): boolean {
 export interface AdminRefundRequestOptions {
   fullRefundOverride: boolean;
   enteredTicketOverride: boolean;
-  /** Refund amount shown in the preview the operator confirmed. */
-  expectedRefundableAmount: number;
+  /**
+   * Refund amount shown in the preview the operator confirmed. Omitted for the recovery of a failed
+   * refund: the server resends (or finalizes) the stored command and ignores expected amounts.
+   */
+  expectedRefundableAmount?: number;
   /** PG cancel amount (minor units) shown in the preview, when known. */
   expectedProviderRefundAmountMinor?: number;
+}
+
+const REFUND_PREVIEW_LOAD_FAILED_MESSAGE =
+  '환불 미리보기를 불러오지 못했습니다. 잠시 후 다시 조회해주세요.';
+const PROVIDER_CHECK_UNAVAILABLE_FALLBACK_MESSAGE =
+  '결제사 결제 상태를 확인하지 못했습니다. 잠시 후 미리보기를 다시 조회해주세요.';
+
+/** HTTP status of a server answer (ApiClientError carries it); null for a network failure. */
+function serverErrorStatus(error: unknown): number | null {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  return error instanceof Error && typeof statusCode === 'number' ? statusCode : null;
 }
 
 function formatProviderRefund(
@@ -251,19 +265,38 @@ export function AdminBookingDetailModal({
   const refundQuote = refundPreview?.cancellationQuote ?? null;
   const refundPreviewCalculating =
     refundPreviewQuery.isLoading || refundPreviewQuery.isFetching;
+  // Display priority: a preview that could not be read (network, 5xx) or a PG that could not be
+  // queried needs a re-check first (fail closed); then a failed refund offered for recovery; then
+  // server blockers. A 4xx preview answer (for example an entered ticket without the override) is a
+  // blocker whose server message is shown as is.
+  const previewErrorStatus = serverErrorStatus(refundPreviewQuery.error);
+  const previewRejectedByServer = refundPreviewQuery.isError
+    && previewErrorStatus !== null
+    && previewErrorStatus < 500;
+  const providerCheckUnavailable = refundPreview?.providerCheckUnavailable === true;
+  const previewNeedsRecheck = (refundPreviewQuery.isError && !previewRejectedByServer)
+    || providerCheckUnavailable;
+  const recoveryMode = !refundPreviewQuery.isError
+    && !previewNeedsRecheck
+    && refundPreview?.adminRecoveryAvailable === true;
   // Server-side blockers (provider balance mismatch, closed cancellation window without override,
-  // no PG cancel command). A preview is also non-requestable when a refund is already in
-  // progress/failed.
-  const refundBlockedReason = refundPreview?.blockedReason
-    ?? (refundPreview && !refundPreview.canRequestRefund
-      ? '이미 환불이 진행 중이거나 실패로 기록된 예매입니다. 환불 진행 상태를 확인해주세요.'
-      : null);
+  // no PG cancel command, a refund still in progress at the PG). A preview without its own reason
+  // is still non-requestable when a refund already holds the tickets.
+  const refundBlockedReason = previewRejectedByServer
+    ? (refundPreviewQuery.error?.message || REFUND_PREVIEW_LOAD_FAILED_MESSAGE)
+    : previewNeedsRecheck || recoveryMode
+      ? null
+      : refundPreview?.blockedReason
+        ?? (refundPreview && !refundPreview.canRequestRefund
+          ? '이미 환불이 진행 중인 예매입니다. 환불 진행 상태를 확인해주세요.'
+          : null);
   const providerRefundLabel = formatProviderRefund(refundPreview?.providerRefund);
   const refundConfirmDisabled =
     !refundReason.trim()
     || isRefunding
     || refundPreviewCalculating
     || refundPreviewQuery.isError
+    || previewNeedsRecheck
     || refundQuote === null
     || refundBlockedReason !== null;
   const [showManualOpenForm, setShowManualOpenForm] = useState(false);
@@ -284,6 +317,15 @@ export function AdminBookingDetailModal({
 
   function handleRefundConfirm() {
     if (!bookingId || !refundReason.trim() || !refundQuote || refundConfirmDisabled) return;
+    if (recoveryMode) {
+      // Recovery reconciles the stored attempt with the PG (same frozen command and quote). Fee
+      // overrides and expected amounts belong to a new quote and are not sent.
+      onRefund(bookingId, refundReason.trim(), {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+      });
+      return;
+    }
     // Send the amounts the operator is looking at; the server rejects the
     // refund (409) instead of charging a different fee after a tier change.
     onRefund(bookingId, refundReason.trim(), {
@@ -547,7 +589,9 @@ export function AdminBookingDetailModal({
         {booking && showRefundForm && canAdminRefund && (
           <div className="space-y-4">
             <h3 className="text-base font-semibold text-gray-900">
-              환불을 진행하시겠습니까?
+              {recoveryMode
+                ? '실패한 환불을 재조정하시겠습니까?'
+                : '환불을 진행하시겠습니까?'}
             </h3>
 
             <div>
@@ -568,7 +612,9 @@ export function AdminBookingDetailModal({
 
             <div className="rounded-lg bg-gray-50 p-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">환불 금액</span>
+                <span className="text-sm text-gray-600">
+                  {recoveryMode ? '저장된 환불 금액' : '환불 금액'}
+                </span>
                 <span className="text-base font-semibold text-gray-900">
                   {refundPreviewCalculating
                     ? '계산 중...'
@@ -585,17 +631,58 @@ export function AdminBookingDetailModal({
                   </span>
                 </div>
               )}
-              {refundPreviewQuery.isError && (
-                <p className="mt-2 text-xs font-semibold text-[#C62828]">
-                  환불 금액을 계산하지 못했습니다. 잠시 후 다시 시도하세요.
-                </p>
+              {previewNeedsRecheck && (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-md border border-[#F5D48A] bg-[#FFFBEB] p-3 text-xs font-semibold text-[#8B6306]"
+                >
+                  <p>
+                    {refundPreviewQuery.isError
+                      ? REFUND_PREVIEW_LOAD_FAILED_MESSAGE
+                      : refundPreview?.blockedReason ?? PROVIDER_CHECK_UNAVAILABLE_FALLBACK_MESSAGE}
+                  </p>
+                  <p className="mt-1 font-normal">
+                    결제사 상태를 확인하기 전에는 환불을 진행할 수 없습니다.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 border-[#F5D48A] bg-white text-[#8B6306] hover:bg-[#FEF3C7]"
+                    disabled={refundPreviewQuery.isFetching}
+                    onClick={() => {
+                      void refundPreviewQuery.refetch();
+                    }}
+                  >
+                    {refundPreviewQuery.isFetching ? '다시 조회 중...' : '다시 조회'}
+                  </Button>
+                </div>
               )}
-              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundBlockedReason && (
+              {!refundPreviewCalculating && recoveryMode && refundQuote && (
+                <div className="mt-3 space-y-1 rounded-md border border-[#C7D2FE] bg-[#EEF2FF] p-3 text-xs text-[#3730A3]">
+                  <p className="font-semibold">이전 환불 재조정</p>
+                  <p>
+                    실패로 기록된 환불이 있고 티켓은 아직 회수된 상태입니다. 환불 확인을
+                    누르면 결제사 취소 내역과 대조한 뒤, 저장된 환불 금액(
+                    {formatWon(refundQuote.refundableAmount)})의 같은 취소 요청을 다시
+                    보내거나 이미 처리된 취소를 마무리합니다.
+                  </p>
+                  {refundPreview?.adminRecoveryReason && (
+                    <p>이전 실패 기록: {refundPreview.adminRecoveryReason}</p>
+                  )}
+                  <p>
+                    결제사 재전송 기한이 지났거나 결제사가 요청을 중단했다면 티켓을 복원하고
+                    요청을 멈춥니다(409). 그때는 미리보기를 다시 확인한 뒤 환불을 다시
+                    요청해주세요.
+                  </p>
+                </div>
+              )}
+              {!refundPreviewCalculating && refundBlockedReason && (
                 <p role="alert" className="mt-2 text-xs font-semibold text-[#C62828]">
                   {refundBlockedReason}
                 </p>
               )}
-              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundQuote === null && !refundBlockedReason && (
+              {!refundPreviewCalculating && !previewNeedsRecheck && refundQuote === null && !refundBlockedReason && (
                 <p className="mt-2 text-xs font-semibold text-[#C62828]">
                   서버 환불 견적이 없어 환불을 진행할 수 없습니다.
                 </p>
@@ -608,40 +695,42 @@ export function AdminBookingDetailModal({
               </div>
             </div>
 
-            <div className="space-y-3 rounded-lg border border-gray-200 p-4">
-              <label className="flex items-start gap-3">
-                <Checkbox
-                  checked={fullRefundOverride}
-                  onCheckedChange={(checked) => setFullRefundOverride(checked === true)}
-                  aria-label="수수료 없이 전액 환불"
-                />
-                <span className="space-y-1">
-                  <span className="block text-sm font-semibold text-gray-900">
-                    수수료 없이 전액 환불
+            {!recoveryMode && (
+              <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+                <label className="flex items-start gap-3">
+                  <Checkbox
+                    checked={fullRefundOverride}
+                    onCheckedChange={(checked) => setFullRefundOverride(checked === true)}
+                    aria-label="수수료 없이 전액 환불"
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold text-gray-900">
+                      수수료 없이 전액 환불
+                    </span>
+                    <span className="block text-xs text-gray-600">
+                      공연사 귀책, 운영상 예외, 테스트 정리에만 사용합니다.
+                    </span>
                   </span>
-                  <span className="block text-xs text-gray-600">
-                    공연사 귀책, 운영상 예외, 테스트 정리에만 사용합니다.
+                </label>
+                <label className="flex items-start gap-3">
+                  <Checkbox
+                    checked={enteredTicketOverride}
+                    onCheckedChange={(checked) =>
+                      setEnteredTicketOverride(checked === true)
+                    }
+                    aria-label="입장 처리 티켓 강제 취소"
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold text-gray-900">
+                      입장 처리 티켓 강제 취소
+                    </span>
+                    <span className="block text-xs text-gray-600">
+                      테스트 입장 처리 후 취소가 필요한 경우에만 사용합니다.
+                    </span>
                   </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-3">
-                <Checkbox
-                  checked={enteredTicketOverride}
-                  onCheckedChange={(checked) =>
-                    setEnteredTicketOverride(checked === true)
-                  }
-                  aria-label="입장 처리 티켓 강제 취소"
-                />
-                <span className="space-y-1">
-                  <span className="block text-sm font-semibold text-gray-900">
-                    입장 처리 티켓 강제 취소
-                  </span>
-                  <span className="block text-xs text-gray-600">
-                    테스트 입장 처리 후 취소가 필요한 경우에만 사용합니다.
-                  </span>
-                </span>
-              </label>
-            </div>
+                </label>
+              </div>
+            )}
 
             <div className="flex gap-2">
               <Button

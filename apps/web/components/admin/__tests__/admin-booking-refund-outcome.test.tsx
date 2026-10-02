@@ -105,11 +105,22 @@ function refundResult(overrides: Partial<AdminRefundResult>): AdminRefundResult 
 
 let previewResponse: RefundPreviewResponse;
 
-function renderDashboard(ui: ReactNode) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+/** What ApiClientError carries for a server answer: the HTTP status and the server message. */
+function serverError(statusCode: number, message: string) {
+  return Object.assign(new Error(message), { name: 'ApiClientError', statusCode });
+}
+
+function renderDashboard(ui: ReactNode, client = new QueryClient({
+  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+})) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
+/** The application's query defaults (app/providers.tsx): one retry. retryDelay 0 keeps the test fast. */
+function appLikeQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: 1, retryDelay: 0 }, mutations: { retry: false } },
+  });
 }
 
 async function openRefundForm(user: ReturnType<typeof userEvent.setup>) {
@@ -241,7 +252,7 @@ describe('AdminBookingDashboard refund outcome', () => {
 
   it('shows the server conflict and re-reads the quote when the refund amount changed', async () => {
     const user = userEvent.setup();
-    mocks.apiPost.mockRejectedValue(new Error('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.'));
+    mocks.apiPost.mockRejectedValue(serverError(409, '환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.'));
     renderDashboard(<AdminBookingDashboard />);
 
     const dialog = await openRefundForm(user);
@@ -277,22 +288,108 @@ describe('AdminBookingDashboard refund outcome', () => {
     expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeDisabled();
   });
 
-  it('shows the narrowing hint and does not re-run a booking list the server timed out', async () => {
-    const timeoutMessage = '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 기간을 선택해 범위를 좁혀주세요';
+  it('shows the narrowing hint and does not re-run a booking list the server timed out, with the app retry default', async () => {
+    const timeoutMessage = '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 예매·결제 상태를 선택해 범위를 좁혀주세요';
     const listCalls = () => mocks.apiGet.mock.calls
       .filter(([url]) => String(url).includes('/api/v1/admin/bookings?')).length;
     const fallback = mocks.apiGet.getMockImplementation()!;
     mocks.apiGet.mockImplementation(async (url: string) => {
       if (String(url).includes('/api/v1/admin/bookings?')) {
-        throw Object.assign(new Error(timeoutMessage), { statusCode: 503 });
+        throw serverError(503, timeoutMessage);
       }
       return fallback(url);
     });
-    renderDashboard(<AdminBookingDashboard />);
+    // The app retries a failed query once by default; useAdminBookings must override that for 503.
+    renderDashboard(<AdminBookingDashboard />, appLikeQueryClient());
 
     expect(await screen.findByText(timeoutMessage)).toBeInTheDocument();
     expect(screen.getByText(/예매를 조회하지 못했습니다/)).toBeInTheDocument();
+    // The error is shown only after retries are exhausted, so this is the final call count.
     expect(listCalls()).toBe(1);
+  });
+
+  it('still retries a booking list once for other server errors, with the app retry default', async () => {
+    const listCalls = () => mocks.apiGet.mock.calls
+      .filter(([url]) => String(url).includes('/api/v1/admin/bookings?')).length;
+    const fallback = mocks.apiGet.getMockImplementation()!;
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/v1/admin/bookings?')) {
+        throw serverError(500, '서버 오류');
+      }
+      return fallback(url);
+    });
+    renderDashboard(<AdminBookingDashboard />, appLikeQueryClient());
+
+    expect(await screen.findByText(/예매를 조회하지 못했습니다/)).toBeInTheDocument();
+    expect(listCalls()).toBe(2);
+  });
+
+  it('sends the recovery of a failed refund without expected amounts', async () => {
+    const user = userEvent.setup();
+    previewResponse = refundPreview({
+      canRequestRefund: false,
+      adminRecoveryAvailable: true,
+      adminRecoveryReason: 'RETRY_EXHAUSTED · 은행 응답 지연',
+      refundTimeline: {
+        currentState: 'FAILED',
+        requestedAt: '2026-05-08T12:00:00.000Z',
+        failedAt: '2026-05-08T12:30:00.000Z',
+        expectedDepositAt: null,
+        customerServiceCtaVisible: true,
+      },
+    });
+    mocks.apiPost.mockResolvedValue(refundResult({}));
+    renderDashboard(<AdminBookingDashboard />);
+
+    const dialog = await openRefundForm(user);
+    expect(await within(dialog).findByText('이전 환불 재조정')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeEnabled());
+    await user.click(within(dialog).getByRole('button', { name: '환불 확인' }));
+
+    await waitFor(() => expect(mocks.apiPost).toHaveBeenCalledTimes(1));
+    const [url, body] = mocks.apiPost.mock.calls[0]!;
+    expect(url).toBe(`/api/v1/admin/bookings/${BOOKING_ID}/refund`);
+    expect(body).toMatchObject({ reason: '고객 요청', fullRefundOverride: false, enteredTicketOverride: false });
+    expect(body.expectedRefundableAmount).toBeUndefined();
+    expect(body.expectedProviderRefundAmountMinor).toBeUndefined();
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalledWith('환불이 완료되었습니다'));
+  });
+
+  it('keeps the modal open with the server message and re-reads the preview when the PG cannot be queried at execution (503)', async () => {
+    const user = userEvent.setup();
+    const message = '결제사 결제 상태를 확인하지 못했습니다. 잠시 후 미리보기를 다시 조회해주세요.';
+    mocks.apiPost.mockRejectedValue(serverError(503, message));
+    renderDashboard(<AdminBookingDashboard />);
+
+    const dialog = await openRefundForm(user);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeEnabled());
+    const previewCalls = () => mocks.apiGet.mock.calls
+      .filter(([url]) => String(url).includes('/refund-preview')).length;
+    const before = previewCalls();
+    previewResponse = refundPreview({ canRequestRefund: false, providerCheckUnavailable: true, blockedReason: message });
+    await user.click(within(dialog).getByRole('button', { name: '환불 확인' }));
+
+    await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith(message));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(previewCalls()).toBeGreaterThan(before));
+    expect(await within(dialog).findByRole('button', { name: '다시 조회' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeDisabled();
+  });
+
+  it('does not show a network failure as a server answer, because the request may have reached the PG', async () => {
+    const user = userEvent.setup();
+    mocks.apiPost.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderDashboard(<AdminBookingDashboard />);
+
+    const dialog = await openRefundForm(user);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeEnabled());
+    await user.click(within(dialog).getByRole('button', { name: '환불 확인' }));
+
+    await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith(
+      '환불 요청 결과를 확인하지 못했습니다. 예매 상세에서 환불 상태를 확인한 뒤 다시 시도해주세요.',
+    ));
+    expect(mocks.toast.error).not.toHaveBeenCalledWith('Failed to fetch');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('shows the USD amount the PG will refund for overseas card payments', async () => {

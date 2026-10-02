@@ -199,6 +199,19 @@ export interface RefundPreviewResponse {
   cancellationQuote: CancellationQuote | null;
   providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
   blockedReason?: string | null;
+  /**
+   * Admin preview only: the PG payment could not be queried. The refund is blocked (fail closed) until
+   * the operator re-checks the preview; the request answers 503 in the same case.
+   */
+  providerCheckUnavailable?: boolean;
+  /**
+   * Admin preview only: a failed refund whose tickets are still revoked can be reconciled by requesting
+   * the admin refund again. `cancellationQuote` is the stored quote of that attempt; `canRequestRefund`
+   * stays false because no new refund starts.
+   */
+  adminRecoveryAvailable?: boolean;
+  /** Admin preview only: the recorded failure of the refund offered for recovery. */
+  adminRecoveryReason?: string | null;
 }
 
 export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
@@ -559,7 +572,11 @@ export interface CancelTicketItemRequest {
   reason: string;
 }
 
-export interface AdminRefundRequest {
+/**
+ * Body of `POST /api/v1/admin/bookings/:id/refund` (validated by `adminRefundSchema`). The expected
+ * amounts are the ones the operator confirmed in the preview; a recovery of a failed refund omits them.
+ */
+export interface AdminRefundRequest extends Partial<CancellationExpectation> {
   reason: string;
   fullRefundOverride?: boolean;
   enteredTicketOverride?: boolean;
