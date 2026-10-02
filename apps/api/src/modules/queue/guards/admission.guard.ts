@@ -28,6 +28,10 @@ type AuthenticatedRequest = Request & {
   };
 };
 
+// Placeholder stored on the request when payment confirm was authorised by the
+// order binding without an admission cookie; it is never a valid token.
+const ORDER_BOUND_ADMISSION_TOKEN = 'order-bound';
+
 @Injectable()
 export class AdmissionGuard implements CanActivate {
   constructor(private readonly queueService: QueueService) {}
@@ -52,7 +56,12 @@ export class AdmissionGuard implements CanActivate {
       request.cookies as Record<string, string | undefined>,
     );
 
-    if (!refreshToken || !admissionToken) {
+    // Payment confirm can arrive after the admission cookie (13 minutes) has
+    // expired, e.g. after 3DS or an app switch inside the extended payment
+    // grace. It is authorised by the pending order binding instead, so only
+    // the browser session (refresh token family) is mandatory there.
+    const requiresAdmissionCookie = !this.isPaymentConfirmPath(request);
+    if (!refreshToken || (requiresAdmissionCookie && !admissionToken)) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
@@ -69,7 +78,7 @@ export class AdmissionGuard implements CanActivate {
 
     request.queueAdmission = {
       queueSessionId: validatedAdmission.queueSessionId,
-      admissionToken,
+      admissionToken: admissionToken ?? ORDER_BOUND_ADMISSION_TOKEN,
       refreshFamilyId: validatedAdmission.refreshTokenFamilyId,
       deviceSlotKey: validatedAdmission.deviceSlotId,
       admittedAt: validatedAdmission.admittedAt,
@@ -87,12 +96,12 @@ export class AdmissionGuard implements CanActivate {
       refreshTokenFamilyId: string;
       deviceSlotId: string;
     },
-    admissionToken: string,
+    admissionToken: string | undefined,
     userId: string,
   ) {
     const path = this.resolvePath(request);
 
-    if (path.includes('/payments/confirm')) {
+    if (this.isPaymentConfirmPath(request)) {
       const orderId = this.readString(request.body, 'orderId');
       if (!orderId) {
         throw new ForbiddenException('대기열 입장 정보가 필요합니다');
@@ -107,7 +116,7 @@ export class AdmissionGuard implements CanActivate {
     }
 
     const showtimeId = this.readString(request.body, 'showtimeId');
-    if (!showtimeId) {
+    if (!showtimeId || !admissionToken) {
       throw new ForbiddenException('대기열 입장 정보가 필요합니다');
     }
 
@@ -127,6 +136,10 @@ export class AdmissionGuard implements CanActivate {
   ): string | null {
     const value = payload?.[key];
     return typeof value === 'string' && value.length > 0 ? value : null;
+  }
+
+  private isPaymentConfirmPath(request: AuthenticatedRequest): boolean {
+    return this.resolvePath(request).includes('/payments/confirm');
   }
 
   private resolvePath(request: AuthenticatedRequest): string {

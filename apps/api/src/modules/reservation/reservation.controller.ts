@@ -2,6 +2,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Optional,
   Post,
   Put,
   Param,
@@ -31,6 +32,7 @@ import {
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
+import { QueueService } from '../queue/queue.service.js';
 import { ReservationService } from './reservation.service.js';
 import { RefundService } from '../refund/refund.service.js';
 
@@ -66,6 +68,8 @@ export class ReservationController {
   constructor(
     private readonly reservationService: ReservationService,
     private readonly refundService: RefundService,
+    // QueueModule is global; optional only so narrow test modules can omit it.
+    @Optional() private readonly queueService?: QueueService,
   ) {}
 
   @UseGuards(AdmissionGuard)
@@ -102,9 +106,12 @@ export class ReservationController {
   @Post('payments/confirm')
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
-    @Request() req: { user: AuthenticatedReservationUser },
+    @Request() req: {
+      user: AuthenticatedReservationUser;
+      queueAdmission?: { queueSessionId?: string };
+    },
   ) {
-    return this.reservationService.confirmAndCreateReservation(
+    const reservation = await this.reservationService.confirmAndCreateReservation(
       body as ConfirmPaymentRequest,
       {
         id: req.user.id,
@@ -113,6 +120,17 @@ export class ReservationController {
         isPhoneVerified: req.user.isPhoneVerified,
       },
     );
+
+    // Return the queue slot as soon as the purchase is confirmed instead of
+    // holding it until the active/recovery window ends. Best effort: the
+    // release never throws, so it cannot turn a confirmed purchase into an error.
+    if (reservation.status === 'CONFIRMED') {
+      await this.queueService
+        ?.releaseAdmissionAfterPurchase(req.queueAdmission?.queueSessionId)
+        .catch(() => false);
+    }
+
+    return reservation;
   }
 
   @Get('users/me/reservations')
