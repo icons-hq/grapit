@@ -1,11 +1,12 @@
 import { NotFoundException } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PerformancePreparation, PerformanceSaleOpening } from '@grabit/shared';
-import { resolvePerformanceSaleOpening, seatMapConfigSchema } from '@grabit/shared';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS, resolvePerformanceSaleOpening, seatMapConfigSchema } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { adminAuditLogs, bookingPolicies, performanceSeatAssignments, performanceSeatTiers, performances, priceTiers,
   seatMaps, showtimes, translationDrafts, translationSources } from '../../database/schema/index.js';
 import { PerformanceIntakeService } from './performance-intake.service.js';
+import { requiresManualTranslation } from '../translation/deepl.client.js';
 
 const hasText = (value: string | null | undefined) => Boolean(value?.trim());
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -64,11 +65,16 @@ export async function readPerformancePreparation(db: DrizzleDB, id: string, now:
       .where(eq(performanceSeatTiers.performanceId, id))
       .groupBy(performanceSeatTiers.id),
   ]);
+  // A published manual-review marker draft is ignored by the public overlay, which shows
+  // the Korean source instead, so it does not count as a translation.
+  const isTranslated = (row: (typeof translations)[number], locale: string, field: 'title' | 'description', source: string | null) =>
+    row.locale === locale && row.field === field && row.source === source && hasText(row.text)
+      && !requiresManualTranslation(row.text);
   const locales = (['ko', 'en', 'th', 'zh-CN'] as const).map((locale) => ({ locale,
-    title: locale === 'ko' ? hasText(performance.title) : translations.some((row) => row.locale === locale
-      && row.field === 'title' && row.source === performance.title && hasText(row.text)),
-    description: locale === 'ko' ? hasText(performance.description) : translations.some((row) => row.locale === locale
-      && row.field === 'description' && row.source === performance.description && hasText(row.text)),
+    title: locale === 'ko' ? hasText(performance.title)
+      : translations.some((row) => isTranslated(row, locale, 'title', performance.title)),
+    description: locale === 'ko' ? hasText(performance.description)
+      : translations.some((row) => isTranslated(row, locale, 'description', performance.description)),
   }));
   const priceByTier = new Map(tiers.map((tier) => [tier.tierName.trim(), tier.price]));
   const configurations = maps.map((map) => seatMapConfigSchema.safeParse(map.seatConfig));
@@ -93,7 +99,9 @@ export async function readPerformancePreparation(db: DrizzleDB, id: string, now:
   const saleOpening = resolvePerformanceSaleOpening({ status: performance.status, bookingStartsAt: policy?.bookingStartsAt ?? null }, now);
   // A stored start that has already passed would open sales the moment an approver publishes.
   const elapsedStartBeforePublish = !published && saleOpening.mode === 'immediate' && saleOpening.startElapsed;
-  const hasPaymentMethods = Boolean(policy?.allowedPaymentMethods.length);
+  // Legacy rows may still list VIRTUAL_ACCOUNT or MOBILE_PHONE, which checkout never submits.
+  const hasPaymentMethods = (policy?.allowedPaymentMethods ?? []).some((method) =>
+    (CHECKOUT_CONFIGURABLE_PAYMENT_METHODS as readonly string[]).includes(method));
   const checks: PerformancePreparation['checks'] = [
     { key: 'basic', label: '기본 정보', step: 'basic', ready: hasText(performance.title) && Boolean(performance.venueId)
       && hasText(performance.ageRating) && performance.startDate <= performance.endDate,

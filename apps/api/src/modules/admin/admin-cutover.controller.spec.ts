@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
+import { Agent } from 'node:http';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -23,6 +24,7 @@ type AuthMode =
 
 describe('AdminCutoverController', () => {
   let app: INestApplication;
+  let agent: Agent;
   let mode: AuthMode = 'admin_with_audit';
   let service: {
     getGateSummary: Mock;
@@ -84,6 +86,11 @@ describe('AdminCutoverController', () => {
 
     app = moduleRef.createNestApplication();
     await app.init();
+    // One listening server and one keep-alive socket for the file. Without it supertest
+    // listens on and closes a new ephemeral port per request, which intermittently
+    // fails with "socket hang up" when a pooled socket of a closed server is reused.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   beforeEach(() => {
@@ -93,6 +100,7 @@ describe('AdminCutoverController', () => {
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
@@ -106,7 +114,7 @@ describe('AdminCutoverController', () => {
     async (authMode, expectedStatus) => {
       mode = authMode;
 
-      const res = await request(app.getHttpServer()).get('/admin/cutover/gates');
+      const res = await request(app.getHttpServer()).get('/admin/cutover/gates').agent(agent);
 
       expect(res.status).toBe(expectedStatus);
       if (expectedStatus === 200) {
@@ -125,7 +133,7 @@ describe('AdminCutoverController', () => {
   it('returns redacted cutover readiness rows with firstBlockingGate and finalEnableAllowed=false', async () => {
     mode = 'admin_with_audit';
 
-    const res = await request(app.getHttpServer()).get('/admin/cutover/gates');
+    const res = await request(app.getHttpServer()).get('/admin/cutover/gates').agent(agent);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({

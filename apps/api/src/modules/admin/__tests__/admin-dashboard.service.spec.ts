@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { AdminDashboardService } from '../admin-dashboard.service.js';
 import type { DashboardPeriod } from '@grabit/shared';
 
@@ -69,6 +71,28 @@ describe('AdminDashboardService', () => {
         todayNegativeCancellationRevenue: -100000,
         todayNetRevenue: 50000,
       });
+    });
+  });
+
+  describe('summary compensated cancels', () => {
+    it('offsets every refunded unissued charge by state, not by one cancel reason (audit #70 x u02)', async () => {
+      mockCache.get.mockResolvedValue(null);
+      const whereSpy = vi.fn((_condition: SQL) => createChainMock([{ count: 0, sum: 0 }]));
+      mockDb.select.mockReturnValue({
+        from: vi.fn(() => ({ innerJoin: vi.fn(() => ({ where: whereSpy })), where: whereSpy })),
+      });
+
+      await service.getSummary();
+
+      // Fourth summary query: compensated cancels of charges that gross counted.
+      const compensated = new PgDialect().sqlToQuery(whereSpy.mock.calls[3]![0]);
+      expect(compensated.sql).toContain('"reservations"."status" = $');
+      expect(compensated.sql).toContain('"payments"."status" = $');
+      expect(compensated.sql).toContain('"payments"."paid_at" is not null');
+      expect(compensated.sql).toContain('not exists');
+      expect(compensated.params).toEqual(expect.arrayContaining(['FAILED', 'CANCELED']));
+      // Ticket limit, amount mismatch, unsupported method and confirm compensations carry other reasons.
+      expect(compensated.sql).not.toContain('cancel_reason');
     });
   });
 

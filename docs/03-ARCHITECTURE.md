@@ -243,6 +243,7 @@ Use shared schemas for request/response validation and UI contract tests wheneve
 - Guarded admin detail reads are neither cached nor counted, and return the stored `status` rather than the derived public status.
 - List query input is bounded by `performanceQuerySchema` (`sub` ≤ 100 characters, `page` ≤ 1000). `sub` is hashed into the key, and empty pages are cached for at most 10 seconds. The web clamps `?page=` to the same range.
 - `GET /api/v1/home/banners` returns only banners with `isActive=true`, a home placement (`home_hero`, `home_secondary`), and status `active` or `scheduled`, whose `startsAt`/`endsAt` window contains the current time. A `scheduled` banner without `startsAt` stays hidden. `paused`, `draft`, and `expired` banners are never public.
+- Admin banner create and update reject (400) a `scheduled` banner without `startsAt`. A partial update checks the merged row in the same `UPDATE`, so setting only `status` or clearing only `startsAt` cannot leave one behind.
 - Visibility changes made directly in SQL bypass these invalidations and can stay cached for up to 300 seconds. After such a change, save the performance or banner once in the admin UI to invalidate the cache.
 
 ## 6. Booking And Concurrency

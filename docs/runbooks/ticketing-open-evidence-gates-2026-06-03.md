@@ -781,29 +781,48 @@ for launch, not merely that fallback code exists.
 
 ### Operating Rules After The Support Content Fix
 
-- Editing a published ko/en or manual translation keeps it live and the
-  public page updates on save. Editing an assisted th/zh-CN translation takes
-  it off the public page until `검수 완료` and `게시` are done again; admin asks
-  for confirmation before saving.
-- `검수 완료` is only for draft/review rows; it is rejected for published and
-  archived rows.
-- Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`).
-  The public API caches each locale for 30 seconds and every admin mutation
-  clears it, so a scheduled start or end can appear up to 30 seconds late.
+- Saved changes reach the public page within about one minute, not
+  immediately. The API caches each locale for 30 seconds and every admin
+  mutation clears it, but a public read that started before the save commits
+  can cache the old content for another 30 seconds, and browsers keep the
+  response for 30 seconds (`Cache-Control: private, max-age=30`). Check a
+  change after a minute with a hard refresh (Cmd/Ctrl+Shift+R) or in a
+  private window.
+- Editing a published ko/en or manual translation keeps it live. Editing an
+  assisted th/zh-CN translation takes it off the public page until `검수 완료`
+  and `게시` are done again; admin asks for confirmation before saving.
+- `검수 완료` approves draft/review rows and is rejected for published rows.
+- Restoring archived content: select the row and press `보관 해제` (the review
+  button on an archived row), then `게시`. Unarchiving does not publish; it
+  returns the row to `게시 가능`, or to `검수 필요` for an assisted th/zh-CN
+  translation, which needs `검수 완료` first. Both steps write
+  `support.content.review` / `support.content.publish` audit rows. A notice
+  translation cannot be restored while another unarchived version of the same
+  locale exists in its translation group (400 `이미 같은 언어의 번역본이
+  있습니다`); archive that version first, so a locale never shows two
+  versions of one notice.
+- Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`); a
+  scheduled start or end can appear up to about a minute late for the reasons
+  above.
+- Notices in the `긴급` (`urgent`) category are listed first even when stored
+  with a lower priority (rows created before the category default existed).
 - `urgent`, `maintenance`, and `payment` notices fall back by locale: a viewer
   whose locale has no published version in the same translation group sees
   the en version, then the ko version, labeled as untranslated. Register
   translations with `번역본 등록` on the source notice so the fallback stops
-  when the translation is published; a notice created separately is not
-  linked and both versions would show. Notices created before this change are
-  not linked and do not fall back until a translation is registered.
+  when the translation is published; a notice created separately with `공지
+  등록` is not linked and both versions show (the form warns about this for
+  en/th/zh-CN in these categories). Notices created before this change are
+  not linked and do not fall back until a translation is registered; linking
+  one writes a `support.content.update` audit row on the source notice.
 - For an urgent/payment/maintenance notice during open, publish the ko source
   first, then register and publish en, th, and zh-CN through `번역본 등록`.
 - Every create/update/review/publish/archive writes `support.content.*` admin
   audit rows with the previous and new title/body; check them in
   `/admin/audit`.
-- If another operator saved the same row first, save returns 409. Reload the
-  latest content from the form and reapply the change.
+- If another operator saved the same row first, save returns 409.
+  `최신 내용 다시 불러오기` asks for confirmation because it discards the
+  unsaved edit: copy it first, reload, then reapply the change.
 
 ### Execution Checklist
 

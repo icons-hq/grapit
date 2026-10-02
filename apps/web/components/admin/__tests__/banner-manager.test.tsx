@@ -11,6 +11,8 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toast } from 'sonner';
+
 import { apiClient } from '@/lib/api-client';
 import {
   useCreateBanner,
@@ -177,6 +179,41 @@ describe('BannerForm', () => {
         isActive: true,
       }),
     );
+  });
+
+  it('blocks saving a scheduled banner without a start time and explains it would never show (audit #51)', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <BannerForm
+        initialData={{ imageUrl: 'https://r2.example.com/banners/open.jpg', status: 'active' }}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        isSubmitting={false}
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await chooseSelectOption(user, '배너 상태', '예약됨');
+    expect(screen.getByRole('alert')).toHaveTextContent('시작 시각이 없으면 노출되지 않습니다');
+
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      '예약됨 상태는 시작 시각이 필요합니다. 시작 시각이 없으면 노출되지 않습니다',
+    );
+
+    fireEvent.change(screen.getByLabelText('배너 시작 시각'), {
+      target: { value: '2026-10-08T20:00' },
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'scheduled',
+      startsAt: new Date('2026-10-08T20:00').toISOString(),
+    }));
   });
 
   it('keeps image upload and submits expanded banner fields', async () => {

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Agent } from 'node:http';
 import request from 'supertest';
 import type { AdminCapabilityUser } from '@grabit/shared';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
@@ -23,6 +24,7 @@ const USERS: Record<string, AdminCapabilityUser> = {
 
 describe('Admin consent audit HTTP access', () => {
   let app: INestApplication;
+  let agent: Agent;
   const service = { queryConsentAudit: vi.fn() };
 
   beforeAll(async () => {
@@ -40,9 +42,15 @@ describe('Admin consent audit HTTP access', () => {
       next();
     });
     await app.init();
+    // One listening server and one keep-alive socket for the file. Without it supertest
+    // listens on and closes a new ephemeral port per request, which intermittently
+    // fails with "socket hang up" when a pooled socket of a closed server is reused.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
@@ -56,7 +64,7 @@ describe('Admin consent audit HTTP access', () => {
 
   it('rejects the field scanner token without reading any consent row', async () => {
     const response = await request(app.getHttpServer())
-      .get('/admin/consent-audit')
+      .get('/admin/consent-audit').agent(agent)
       .set('x-test-user', 'scanner');
 
     expect(response.status).toBe(403);
@@ -65,7 +73,7 @@ describe('Admin consent audit HTTP access', () => {
 
   it('serves an audit reader one default-sized page', async () => {
     const response = await request(app.getHttpServer())
-      .get('/admin/consent-audit')
+      .get('/admin/consent-audit').agent(agent)
       .set('x-test-user', 'reviewer');
 
     expect(response.status).toBe(200);
@@ -76,7 +84,7 @@ describe('Admin consent audit HTTP access', () => {
   it('rejects an oversized page and a malformed user id before querying', async () => {
     for (const query of ['limit=501', 'userId=user_123']) {
       const response = await request(app.getHttpServer())
-        .get(`/admin/consent-audit?${query}`)
+        .get(`/admin/consent-audit?${query}`).agent(agent)
         .set('x-test-user', 'reviewer');
       expect(response.status, query).toBe(400);
     }

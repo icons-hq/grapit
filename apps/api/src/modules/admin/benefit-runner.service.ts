@@ -565,7 +565,7 @@ export class BenefitRunnerService {
     // A live run summary is a snapshot taken at run time. Later cancellations,
     // re-runs and rollbacks change the entitlements, so report their current state.
     const currentRows: EntitlementCsvRow[] = row.mode === 'live'
-      ? await this.withCurrentEntitlementState(runId, summary.exportRows)
+      ? await this.withCurrentEntitlementState(row.showtimeId, runId, summary.exportRows)
       : summary.exportRows;
     const rows = await this.hydrateExportRowsWithTicketMetadata(currentRows);
     const csv = withUtf8Bom(safeCsvRows([
@@ -663,6 +663,7 @@ export class BenefitRunnerService {
   }
 
   private async withCurrentEntitlementState(
+    showtimeId: string,
     runId: string,
     rows: BenefitEntitlementExportRow[],
   ): Promise<EntitlementCsvRow[]> {
@@ -680,7 +681,12 @@ export class BenefitRunnerService {
         redeemedAt: ticketBenefitEntitlements.redeemedAt,
       })
       .from(ticketBenefitEntitlements)
-      .where(eq(ticketBenefitEntitlements.runId, runId));
+      // run_id has no index; the showtime prefix uses
+      // idx_ticket_benefit_entitlements_showtime_ticket_item instead of a full scan.
+      .where(and(
+        eq(ticketBenefitEntitlements.showtimeId, showtimeId),
+        eq(ticketBenefitEntitlements.runId, runId),
+      ));
     const byId = new Map(current.map((entitlement) => [entitlement.id, entitlement]));
     const byTicketAndBenefit = new Map(current.map((entitlement) => [
       `${entitlement.ticketItemId}:${entitlement.benefitIdentity}`,

@@ -7,6 +7,7 @@ import {
   priceTiers,
   seatMaps,
   showtimes,
+  translationSources,
 } from '../../database/schema/index.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { readPerformancePreparation } from './performance-preparation.js';
@@ -19,6 +20,8 @@ type Fixture = {
   maps?: Array<{ venueLayoutId: string | null; seatConfig: unknown }>;
   overlayTiers?: Array<{ tierName: string; price: number; assignments: number }>;
   bookingStartsAt?: Date | null;
+  allowedPaymentMethods?: string[];
+  translations?: Array<{ field: 'title' | 'description'; source: string; locale: string; text: string }>;
 };
 
 function createDb(fixture: Fixture = {}) {
@@ -34,7 +37,8 @@ function createDb(fixture: Fixture = {}) {
     [showtimes, [{ id: 'showtime-1' }]],
     [priceTiers, fixture.tiers ?? [{ tierName: 'VIP', price: 50000 }]],
     [seatMaps, maps],
-    [bookingPolicies, [{ allowedPaymentMethods: ['CARD'],
+    [translationSources, fixture.translations ?? []],
+    [bookingPolicies, [{ allowedPaymentMethods: fixture.allowedPaymentMethods ?? ['CARD'],
       bookingStartsAt: fixture.bookingStartsAt === undefined ? new Date('2026-10-08T11:00:00.000Z') : fixture.bookingStartsAt }]],
     [performanceSeatTiers, fixture.overlayTiers ?? [{ tierName: 'VIP', price: 50000, assignments: 2 }]],
   ]);
@@ -143,5 +147,37 @@ describe('readPerformancePreparation seat and price gate', () => {
     }), 'perf-1', NOW);
 
     expect(check(preparation, 'seats').ready).toBe(false);
+  });
+});
+
+describe('readPerformancePreparation locale and payment readiness', () => {
+  const published = (locale: string, field: 'title' | 'description', text: string) =>
+    ({ locale, field, source: field === 'title' ? '팬미팅' : '상세 안내', text });
+
+  it('does not count a published manual-review marker draft as translated, because the public page shows Korean', async () => {
+    const preparation = await readPerformancePreparation(createDb({ translations: [
+      published('en', 'title', 'Fan meeting'),
+      published('en', 'description', '[manual-review:deepl-unavailable] 상세 안내'),
+      published('th', 'title', '  [manual-review:deepl-unavailable] 팬미팅'),
+    ] }), 'perf-1', NOW);
+
+    expect(preparation.locales.find((locale) => locale.locale === 'en')).toEqual({ locale: 'en', title: true, description: false });
+    expect(preparation.locales.find((locale) => locale.locale === 'th')).toMatchObject({ title: false });
+    expect(check(preparation, 'locales').ready).toBe(false);
+
+    const reviewed = await readPerformancePreparation(createDb({ translations: [
+      published('en', 'title', 'Fan meeting'),
+      published('en', 'description', 'Performance information'),
+    ] }), 'perf-1', NOW);
+    expect(check(reviewed, 'locales').ready).toBe(true);
+  });
+
+  it('requires at least one payment method checkout can submit (audit #70)', async () => {
+    const legacyOnly = await readPerformancePreparation(createDb({ allowedPaymentMethods: ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'] }), 'perf-1', NOW);
+    expect(check(legacyOnly, 'sales').ready).toBe(false);
+    expect(check(legacyOnly, 'sales').detail).toContain('결제 수단을 1개 이상 선택해주세요');
+
+    const mixed = await readPerformancePreparation(createDb({ allowedPaymentMethods: ['VIRTUAL_ACCOUNT', 'TRANSFER'] }), 'perf-1', NOW);
+    expect(check(mixed, 'sales').ready).toBe(true);
   });
 });

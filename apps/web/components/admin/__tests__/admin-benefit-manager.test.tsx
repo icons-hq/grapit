@@ -405,6 +405,30 @@ describe('AdminBenefitManager', () => {
     expect(screen.queryByText(/저장되지 않은 변경이 있습니다/)).not.toBeInTheDocument();
   });
 
+  it('blocks the live run of a saved configuration with a legacy exclusion the runner refuses', async () => {
+    const user = userEvent.setup();
+    // Saved before exclusions were limited to limited benefits: the editor drops this
+    // rule, so it shows no unsaved change, but the server answers 400 on a live run.
+    mocks.configuration = {
+      ...fixtureConfiguration,
+      benefits: fixtureConfiguration.benefits.map((benefit) => benefit.kind === 'included'
+        ? { ...benefit, mutuallyExclusiveWith: ['benefit_6_to_1'] }
+        : benefit),
+    };
+    await selectBenefitShowtime(user);
+
+    await screen.findByDisplayValue('6:1 이벤트 설명');
+    await user.type(screen.getByLabelText('실제 적용 사유'), '판매 종료 전 확정');
+
+    expect(screen.queryByText(/저장되지 않은 변경이 있습니다/)).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '저장된 설정에 더 이상 허용되지 않는 배타 규칙이 있습니다. 설정을 다시 저장한 뒤 실행하세요.',
+    );
+    expect(screen.getByRole('button', { name: /^실제 적용$/ })).toBeDisabled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mocks.liveMutate).not.toHaveBeenCalled();
+  });
+
   it('confirms the saved limited benefits before applying them to tickets', async () => {
     const user = userEvent.setup();
     await selectBenefitShowtime(user);

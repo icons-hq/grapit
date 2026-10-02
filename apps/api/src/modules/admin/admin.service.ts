@@ -53,6 +53,7 @@ import {
   BANNER_DEVICE_TARGETS,
   BANNER_PLACEMENTS,
   BANNER_STATUSES,
+  SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
   createBannerSchema,
   performanceDetailImagesSchema,
 } from '@grabit/shared';
@@ -1380,10 +1381,20 @@ export class AdminService {
     return result;
   }
 
-  async deletePerformance(id: string, context?: AdminEventMutationContext): Promise<void> {
+  async deletePerformance(id: string, context: AdminEventMutationContext): Promise<void> {
     await this.db.transaction(async (tx) => {
-      // Lock first so a concurrent publish cannot slip between the checks and the
-      // cascading delete of showtimes, seat inventory, prices and benefit settings.
+      // Same lock order as PerformanceDraftService.apply (draft rows, then the
+      // performance): taking the performance first deadlocked (40P01) against a
+      // concurrent draft apply, which holds its draft row while it waits for
+      // the performance.
+      await tx
+        .select({ id: performanceDrafts.id })
+        .from(performanceDrafts)
+        .where(eq(performanceDrafts.performanceId, id))
+        .orderBy(performanceDrafts.id)
+        .for('update');
+      // Lock the performance so a concurrent publish cannot slip between the checks and
+      // the cascading delete of showtimes, seat inventory, prices and benefit settings.
       const [target] = await tx
         .select({
           id: performances.id,
@@ -1459,34 +1470,33 @@ export class AdminService {
       // their cleanup atomic so another FK rejection cannot erase saved work.
       await tx.delete(performanceDrafts).where(eq(performanceDrafts.performanceId, id));
       await tx.delete(performances).where(eq(performances.id, id));
-      if (context) {
-        await this.adminAuditService.write(
-          {
-            actorUserId: context.actorUserId,
-            action: 'event.delete',
-            resourceType: 'performance',
-            resourceId: id,
-            status: 'success',
-            reason: context.reason ?? '공연 삭제',
-            // Audit snapshots keep only keys listed in changedFields.
-            changedFields: ['performance'],
-            before: {
-              performance: {
-                title: target.title,
-                status: target.status,
-                publishState: target.publishState,
-                publishedAt: target.publishedAt?.toISOString() ?? null,
-                showtimeCount: countValue(counts?.showtimes_count),
-              },
+      // Every deletion is attributable: there is no unaudited caller.
+      await this.adminAuditService.write(
+        {
+          actorUserId: context.actorUserId,
+          action: 'event.delete',
+          resourceType: 'performance',
+          resourceId: id,
+          status: 'success',
+          reason: context.reason ?? '공연 삭제',
+          // Audit snapshots keep only keys listed in changedFields.
+          changedFields: ['performance'],
+          before: {
+            performance: {
+              title: target.title,
+              status: target.status,
+              publishState: target.publishState,
+              publishedAt: target.publishedAt?.toISOString() ?? null,
+              showtimeCount: countValue(counts?.showtimes_count),
             },
-            after: { performance: null },
-            ipAddress: context.ipAddress ?? null,
-            userAgent: context.userAgent ?? null,
-            requestId: context.requestId ?? null,
           },
-          tx as unknown as DrizzleDB,
-        );
-      }
+          after: { performance: null },
+          ipAddress: context.ipAddress ?? null,
+          userAgent: context.userAgent ?? null,
+          requestId: context.requestId ?? null,
+        },
+        tx as unknown as DrizzleDB,
+      );
     });
     await this.invalidateCatalogCache(id);
   }
@@ -1704,13 +1714,20 @@ export class AdminService {
     if (bannerInput.isActive !== undefined) updateData['isActive'] = bannerInput.isActive;
     updateData['updatedAt'] = new Date();
 
+    // A partial update can leave a stored 'scheduled' banner without a start (or
+    // schedule one that has none). Check the merged row atomically in the UPDATE.
+    const scheduledStartGuard = scheduledBannerStartGuard(bannerInput);
     const [result] = await this.db
       .update(banners)
       .set(updateData)
-      .where(eq(banners.id, id))
+      .where(scheduledStartGuard ? and(eq(banners.id, id), scheduledStartGuard) : eq(banners.id, id))
       .returning();
 
     if (!result) {
+      if (scheduledStartGuard) {
+        const [existing] = await this.db.select({ id: banners.id }).from(banners).where(eq(banners.id, id));
+        if (existing) throw new BadRequestException(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+      }
       throw new NotFoundException(`배너를 찾을 수 없습니다 (id: ${id})`);
     }
 
@@ -1804,9 +1821,29 @@ function validateCreateBannerInput(
 ): NormalizedCreateBannerInput {
   const parsed = createBannerSchema.safeParse(input);
   if (!parsed.success) {
-    throw new BadRequestException('배너 입력이 올바르지 않습니다');
+    const scheduledWithoutStart = parsed.error.issues.some(
+      (issue) => issue.message === SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+    );
+    throw new BadRequestException(
+      scheduledWithoutStart ? SCHEDULED_BANNER_REQUIRES_START_MESSAGE : '배너 입력이 올바르지 않습니다',
+    );
   }
   return parsed.data;
+}
+
+/**
+ * Row condition that keeps an update from leaving a 'scheduled' banner without a
+ * start time when the payload changes only one of the two fields. Null when the
+ * payload alone decides it (validateUpdateBannerInput rejects that case).
+ */
+function scheduledBannerStartGuard(input: Partial<CreateBannerInput>) {
+  if (input.status === 'scheduled' && input.startsAt === undefined) {
+    return sql`${banners.startsAt} is not null`;
+  }
+  if (input.status === undefined && input.startsAt !== undefined && !input.startsAt) {
+    return ne(banners.status, 'scheduled');
+  }
+  return null;
 }
 
 function validateUpdateBannerInput(
@@ -1826,6 +1863,9 @@ function validateUpdateBannerInput(
     && Date.parse(input.endsAt) < Date.parse(input.startsAt)
   ) {
     throw new BadRequestException('배너 종료 시각은 시작 시각보다 빠를 수 없습니다');
+  }
+  if (input.status === 'scheduled' && input.startsAt !== undefined && !input.startsAt) {
+    throw new BadRequestException(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
   }
   if (
     input.sortOrder !== undefined
