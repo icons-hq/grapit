@@ -246,21 +246,76 @@ edge secret, once `EDGE_PROXY_SHARED_SECRET` is set on the API. The Worker
 sends that secret in `x-grabit-edge-secret` and sends the visitor's
 `cf-connecting-ip` in `x-grabit-client-ip`. It also drops any visitor-supplied
 copies of both headers. Throttling, consent and audit IPs depend on this.
+
+Throttle bucket keys in Valkey are hashed, so check client IP resolution from
+the outside. `GET /api/v1/auth/email-availability` allows 10 requests per
+minute per client IP and reports what is left in `X-RateLimit-Remaining`
+(covered by `throttle-http.spec.ts`):
+
+```bash
+# Prints the per-IP budget left for the client IP the API resolved for you.
+probe() {
+  curl -sS -o /dev/null -D - "$@" \
+    "${API_BASE:-https://api.heygrabit.com}/api/v1/auth/email-availability?email=ip-probe@example.com" \
+    | tr -d '\r' | awk -F': ' 'tolower($1) == "x-ratelimit-remaining" { print $2 }'
+}
+```
+
+Two-network check: within one minute, run `probe` twice on network A (for
+example the office line) and once on network B (for example a phone
+hotspot). A must print falling values such as `9` and `8`, and B must start
+again near the top (`9`). If B continues A's count, or a probe prints far less
+than `9` while nobody else on your network uses the site, the API resolves
+visitors to shared Cloudflare edge IPs.
+
 Roll it out in this order, so no step ever leaves the API without a usable
 client IP:
 
+0. Before the API code that drops the `True-Client-IP` and `X-Forwarded-For`
+   fallbacks reaches `main` (a push to `main` deploys the API), confirm that
+   origin requests carry `cf-connecting-ip`. Cloudflare documents that it sets
+   this header to the visitor IP on Worker subrequests to non-Cloudflare
+   origins, and that a Worker cannot change it. This Worker has not been
+   measured yet. From one network, within one minute, against the API still
+   serving the old code:
+
+   ```bash
+   probe -H 'True-Client-IP: 192.0.2.10' -H 'X-Forwarded-For: 192.0.2.10'
+   probe -H 'True-Client-IP: 192.0.2.11' -H 'X-Forwarded-For: 192.0.2.11'
+   ```
+
+   The old code reads `cf-connecting-ip` first and the forged headers only
+   when it is missing. Falling values (`9`, then `8`) mean the header arrives:
+   continue with step 1. Equal values mean it does not. Then stop, and do
+   step 2 together with the API code instead, so the API never runs without
+   the secret (Worker secret first, then the API binding in the same deploy
+   as the code).
 1. Deploy the API and Worker code. With the secret unset on both, the API
-   keeps the Cloudflare-peer `cf-connecting-ip` fallback.
+   keeps the Cloudflare-peer `cf-connecting-ip` fallback. As soon as the new
+   API revision serves traffic, run the two-network check, and repeat the two
+   forged-header probes from step 0: their values must now keep falling, since
+   the new code ignores both headers. If the two-network check fails, route
+   traffic back to the previous revision at once, then take the step 0 "equal
+   values" path:
+
+   ```bash
+   gcloud run services update-traffic grabit-api \
+     --project=grapit-491806 \
+     --region=asia-northeast3 \
+     --to-revisions=PREVIOUS_REVISION=100
+   ```
+
+   While traffic is pinned, a new deploy does not receive it. After the fix
+   ships, return traffic with `--to-latest` and repeat the check.
 2. Generate one random value of at least 32 bytes. Store it as Worker secret
    `EDGE_PROXY_SHARED_SECRET` (`wrangler secret put EDGE_PROXY_SHARED_SECRET
    --env production`). Store the same value in Secret Manager, then bind it
    to the API service as `EDGE_PROXY_SHARED_SECRET`.
-3. Deploy the API with the binding. Verify the result by sending anonymous
-   `POST /api/v1/auth/refresh` with a dummy refresh cookie from two
-   different networks through `api.heygrabit.com`. The two requests must
-   land in different `default:ip:` throttle buckets, or appear in API logs
-   with different IPs. A direct `run.app` request with forged
-   `x-grabit-client-ip` must land in its peer's bucket.
+3. Deploy the API with the binding and run the two-network check. Then probe
+   the `run.app` origin directly, twice, with different forged
+   `x-grabit-client-ip` values (`API_BASE=<run.app URL> probe -H
+   'x-grabit-client-ip: 192.0.2.20'`, then `192.0.2.21`). Without the secret
+   the API must ignore them, so the values keep falling.
 
 While the API binding is set, a request without a matching secret is
 identified by its peer IP. Traffic from a Worker version that does not send the

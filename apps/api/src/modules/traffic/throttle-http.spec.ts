@@ -57,14 +57,22 @@ class TestJwtGuard implements CanActivate {
 
 const CLOUDFLARE_PEER = '172.70.207.202';
 
-function policyLimit(name: TrafficPolicyName): number {
+function policyOption(name: TrafficPolicyName): { limit: number; ttl: number } {
   const policy = new TrafficDefenseService()
     .getThrottlerOptions()
     .find((option) => option.name === name);
-  if (typeof policy?.limit !== 'number') {
-    throw new Error(`no numeric limit for ${name}`);
+  if (typeof policy?.limit !== 'number' || typeof policy.ttl !== 'number') {
+    throw new Error(`no numeric limit/ttl for ${name}`);
   }
-  return policy.limit;
+  return { limit: policy.limit, ttl: policy.ttl };
+}
+
+function policyLimit(name: TrafficPolicyName): number {
+  return policyOption(name).limit;
+}
+
+function policyTtl(name: TrafficPolicyName): number {
+  return policyOption(name).ttl;
 }
 
 describe('throttling over HTTP', () => {
@@ -191,8 +199,13 @@ describe('throttling over HTTP', () => {
   });
 
   function post(path: string, ip: string) {
+    return postRaw(`/api/v1${path}`, ip);
+  }
+
+  /** POST to a full path, for spellings of the global prefix itself. */
+  function postRaw(fullPath: string, ip: string) {
     return request(app.getHttpServer())
-      .post(`/api/v1${path}`)
+      .post(fullPath)
       .agent(agent)
       .set('X-Forwarded-For', ip);
   }
@@ -353,6 +366,74 @@ describe('throttling over HTTP', () => {
     });
   });
 
+  describe('identity policies hold on every path spelling that reaches the handler (review r2)', () => {
+    // Express 5 routes case-insensitively and ignores a trailing slash, so
+    // all of these reach the same handler and must hit the same policy.
+    it('caps password guesses on case-variant login paths', async () => {
+      const spellings = [
+        '/api/v1/auth/LOGIN',
+        '/api/v1/auth/Login/',
+        '/API/V1/AUTH/login',
+        '/api/v1/auth/login',
+      ];
+      const limit = policyLimit('login-account');
+      expect(limit).toBeLessThan(ROUTE_THROTTLES.authLogin.limit);
+      const statuses = await sendMany(limit, (index) =>
+        postRaw(spellings[index % spellings.length]!, '198.51.100.7')
+          .send({ email: 'victim@example.com', password: 'guess' }),
+      );
+      expect(statuses.every((status) => status === 200)).toBe(true);
+
+      const blocked = await postRaw('/api/v1/Auth/lOgIn', '198.51.100.7')
+        .send({ email: 'victim@example.com', password: 'guess' });
+      expect(blocked.status).toBe(429);
+      expect(blocked.body.message).toBe(TRAFFIC_RATE_LIMITED);
+    });
+
+    it('caps verification mail per address on case-variant request/resend paths', async () => {
+      const spellings = [
+        '/auth/Email-Verification/resend',
+        '/auth/email-verification/RESEND/',
+        '/auth/EMAIL-VERIFICATION/Request',
+        '/auth/email-verification/resend',
+        '/Auth/email-verification/request',
+      ];
+      const limit = policyLimit('email-verification-send');
+      const statuses = await sendMany(limit, (index) =>
+        post(spellings[index % spellings.length]!, `198.51.100.${index + 1}`)
+          .send({ email: 'victim@example.com' }),
+      );
+      expect(statuses.every((status) => status === 200)).toBe(true);
+
+      const blocked = await post('/auth/Email-Verification/RESEND', '192.0.2.77')
+        .send({ email: 'victim@example.com' });
+      expect(blocked.status).toBe(429);
+      expect(
+        authService.requestEmailVerification.mock.calls.length +
+          authService.resendEmailVerification.mock.calls.length,
+      ).toBe(limit);
+    });
+
+    it('caps password reset mail per address on case-variant paths', async () => {
+      const spellings = [
+        '/auth/Password-Reset/request',
+        '/auth/password-reset/REQUEST/',
+        '/AUTH/PASSWORD-RESET/REQUEST',
+      ];
+      const limit = policyLimit('password-reset-email');
+      const statuses = await sendMany(limit, (index) =>
+        post(spellings[index % spellings.length]!, `198.51.100.${index + 1}`)
+          .send({ email: 'victim@example.com' }),
+      );
+      expect(statuses.every((status) => status === 200)).toBe(true);
+
+      const blocked = await post('/auth/Password-Reset/Request', '192.0.2.77')
+        .send({ email: 'victim@example.com' });
+      expect(blocked.status).toBe(429);
+      expect(authService.requestPasswordReset).toHaveBeenCalledTimes(limit);
+    });
+  });
+
   describe('email verification mail is rate limited (#12)', () => {
     it('stops a resend flood to one address from one IP', async () => {
       const statuses = await sendMany(5, () =>
@@ -400,7 +481,7 @@ describe('throttling over HTTP', () => {
       expect(blocked.status).toBe(429);
     });
 
-    it('caps account-email mail per signed-in user and shares the per-address cap (review r1)', async () => {
+    it('caps account-email mail per signed-in user, and per user and address', async () => {
       const perUser = ROUTE_THROTTLES.accountEmailVerificationSend.limit;
       const toDistinct = await sendMany(perUser, (index) =>
         post('/auth/email-verification/account-email/request', '198.51.100.7')
@@ -413,21 +494,43 @@ describe('throttling over HTTP', () => {
         .send({ email: 'another@example.com' });
       expect(overUser.status).toBe(429);
 
-      // Signup resends and other accounts share the per-address budget.
-      await sendMany(3, (index) =>
-        post('/auth/email-verification/resend', `203.0.113.${index + 1}`)
+      const perAddress = policyLimit('account-email-send');
+      expect(perAddress).toBeLessThan(perUser);
+      const toOneAddress = await sendMany(perAddress, (index) =>
+        post('/auth/email-verification/account-email/request', `192.0.2.${index + 1}`)
+          .set('x-test-user', 'user-2')
+          .send({ email: index % 2 === 0 ? 'Target@example.com' : 'target@example.com' }),
+      );
+      expect(toOneAddress.every((status) => status === 200)).toBe(true);
+      const overAddress = await post('/auth/email-verification/account-email/request', '192.0.2.99')
+        .set('x-test-user', 'user-2')
+        .send({ email: 'target@example.com' });
+      expect(overAddress.status).toBe(429);
+      expect(authService.requestAccountEmailVerification).toHaveBeenCalledTimes(perUser + perAddress);
+    });
+
+    it('does not let account-email requests from another account lock the address owner out (review r2)', async () => {
+      // account-email/request answers 409 for an address another user owns and
+      // sends nothing, so it must not spend that owner's resend budget.
+      const perAddress = policyLimit('account-email-send');
+      const attacker = await sendMany(perAddress + 3, () =>
+        post('/auth/email-verification/account-email/request', '203.0.113.66')
+          .set('x-test-user', 'attacker-1')
           .send({ email: 'victim@example.com' }),
       );
-      await sendMany(2, (index) =>
-        post('/auth/email-verification/account-email/request', '192.0.2.10')
-          .set('x-test-user', `user-${index + 2}`)
-          .send({ email: 'Victim@example.com' }),
-      );
-      const overAddress = await post('/auth/email-verification/account-email/request', '192.0.2.11')
-        .set('x-test-user', 'user-9')
+      expect(attacker.slice(0, perAddress).every((status) => status === 200)).toBe(true);
+      expect(attacker.at(-1)).toBe(429);
+
+      const ownerResend = await post('/auth/email-verification/resend', '198.51.100.7')
         .send({ email: 'victim@example.com' });
-      expect(overAddress.status).toBe(429);
-      expect(authService.requestAccountEmailVerification).toHaveBeenCalledTimes(perUser + 2);
+      expect(ownerResend.status).toBe(200);
+      expect(authService.resendEmailVerification).toHaveBeenCalledTimes(1);
+
+      // Nor does it share a bucket with the owner's own account-email flow.
+      const owner = await post('/auth/email-verification/account-email/request', '198.51.100.7')
+        .set('x-test-user', 'victim-1')
+        .send({ email: 'victim@example.com' });
+      expect(owner.status).toBe(200);
     });
 
     it('caps account-email code guesses per signed-in user', async () => {
@@ -459,6 +562,24 @@ describe('throttling over HTTP', () => {
       const owner = await post('/auth/email-verification/verify', '203.0.113.20')
         .send({ email: 'victim@example.com', code: '123456' });
       expect(owner.status).toBe(200);
+    });
+
+    it('lets as many signups behind one NAT verify their codes as may sign up there (review r2)', async () => {
+      // Every signup verifies once, so the per-IP verify ceiling must not sit
+      // below the per-IP signup allowance over the same window.
+      const verifyPerIp = ROUTE_THROTTLES.authEmailVerificationVerify;
+      const signupPerWindow = policyLimit('signup') * (verifyPerIp.ttl / policyTtl('signup'));
+      expect(verifyPerIp.limit).toBeGreaterThanOrEqual(signupPerWindow);
+
+      const statuses = await sendMany(verifyPerIp.limit, (index) =>
+        post('/auth/email-verification/verify', '198.51.100.7')
+          .send({ email: `member-${index}@example.com`, code: '123456' }),
+      );
+      expect(statuses).not.toContain(429);
+
+      const ceiling = await post('/auth/email-verification/verify', '198.51.100.7')
+        .send({ email: 'one-more@example.com', code: '123456' });
+      expect(ceiling.status).toBe(429);
     });
   });
 
@@ -560,6 +681,27 @@ describe('throttling over HTTP', () => {
 
       expect(statuses.every((status) => status === 204)).toBe(true);
       expect(authService.refreshTokens).not.toHaveBeenCalled();
+    });
+
+    it('reports the per-IP bucket on email-availability, which the runbook IP probe reads', async () => {
+      // docs/runbooks/managed-demo-cost-floor.md compares X-RateLimit-Remaining
+      // across networks to prove the API sees distinct client IPs.
+      const probe = (ip: string) => get('/auth/email-availability?email=ip-probe@example.com', ip);
+      const first = await probe('198.51.100.7');
+      const second = await probe('198.51.100.7');
+      const otherNetwork = await probe('203.0.113.20');
+
+      expect(first.status).toBe(200);
+      expect(first.headers['x-ratelimit-limit']).toBe(
+        String(ROUTE_THROTTLES.authEmailAvailability.limit),
+      );
+      expect(Number(first.headers['x-ratelimit-remaining'])).toBe(
+        ROUTE_THROTTLES.authEmailAvailability.limit - 1,
+      );
+      expect(Number(second.headers['x-ratelimit-remaining'])).toBe(
+        ROUTE_THROTTLES.authEmailAvailability.limit - 2,
+      );
+      expect(otherNetwork.headers['x-ratelimit-remaining']).toBe(first.headers['x-ratelimit-remaining']);
     });
 
     it('keeps refresh with a cookie per IP with room for many users behind one NAT', async () => {

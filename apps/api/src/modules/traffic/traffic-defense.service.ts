@@ -26,6 +26,7 @@ const TRAFFIC_POLICY_NAMES = [
   'password-reset-email',
   'email-verification-send',
   'email-verification-verify',
+  'account-email-send',
 ] as const;
 
 export type TrafficPolicyName = (typeof TRAFFIC_POLICY_NAMES)[number];
@@ -39,8 +40,15 @@ type RequestLike = Request & {
   cookies?: Record<string, string | undefined>;
   body?: Record<string, unknown>;
   query?: Record<string, unknown>;
+  /** Set by the Express router to the route that dispatched the request. */
+  route?: { path?: unknown };
 };
 
+/**
+ * Policies match against the route template that dispatched the request
+ * (`/api/v1/auth/login`, `/api/v1/queue/performances/:performanceId/enter`),
+ * lower-cased, without a trailing slash. Patterns must be lower-case.
+ */
 type PolicyRouteMatcher = {
   method: string;
   patterns: RegExp[];
@@ -49,16 +57,23 @@ type PolicyRouteMatcher = {
 /**
  * Who a policy bucket belongs to.
  * - `principal`: the JWT-verified user, otherwise the trusted client IP.
- * - `email`: the normalized request email across every IP. Only for routes
- *   whose side effect lands on that address (mail sends), so one address
- *   cannot be flooded from many IPs. The route's IP-scoped default bucket
- *   still caps how many addresses one IP can target.
+ * - `email`: the normalized request email across every IP. Only for anonymous
+ *   routes whose side effect lands on that address (mail sends), so one
+ *   address cannot be flooded from many IPs. The route's IP-scoped default
+ *   bucket still caps how many addresses one IP can target. Such a route must
+ *   mail every address whose owner can use the flow: a request that sends
+ *   nothing still spends the address budget, and only real mail tells the
+ *   owner what is going on (and hands them a fresh code or link).
  * - `email-ip`: the normalized request email from one client IP. Used where a
  *   cross-IP cap would let anyone lock a victim out (login, code verify).
+ * - `user-email`: the normalized request email per JWT-verified user (per
+ *   client IP when anonymous). For signed-in routes that may refuse to send,
+ *   such as a 409 for an address another account owns: one account's
+ *   requests must not spend a budget that the address owner needs.
  * Identity policies skip requests that carry no usable email; the route's
- * IP-scoped default bucket still applies to them.
+ * default bucket still applies to them.
  */
-type PolicyIdentity = 'principal' | 'email' | 'email-ip';
+type PolicyIdentity = 'principal' | 'email' | 'email-ip' | 'user-email';
 
 type TrafficPolicyDefinition = {
   ttl: number;
@@ -66,7 +81,7 @@ type TrafficPolicyDefinition = {
   matchers: PolicyRouteMatcher[];
   identity?: PolicyIdentity;
   /**
-   * Where the matched routes read the email (`email` / `email-ip` identities).
+   * Where the matched routes read the email (identities other than `principal`).
    * Must be the same source the handler or strategy uses. Defaults to `body`.
    */
   emailSource?: ThrottleEmailSource;
@@ -184,6 +199,8 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     ],
   },
   'email-verification-send': {
+    // Anonymous request/resend mail every address that has an account and
+    // send nothing otherwise (signup itself mails the first code).
     ttl: FIFTEEN_MINUTES_MS,
     limit: 5,
     identity: 'email',
@@ -191,7 +208,7 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     matchers: [
       {
         method: 'POST',
-        patterns: [/\/auth\/email-verification\/(request|resend|account-email\/request)$/],
+        patterns: [/\/auth\/email-verification\/(request|resend)$/],
       },
     ],
   },
@@ -203,6 +220,20 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       {
         method: 'POST',
         patterns: [/\/auth\/email-verification\/(verify|account-email\/verify)$/],
+      },
+    ],
+  },
+  'account-email-send': {
+    // Signed-in account email codes. The handler answers 409 without mail for
+    // an address another account owns, so this is per account and address,
+    // never shared with the owner's own request/resend or account-email flow.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 5,
+    identity: 'user-email',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/account-email\/request$/],
       },
     ],
   },
@@ -277,9 +308,16 @@ export class TrafficDefenseService {
     }
 
     const emailKey = hashThrottleIdentity(email);
-    return identity === 'email'
-      ? `${policy}:email:${emailKey}`
-      : `${policy}:email-ip:${emailKey}:${ipKey}`;
+    if (identity === 'email') {
+      return `${policy}:email:${emailKey}`;
+    }
+    if (identity === 'user-email') {
+      const userId = resolveThrottleUserId(req);
+      return userId
+        ? `${policy}:user:${userId}:email:${emailKey}`
+        : `${policy}:email-ip:${emailKey}:${ipKey}`;
+    }
+    return `${policy}:email-ip:${emailKey}:${ipKey}`;
   }
 
   /**
@@ -302,7 +340,7 @@ export class TrafficDefenseService {
     }
 
     const request = context.switchToHttp().getRequest<RequestLike>();
-    const method = (request.method ?? 'GET').toUpperCase();
+    const method = this.resolveRouteMethod(request);
     if (method === 'OPTIONS') {
       return true;
     }
@@ -313,7 +351,7 @@ export class TrafficDefenseService {
     // each other.
     return (
       method === 'POST' &&
-      REFRESH_ROUTE_PATTERN.test(this.normalizePath(request.originalUrl ?? request.url ?? '')) &&
+      REFRESH_ROUTE_PATTERN.test(this.resolveRoutePath(request)) &&
       !request.cookies?.[AUTH_COOKIE_NAME]
     );
   }
@@ -390,8 +428,8 @@ export class TrafficDefenseService {
     }
 
     const request = context.switchToHttp().getRequest<RequestLike>();
-    const path = this.normalizePath(request.originalUrl ?? request.url ?? '');
-    const method = (request.method ?? 'GET').toUpperCase();
+    const path = this.resolveRoutePath(request);
+    const method = this.resolveRouteMethod(request);
 
     return TRAFFIC_POLICIES[policy].matchers.some((matcher) => {
       if (matcher.method !== method) {
@@ -402,8 +440,31 @@ export class TrafficDefenseService {
     });
   }
 
+  /**
+   * The path a policy is matched against. The Express router accepts several
+   * spellings for one handler: it matches case-insensitively by default
+   * (Express 5 `case sensitive routing` off) and ignores a trailing slash. The
+   * raw URL would let `/auth/LOGIN` skip every policy the handler relies on,
+   * so match the template of the route that dispatched the request. Outside a
+   * routed request, fall back to the URL with the same folding.
+   */
+  private resolveRoutePath(request: RequestLike): string {
+    const routePath = request.route?.path;
+    return this.normalizePath(
+      typeof routePath === 'string' && routePath.length > 0
+        ? routePath
+        : (request.originalUrl ?? request.url ?? ''),
+    );
+  }
+
+  /** Express serves HEAD with the GET handler, so it is the same route. */
+  private resolveRouteMethod(request: RequestLike): string {
+    const method = (request.method ?? 'GET').toUpperCase();
+    return method === 'HEAD' ? 'GET' : method;
+  }
+
   private normalizePath(path: string): string {
-    const withoutQuery = path.split('?')[0] ?? path;
+    const withoutQuery = (path.split('?')[0] ?? path).toLowerCase();
     if (!withoutQuery) {
       return '/';
     }

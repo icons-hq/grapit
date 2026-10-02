@@ -75,11 +75,15 @@ export const ROUTE_THROTTLES = {
    * `email-verification-send` caps each address across IPs.
    */
   authEmailVerificationSend: { limit: 20, ttl: FIFTEEN_MINUTES_MS },
-  /** POST /auth/email-verification/verify per client IP; `email-verification-verify` caps email + IP. */
-  authEmailVerificationVerify: { limit: 30, ttl: FIFTEEN_MINUTES_MS },
+  /**
+   * POST /auth/email-verification/verify per client IP. Every signup verifies,
+   * so this matches the signup allowance per IP (20/min, 300 per 15 min) for
+   * a shared NAT. Guessing is capped by `email-verification-verify` (email + IP).
+   */
+  authEmailVerificationVerify: { limit: 300, ttl: FIFTEEN_MINUTES_MS },
   /**
    * POST /auth/email-verification/account-email/request per signed-in user.
-   * `email-verification-send` caps each address across users and IPs.
+   * `account-email-send` also caps each user + address.
    */
   accountEmailVerificationSend: { limit: 10, ttl: FIFTEEN_MINUTES_MS },
   /**

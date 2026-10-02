@@ -39,6 +39,7 @@ describe('TrafficDefenseService', () => {
         'password-reset-email',
         'email-verification-send',
         'email-verification-verify',
+        'account-email-send',
       ]),
     );
   });
@@ -308,7 +309,7 @@ describe('TrafficDefenseService', () => {
     ).toBe(true);
   });
 
-  it('applies the per-address mail and code policies to signed-in account email routes', () => {
+  it('keys signed-in account-email mail per user and address, apart from anonymous resend (review r2)', () => {
     const service = new TrafficDefenseService();
     const skip = (name: string, originalUrl: string) =>
       service
@@ -319,29 +320,95 @@ describe('TrafficDefenseService', () => {
             createRequest({ originalUrl, user: { id: 'user-1' }, body: { email: 'a@b.co' } }),
           ),
         );
-
-    expect(skip('email-verification-send', '/api/v1/auth/email-verification/account-email/request'))
-      .toBe(false);
-    expect(skip('email-verification-verify', '/api/v1/auth/email-verification/account-email/verify'))
-      .toBe(false);
-    expect(
+    const accountEmail = (userId: string, email: string) =>
       service.resolveTracker(
-        'email-verification-send',
+        'account-email-send',
         createRequest({
           originalUrl: '/api/v1/auth/email-verification/account-email/request',
-          user: { id: 'user-1' },
-          body: { email: 'A@B.co' },
+          user: { id: userId },
+          body: { email },
         }),
-      ),
-    ).toBe(
-      service.resolveTracker(
-        'email-verification-send',
-        createRequest({
-          originalUrl: '/api/v1/auth/email-verification/resend',
-          body: { email: 'a@b.co' },
-        }),
-      ),
+      );
+
+    expect(skip('account-email-send', '/api/v1/auth/email-verification/account-email/request'))
+      .toBe(false);
+    // A 409 for an address another account owns sends nothing, so the
+    // anonymous per-address mail bucket must not see these requests.
+    expect(skip('email-verification-send', '/api/v1/auth/email-verification/account-email/request'))
+      .toBe(true);
+    expect(skip('account-email-send', '/api/v1/auth/email-verification/resend')).toBe(true);
+    expect(skip('email-verification-verify', '/api/v1/auth/email-verification/account-email/verify'))
+      .toBe(false);
+
+    expect(accountEmail('user-1', 'A@B.co ')).toBe(accountEmail('user-1', 'a@b.co'));
+    expect(accountEmail('user-1', 'a@b.co')).toMatch(
+      /^account-email-send:user:user-1:email:[0-9a-f]{32}$/,
     );
+    expect(accountEmail('user-2', 'a@b.co')).not.toBe(accountEmail('user-1', 'a@b.co'));
+  });
+
+  it('matches policies on the route that dispatched the request, so path spellings cannot skip them (review r2)', () => {
+    const service = new TrafficDefenseService();
+    const skip = (name: string, overrides: Record<string, unknown>) =>
+      service
+        .getThrottlerOptions()
+        .find((option) => option.name === name)
+        ?.skipIf?.(createExecutionContext(createRequest(overrides)));
+
+    // Express 5 routes /auth/LOGIN/ to the login handler; the template is canonical.
+    expect(
+      skip('login-account', {
+        originalUrl: '/api/v1/AUTH/Login/?next=1',
+        route: { path: '/api/v1/auth/login' },
+        body: { email: 'a@b.co' },
+      }),
+    ).toBe(false);
+    expect(
+      skip('queue-entry', {
+        originalUrl: '/api/v1/QUEUE/Performances/18a3bcc6-5e75-463d-abfd-634601328754/ENTER',
+        route: { path: '/api/v1/queue/performances/:performanceId/enter' },
+      }),
+    ).toBe(false);
+    // Without a routed request, the URL is folded the same way.
+    expect(
+      skip('password-reset-email', {
+        originalUrl: '/API/V1/Auth/Password-Reset/REQUEST/',
+        body: { email: 'a@b.co' },
+      }),
+    ).toBe(false);
+    // The template decides: a URL that merely looks like a policy path does not.
+    expect(
+      skip('login-account', {
+        originalUrl: '/api/v1/auth/login',
+        route: { path: '/api/v1/auth/register' },
+        body: { email: 'a@b.co' },
+      }),
+    ).toBe(true);
+    // Express serves HEAD with the GET handler.
+    expect(skip('queue-entry', { method: 'HEAD', originalUrl: '/api/v1/queue/entry' })).toBe(false);
+  });
+
+  it('skips cookie-less refresh on every spelling of the refresh route', () => {
+    const service = new TrafficDefenseService();
+
+    expect(
+      service.shouldSkipDefaultThrottle(
+        createExecutionContext(
+          createRequest({ originalUrl: '/api/v1/Auth/REFRESH/', route: { path: '/api/v1/auth/refresh' } }),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      service.shouldSkipDefaultThrottle(
+        createExecutionContext(
+          createRequest({
+            originalUrl: '/api/v1/Auth/REFRESH',
+            route: { path: '/api/v1/auth/refresh' },
+            cookies: { refreshToken: 'cookie' },
+          }),
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('shares the email-verification-send bucket between request and resend', () => {
