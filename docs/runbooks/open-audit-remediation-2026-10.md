@@ -140,6 +140,7 @@ ORDER BY p.created_at;
 ### 2.1 배포 결과 확인
 
 - [ ] 첫 Deploy run의 `Guard sitewide booking gate`, `Database preflight`(PGOPTIONS readback, freeze, connection budget), deploy-api·deploy-web의 `Re-check sitewide booking gate before deploy` 결과와 step summary를 확인한다. #60 #64
+- [ ] `Database preflight`에 `grabit-api still has PGBOSS_POOL_MAX=<n> from an earlier deploy` 경고가 있으면, repository variable `PGBOSS_POOL_MAX`가 비어 있는데 API 서비스에 예전 값이 남은 것이다. budget은 그 값과 code default 중 큰 값으로 센다. code default를 쓸 것이면 경고에 적힌 `gcloud run services update grabit-api --region=asia-northeast3 --remove-env-vars=PGBOSS_POOL_MAX`를 승인된 절차로 실행하고, 그 값을 유지할 것이면 variable에 같은 값을 넣는다. `Could not read the live grabit-api service` notice는 budget이 code default로 센 것이다. [Optional runtime settings](managed-demo-cost-floor.md#optional-runtime-settings). #54 #58
 - [ ] edge secret을 이번 배포에 넣었거나 IP 신뢰 코드가 처음 나간 경우, 새 API revision이 트래픽을 받자마자 two-network check와 위조 header probe를 실행한다. 실패하면 즉시 `gcloud run services update-traffic grabit-api --to-revisions=<이전 revision>=100`. 이후 회전·rollback 순서는 [Client IP trust](managed-demo-cost-floor.md#phase-4--cloudflare-edge-proxy-and-load-balancer-retirement)를 따른다. Worker rollback이나 LB fallback 전에는 API binding을 먼저 제거한다. #152 #158
 - [ ] API·worker 기동 로그와 Sentry에 QR keyring 경고(1.3의 마지막 네 문자열)가 없는지 확인한다. #109
 - [ ] API 기동 로그와 Sentry에 `CRITICAL: EDGE_PROXY_SHARED_SECRET is not set in production`(Sentry `fatal`)이 없는지 본다. 있으면 API에 edge secret binding이 없어 IP 기준 한도(이메일 인증·가입·로그인·비밀번호 재설정)가 Worker egress 주소 하나로 모일 수 있다. LB fallback·Worker rollback 중이면 의도된 상태다. 실행 중 `Resolved client IP ... is a Cloudflare address` warn(분당 최대 1회)이 보이면 Worker가 secret을 보내지 않거나 API·Worker 값이 다르다. 기동 실패로 막으려면 `EDGE_PROXY_SHARED_SECRET_REQUIRED=true`를 API에 직접 설정한다(rollback 전에는 먼저 해제). [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration). #152 #158
@@ -207,6 +208,7 @@ ORDER BY p.created_at;
 - [ ] 30분이 넘는 대기 시나리오(목표 동시 대기 인원·회차별 좌석 수)에서 sliding 세션 유지, 구매 후 slot 반환 처리량, 초당 1회 reconcile 아래 입장 속도, 대기 WebSocket 동시 연결 수를 확인한다. 판매 시각 없는 수동 오픈 모드도 포함한다. #4 #61 #89 #33
 - [ ] 부하 후 즉시 `provision-load-buyers.mjs cleanup`, 테스트 공연 정리 SQL(dry-run 수치 그대로) 뒤 `cleanup --delete-users`. [cleanup](phase26-cutover-ops.md#dedicated-test-event-cleanup). #164
 - [ ] k6 부하 스크립트, isolated-capacity, rehearsal smoke의 prepare는 `@grabit/shared`의 예매 동의 항목(`terms`, `privacy`)만 항목별 현재 version(`2026-04-28`, `2026-05-11`)으로 보낸다. 그래서 privacy·pipa_required `2026-04-28` 행 비활성화(4.1)를 부하 gate 뒤로 미룰 필요가 없다. 부하 대상 DB에 0045(`privacy` `2026-05-11` 행)가 적용됐는지만 확인한다. #65 #106 #169
+- [ ] rehearsal smoke의 `PHASE26_TEST_AMOUNT`는 좌석가다(총액이 아님). prepare·confirm 금액은 그 값에 서비스 수수료(`TICKET_SERVICE_FEE_KRW`)를 더한 값이므로 총액을 넣으면 prepare가 금액 불일치 400으로 끝난다. 설정하면 실행 시 stderr 경고가 나온다. 가능하면 `PHASE26_TEST_TIER_PRICE`를 쓴다. #65
 - [ ] `production-preflight` 운영 실행 환경에 cloud-sql-proxy v2와 ADC를 준비한다. 첫 실행에서 `grapit_app`이 `pg_control_system()`을 읽을 수 있는지와 `server.source`를 확인한다. postmaster 대체 식별값이면 배포 창 안에 Cloud SQL 재시작이 없어야 비교가 통과한다. baseline은 배포 직전에 같은 DB role로 다시 수집한다. 판매 용량 복원에서 Cloud SQL을 다른 이름의 instance로 바꾸면 `--instance=<project:region:instance>`(또는 `REVAMP_PROD_CLOUD_SQL_INSTANCE`)로 대상을 지정한다. 기본값은 `grabit-db-managed-demo`이고, secret의 host가 지정한 instance와 다르면 `unexpected_instance`로 멈춘다. baseline도 같은 instance로 수집한 것만 비교된다. #163 #166
 - [ ] 저사양 Android 실기기에서 실제 좌석맵과 초당 30건의 seat-update 아래 INP와 long task를 CPU throttling으로 측정한다. jsdom 측정(업데이트당 325ms → 0.41ms)만 있다. #11
 
@@ -229,7 +231,7 @@ ORDER BY p.created_at;
 - [ ] Cloud SQL maintenance deny period로 판매·입장 시간대를 덮는다. #57
 - [ ] `verify-valkey-sale-posture.mjs`를 다시 실행해 Valkey 유지보수 예정이 오픈·입장 보호 구간과 그 앞뒤 6시간 안에 없는지 확인한다. #63
 - [ ] Prewarm을 쓰면 scale-up은 판매 15분 전 이상, step-down은 대기열이 비고 트래픽이 줄어든 뒤. #150
-- [ ] 재개방은 evidence gate 통과 후 variable을 먼저 `true`로 바꾸고 gcloud로 열거나, 수동 Deploy dispatch에서 `allow_booking_reopen=true`로 연다. #64
+- [ ] 재개방은 evidence gate 통과 후 variable을 먼저 `true`로 바꾸고 gcloud로 열거나, 수동 Deploy dispatch에서 `allow_booking_reopen=true`로 연다. 이 승인은 run 시작 때 닫혀 있던 서비스에만 적용된다. 시작 때 열려 있던 서비스의 live 값을 배포 직전에 읽지 못하면 그 deploy job은 배포하지 않고 실패하므로, 서비스를 읽을 수 있게 된 뒤 다시 실행한다([kill switch](managed-demo-cost-floor.md#sitewide-booking-kill-switch)). #64
 
 ## 4. 결정이 필요한 항목
 
@@ -259,7 +261,7 @@ ORDER BY p.created_at;
 
 코드 후속이 필요하다. 오픈 판단 때 수용 여부를 기록한다.
 
-- 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 진행 중인 주문은 confirm에서 보상 취소된다. #70 #74
+- 서버는 결제 handoff·confirm·비동기 DONE에서 실제 결제수단을 저장된 결제수단과 공연 정책(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`와의 교집합)에 대조한다. 정책 밖 결제는 발권하지 않고 보상 취소하며, 입금이 끝난 가상계좌는 자동 취소 대신 attention으로 남긴다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)). 웹은 위젯 선택을 명시 표로 분류해 가상계좌·휴대폰·미지원 수단을 서버로 보내지 않고, prepare도 가상계좌·휴대폰을 모든 정책에서 거절한다. 남은 위험은 구매자 경험이다. 위젯 iframe에서 결제창이 열린 뒤 수단이 바뀌면 구매자는 인증을 마친 뒤 서버 대조로 자동 취소를 겪는다. 그래서 이 수단을 위젯에 켜지 않는 것(1.3)이 계속 운영 원칙이다. confirm과 비동기 DONE은 승인 처리 시점의 현재 공연 정책으로 판정하므로, 판매 중인 공연의 정책에서 수단을 빼면 그 수단으로 이미 handoff·승인한 결제도 보상 취소(자동 환불)되고 좌석이 풀린다. 바꾸기 전에 진행 중 결제를 read-only로 세어 0건일 때 바꾼다([결제수단 정책](show-relaunch-reliability.md#결제수단-정책-70)의 판매 중 결제수단 제거). #70 #74
 - QR reminder의 `email_sent_at`이 claim을 겸해, claim 뒤 프로세스가 죽으면 그 reminder는 유실된다. 다음 migration에서 claim/lease 컬럼과 stale claim sweep이 필요하다(2.4에서 관찰). #107
 - web에는 `script-src` CSP가 없다. seat-update는 이제 frame 단위로 묶어 반영하지만, 저사양 Android 실기기 INP는 아직 측정하지 않았다(3.3). #11 #49
 - 새 runtime env 예시(`PGBOSS_POOL_MAX`, `PGBOSS_START_MAX_ATTEMPTS`, `DB_APPLICATION_NAME`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`)를 `.env.example`에 넣는 작업은 감사 작업 환경에서 `.env*` 접근이 막혀 하지 못했다. 로컬 설정 담당자가 확인한다. 기본값과 의미는 [Architecture 8.4](../03-ARCHITECTURE.md#84-runtime-configuration)와 [Optional runtime settings](managed-demo-cost-floor.md#optional-runtime-settings)에 있다. #54 #55

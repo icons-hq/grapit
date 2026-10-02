@@ -94,9 +94,9 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 - migration job의 모든 DB 세션은 `PGOPTIONS`로 `lock_timeout`(기본 `5s`)과 `statement_timeout`(기본 `60s`)을 받는다. 잠금을 시간 안에 얻지 못하면 migration 전체가 rollback되고 API/Web 배포 job은 실행되지 않는다. 한산한 시간에 Deploy를 재실행한다. 값은 repository variable `MIGRATION_LOCK_TIMEOUT`/`MIGRATION_STATEMENT_TIMEOUT`으로 바꾸며, DB preflight가 실제 세션 값을 다시 읽어 미적용이면 migration을 거부한다.
 - 판매 오픈 전날부터 현장 입장 종료까지 repository variable `MIGRATION_FREEZE=true`를 둔다. 이 기간에는 pending migration이 하나라도 있으면 Deploy가 DB 변경 전에 실패한다. schema 변경이 없는 hotfix는 그대로 배포된다. freeze 해제는 hot table 잠금 영향을 검토한 뒤 명시적으로 한다.
 - 대형 테이블 인덱스는 단일 transaction migration 안에서 `CREATE INDEX CONCURRENTLY`를 쓸 수 없다. 별도 승인 runbook으로 `CONCURRENTLY` 생성 후 migration은 `IF NOT EXISTS`로 확인만 하도록 분리한다.
-- migration 자체에 더 긴 잠금 대기가 필요하면(예: 0033의 `SET LOCAL lock_timeout = '10s'`) 그 migration 안에서만 명시하고, 판매 시간대를 피한 배포 창을 따로 잡는다.
+- 더 긴 잠금 대기가 필요한 migration은 `SET LOCAL lock_timeout`을 쓰지 않는다(0038 이후는 `apps/api/src/database/migration-lock-timeout.spec.ts`가 CI에서 막는다). 단독 배포로 분리하고, 판매 시간대를 피한 승인된 창에서 repository variable `MIGRATION_LOCK_TIMEOUT`(최대 `30s`)을 올린다.
 - 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
-- `SET LOCAL`은 transaction이 끝날 때까지 유지된다. drizzle은 pending migration을 한 transaction으로 적용하므로, `SET LOCAL lock_timeout = '10s'`를 둔 migration 뒤의 모든 migration도 `MIGRATION_LOCK_TIMEOUT`(기본 5s) 대신 10s를 받는다. 이런 migration을 다른 migration과 같은 배포에 묶을 때는 그 뒤의 DDL 전체를 10s 대기 기준으로 검토한다.
+- 이미 운영에 적용된 0033에는 역사적인 `SET LOCAL lock_timeout = '10s'`가 남아 있다(0037까지는 적용 완료라 수정하지 않는다). `SET LOCAL`은 transaction이 끝날 때까지 유지되고 drizzle은 pending migration을 한 transaction으로 적용하므로, 0033이 pending인 환경(예: 빈 DB에 처음부터 적용)에서는 같은 batch의 뒤 migration도 `MIGRATION_LOCK_TIMEOUT`(기본 5s) 대신 10s를 받는다. 그런 환경에 적용할 때만 0033 뒤 DDL을 10s 대기 기준으로 검토한다. 새 migration에서는 이 패턴을 쓰지 않는다(위 항목).
 
 ### 2026-10 감사 migration batch(0038–0047) 첫 배포
 
@@ -130,7 +130,24 @@ reservation prepare는 공연 `allowed_payment_methods`에 없는 결제수단�
 - 동기 confirm: Toss 승인 응답의 실제 결제수단(`method`, 간편결제면 `easyPay.provider`)이 저장된 결제수단·간편결제사와 같고 집합 안이어야 한다. 아니면 발권하지 않고 보상 취소한 뒤 400 `PAYMENT_APPROVAL_MISMATCH`다(아래 계약).
 - 비동기 DONE(웹훅·pending return): provider 조회 결과의 결제수단으로 같은 판정을 한다. 아니면 `payment_method_not_allowed`로 전액 보상 취소한다(`ASYNC_DONE_PAYMENT_METHOD_NOT_ALLOWED_CANCELLED`). 입금이 끝난 가상계좌는 환불 계좌가 있어야 전액 취소되므로 자동 취소하지 않고 즉시 `attention`(진단 `ASYNC_DONE_COMPENSATION_ATTENTION`, error 로그)으로 남긴다. 운영자가 결제사에서 환불한다.
 
-운영 주의: 판매 중인 공연의 정책에서 수단을 빼면, 그 수단으로 이미 handoff했거나 결제 중인 주문은 confirm(또는 비동기 DONE)에서 보상 취소되고 발권되지 않는다. 판매 중 수단 제거는 해당 수단의 진행 주문이 없을 때(판매·대기열 시간 밖) 한다.
+운영 주의 — 판매 중 결제수단 제거: confirm과 비동기 DONE은 주문 시점이 아니라 승인 처리 시점의 현재 공연 정책으로 결제수단을 판정한다. 그래서 판매 중인 공연의 허용 결제수단에서 수단을 빼면, 이미 Provider Handoff(`checkout_started_at` 기록)나 결제사 승인까지 마친 그 수단의 결제도 confirm·비동기 DONE에서 보상 취소(자동 환불)되고 발권되지 않으며 좌석이 풀린다. 신규 결제만 막으려는 장애 대응이라도 같다.
+
+- 바꾸기 전에 그 공연에서 해당 수단으로 진행 중인 결제를 승인된 접근 경로로 read-only로 센다. 0건일 때 바꾼다. 0건이 아니면 그 주문들이 결제 기한으로 끝날 때까지 기다리거나, 판매·대기열 시간 밖으로 미룬다. `$1`은 공연 id, `<METHOD>`는 `CARD`·`TRANSFER`·`SIMPLE_PAY`·`FOREIGN_EASY_PAY` 중 빼려는 범주다.
+
+  ```sql
+  BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+  SELECT count(*)
+  FROM reservations r
+  JOIN showtimes s ON s.id = r.showtime_id
+  WHERE s.performance_id = $1
+    AND r.status = 'PENDING_PAYMENT'
+    AND r.checkout_started_at IS NOT NULL
+    AND r.checkout_payment_method->>'method' = '<METHOD>';
+  ROLLBACK;
+  ```
+
+- 관리자 공연 편집 폼은 공개 공연에서 결제수단을 빼면 저장 전에 확인을 요구한다(admin-console-2). 확인 창이 나오면 위 쿼리 결과를 먼저 본다.
+- 0건을 확인한 뒤 바꿨더라도 그 사이 handoff한 주문은 같은 보상 취소를 겪는다. 판매가 몰리는 시간에는 바꾸지 않는다.
 
 1. Toss 위젯 관리자에서 `DEFAULT`·`uspay` variant에 실제로 켜진 결제수단을 read-only로 확인해 기준 목록을 정한다. 범주는 국내·해외 카드 `CARD`, 계좌이체 `TRANSFER`, 토스페이·네이버페이·카카오페이 `SIMPLE_PAY`, Alipay·PayPal·TrueMoney `FOREIGN_EASY_PAY`다. [2026-09-21 가맹점 설정 확인](../research/2026-09-21-payment-merchant-settings-audit.md) 기준으로 `DEFAULT`는 카드·계좌이체, `uspay`는 카드·Alipay·PayPal이므로 기준 목록은 `["CARD", "TRANSFER", "FOREIGN_EASY_PAY"]`다. 국내 간편결제가 켜져 있으면 `"SIMPLE_PAY"`를 추가한다.
 2. 배포 전에 판매 종료가 아닌 공개 공연 전체를 아래 쿼리로 점검한다. 쿼리의 목록을 1번 기준 목록으로 바꿔 넣는다. 결과가 한 행이라도 있으면 배포를 멈추고 관리자 공연 편집에서 결제수단을 저장한다. 운영자가 특정 공연에서 의도적으로 뺀 범주는 그 공연만 예외로 기록한다.
@@ -153,7 +170,7 @@ ROLLBACK;
 
 ### migration 0039 (#62·#68)
 
-0039는 `reservations`의 admission token 원문을 `sha256:<hex>` digest로 바꾸는 UPDATE를 포함한다. prepare가 그동안 cookie token을 저장했으므로 과거 예약 대부분이 대상이다. drizzle migrator는 대기 중인 migration 전체를 한 transaction에서 실행한다. 그래서 행 잠금이 migrate commit까지 유지되고, 그동안 같은 예약을 갱신하는 confirm·webhook·만료 worker가 기다린다. 0039의 `lock_timeout = '10s'`를 넘는 잠금 대기는 migration을 실패시킨다(전체 rollback).
+0039는 `reservations`의 admission token 원문을 `sha256:<hex>` digest로 바꾸는 UPDATE를 포함한다. prepare가 그동안 cookie token을 저장했으므로 과거 예약 대부분이 대상이다. drizzle migrator는 대기 중인 migration 전체를 한 transaction에서 실행한다. 그래서 행 잠금이 migrate commit까지 유지되고, 그동안 같은 예약을 갱신하는 confirm·webhook·만료 worker가 기다린다. 0039에는 `SET LOCAL lock_timeout`이 없다. `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 넘는 잠금 대기는 migration을 실패시킨다(전체 rollback).
 
 1. 배포 전에 대상 행 수를 확인한다. `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';`
 2. 0039가 포함된 배포는 판매·대기열 시간 밖에 실행한다. 결제 기한이 남은 `PENDING_PAYMENT` 예약이 없는 시간이 가장 안전하다.
