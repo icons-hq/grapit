@@ -171,9 +171,9 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
 
     await expect(page).toHaveURL(/\/auth\?returnTo=/);
-    expect(decodeURIComponent(new URL(page.url()).searchParams.get('returnTo') ?? '')).toBe(
-      `/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`,
-    );
+    // The raw QR credential must not travel into the login URL or browser history.
+    expect(decodeURIComponent(new URL(page.url()).searchParams.get('returnTo') ?? '')).toBe('/field/check-in');
+    expect(decodeURIComponent(page.url())).not.toContain(rawQrToken);
     await expectNoRawSecrets(page);
   });
 

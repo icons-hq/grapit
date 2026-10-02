@@ -392,6 +392,13 @@ Credential validity and venue entry state are separate:
 
 Scanner-only access is represented through admin capability bundles, not a separate auth stack.
 
+The `/field/check-in` web client keeps these device-side rules ([runbook](runbooks/seat-level-field-operations.md)):
+
+- the scanner's showtime choice is stored per account in localStorage. It is restored in camera-opened tabs only when it is at most 12 hours old, still listed with the same start time, and today in KST or within 12 hours of now.
+- the raw `?ticket=`/`?token=` value moves into memory, is removed from the URL with `history.replaceState`, never goes into the `/auth` returnTo, and is masked by the browser Sentry `beforeSend`/`beforeSendTransaction`/`beforeSendSpan`/`beforeBreadcrumb` hooks.
+- an offline pending scan is stored only for a ticket verified before the connection dropped. A QR first scanned while offline shows an offline notice and is not queued. The IndexedDB queue allows one unsynced record per QR token, and that check and the write run in one readwrite transaction.
+- unsynced records of every account and showtime on the device stay visible. A scanner with both `field.scan.sync` and `field.scan.consume` (the server's offline sync requirement) syncs all of its own records automatically when online; this widens ADR 0011's scanner/showtime-scoped sync to every showtime of the account. Synced/rejected receipts, which no longer hold the token, are pruned after 7 days.
+
 ### 7.3 Settlement
 
 Admin settlement uses `FinanceLedgerService` through `GET /admin/settlement/ledger` and `POST /admin/settlement/ledger/export`:

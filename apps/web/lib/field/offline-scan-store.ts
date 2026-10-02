@@ -62,6 +62,80 @@ export async function addPendingScanAttempt(
   return record;
 }
 
+export type AddPendingScanAttemptResult =
+  | { status: 'added'; record: PendingScanAttemptRecord }
+  | { status: 'duplicate'; existing: PendingScanAttemptRecord };
+
+/**
+ * Stores an offline entry only when this device has no unsynced entry for the
+ * same QR token. The lookup and write share one IndexedDB readwrite
+ * transaction, so tabs racing on the same QR cannot both add a record.
+ */
+export async function addPendingScanAttemptUnlessTokenPending(
+  attempt: PendingScanAttemptRecord,
+): Promise<AddPendingScanAttemptResult> {
+  const record = sanitizePendingAttempt(attempt);
+  const db = await getDb();
+
+  if (!db) {
+    const existing = findPendingWithToken(memoryRecords.values(), record.token);
+    if (existing) return { status: 'duplicate', existing };
+    memoryRecords.set(record.deviceAttemptId, record);
+    return { status: 'added', record };
+  }
+
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  const pending = await tx.store.index(SYNC_STATE_INDEX).getAll('pending');
+  const existing = findPendingWithToken(pending, record.token);
+  if (existing) {
+    await tx.done;
+    return { status: 'duplicate', existing };
+  }
+  await Promise.all([tx.store.put(record), tx.done]);
+  return { status: 'added', record };
+}
+
+export async function findPendingScanAttemptByToken(
+  token: string,
+): Promise<PendingScanAttemptRecord | null> {
+  return findPendingWithToken(await listPendingScanAttempts({ syncState: 'pending' }), token);
+}
+
+/**
+ * Deletes synced/rejected receipts (which no longer hold a QR token) once
+ * they are older than the retention window. Unsynced records are kept.
+ */
+export async function pruneResolvedScanAttempts(
+  olderThan: Date,
+): Promise<number> {
+  const cutoff = olderThan.getTime();
+  const isExpired = (record: PendingScanAttemptRecord) => {
+    if (record.syncState === 'pending') return false;
+    const resolvedAt = Date.parse(record.resolvedAt ?? record.lastSyncAttemptAt ?? record.attemptedAt);
+    return Number.isFinite(resolvedAt) && resolvedAt < cutoff;
+  };
+  const db = await getDb();
+
+  if (!db) {
+    let removed = 0;
+    for (const record of [...memoryRecords.values()]) {
+      if (isExpired(record)) {
+        memoryRecords.delete(record.deviceAttemptId);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  const expired = (await tx.store.getAll()).filter(isExpired);
+  await Promise.all([
+    ...expired.map((record) => tx.store.delete(record.deviceAttemptId)),
+    tx.done,
+  ]);
+  return expired.length;
+}
+
 export async function listPendingScanAttempts(
   filter: PendingScanListFilter = {},
 ): Promise<PendingScanAttemptRecord[]> {
@@ -236,6 +310,18 @@ function sortAttempts(
   records: PendingScanAttemptRecord[],
 ): PendingScanAttemptRecord[] {
   return [...records].sort((a, b) => a.attemptedAt.localeCompare(b.attemptedAt));
+}
+
+function findPendingWithToken(
+  records: Iterable<PendingScanAttemptRecord>,
+  token: string,
+): PendingScanAttemptRecord | null {
+  const target = token.trim();
+  if (!target) return null;
+  for (const record of records) {
+    if (record.syncState === 'pending' && record.token.trim() === target) return record;
+  }
+  return null;
 }
 
 function filterByScanner(records: PendingScanAttemptRecord[], scannerUserId?: string): PendingScanAttemptRecord[] {
