@@ -912,7 +912,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     } });
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
-      provider: 'ALIPAY_PLUS' as const, method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
+      provider: 'ALIPAY_PLUS' as const, easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
     } } satisfies TossWebhookRequestBody;
     await service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done');
     await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
@@ -1002,7 +1002,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       }, releaseRecoverySeatLocks: async () => { recoveryHeld = false; },
     } });
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
-      paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS' as const,
+      paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS' as const, easyPay: 'ALIPAY',
       method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
     } } satisfies TossWebhookRequestBody;
     const results = await Promise.allSettled([
@@ -1027,7 +1027,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const calls = rows.map((r) => service.upsertAsyncPaymentProgress({
       eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
         paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
-        provider: 'ALIPAY_PLUS', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
+        provider: 'ALIPAY_PLUS', easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
       },
     }, 'DONE', 'payment_status_changed:done'));
     const results = await Promise.allSettled(calls);
@@ -1048,7 +1048,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     await Promise.all(orders.map((r) => service.upsertAsyncPaymentProgress({
       eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
         paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
-        provider: 'ALIPAY_PLUS', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
+        provider: 'ALIPAY_PLUS', easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
       },
     }, 'DONE', 'payment_status_changed:done')));
     const issued = await db.select().from(ticketItems).where(inArray(ticketItems.reservationId, orders.map((r) => r.id)));
@@ -1070,7 +1070,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     } });
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
-      provider: 'ALIPAY_PLUS' as const, method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
+      provider: 'ALIPAY_PLUS' as const, easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 52000,
     } } satisfies TossWebhookRequestBody;
     expect(await service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done')).toBe('DONE_CANCEL_PENDING');
     await db.update(ticketItems).set({ status: 'cancelled' }).where(eq(ticketItems.id, owner!.id));
@@ -1205,7 +1205,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     });
 
     expect(await service.upsertAsyncPaymentProgress({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
-      paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS', method: 'FOREIGN_EASY_PAY',
+      paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS', easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY',
       currency: 'KRW', totalAmount: 52000 } }, 'DONE', 'payment_status_changed:done')).toBe('DONE_CANCEL_PENDING');
     expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, r.id))).toHaveLength(0);
     let [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
@@ -1252,7 +1252,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     }));
     const queryPayment = vi.fn().mockImplementation(async (paymentKey: string) => ({
       paymentKey, orderId: r.tossOrderId!, status: 'DONE', method: 'FOREIGN_EASY_PAY', currency: 'KRW',
-      totalAmount: 52000, approvedAt: new Date().toISOString(),
+      totalAmount: 52000, easyPay: { provider: 'ALIPAY' }, approvedAt: new Date().toISOString(),
     }));
     const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
     Object.assign(service, {

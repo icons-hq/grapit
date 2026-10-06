@@ -29,6 +29,10 @@ describe('normalizeTossApprovedMethod', () => {
     ['간편결제', { provider: '카카오페이' }, { category: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
     ['EASY_PAY', { provider: 'KAKAOPAY' }, { category: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
     ['해외간편결제', '알리페이', { category: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+    ['해외간편결제', 'ALIPAYHK', { category: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+    ['FOREIGN_EASY_PAY', { provider: '지캐시' }, { category: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+    ['해외간편결제', '트루머니', { category: 'FOREIGN_EASY_PAY', provider: 'TRUEMONEY' }],
+    ['해외간편결제', '페이팔', { category: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
     ['FOREIGN_EASY_PAY', { provider: 'PAYPAL' }, { category: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
     ['해외간편결제', undefined, { category: 'FOREIGN_EASY_PAY' }],
     ['가상계좌', undefined, { category: 'VIRTUAL_ACCOUNT' }],
@@ -96,15 +100,74 @@ describe('findApprovedMethodPolicyMismatch', () => {
   const card = { method: 'CARD', provider: 'CARD' } as const;
   const tossPay = { method: 'SIMPLE_PAY', provider: 'TOSS_PAY' } as const;
   const alipay = { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' } as const;
+  const paypal = { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' } as const;
   const all = [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS];
 
   it('accepts an approval of the frozen checkout method inside the policy', () => {
     expect(findApprovedMethodPolicyMismatch({ category: 'CARD' }, card, ['CARD'])).toBeNull();
     expect(findApprovedMethodPolicyMismatch({ category: 'SIMPLE_PAY', provider: 'TOSS_PAY' }, tossPay, all))
       .toBeNull();
-    // Foreign wallets compare the category only.
-    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }, alipay, all))
+    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }, alipay, all))
       .toBeNull();
+    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }, paypal, all))
+      .toBeNull();
+  });
+
+  /**
+   * PR #235 review: a foreign wallet order must be approved with its frozen
+   * wallet, like a domestic easy pay. An Alipay+ order approved as PayPal (or
+   * the reverse) was issued because only the category was compared.
+   */
+  it('rejects a foreign wallet approved with another wallet than the one checked out', () => {
+    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }, alipay, all))
+      .toBe('checkout_provider_mismatch');
+    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }, paypal, all))
+      .toBe('checkout_provider_mismatch');
+    expect(findApprovedMethodPolicyMismatch({ category: 'FOREIGN_EASY_PAY', provider: 'TRUEMONEY' }, alipay, all))
+      .toBe('checkout_provider_mismatch');
+  });
+
+  it.each([
+    ['ALIPAY'],
+    ['알리페이'],
+    ['alipay'],
+    ['ALIPAY_PLUS'],
+    ['ALIPAYHK'],
+    ['GCASH'],
+    ['지캐시'],
+    ['DANA'],
+    ['TOUCHNGO'],
+    ['RABBIT_LINE_PAY'],
+  ])('keeps an Alipay+ checkout settled with the Toss wallet code %s', (easyPay) => {
+    expect(findApprovedMethodPolicyMismatch(
+      normalizeTossApprovedMethod('해외간편결제', easyPay),
+      alipay,
+      all,
+    )).toBeNull();
+    expect(findApprovedMethodPolicyMismatch(
+      normalizeTossApprovedMethod('FOREIGN_EASY_PAY', { provider: easyPay }),
+      alipay,
+      all,
+    )).toBeNull();
+  });
+
+  it.each([['PAYPAL'], ['페이팔']])('keeps a PayPal checkout settled with %s', (easyPay) => {
+    expect(findApprovedMethodPolicyMismatch(
+      normalizeTossApprovedMethod('해외간편결제', easyPay),
+      paypal,
+      all,
+    )).toBeNull();
+  });
+
+  it.each([
+    [undefined],
+    [null],
+    ['PAYPAY'],
+    [{ provider: null }],
+  ])('treats a foreign wallet with an unknown provider (%j) as unsupported, like a domestic easy pay', (easyPay) => {
+    const approved = normalizeTossApprovedMethod('해외간편결제', easyPay);
+    expect(findApprovedMethodPolicyMismatch(approved, alipay, all)).toBe('unsupported_method');
+    expect(findApprovedMethodPolicyMismatch(approved, paypal, all)).toBe('unsupported_method');
   });
 
   it('rejects methods checkout never sells, whatever the policy says', () => {

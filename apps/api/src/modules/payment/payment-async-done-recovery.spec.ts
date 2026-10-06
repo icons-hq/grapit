@@ -205,6 +205,7 @@ describe('PaymentService async DONE safety and recovery', () => {
         status: 'DONE',
         method: 'FOREIGN_EASY_PAY',
         provider: 'ALIPAY_PLUS' as const,
+        easyPay: 'ALIPAY',
         currency: 'KRW',
         totalAmount: 52000,
         approvedAt: '2026-10-01T00:20:00.000Z',
@@ -1224,6 +1225,50 @@ describe('PaymentService async DONE safety and recovery', () => {
       )).resolves.toBe('DONE_APPLIED');
       expect(tossClient.cancelPayment).not.toHaveBeenCalled();
     });
+
+    /**
+     * PR #235 review: an Alipay+ DONE for an order frozen as PayPal matched the
+     * foreign easy pay category and was issued. The wallet must be the one
+     * checked out, like a domestic easy pay provider.
+     */
+    it.each([
+      ['an Alipay+ DONE for a PayPal checkout', { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' }, 'ALIPAY', 'checkout_provider_mismatch'],
+      ['a DONE whose lookup names no wallet', ALIPAY_DONE_POLICY.checkoutPaymentMethod, null, 'unsupported_method'],
+      ['a DONE with an unknown wallet code', ALIPAY_DONE_POLICY.checkoutPaymentMethod, 'PAYPAY', 'unsupported_method'],
+    ])('refunds %s instead of issuing it', async (_label, checkoutPaymentMethod, easyPayProvider, mismatch) => {
+      doneFixture({ checkoutPaymentMethod });
+      capturedInserts();
+      const errorLog = vi.spyOn((service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        { ...lateDonePayload('GRP-POLICY-5'), providerVerified: { method: '해외간편결제', easyPayProvider } },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(tossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_late_done',
+        '허용되지 않은 결제수단으로 인한 자동 취소',
+        expect.anything(),
+      );
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining(`mismatch=${mismatch}`));
+    });
+
+    it.each([['ALIPAY'], ['알리페이'], ['ALIPAYHK'], ['GCASH']])(
+      'keeps issuing an Alipay+ checkout settled with the Toss wallet code %s',
+      async (easyPayProvider) => {
+        doneFixture();
+        mockCommittingTransaction();
+
+        await expect(service.upsertAsyncPaymentProgress(
+          { ...lateDonePayload('GRP-POLICY-6'), providerVerified: { method: '해외간편결제', easyPayProvider } },
+          'DONE',
+          'payment_status_changed:done',
+        )).resolves.toBe('DONE_APPLIED');
+        expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+      },
+    );
 
     it('answers DONE_CANCEL_PENDING for a late DONE of an approval payment confirm already claimed (pay-server-4)', async () => {
       db.select
