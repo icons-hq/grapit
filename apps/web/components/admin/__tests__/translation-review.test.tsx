@@ -312,6 +312,46 @@ describe('admin translation review workflow', () => {
     expect(onPublishDraft).toHaveBeenCalledWith('draft-en');
   });
 
+  it('requires a manual translation before a marker draft can be reviewed or published', async () => {
+    const user = userEvent.setup();
+    const onReviewDraft = vi.fn().mockResolvedValue({ ...draftRow, status: 'review' });
+    const markerText = '[manual-review:deepl-unavailable] 한국어 원문입니다.';
+
+    const { rerender } = render(
+      <TranslationReviewDetailPanel
+        draft={{ ...draftRow, translatedText: markerText }}
+        onReviewDraft={onReviewDraft}
+        onPublishDraft={vi.fn()}
+        isReviewing={false}
+        isPublishing={false}
+      />,
+    );
+
+    expect(screen.getByRole('note')).toHaveTextContent('번역문을 직접 입력한 뒤 검수 완료하세요');
+    expect(screen.getByRole('button', { name: '검수 완료' })).toBeDisabled();
+
+    await user.clear(screen.getByLabelText('번역 검수문'));
+    await user.type(screen.getByLabelText('번역 검수문'), 'Korean source, translated by hand');
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '검수 완료' }));
+    expect(onReviewDraft).toHaveBeenCalledWith({
+      draftId: 'draft-en',
+      translatedText: 'Korean source, translated by hand',
+    });
+
+    // A legacy draft that reached review with the marker cannot be published.
+    rerender(
+      <TranslationReviewDetailPanel
+        draft={{ ...draftRow, id: 'draft-legacy', status: 'review', translatedText: markerText }}
+        onReviewDraft={onReviewDraft}
+        onPublishDraft={vi.fn()}
+        isReviewing={false}
+        isPublishing={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: '게시' })).toBeDisabled();
+  });
+
   it('disables review for already published drafts', () => {
     render(
       <TranslationReviewDetailPanel

@@ -160,7 +160,13 @@ export function MobileLocaleSwitcher({ className }: { className?: string }) {
   );
 }
 
-function useLocaleSelection({
+/**
+ * Explicit locale change shared by every locale control. It persists the
+ * preference (cookie and, when signed in, preferredLocale) and then does a full
+ * navigation: the root layout injects the next-intl provider locale and
+ * <html lang>, and a soft navigation would keep the previous locale there.
+ */
+export function useLocaleSelection({
   onLocaleChange,
 }: {
   onLocaleChange?: () => void;

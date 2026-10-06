@@ -24,9 +24,15 @@ import {
 } from '@/components/performance/status-badge';
 import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
-import { KstTime } from '@/components/i18n/kst-time';
+import {
+  formatBookingOpensAtKst,
+  parseBookingStartMs,
+  resolveBookingStartPerformanceStatus,
+} from '@/components/performance/performance-display-status';
+import { PerformancePeriod } from '@/components/performance/performance-period';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
@@ -71,9 +77,15 @@ export default function PerformanceDetailPage({
     verificationRequiredForBooking,
     bookingDisabledMessage,
     bookingEnabled,
+    isResolved: flagsResolved,
+    isBeforeScheduledBookingStart,
   } = useBookingAvailability({
     performanceStatus: performance?.status,
     bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
+  });
+  // Refresh the server clock sample shortly before the opening the CTA waits for.
+  useRuntimeFlags({
+    resyncClockBeforeMs: parseBookingStartMs(performance?.bookingPolicy?.bookingStartsAt),
   });
   const showAutomaticTranslationLabel =
     hasAutomaticTranslationMetadata(performance);
@@ -102,10 +114,21 @@ export default function PerformanceDetailPage({
 
   const showDescriptionSection = performance.descriptionVisible !== false;
   const showSalesSection = performance.salesInfoVisible !== false;
-  const displayStatus = getDisplayPerformanceStatus(
+  // Same server-clock verdict as the booking CTA so the badge and schedule flip
+  // together with it at the booking start, even on a skewed device clock.
+  const saleStatus = resolveBookingStartPerformanceStatus(
     performance.status,
-    bookingEnabled,
+    performance.bookingPolicy?.bookingStartsAt,
+    isBeforeScheduledBookingStart,
   );
+  // Booking stays closed while the flags are unknown, but the badge is not downgraded.
+  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
+  // The open time the home list shows for this performance, repeated here while
+  // booking has not started yet.
+  const bookingOpensAt =
+    saleStatus === 'upcoming'
+      ? formatBookingOpensAtKst(performance.bookingPolicy?.bookingStartsAt, activeLocale)
+      : null;
 
   return (
     <>
@@ -171,23 +194,22 @@ export default function PerformanceDetailPage({
                   icon={<Calendar className="h-4 w-4" />}
                   label={copy.performance.scheduleLabel}
                   value={
-                    performance.status === 'upcoming' ? (
-                      copy.performance.upcomingDateLabel
-                    ) : (
-                      <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
-                        <KstTime
-                          value={performance.startDate}
-                          locale={activeLocale}
-                        />
-                        <span aria-hidden="true" className="text-gray-400">
-                          ~
-                        </span>
-                        <KstTime
-                          value={performance.endDate}
-                          locale={activeLocale}
-                        />
-                      </span>
-                    )
+                    <>
+                      <PerformancePeriod
+                        startDate={performance.startDate}
+                        endDate={performance.endDate}
+                        locale={activeLocale}
+                        fallback={copy.home.dateUnknown}
+                      />
+                      {bookingOpensAt && (
+                        <p
+                          className="mt-1 text-xs font-medium text-primary"
+                          data-testid="performance-booking-opens-at"
+                        >
+                          {copy.home.bookingOpens.replace('{date}', bookingOpensAt)}
+                        </p>
+                      )}
+                    </>
                   }
                 />
                 {performance.runtime && (

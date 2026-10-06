@@ -47,6 +47,34 @@ export interface PerformanceDraft {
   updatedAt: string;
 }
 
+/**
+ * How buyer sales open once the performance is public, mirroring the booking gate:
+ * a future sale start time always waits, an upcoming sale status without a start
+ * time never opens on its own, and an open sale status (or an elapsed start time)
+ * sells as soon as the performance is published.
+ */
+export type PerformanceSaleOpeningMode = 'immediate' | 'scheduled' | 'manual' | 'ended';
+export interface PerformanceSaleOpening {
+  mode: PerformanceSaleOpeningMode;
+  /** Stored sale start instant (ISO), if any. */
+  at: string | null;
+  /** True when a stored sale start instant is not in the future at evaluation time. */
+  startElapsed: boolean;
+}
+
+export function resolvePerformanceSaleOpening(
+  input: { status: string; bookingStartsAt: string | Date | null | undefined },
+  now: Date = new Date(),
+): PerformanceSaleOpening {
+  const startMs = input.bookingStartsAt == null ? Number.NaN : new Date(input.bookingStartsAt).getTime();
+  const hasStart = Number.isFinite(startMs);
+  const at = hasStart ? new Date(startMs).toISOString() : null;
+  const startElapsed = hasStart && startMs <= now.getTime();
+  if (input.status === 'ended') return { mode: 'ended', at, startElapsed };
+  if (hasStart) return { mode: startElapsed ? 'immediate' : 'scheduled', at, startElapsed };
+  return { mode: input.status === 'upcoming' ? 'manual' : 'immediate', at: null, startElapsed: false };
+}
+
 export interface PerformancePreparation {
   performanceId: string;
   title: string;
@@ -54,6 +82,7 @@ export interface PerformancePreparation {
   publishState: 'draft' | 'review' | 'publish_ready' | 'published';
   status: string;
   bookingStartsAt: string | null;
+  saleOpening: PerformanceSaleOpening;
   canPublish: boolean;
   structureProtected: boolean;
   reservationCount: number;

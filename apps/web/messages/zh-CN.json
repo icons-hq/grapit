@@ -126,7 +126,22 @@
     "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。",
     "loading": "正在加载最新帮助信息。",
     "loadError": "无法加载最新帮助信息。请重试或通过下方邮箱联系我们。",
-    "legalLinks": "条款与隐私信息"
+    "legalLinks": "条款与隐私信息",
+    "noticePostedAt": "发布于 {date}",
+    "noticeOriginalLanguage": "译文准备中，暂以{language}原文显示。",
+    "noticeLanguages": {
+      "ko": "韩语",
+      "en": "英语"
+    },
+    "noticeCategories": {
+      "general": "一般",
+      "urgent": "紧急",
+      "maintenance": "维护",
+      "payment": "支付",
+      "refund": "退款",
+      "signup": "注册",
+      "event": "演出"
+    }
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",
@@ -137,6 +152,12 @@
           "title": "您正在票务排队中等待进入",
           "description": "正在加载您的排位、预计等待时间和剩余座位数。",
           "helper": "队列信息会在稍后自动刷新。"
+        },
+        "notOpen": {
+          "badge": "尚未开售",
+          "title": "预订尚未开放，开放时将自动进入排队",
+          "description": "请保持此页面打开，开放时系统会自动尝试进入排队。",
+          "helper": "无需刷新或反复点击，倒计时以服务器时间为准。"
         },
         "waiting": {
           "badge": "等待中",
@@ -155,6 +176,12 @@
           "title": "入场时限已过，请重新排队。",
           "description": "请重新进入队列以获得新的入场时间窗口。",
           "helper": "重新排队后，您仍可查看排位、预计等待时间和剩余座位数。"
+        },
+        "closed": {
+          "badge": "无法预订",
+          "title": "当前没有可预订的场次",
+          "description": "销售已结束，或所有场次均已开演。",
+          "helper": "请在演出页面查看其他日期或最新销售状态。"
         },
         "authRequired": {
           "badge": "请先登录",
@@ -181,18 +208,39 @@
           "helper": "如果仍被阻止，请稍后重试并联系客户支持。"
         }
       },
+      "notFound": {
+        "badge": "无法预订",
+        "title": "找不到该演出",
+        "description": "链接可能有误，或该演出已不再公开。",
+        "helper": "请从首页重新查找演出。"
+      },
       "metrics": {
         "position": "当前排位",
         "eta": "预计等待时间",
         "remainingSeats": "剩余座位",
         "ready": "可进入",
-        "soon": "即将进入"
+        "soon": "即将进入",
+        "etaCalculating": "计算中",
+        "etaWithin": "最多约{minutes}分钟",
+        "etaUnavailable": "无法估算",
+        "etaOverLimit": "可能超过{hours}小时",
+        "etaAbout": "约{minutes}分钟",
+        "etaRange": "约{min}~{max}分钟",
+        "opensIn": "距离开售",
+        "opening": "正在进入",
+        "openTimeUnknown": "正在确认开售时间"
       },
       "infoLabel": "队列详情",
       "autoEnterInfo": "一旦获得入场资格，系统会自动打开座位选择页面。",
+      "accessEndingSoon": "预订入场时间仅剩 2 分钟。已选好座位请尽快进入付款步骤，超时后需重新排队并获得新的序号。",
       "safetyInfo": "进入排队不代表已获得座位。选择座位并确认保留后，才会暂时为您保留该座位。",
+      "etaInfo": "预计等待时间是按当前剩余座位数计算的最长时间。座位售出后每轮可入场的人数会减少，等待时间可能变长。轮到您时将自动进入，请保持此页面打开。",
+      "openTimeUnknownInfo": "开售时间尚未公布。此页面约每{seconds}秒检查一次，开售后会自动进入排队。",
+      "soldOutRisk": "排在您前面的人数多于剩余座位，可能在轮到您之前售罄。",
       "retryAction": "重试",
-      "enterNowAction": "立即进入"
+      "enterNowAction": "立即进入",
+      "backAction": "返回演出信息",
+      "backHomeAction": "返回首页"
     },
     "paymentDeadline": {
       "badge": "支付时限",
@@ -300,12 +348,16 @@
       "selectSeat": "选择座位",
       "deselectSeat": "取消选座",
       "totalSeatCount": "共 {count} 个座位",
-      "selectionConflict": "请确认座位状态和每人限购数量后重试。"
+      "selectionConflict": "请确认座位状态和每人限购数量后重试。",
+      "showtimeClosed": "该场次已开始，无法预订。",
+      "selectionResynced": "部分座位的保留状态已变化，已更新所选座位。请确认所选座位。",
+      "selectionVerifyFailed": "无法确认所选座位的保留状态，请稍后重试。"
     }
   },
   "locale": {
     "suggestion": "要以简体中文查看此页面吗？",
-    "dismiss": "稍后"
+    "dismiss": "稍后",
+    "localTime": "当地时间"
   },
   "legal": {
     "fallbackLabel": "查看英文法律告知"
@@ -483,7 +535,8 @@
       "verificationLogin": "邮箱已验证。登录后可继续预订。",
       "continue": "继续",
       "showPassword": "显示密码",
-      "hidePassword": "隐藏密码"
+      "hidePassword": "隐藏密码",
+      "sessionRestorePending": "网络连接不稳定，正在重新确认您的登录状态。稍后将自动返回。"
     },
     "validation": {
       "email": "请输入有效的邮箱地址",
@@ -557,6 +610,8 @@
       "confirmFailedBody": "再次付款前，请先在预订记录中确认结果。",
       "confirmUnknownBody": "尚无法确认付款结果。请稍后重新查询，或查看预订记录。",
       "retryStatus": "重新检查状态",
+      "retryConfirm": "重新发送付款确认",
+      "confirmRetryBody": "付款验证已完成，但暂未能完成付款确认。请稍后重新发送确认请求。只会扣款一次。",
       "statusCheckFailed": "无法查询付款状态。",
       "deadlineExpired": "付款期限已于 {deadline} 结束。",
       "pendingDeadline": "此订单将等待付款状态至 {deadline}。"
@@ -756,6 +811,7 @@
         "其他"
       ],
       "title": "退款和座位重新开放说明",
+      "deadlineTitle": "取消截止信息",
       "description": "可在各座位票券中取消单个座位，也可取消整个预订。确认前请核对退款金额及保留的票券。",
       "reasonLabel": "取消原因",
       "reasonPlaceholder": "请选择取消原因",

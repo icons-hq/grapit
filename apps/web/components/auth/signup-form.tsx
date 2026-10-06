@@ -20,6 +20,7 @@ import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { isPhoneVerificationTokenUsedError } from '@/components/auth/phone-verification-errors';
 
 export function SignupForm() {
   const router = useRouter();
@@ -30,6 +31,8 @@ export function SignupForm() {
   const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step3Draft, setStep3Draft] = useState<Partial<RegisterStep3Input>>();
+  // Remounts step 3 (and its phone verification) with the entered values.
+  const [step3ResetKey, setStep3ResetKey] = useState(0);
   const [emailVerificationEmail, setEmailVerificationEmail] = useState<
     string | null
   >(null);
@@ -87,6 +90,12 @@ export function SignupForm() {
       if ('emailDeliveryFailed' in res && res.emailDeliveryFailed) toast.error(authCopy.emailVerification.deliveryFailed);
       else toast.success(authCopy.form.signupComplete);
     } catch (error) {
+      if (isPhoneVerificationTokenUsedError(error)) {
+        // The token already backed another write: keep the entered values,
+        // drop the token and ask for phone verification again.
+        setStep3Draft({ ...data, phoneVerificationToken: '' });
+        setStep3ResetKey((key) => key + 1);
+      }
       const message =
         error instanceof Error
           ? error.message
@@ -132,6 +141,7 @@ export function SignupForm() {
             )}
             {currentStep === 3 && (
               <SignupStep3
+                key={step3ResetKey}
                 onComplete={handleStep3Complete}
                 defaultValues={step3Draft}
                 onBack={(draft) => { setStep3Draft(draft); setCurrentStep(2); }}

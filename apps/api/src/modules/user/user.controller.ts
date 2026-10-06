@@ -6,10 +6,12 @@ import {
   Body,
   Req,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { UserService } from './user.service.js';
 import {
   accountWithdrawalSchema,
@@ -22,6 +24,9 @@ import {
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
+  // Loaded on every page load; per user and network so a shared gate scanner
+  // account is not capped at the 60/min per-account default (audit #15).
+  @Throttle({ default: ROUTE_THROTTLES.currentUserProfile })
   @Get('me')
   async getProfile(@CurrentUser() user: RequestUser) {
     return this.userService.getUserProfile(user.id);

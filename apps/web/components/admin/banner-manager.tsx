@@ -5,10 +5,11 @@ import { Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePresignedUpload } from '@/hooks/use-admin';
 import { uploadPresignedAsset } from '@/lib/admin-upload';
-import type {
-  BannerDeviceTarget,
-  BannerPlacement,
-  BannerStatus,
+import {
+  SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+  type BannerDeviceTarget,
+  type BannerPlacement,
+  type BannerStatus,
 } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -98,6 +99,8 @@ export function BannerForm({
   );
   const [sortOrder, setSortOrder] = useState(initialData?.sortOrder ?? 0);
   const presignedUpload = usePresignedUpload();
+  // The public home shows a scheduled banner from its start time; without one, never.
+  const scheduledWithoutStart = status === 'scheduled' && !startsAt;
   const isMobileTarget = deviceTarget === 'mobile';
   const uploadRatioClass = isMobileTarget ? 'aspect-[1290/600]' : 'aspect-video';
   const uploadGuidance = isMobileTarget
@@ -138,6 +141,10 @@ export function BannerForm({
     e.preventDefault();
     if (!imageUrl) {
       toast.error('배너 이미지를 업로드해주세요.');
+      return;
+    }
+    if (scheduledWithoutStart) {
+      toast.error(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
       return;
     }
     await onSubmit({
@@ -321,6 +328,11 @@ export function BannerForm({
           />
         </div>
       </div>
+      {scheduledWithoutStart && (
+        <p role="alert" className="-mt-2 text-sm text-red-600">
+          {SCHEDULED_BANNER_REQUIRES_START_MESSAGE}
+        </p>
+      )}
 
       {/* Sort Order */}
       <div>

@@ -81,6 +81,13 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
   readonly AdminCapabilityValue[]
 >;
 
+/** True when the list contains every capability in `ADMIN_CAPABILITIES`. */
+export function isFullAdminCapabilitySet(
+  capabilities: readonly string[],
+): boolean {
+  return ADMIN_CAPABILITIES.every((capability) => capabilities.includes(capability));
+}
+
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
@@ -192,9 +199,15 @@ export const adminAuditActionSchema = z.enum([
   ...ADMIN_CAPABILITIES,
   'field.scan.offline_sync',
   'event.update',
+  'event.delete',
   'refund.admin_refund',
   'support.assign',
   'support.resolve',
+  'support.content.create',
+  'support.content.update',
+  'support.content.review',
+  'support.content.publish',
+  'support.content.archive',
   'allowlist.update',
   'security.allowlist.update',
   'security.permission.update',
@@ -204,6 +217,7 @@ export const adminAuditActionSchema = z.enum([
   'benefits.run.rollback',
   'benefits.run.export',
   'benefits.entitlements.export',
+  'benefits.included_repair.apply',
   'user.export_raw',
   'user.withdraw',
   'user.hard_delete',
@@ -376,6 +390,9 @@ export const adminUserListItemSchema = z.object({
   marketingConsent: z.boolean(),
   adminCapabilityBundle: adminCapabilityBundleSchema.nullable(),
   adminCapabilities: z.array(adminCapabilitySchema),
+  /** Server-resolved guard access; preferred over re-resolving bundle + list. */
+  adminSuperuser: z.boolean().optional(),
+  effectiveAdminCapabilities: z.array(adminCapabilitySchema).optional(),
   accountStatus: accountStatusSchema.default('active'),
   withdrawnAt: isoDatetime('탈퇴 처리 시각').nullable().optional(),
   withdrawalReason: z.string().nullable().optional(),
@@ -483,22 +500,33 @@ export const adminUserPermissionUpdateSchema = z
     }),
   })
   .superRefine((value, ctx) => {
-    if (value.role === 'admin' && !value.adminCapabilityBundle) {
+    // role=user always clears bundle/capabilities on the server, so leftover
+    // values from the editor must not block an emergency permission revoke.
+    if (value.role !== 'admin') {
+      return;
+    }
+
+    if (!value.adminCapabilityBundle) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['adminCapabilityBundle'],
         message: '관리자 권한 묶음이 필요합니다',
       });
+      return;
     }
 
+    // The admin bundle is superuser and ignores capability lists. A partial
+    // list would be displayed/audited as narrowed while granting everything.
     if (
-      value.role === 'user' &&
-      (value.adminCapabilityBundle || value.adminCapabilities.length > 0)
+      value.adminCapabilityBundle === 'admin' &&
+      value.adminCapabilities.length > 0 &&
+      !isFullAdminCapabilitySet(value.adminCapabilities)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['adminCapabilities'],
-        message: '일반 사용자는 관리자 권한을 가질 수 없습니다',
+        message:
+          '전체 관리자 묶음은 모든 권한을 가지므로 세부 권한을 줄일 수 없습니다. 일부 권한만 부여하려면 다른 권한 묶음을 선택하세요',
       });
     }
   });

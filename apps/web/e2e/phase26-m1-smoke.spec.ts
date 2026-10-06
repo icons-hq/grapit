@@ -263,7 +263,8 @@ async function blockDisabledBookingMutations(page: Page) {
     '**/api/v1/booking/seats/lock',
     '**/api/v1/reservations/prepare',
     '**/api/v1/payments/branch',
-    '**/api/v1/payments/confirm',
+    // `?locale=` rides on the confirm request, so match any query.
+    '**/api/v1/payments/confirm**',
   ];
   for (const pattern of blockedPatterns) {
     await page.route(pattern, async (route: Route) => {

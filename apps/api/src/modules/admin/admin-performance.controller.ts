@@ -55,7 +55,12 @@ const publishPerformanceSchema = z.object({
     .array(z.string().trim().min(1).max(100))
     .min(1, '변경된 필드 확인이 필요합니다'),
   contentChecklist: publishContentChecklistSchema,
+  immediateSaleConfirmed: z.boolean().optional(),
 });
+
+const deletePerformanceSchema = z
+  .object({ reason: z.string().trim().min(1).max(500).optional() })
+  .optional();
 
 const presignedUploadRequestSchema = z.object({
   folder: z
@@ -66,6 +71,7 @@ const presignedUploadRequestSchema = z.object({
 });
 
 type PublishPerformanceBody = z.infer<typeof publishPerformanceSchema>;
+type DeletePerformanceBody = z.infer<typeof deletePerformanceSchema>;
 type PresignedUploadRequest = z.infer<typeof presignedUploadRequestSchema>;
 type AdminRequest = Request & {
   user?: AdminCapabilityUser;
@@ -148,8 +154,15 @@ export class AdminPerformanceController {
 
   @Delete('performances/:id')
   @AdminCapabilities('event.write')
-  async deletePerformance(@Param('id') id: string) {
-    await this.adminService.deletePerformance(id);
+  async deletePerformance(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(deletePerformanceSchema)) body: DeletePerformanceBody,
+    @Req() req: AdminRequest,
+  ) {
+    await this.adminService.deletePerformance(id, {
+      ...this.resolveMutationContext(req),
+      reason: body?.reason ?? null,
+    });
     return { message: '공연이 삭제되었습니다' };
   }
 

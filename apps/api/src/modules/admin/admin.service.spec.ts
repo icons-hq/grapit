@@ -6,6 +6,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type {
   Banner,
   PerformanceWithDetails,
@@ -18,6 +20,7 @@ import type {
   CreateBannerInput,
   SeatMapConfigInput,
 } from '@grabit/shared/schemas/performance.schema';
+import { SCHEDULED_BANNER_REQUIRES_START_MESSAGE } from '@grabit/shared';
 
 import { AdminService } from './admin.service.js';
 import { AdminBannerController } from './admin-banner.controller.js';
@@ -28,8 +31,11 @@ import { CatalogFreshnessService } from '../performance/catalog-freshness.servic
 import {
   banners,
   bookingPolicies,
+  performanceDrafts,
   performances,
+  performanceSeatAssignments,
   performanceSeatTiers,
+  priceTiers,
   reservations,
   seatMaps,
   showtimes,
@@ -705,46 +711,130 @@ describe('AdminService', () => {
   // test/admin-preparation.integration.spec.ts with real HTTP and PostgreSQL.
 
   describe('deletePerformance', () => {
-    it('should delete performance by id (cascade handles children)', async () => {
-      await service.deletePerformance('perf-id-123');
+    type DeleteTarget = { id: string; title: string; status: string; publishState: string; publishedAt: Date | null };
+    function arrangeDeleteTarget(
+      target: DeleteTarget | null,
+      counts: Partial<Record<'showtimes_count' | 'reservations_count' | 'ticket_scan_events_count' | 'seat_operation_history_count', number>> = {},
+    ) {
+      const tx = mockDb._tx;
+      const lockOrder: string[] = [];
+      const draftLock = { from: vi.fn(), where: vi.fn(), orderBy: vi.fn(),
+        for: vi.fn(async () => { lockOrder.push('performance_drafts'); return []; }) };
+      draftLock.from.mockReturnValue(draftLock);
+      draftLock.where.mockReturnValue(draftLock);
+      draftLock.orderBy.mockReturnValue(draftLock);
+      const lockedRead = { from: vi.fn(), where: vi.fn(), lockOrder, draftLock,
+        for: vi.fn(async () => { lockOrder.push('performances'); return target ? [target] : []; }) };
+      lockedRead.from.mockReturnValue(lockedRead);
+      lockedRead.where.mockReturnValue(lockedRead);
+      tx.select.mockReturnValueOnce(draftLock as never).mockReturnValueOnce(lockedRead as never);
+      tx.execute.mockResolvedValueOnce({
+        rows: [{ showtimes_count: 0, reservations_count: 0, ticket_scan_events_count: 0, seat_operation_history_count: 0, ...counts }],
+      });
+      return lockedRead;
+    }
+    const draftTarget: DeleteTarget = { id: 'perf-id-123', title: 'Hamlet', status: 'upcoming', publishState: 'draft', publishedAt: null };
 
-      // When GREEN, should verify DELETE FROM performances WHERE id = 'perf-id-123'
-      // Cascade will handle child tables (priceTiers, showtimes, castings, seatMaps)
+    it('deletes an unused draft under a row lock and records who deleted what', async () => {
+      const lockedRead = arrangeDeleteTarget(draftTarget, { showtimes_count: 2 });
+
+      await service.deletePerformance('perf-id-123', { ...adminMutationContext, reason: '중복 등록 정리' });
+
+      expect(lockedRead.for).toHaveBeenCalledWith('update');
+      // Draft apply locks its draft row before the performance; delete must use the same order.
+      expect(lockedRead.draftLock.from).toHaveBeenCalledWith(performanceDrafts);
+      expect(lockedRead.draftLock.for).toHaveBeenCalledWith('update');
+      expect(lockedRead.lockOrder).toEqual(['performance_drafts', 'performances']);
       expect(mockDb._tx.delete).toHaveBeenCalledWith(performances);
+      expect(mockAudit.write).toHaveBeenCalledWith(expect.objectContaining({
+        actorUserId: adminMutationContext.actorUserId,
+        action: 'event.delete',
+        resourceType: 'performance',
+        resourceId: 'perf-id-123',
+        status: 'success',
+        reason: '중복 등록 정리',
+        changedFields: ['performance'],
+        before: { performance: expect.objectContaining({ title: 'Hamlet', publishState: 'draft', status: 'upcoming', showtimeCount: 2 }) },
+        ipAddress: adminMutationContext.ipAddress,
+        requestId: adminMutationContext.requestId,
+      }), mockDb._tx);
+      expect(mockCatalogFreshness.invalidatePerformance).toHaveBeenCalledWith('perf-id-123');
+    });
+
+    it('refuses to delete a published performance even without bookings and points to archiving', async () => {
+      arrangeDeleteTarget({ ...draftTarget, publishState: 'published', publishedAt: new Date('2026-09-01T00:00:00.000Z') });
+
+      const error = await service.deletePerformance('perf-id-123', adminMutationContext).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).message).toContain('판매종료');
+      expect(mockDb._tx.execute).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+      expect(mockAudit.write).not.toHaveBeenCalled();
+      expect(mockCatalogFreshness.invalidatePerformance).not.toHaveBeenCalled();
     });
 
     it('blocks delete when booking or field operation history is linked', async () => {
-      mockDb.execute.mockResolvedValueOnce({
-        rows: [{
-          performance_count: 1,
-          reservations_count: 1,
-          ticket_scan_events_count: 1,
-          seat_operation_history_count: 0,
-        }],
-      });
+      arrangeDeleteTarget(draftTarget, { reservations_count: 1, ticket_scan_events_count: 1 });
 
-      await expect(service.deletePerformance('perf-id-123')).rejects.toBeInstanceOf(
+      await expect(service.deletePerformance('perf-id-123', adminMutationContext)).rejects.toBeInstanceOf(
         ConflictException,
       );
 
-      expect(mockDb.delete).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+      expect(mockAudit.write).not.toHaveBeenCalled();
     });
 
     it('returns not found when deleting a missing performance', async () => {
-      mockDb.execute.mockResolvedValueOnce({
-        rows: [{
-          performance_count: 0,
-          reservations_count: 0,
-          ticket_scan_events_count: 0,
-          seat_operation_history_count: 0,
-        }],
-      });
+      arrangeDeleteTarget(null);
 
-      await expect(service.deletePerformance('missing-id')).rejects.toBeInstanceOf(
+      await expect(service.deletePerformance('missing-id', adminMutationContext)).rejects.toBeInstanceOf(
         NotFoundException,
       );
 
-      expect(mockDb.delete).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('price tier names', () => {
+    it('stores trimmed tier names so the seat overlay still assigns every seat of that tier', async () => {
+      // Direct service callers can bypass the shared schema trim; the service must not.
+      await service.createPerformance({
+        ...sampleCreateInput,
+        priceTiers: [{ tierName: 'VIP ', price: 150000, sortOrder: 0 }],
+        seatMaps: [{ ...sampleSeatMaps[0]!, seatConfig: { tiers: [{ tierName: 'VIP ', color: '#FFD700', seatIds: ['A1', 'A2'] }] } }],
+      });
+
+      const tx = mockDb._tx;
+      const priceTierInsert = tx.insert.mock.results[findInsertCallIndex(tx, priceTiers)]?.value as { values: ReturnType<typeof vi.fn> };
+      expect(priceTierInsert.values).toHaveBeenCalledWith([expect.objectContaining({ tierName: 'VIP', price: 150000 })]);
+      const overlayTierInsert = tx.insert.mock.results[findInsertCallIndex(tx, performanceSeatTiers)]?.value as { values: ReturnType<typeof vi.fn> };
+      expect(overlayTierInsert.values).toHaveBeenCalledWith([expect.objectContaining({ tierName: 'VIP', color: '#FFD700' })]);
+      expect(findInsertCallIndex(tx, performanceSeatAssignments)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('moves the sellable overlay price with the edited tier price, matching names by trimmed value', async () => {
+      await service.updatePerformance('perf-id-123', {
+        priceTiers: [
+          { tierName: 'VIP ', price: 170000, sortOrder: 0 },
+          { tierName: 'R', price: 120000, sortOrder: 1 },
+          { tierName: 'S', price: 90000, sortOrder: 2 },
+        ],
+      });
+
+      const tx = mockDb._tx;
+      const priceTierInsert = tx.insert.mock.results[findInsertCallIndex(tx, priceTiers)]?.value as { values: ReturnType<typeof vi.fn> };
+      expect(priceTierInsert.values).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ tierName: 'VIP', price: 170000 })]));
+      const overlayUpdates = tx.update.mock.calls.flatMap(([table], index) => {
+        if (table !== performanceSeatTiers) return [];
+        const set = (tx.update.mock.results[index]?.value as { set: ReturnType<typeof vi.fn> }).set;
+        const where = (set.mock.results[0]?.value as { where: ReturnType<typeof vi.fn> }).where;
+        return [{ values: set.mock.calls[0]?.[0] as Record<string, unknown>,
+          condition: new PgDialect().sqlToQuery(where.mock.calls[0]?.[0] as SQL) }];
+      });
+      const vipUpdate = overlayUpdates.find((update) => update.values['price'] === 170000);
+      expect(vipUpdate?.condition.sql).toContain('btrim("performance_seat_tiers"."tier_name") = $');
+      expect(vipUpdate?.condition.params).toContain('VIP');
     });
   });
 
@@ -953,6 +1043,35 @@ describe('AdminService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a scheduled banner without a start time, which the public filter never shows (audit #51)', async () => {
+      await expect(service.createBanner({
+        imageUrl: 'https://r2.example.com/banners/open.jpg', status: 'scheduled', startsAt: null,
+      })).rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+      await expect(service.updateBanner('banner-id-123', { status: 'scheduled', startsAt: null }))
+        .rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['schedules a stored banner that has no start', { status: 'scheduled' as const }, '"starts_at" is not null'],
+      ['clears the start of a stored scheduled banner', { startsAt: null }, '"status" <> $'],
+    ])('checks the merged row when a partial update %s', async (_label, input, condition) => {
+      const where = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) });
+      mockDb.update = vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where }) });
+      const existing = { from: vi.fn(), where: vi.fn().mockResolvedValue([{ id: 'banner-id-123' }]) };
+      existing.from.mockReturnValue(existing);
+      mockDb.select = vi.fn().mockReturnValue(existing);
+
+      await expect(service.updateBanner('banner-id-123', input))
+        .rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+
+      const rendered = new PgDialect().sqlToQuery(where.mock.calls[0]![0] as SQL);
+      expect(rendered.sql).toContain('"banners"."id" = $');
+      expect(rendered.sql).toContain(condition);
+      expect(mockCatalogFreshness.invalidateBanners).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when banner does not exist', async () => {
@@ -1216,5 +1335,28 @@ describe('AdminPerformanceController', () => {
       undefined,
       { includeHiddenCopy: true },
     );
+  });
+
+  it('passes the acting admin and an optional reason to performance deletion for the audit trail', async () => {
+    const adminService = { deletePerformance: vi.fn().mockResolvedValue(undefined) };
+    const controller = new AdminPerformanceController(
+      adminService as unknown as ConstructorParameters<typeof AdminPerformanceController>[0],
+      {} as ConstructorParameters<typeof AdminPerformanceController>[1],
+      {} as ConstructorParameters<typeof AdminPerformanceController>[2],
+    );
+    const req = {
+      user: { id: '11111111-1111-4111-8111-111111111111' },
+      headers: { 'user-agent': 'Vitest Admin Console', 'x-request-id': 'req-delete' },
+      socket: { remoteAddress: '198.51.100.10' },
+      get(name: string) { return (this.headers as Record<string, string>)[name.toLowerCase()]; },
+    };
+
+    await controller.deletePerformance('perf-id-123', { reason: '중복 등록 정리' }, req as never);
+    await controller.deletePerformance('perf-id-456', undefined, req as never);
+
+    expect(adminService.deletePerformance).toHaveBeenNthCalledWith(1, 'perf-id-123', expect.objectContaining({
+      actorUserId: '11111111-1111-4111-8111-111111111111', reason: '중복 등록 정리', requestId: 'req-delete',
+    }));
+    expect(adminService.deletePerformance).toHaveBeenNthCalledWith(2, 'perf-id-456', expect.objectContaining({ reason: null }));
   });
 });

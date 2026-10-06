@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type {
   FieldCheckInOutcome,
   FieldMonitorAlert,
@@ -27,33 +28,25 @@ type FieldMonitorSummaryResponse = FieldMonitorSummary & {
   lastUpdatedAt: string;
 };
 
-type KpiRow = {
-  totalReservations?: number | string | null;
-  enteredCount?: number | string | null;
-  duplicateScanCount?: number | string | null;
-  rejectedScanCount?: number | string | null;
-  offlinePendingCount?: number | string | null;
-  offlineSyncedCount?: number | string | null;
+type CountValue = number | string | null | undefined;
+type TimestampValue = Date | string | null | undefined;
+
+type AdmissionCountRow = {
+  totalTicketItems?: CountValue;
+  enteredCount?: CountValue;
 };
 
-type AlertDirectRow = {
-  type: FieldMonitorAlert['type'];
-  severity?: FieldMonitorAlert['severity'] | null;
-  message?: string | null;
-  count?: number | string | null;
-  detectedAt?: Date | string | null;
+/** Scan outcomes attributed to the gate showtime, shared by KPIs and alerts. */
+type ScanSignalRow = {
+  duplicateScanCount?: CountValue;
+  rejectedScanCount?: CountValue;
+  rejectedTamperedCount?: CountValue;
+  refundedCancelledCount?: CountValue;
+  offlineSyncedCount?: CountValue;
+  duplicateDetectedAt?: TimestampValue;
+  rejectedTamperedDetectedAt?: TimestampValue;
+  refundedCancelledDetectedAt?: TimestampValue;
 };
-
-type AlertAggregateRow = {
-  duplicateSpikeCount?: number | string | null;
-  rejectedTamperedCount?: number | string | null;
-  refundedCancelledCount?: number | string | null;
-  offlineBacklogCount?: number | string | null;
-  syncFailureCount?: number | string | null;
-  detectedAt?: Date | string | null;
-};
-
-type AlertSignalRow = AlertDirectRow | AlertAggregateRow;
 
 type ScanLogDbRow = {
   id?: string | null;
@@ -74,6 +67,9 @@ type ScanLogDbRow = {
   rejectionReason?: string | null;
 };
 
+// Offline backlog and sync-failure alerts are not produced: pending attempts
+// stay on each field device until synced and a failed sync stays pending there,
+// so the server has no record to count. Staff check each device's pending list.
 const MONITOR_ALERT_THRESHOLDS = {
   // Test contract: duplicate count 5 warns, 12 is critical.
   duplicateWarning: 5,
@@ -81,10 +77,33 @@ const MONITOR_ALERT_THRESHOLDS = {
   rejectedWarning: 1,
   rejectedCritical: 5,
   refundedCancelledWarning: 1,
-  offlineBacklogWarning: 10,
-  offlineBacklogCritical: 25,
-  syncFailureCritical: 1,
 } as const;
+
+type ScanResult = (typeof ticketScanEvents.result.enumValues)[number];
+
+/** Results counted as a duplicate scan by the KPI, duplicate_spike and the log filter. */
+const DUPLICATE_RESULT_VALUES: ScanResult[] = ['duplicate', 'already_used'];
+const DUPLICATE_RESULTS = sql.raw(`(${DUPLICATE_RESULT_VALUES.map((value) => `'${value}'`).join(', ')})`);
+const REJECTED_RESULTS = sql.raw(
+  `('tampered', 'refunded_cancelled', 'expired', 'wrong_showtime', 'offline_rejected', 'sync_failure')`,
+);
+const REJECTED_TAMPERED_RESULTS = sql.raw(
+  `('tampered', 'expired', 'wrong_showtime', 'offline_rejected')`,
+);
+
+/**
+ * The showtime whose gate saw the scan: the scanner-selected showtime, or the
+ * ticket showtime for rows written before requested_showtime_id existed.
+ */
+const gateShowtimeId = sql<string>`coalesce(${ticketScanEvents.requestedShowtimeId}, ${ticketScanEvents.showtimeId})`;
+
+/** Index-friendly form of `gateShowtimeId = showtimeId`. */
+function scannedAtGateShowtime(showtimeId: string): SQL {
+  return or(
+    eq(ticketScanEvents.requestedShowtimeId, showtimeId),
+    and(isNull(ticketScanEvents.requestedShowtimeId), eq(ticketScanEvents.showtimeId, showtimeId)),
+  )!;
+}
 
 @Injectable()
 export class FieldMonitorService {
@@ -94,13 +113,13 @@ export class FieldMonitorService {
     eventId: string;
     showtimeId: string;
   }): Promise<FieldMonitorSummaryResponse> {
-    const [kpiRow] = await this.loadKpis(input, this.db);
-    const alertRows = await this.loadAlertSignals(input, this.db);
-    const totalTicketItems = toCount(kpiRow?.totalReservations);
-    const enteredCount = toCount(kpiRow?.enteredCount);
+    const [admission] = await this.loadAdmissionCounts(input, this.db);
+    const [signals] = await this.loadScanSignals(input, this.db);
+    const totalTicketItems = toCount(admission?.totalTicketItems);
+    const enteredCount = toCount(admission?.enteredCount);
     const notEnteredCount = Math.max(totalTicketItems - enteredCount, 0);
     const updatedAt = new Date().toISOString();
-    const alerts = buildAlerts(alertRows, updatedAt);
+    const alerts = buildAlerts(signals, updatedAt);
 
     return {
       eventId: input.eventId,
@@ -108,10 +127,11 @@ export class FieldMonitorService {
       enteredCount,
       notEnteredCount,
       entryRate: totalTicketItems > 0 ? roundRate(enteredCount / totalTicketItems) : 0,
-      duplicateScanCount: toCount(kpiRow?.duplicateScanCount),
-      rejectedScanCount: toCount(kpiRow?.rejectedScanCount),
-      offlinePendingCount: toCount(kpiRow?.offlinePendingCount),
-      offlineSyncedCount: toCount(kpiRow?.offlineSyncedCount),
+      duplicateScanCount: toCount(signals?.duplicateScanCount),
+      rejectedScanCount: toCount(signals?.rejectedScanCount),
+      // Device-local pending attempts are not visible to the server (see thresholds).
+      offlinePendingCount: 0,
+      offlineSyncedCount: toCount(signals?.offlineSyncedCount),
       latestAbnormalAlerts: alerts,
       alerts,
       updatedAt,
@@ -124,18 +144,15 @@ export class FieldMonitorService {
     return rows.map((row) => toMonitorLogRow(row, filter.eventId));
   }
 
-  private async loadKpis(
+  /** Admission progress of the showtime's valid Ticket Items. */
+  private async loadAdmissionCounts(
     input: { eventId: string; showtimeId: string },
     db: FieldMonitorDb,
-  ): Promise<KpiRow[]> {
+  ): Promise<AdmissionCountRow[]> {
     return db
       .select({
-        totalReservations: sql<number>`count(distinct ${ticketItems.id})::int`,
+        totalTicketItems: sql<number>`count(distinct ${ticketItems.id})::int`,
         enteredCount: sql<number>`count(distinct case when ${ticketItems.admissionState} = 'entered' or ${tickets.usedAt} is not null then ${ticketItems.id} end)::int`,
-        duplicateScanCount: sql<number>`count(distinct case when ${ticketScanEvents.result} in ('duplicate', 'already_used') then ${ticketScanEvents.id} end)::int`,
-        rejectedScanCount: sql<number>`count(distinct case when ${ticketScanEvents.result} in ('tampered', 'refunded_cancelled', 'expired', 'wrong_showtime', 'offline_rejected', 'sync_failure') then ${ticketScanEvents.id} end)::int`,
-        offlinePendingCount: sql<number>`count(distinct case when ${ticketScanEvents.result} = 'offline_pending' or ${ticketScanEvents.syncState} = 'pending' then ${ticketScanEvents.id} end)::int`,
-        offlineSyncedCount: sql<number>`count(distinct case when ${ticketScanEvents.result} = 'offline_synced' or ${ticketScanEvents.syncState} = 'synced' then ${ticketScanEvents.id} end)::int`,
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
@@ -155,7 +172,6 @@ export class FieldMonitorService {
           eq(tickets.showtimeId, showtimes.id),
         ),
       )
-      .leftJoin(ticketScanEvents, eq(ticketScanEvents.reservationId, reservations.id))
       .where(
         and(
           eq(performances.id, input.eventId),
@@ -168,26 +184,34 @@ export class FieldMonitorService {
       );
   }
 
-  private async loadAlertSignals(
+  /**
+   * Scan outcomes seen at this showtime's gate, read from the scan ledger alone.
+   * Rejections of cancelled tickets, unverifiable QRs and other showtimes' tickets
+   * have no valid booking at this showtime, so they must not depend on the
+   * admission join above. KPIs and alerts share these counts.
+   */
+  private async loadScanSignals(
     input: { eventId: string; showtimeId: string },
     db: FieldMonitorDb,
-  ): Promise<AlertSignalRow[]> {
+  ): Promise<ScanSignalRow[]> {
+    const result = ticketScanEvents.result;
     return db
       .select({
-        duplicateSpikeCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} in ('duplicate', 'already_used') then 1 else 0 end), 0)::int`,
-        rejectedTamperedCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} in ('tampered', 'expired', 'wrong_showtime', 'offline_rejected') then 1 else 0 end), 0)::int`,
-        refundedCancelledCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} = 'refunded_cancelled' then 1 else 0 end), 0)::int`,
-        offlineBacklogCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} = 'offline_pending' or ${ticketScanEvents.syncState} = 'pending' then 1 else 0 end), 0)::int`,
-        syncFailureCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} = 'sync_failure' or ${ticketScanEvents.syncState} = 'failed' then 1 else 0 end), 0)::int`,
-        detectedAt: sql<Date>`coalesce(max(${ticketScanEvents.scannedAt}), now())`,
+        duplicateScanCount: sql<number>`count(*) filter (where ${result} in ${DUPLICATE_RESULTS})::int`,
+        rejectedScanCount: sql<number>`count(*) filter (where ${result} in ${REJECTED_RESULTS})::int`,
+        rejectedTamperedCount: sql<number>`count(*) filter (where ${result} in ${REJECTED_TAMPERED_RESULTS})::int`,
+        refundedCancelledCount: sql<number>`count(*) filter (where ${result} = 'refunded_cancelled')::int`,
+        offlineSyncedCount: sql<number>`count(*) filter (where ${result} = 'offline_synced' or ${ticketScanEvents.syncState} = 'synced')::int`,
+        duplicateDetectedAt: sql<Date | null>`max(${ticketScanEvents.scannedAt}) filter (where ${result} in ${DUPLICATE_RESULTS})`.mapWith(ticketScanEvents.scannedAt),
+        rejectedTamperedDetectedAt: sql<Date | null>`max(${ticketScanEvents.scannedAt}) filter (where ${result} in ${REJECTED_TAMPERED_RESULTS})`.mapWith(ticketScanEvents.scannedAt),
+        refundedCancelledDetectedAt: sql<Date | null>`max(${ticketScanEvents.scannedAt}) filter (where ${result} = 'refunded_cancelled')`.mapWith(ticketScanEvents.scannedAt),
       })
       .from(ticketScanEvents)
-      .innerJoin(showtimes, eq(ticketScanEvents.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .innerJoin(showtimes, eq(showtimes.id, input.showtimeId))
       .where(
         and(
-          eq(performances.id, input.eventId),
-          eq(ticketScanEvents.showtimeId, input.showtimeId),
+          eq(showtimes.performanceId, input.eventId),
+          scannedAtGateShowtime(input.showtimeId),
         ),
       );
   }
@@ -196,15 +220,16 @@ export class FieldMonitorService {
     filter: FieldMonitorLogFilter,
     db: FieldMonitorDb,
   ): Promise<ScanLogDbRow[]> {
+    const gateShowtimes = alias(showtimes, 'gate_showtimes');
     const conditions = [];
     if (filter.eventId) {
-      conditions.push(eq(performances.id, filter.eventId));
+      conditions.push(eq(gateShowtimes.performanceId, filter.eventId));
     }
     if (filter.showtimeId) {
-      conditions.push(eq(ticketScanEvents.showtimeId, filter.showtimeId));
+      conditions.push(scannedAtGateShowtime(filter.showtimeId));
     }
     if (filter.outcome) {
-      conditions.push(sql`${ticketScanEvents.result} = any(${resultValuesForOutcome(filter.outcome)})`);
+      conditions.push(inArray(ticketScanEvents.result, resultValuesForOutcome(filter.outcome)));
     }
     if (filter.syncState) {
       conditions.push(eq(ticketScanEvents.syncState, syncStateForFilter(filter.syncState)));
@@ -222,8 +247,8 @@ export class FieldMonitorService {
     return db
       .select({
         id: ticketScanEvents.id,
-        eventId: performances.id,
-        showtimeId: ticketScanEvents.showtimeId,
+        eventId: gateShowtimes.performanceId,
+        showtimeId: gateShowtimeId,
         result: ticketScanEvents.result,
         syncState: ticketScanEvents.syncState,
         scannerUserId: ticketScanEvents.scannerUserId,
@@ -237,9 +262,9 @@ export class FieldMonitorService {
         rejectionReason: ticketScanEvents.rejectionReason,
       })
       .from(ticketScanEvents)
-      .innerJoin(showtimes, eq(ticketScanEvents.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .innerJoin(reservations, eq(ticketScanEvents.reservationId, reservations.id))
+      .leftJoin(gateShowtimes, eq(gateShowtimes.id, gateShowtimeId))
+      // Unverifiable QR scans have no booking; keep them in the log.
+      .leftJoin(reservations, eq(ticketScanEvents.reservationId, reservations.id))
       .innerJoin(users, eq(ticketScanEvents.scannerUserId, users.id))
       .leftJoin(ticketItems, eq(ticketScanEvents.ticketItemId, ticketItems.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -249,74 +274,38 @@ export class FieldMonitorService {
 }
 
 function buildAlerts(
-  rows: AlertSignalRow[],
+  signal: ScanSignalRow | undefined,
   fallbackDetectedAt: string,
 ): FieldMonitorAlert[] {
-  if (rows.length > 0 && 'type' in rows[0]) {
-    return rows
-      .filter((row): row is AlertDirectRow =>
-        'type' in row && Boolean(row.type),
-      )
-      .map((row) => normalizeAlertRow(row, fallbackDetectedAt));
-  }
+  const detectedAt = (value: TimestampValue) =>
+    value ? toIso(value) : fallbackDetectedAt;
 
-  const signal = (rows[0] ?? {}) as AlertAggregateRow;
   return [
     alertFromCount(
       'duplicate_spike',
-      toCount(signal.duplicateSpikeCount),
-      fallbackDetectedAt,
+      toCount(signal?.duplicateScanCount),
+      detectedAt(signal?.duplicateDetectedAt),
       'Duplicate scans exceeded baseline',
       MONITOR_ALERT_THRESHOLDS.duplicateWarning,
       MONITOR_ALERT_THRESHOLDS.duplicateCritical,
     ),
     alertFromCount(
       'rejected_tampered_scan',
-      toCount(signal.rejectedTamperedCount),
-      fallbackDetectedAt,
+      toCount(signal?.rejectedTamperedCount),
+      detectedAt(signal?.rejectedTamperedDetectedAt),
       'Rejected or tampered scan attempts detected',
       MONITOR_ALERT_THRESHOLDS.rejectedWarning,
       MONITOR_ALERT_THRESHOLDS.rejectedCritical,
     ),
     alertFromCount(
       'refunded_cancelled_attempt',
-      toCount(signal.refundedCancelledCount),
-      fallbackDetectedAt,
+      toCount(signal?.refundedCancelledCount),
+      detectedAt(signal?.refundedCancelledDetectedAt),
       'Refunded or cancelled ticket scan attempts detected',
       MONITOR_ALERT_THRESHOLDS.refundedCancelledWarning,
       Number.POSITIVE_INFINITY,
     ),
-    alertFromCount(
-      'offline_backlog',
-      toCount(signal.offlineBacklogCount),
-      fallbackDetectedAt,
-      'Offline pending scan backlog requires sync',
-      MONITOR_ALERT_THRESHOLDS.offlineBacklogWarning,
-      MONITOR_ALERT_THRESHOLDS.offlineBacklogCritical,
-    ),
-    alertFromCount(
-      'sync_failure',
-      toCount(signal.syncFailureCount),
-      fallbackDetectedAt,
-      'Offline sync failures require operator review',
-      MONITOR_ALERT_THRESHOLDS.syncFailureCritical,
-      MONITOR_ALERT_THRESHOLDS.syncFailureCritical,
-    ),
   ].filter((alert): alert is FieldMonitorAlert => alert !== null);
-}
-
-function normalizeAlertRow(
-  row: AlertDirectRow,
-  fallbackDetectedAt: string,
-): FieldMonitorAlert {
-  const count = toCount(row.count);
-  return {
-    type: row.type,
-    severity: row.severity ?? severityFor(row.type, count),
-    message: row.message?.trim() || messageFor(row.type),
-    count,
-    detectedAt: toIso(row.detectedAt ?? fallbackDetectedAt),
-  };
 }
 
 function alertFromCount(
@@ -338,39 +327,6 @@ function alertFromCount(
     count,
     detectedAt,
   };
-}
-
-function severityFor(
-  type: FieldMonitorAlert['type'],
-  count: number,
-): FieldMonitorAlert['severity'] {
-  switch (type) {
-    case 'duplicate_spike':
-      return count >= MONITOR_ALERT_THRESHOLDS.duplicateCritical ? 'critical' : 'warning';
-    case 'rejected_tampered_scan':
-      return count >= MONITOR_ALERT_THRESHOLDS.rejectedCritical ? 'critical' : 'warning';
-    case 'offline_backlog':
-      return count >= MONITOR_ALERT_THRESHOLDS.offlineBacklogCritical ? 'critical' : 'warning';
-    case 'sync_failure':
-      return 'critical';
-    case 'refunded_cancelled_attempt':
-      return 'warning';
-  }
-}
-
-function messageFor(type: FieldMonitorAlert['type']): string {
-  switch (type) {
-    case 'duplicate_spike':
-      return 'Duplicate scans exceeded baseline';
-    case 'rejected_tampered_scan':
-      return 'Rejected or tampered scan attempts detected';
-    case 'refunded_cancelled_attempt':
-      return 'Refunded or cancelled ticket scan attempts detected';
-    case 'offline_backlog':
-      return 'Offline pending scan backlog requires sync';
-    case 'sync_failure':
-      return 'Offline sync failures require operator review';
-  }
 }
 
 function toMonitorLogRow(
@@ -445,7 +401,7 @@ function syncStateForFilter(syncState: 'pending' | 'synced' | 'rejected') {
   return syncState;
 }
 
-function resultValuesForOutcome(outcome: FieldCheckInOutcome): string[] {
+function resultValuesForOutcome(outcome: FieldCheckInOutcome): ScanResult[] {
   switch (outcome) {
     case 'entered':
       return ['success', 'offline_synced'];
@@ -457,7 +413,13 @@ function resultValuesForOutcome(outcome: FieldCheckInOutcome): string[] {
       return ['offline_pending'];
     case 'processable':
       return ['success'];
-    default:
+    case 'duplicate':
+      return DUPLICATE_RESULT_VALUES;
+    case 'tampered':
+    case 'refunded_cancelled':
+    case 'expired':
+    case 'wrong_showtime':
+    case 'already_used':
       return [outcome];
   }
 }
@@ -466,7 +428,7 @@ function sanitizeReason(reason: string | null | undefined): string | null {
   return reason?.trim() ? reason.trim().slice(0, 200) : null;
 }
 
-function toCount(value: number | string | null | undefined): number {
+function toCount(value: CountValue): number {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : 0;
   }

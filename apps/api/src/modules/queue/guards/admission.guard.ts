@@ -1,20 +1,30 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { z } from 'zod';
+import { canUseAdminBookingBypass } from '../../../common/admin-booking-bypass.js';
+import { resolveRoutePath } from '../../traffic/route-path.js';
 import {
   QueueService,
   readQueueAdmissionCookie,
   readRefreshCookie,
 } from '../queue.service.js';
 
+// Same rule as the lock/prepare DTOs. Guards run before body pipes, so the
+// showtime id must be validated here before it reaches a uuid column query.
+const showtimeIdSchema = z.string().uuid();
+
 type AuthenticatedRequest = Request & {
   user?: {
     id?: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
   };
   body?: Record<string, unknown>;
   queueAdmission?: {
@@ -28,6 +38,20 @@ type AuthenticatedRequest = Request & {
   };
 };
 
+// Placeholder stored on the request when an order-bound request (payment
+// handoff or confirm) was authorised by the order binding without an admission
+// cookie; it is never a valid token.
+const ORDER_BOUND_ADMISSION_TOKEN = 'order-bound';
+
+// Matched against the normalised route path (lower-case, no query or trailing
+// slash), so every spelling Express routes to these handlers is recognised.
+// The provider handoff (`/payments/branch`) and payment confirm act on an
+// existing order and share one rule: the order binding of this browser, or the
+// Redis admission of the cookie as a fallback. `/payments/branch/release` only
+// hands an order back and is not guarded.
+const ORDER_BOUND_PATH_SUFFIXES = ['/payments/confirm', '/payments/branch'] as const;
+const RESERVATION_PREPARE_PATH_SUFFIX = '/reservations/prepare';
+
 @Injectable()
 export class AdmissionGuard implements CanActivate {
   constructor(private readonly queueService: QueueService) {}
@@ -39,7 +63,9 @@ export class AdmissionGuard implements CanActivate {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
-    if (request.user?.role === 'admin') {
+    // Restricted admin bundles (scanner, finance, ...) also carry role='admin'
+    // but must pass the queue like any Buyer.
+    if (canUseAdminBookingBypass(request.user)) {
       request.queueAdmission = this.createAdminBypassAdmission(userId);
       return true;
     }
@@ -52,7 +78,13 @@ export class AdmissionGuard implements CanActivate {
       request.cookies as Record<string, string | undefined>,
     );
 
-    if (!refreshToken || !admissionToken) {
+    // Payment confirm can arrive after the admission cookie (13 minutes) has
+    // expired, e.g. after 3DS or an app switch inside the extended payment
+    // grace, and a Prepared Checkout may be handed off again after the queue
+    // window closed. Both are authorised by the pending order binding instead,
+    // so only the browser session (refresh token family) is mandatory there.
+    const requiresAdmissionCookie = !this.isOrderBoundPath(request);
+    if (!refreshToken || (requiresAdmissionCookie && !admissionToken)) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
@@ -69,7 +101,7 @@ export class AdmissionGuard implements CanActivate {
 
     request.queueAdmission = {
       queueSessionId: validatedAdmission.queueSessionId,
-      admissionToken,
+      admissionToken: admissionToken ?? ORDER_BOUND_ADMISSION_TOKEN,
       refreshFamilyId: validatedAdmission.refreshTokenFamilyId,
       deviceSlotKey: validatedAdmission.deviceSlotId,
       admittedAt: validatedAdmission.admittedAt,
@@ -87,12 +119,10 @@ export class AdmissionGuard implements CanActivate {
       refreshTokenFamilyId: string;
       deviceSlotId: string;
     },
-    admissionToken: string,
+    admissionToken: string | undefined,
     userId: string,
   ) {
-    const path = this.resolvePath(request);
-
-    if (path.includes('/payments/confirm')) {
+    if (this.isOrderBoundPath(request)) {
       const orderId = this.readString(request.body, 'orderId');
       if (!orderId) {
         throw new ForbiddenException('대기열 입장 정보가 필요합니다');
@@ -107,15 +137,18 @@ export class AdmissionGuard implements CanActivate {
     }
 
     const showtimeId = this.readString(request.body, 'showtimeId');
-    if (!showtimeId) {
+    if (!showtimeId || !admissionToken) {
       throw new ForbiddenException('대기열 입장 정보가 필요합니다');
+    }
+    if (!showtimeIdSchema.safeParse(showtimeId).success) {
+      throw new BadRequestException('올바른 회차 ID가 아닙니다');
     }
 
     return this.queueService.assertAdmissionForShowtime({
       showtimeId,
       identity,
       admissionToken,
-      action: path.includes('/reservations/prepare')
+      action: resolveRoutePath(request).endsWith(RESERVATION_PREPARE_PATH_SUFFIX)
         ? 'prepare-reservation'
         : 'lock-seat',
     });
@@ -129,9 +162,9 @@ export class AdmissionGuard implements CanActivate {
     return typeof value === 'string' && value.length > 0 ? value : null;
   }
 
-  private resolvePath(request: AuthenticatedRequest): string {
-    const originalUrl = request.originalUrl ?? request.url ?? '';
-    return originalUrl.split('?')[0] ?? originalUrl;
+  private isOrderBoundPath(request: AuthenticatedRequest): boolean {
+    const path = resolveRoutePath(request);
+    return ORDER_BOUND_PATH_SUFFIXES.some((suffix) => path.endsWith(suffix));
   }
 
   private createAdminBypassAdmission(userId: string): NonNullable<

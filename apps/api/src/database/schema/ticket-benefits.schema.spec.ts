@@ -1,4 +1,5 @@
 import { getTableColumns } from 'drizzle-orm';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -24,6 +25,11 @@ const migrationPath = resolve(
 const benefitExportAuditMigrationPath = resolve(
   __dirname,
   '../migrations/0030_benefit_export_audit_actions.sql',
+);
+
+const benefitOperationsMigrationPath = resolve(
+  __dirname,
+  '../migrations/0040_benefit_mutex_text_and_repair_audit.sql',
 );
 
 function readMigration() {
@@ -78,7 +84,8 @@ describe('ticket benefit schema contracts', () => {
     }
   });
 
-  it('commits the 0029 migration journal entry without broad snapshot churn', () => {
+  // Snapshot coverage is checked once for the latest migration in migration-snapshot.schema.spec.ts.
+  it('commits the 0029 migration journal entry', () => {
     const migrationsDir = resolve(__dirname, '../migrations');
     const journal = JSON.parse(
       readFileSync(resolve(migrationsDir, 'meta/_journal.json'), 'utf8'),
@@ -95,12 +102,6 @@ describe('ticket benefit schema contracts', () => {
         idx: 31,
         tag: '0030_benefit_export_audit_actions',
       }),
-    );
-    expect(existsSync(resolve(migrationsDir, 'meta/0029_snapshot.json'))).toBe(
-      false,
-    );
-    expect(existsSync(resolve(migrationsDir, 'meta/0030_snapshot.json'))).toBe(
-      false,
     );
   });
 
@@ -344,5 +345,30 @@ describe('ticket benefit schema contracts', () => {
         `ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS '${action}';`,
       );
     }
+  });
+
+  it('stores mutual exclusion lists as text so three or more UI identities fit', () => {
+    const migration = readFileSync(benefitOperationsMigrationPath, 'utf8');
+    const journal = readFileSync(resolve(__dirname, '../migrations/meta/_journal.json'), 'utf8');
+
+    expect(getTableColumns(ticketBenefits).mutualExclusionGroup.getSQLType()).toBe('text');
+    expect(migration).toContain(
+      'ALTER TABLE "ticket_benefits" ALTER COLUMN "mutual_exclusion_group" SET DATA TYPE text;',
+    );
+    expect(journal).toContain('"tag": "0040_benefit_mutex_text_and_repair_audit"');
+  });
+
+  it('links repaired included entitlements to an admin audit row', () => {
+    const migration = readFileSync(benefitOperationsMigrationPath, 'utf8');
+    const foreignKeys = getTableConfig(ticketBenefitEntitlements).foreignKeys.map((fk) => fk.getName());
+
+    expectColumnName(getTableColumns(ticketBenefitEntitlements).repairAuditLogId, 'repair_audit_log_id');
+    expect(foreignKeys).toContain('tbe_repair_audit_log_fk');
+    expect(adminAuditActionEnum.enumValues).toContain('benefits.included_repair.apply');
+    expect(migration).toContain(
+      `ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS 'benefits.included_repair.apply';`,
+    );
+    expect(migration).toContain('ADD COLUMN "repair_audit_log_id" uuid;');
+    expect(migration).toMatch(/ADD CONSTRAINT "tbe_repair_audit_log_fk" FOREIGN KEY \("repair_audit_log_id"\) REFERENCES "public"\."admin_audit_logs"\("id"\) ON DELETE restrict[^;]*NOT VALID;/);
   });
 });

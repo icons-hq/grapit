@@ -94,6 +94,15 @@ export const fieldCheckInVerifyRequestSchema = z
     token: z.string().trim().min(1, 'QR token이 필요합니다').optional(),
     qrUrl: z.string().url('유효한 QR URL이 필요합니다').optional(),
     showtimeId: showtimeIdSchema.optional(),
+    // The scanner's attempt for this QR view; the same value is later used for
+    // consume. It lets the server record one rejected scan per attempt and skip
+    // re-checks of an attempt that consume already recorded.
+    deviceAttemptId: z
+      .string()
+      .trim()
+      .min(1, 'device attempt ID가 필요합니다')
+      .max(100, 'device attempt ID가 너무 깁니다')
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -119,14 +128,21 @@ export const fieldCheckInTicketContextSchema = z
     maskedJti: z.string().min(1, 'masked JTI가 필요합니다').optional(),
     benefitEntitlements: z.array(fieldBenefitEntitlementSchema).default([]),
     benefitsAvailable: z.boolean().optional(),
+    // Seat cancellation requested but not yet confirmed by the PG: refuse entry and escalate.
+    cancellationPending: z.boolean().optional(),
   })
   .strict();
+
+// Server display label that overrides the client's outcome label (e.g. a pending
+// cancellation, whose outcome stays refunded_cancelled).
+const fieldCheckInResultLabelSchema = z.string().min(1).optional();
 
 export const fieldCheckInVerifyResponseSchema = z
   .object({
     outcome: fieldCheckInOutcomeSchema,
     processable: z.boolean(),
     ticket: fieldCheckInTicketContextSchema.nullable(),
+    resultLabel: fieldCheckInResultLabelSchema,
     rejectionReason: z.string().min(1).nullable().optional(),
     priorScan: z
       .object({
@@ -161,6 +177,7 @@ export const fieldCheckInConsumeResponseSchema = z
     ticket: fieldCheckInTicketContextSchema.nullable(),
     scanEventId: z.string().min(1).nullable().optional(),
     consumedAt: isoDatetime('입장 처리 시각').nullable().optional(),
+    resultLabel: fieldCheckInResultLabelSchema,
     rejectionReason: z.string().min(1).nullable().optional(),
     priorScan: z
       .object({
@@ -236,6 +253,9 @@ export const fieldMonitorSummarySchema = z
     entryRate: z.number().min(0).max(1),
     duplicateScanCount: z.number().int().min(0),
     rejectedScanCount: z.number().int().min(0),
+    // Kept for response compatibility. Offline pending attempts exist only on
+    // field devices until they are synced, so the server always reports 0 and
+    // the monitor directs staff to each device's pending list instead.
     offlinePendingCount: z.number().int().min(0),
     offlineSyncedCount: z.number().int().min(0),
     latestAbnormalAlerts: z.array(fieldMonitorAlertSchema).default([]),

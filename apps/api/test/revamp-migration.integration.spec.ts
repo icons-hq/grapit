@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 const protectedTables = ['users', 'social_accounts', 'consent_items', 'consent_audit_logs', 'performances', 'showtimes',
@@ -21,9 +22,9 @@ describe('Full revamp migration — existing account, payment and entitlement pr
   let previousMigrations: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'revamp_preservation_test' }).withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432), user: 'postgres', password: 'test', database: 'revamp_preservation_test' });
+    const postgres = await startPostgresContainer({ database: 'revamp_preservation_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port, user: 'postgres', password: 'test', database: 'revamp_preservation_test' });
     closePool = createPostgresPoolCleanup(pool);
     previousMigrations = await mkdtemp(join(tmpdir(), 'grabit-before-revamp-'));
     const journal = JSON.parse(await readFile('src/database/migrations/meta/_journal.json', 'utf8')) as {
@@ -90,14 +91,21 @@ describe('Full revamp migration — existing account, payment and entitlement pr
     const before = await snapshot();
     await migrate(drizzle(pool), { migrationsFolder: 'src/database/migrations' });
     const after = await snapshot();
+    // Additive reference seeds introduced after the boundary; every pre-existing row must stay untouched.
+    const addedSeedRows: Partial<Record<(typeof protectedTables)[number], (row: Record<string, unknown>) => boolean>> = {
+      consent_items: (row) => row.version === '2026-05-11' && (row.key === 'privacy' || row.key === 'pipa_required'),
+    };
     for (const table of protectedTables) {
       const originalRows = before[table]!;
-      expect(after[table], table).toHaveLength(originalRows.length);
+      const isAddedSeed = addedSeedRows[table];
+      const retainedRows = isAddedSeed ? after[table]!.filter((row) => !isAddedSeed(row)) : after[table]!;
+      expect(retainedRows, table).toHaveLength(originalRows.length);
       originalRows.forEach((row, index) => {
-        const retained = Object.fromEntries(Object.keys(row).map((key) => [key, after[table]![index]![key]]));
+        const retained = Object.fromEntries(Object.keys(row).map((key) => [key, retainedRows[index]![key]]));
         expect(retained, `${table}: existing record`).toEqual(row);
       });
     }
+    expect(after.consent_items!.filter(addedSeedRows.consent_items!)).toHaveLength(8);
     expect((await pool.query('SELECT sum(amount)::int AS amount, sum(provider_charge_amount_minor)::int AS minor FROM payments')).rows[0])
       .toEqual({ amount: 104000, minor: 8000 });
     expect((await pool.query("SELECT count(*)::int AS n FROM tickets WHERE status='active'")).rows[0].n).toBe(1);

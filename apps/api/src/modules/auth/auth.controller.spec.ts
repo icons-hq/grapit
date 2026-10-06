@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AuthController } from './auth.controller.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+import { SOCIAL_REGISTRATION_BINDING_COOKIE } from './social-oauth-state.js';
 
 const authModuleSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'auth.module.ts'),
@@ -22,6 +24,7 @@ const excludedLaunchProviderTokens = {
   socialRoute: ['social', 'line'].join('/'),
 };
 const DEFAULT_SKIP_METADATA = 'THROTTLER:SKIPdefault';
+const DEFAULT_LIMIT_METADATA = 'THROTTLER:LIMITdefault';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -42,6 +45,7 @@ describe('AuthController', () => {
   let mockRequest: Partial<Request>;
   let mockResponse: {
     cookie: ReturnType<typeof vi.fn>;
+    clearCookie: ReturnType<typeof vi.fn>;
     redirect: ReturnType<typeof vi.fn>;
     status: ReturnType<typeof vi.fn>;
     headersSent: boolean;
@@ -69,6 +73,7 @@ describe('AuthController', () => {
 
     mockResponse = {
       cookie: vi.fn(),
+      clearCookie: vi.fn(),
       redirect: vi.fn(),
       status: vi.fn().mockReturnThis(),
       headersSent: false,
@@ -179,6 +184,7 @@ describe('AuthController', () => {
         'registration-token',
         { name: 'User' },
         { ipAddress: '198.51.100.2', userAgent: 'Vitest Social' },
+        { registrationBinding: undefined },
       );
     });
 
@@ -208,6 +214,107 @@ describe('AuthController', () => {
       });
       expect(JSON.stringify(result)).not.toContain('accessToken');
       expect(JSON.stringify(result)).not.toContain('refreshToken');
+    });
+  });
+
+  describe('register email delivery outcome', () => {
+    it('tells the buyer when the verification email could not be sent', async () => {
+      mockAuthService.register.mockResolvedValue({
+        emailVerificationRequired: true,
+        emailDeliveryFailed: true,
+        email: 'user@example.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+
+      const result = await controller.register(
+        { email: 'user@example.com' } as never,
+        { ip: '198.51.100.20', get: vi.fn() } as unknown as Request,
+      );
+
+      expect(result).toMatchObject({ emailVerificationRequired: true, emailDeliveryFailed: true });
+    });
+
+    it('omits emailDeliveryFailed when the verification email was accepted', async () => {
+      mockAuthService.register.mockResolvedValue({
+        emailVerificationRequired: true,
+        email: 'user@example.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+
+      const result = await controller.register(
+        { email: 'user@example.com' } as never,
+        { ip: '198.51.100.20', get: vi.fn() } as unknown as Request,
+      );
+
+      expect(result).not.toHaveProperty('emailDeliveryFailed');
+    });
+  });
+
+  describe('social registration browser binding', () => {
+    it('binds a needs_registration callback to this browser with an httpOnly cookie', async () => {
+      mockAuthService.findOrCreateSocialUser.mockResolvedValue({
+        status: 'needs_registration',
+        registrationToken: 'reg-token-xyz',
+      });
+
+      await controller.socialKakaoCallback(
+        mockRequest as Request,
+        mockResponse as unknown as Response,
+      );
+
+      const options = mockAuthService.findOrCreateSocialUser.mock.calls[0]![1] as { registrationBinding: string };
+      expect(options.registrationBinding).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(mockResponse.cookie).toHaveBeenCalledWith(
+        SOCIAL_REGISTRATION_BINDING_COOKIE,
+        options.registrationBinding,
+        expect.objectContaining({ httpOnly: true, secure: true, sameSite: 'none', path: '/api/v1/auth/social' }),
+      );
+      const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).not.toContain(options.registrationBinding);
+    });
+
+    it('passes the binding cookie to the service and clears it after completion', async () => {
+      mockAuthService.completeSocialRegistration.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+
+      await controller.completeSocialRegistration(
+        { registrationToken: 'registration-token', name: 'User' } as never,
+        {
+          ip: '198.51.100.2',
+          get: vi.fn(),
+          cookies: { [SOCIAL_REGISTRATION_BINDING_COOKIE]: 'browser-binding' },
+        } as unknown as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockAuthService.completeSocialRegistration).toHaveBeenCalledWith(
+        'registration-token',
+        { name: 'User' },
+        expect.any(Object),
+        { registrationBinding: 'browser-binding' },
+      );
+      expect(mockResponse.clearCookie).toHaveBeenCalledWith(
+        SOCIAL_REGISTRATION_BINDING_COOKIE,
+        expect.objectContaining({ path: '/api/v1/auth/social' }),
+      );
+    });
+
+    it('keeps the binding cookie when completion fails so the buyer can retry in the same browser', async () => {
+      mockAuthService.completeSocialRegistration.mockRejectedValue(new Error('phone verification failed'));
+
+      await expect(
+        controller.completeSocialRegistration(
+          { registrationToken: 'registration-token', name: 'User' } as never,
+          { ip: '198.51.100.2', get: vi.fn(), cookies: {} } as unknown as Request,
+          mockResponse as unknown as Response,
+        ),
+      ).rejects.toThrow('phone verification failed');
+      expect(mockResponse.clearCookie).not.toHaveBeenCalled();
     });
   });
 
@@ -499,13 +606,19 @@ describe('AuthController', () => {
       expect(JSON.stringify(result)).not.toContain('token');
     });
 
-    it('POST request skips the default IP throttler during signup verification', () => {
+    it('POST request stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.requestEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.requestEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationSend.limit);
     });
 
     it('POST resend keeps the resend action immediately visible through a dedicated endpoint', async () => {
@@ -528,13 +641,19 @@ describe('AuthController', () => {
       );
     });
 
-    it('POST resend skips the default IP throttler during signup verification', () => {
+    it('POST resend stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.resendEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.resendEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationSend.limit);
     });
 
     it('POST verify checks a 6-digit email code through AuthService', async () => {
@@ -551,13 +670,19 @@ describe('AuthController', () => {
       );
     });
 
-    it('POST verify skips the default IP throttler during signup verification', () => {
+    it('POST verify stays rate limited per IP (audit #12)', () => {
       expect(
         Reflect.getMetadata(
           DEFAULT_SKIP_METADATA,
           AuthController.prototype.verifyEmailVerification,
         ),
-      ).toBe(true);
+      ).toBeUndefined();
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_LIMIT_METADATA,
+          AuthController.prototype.verifyEmailVerification,
+        ),
+      ).toBe(ROUTE_THROTTLES.authEmailVerificationVerify.limit);
     });
 
     it('POST verify keeps old token links compatible while new emails use codes', async () => {

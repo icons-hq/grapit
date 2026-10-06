@@ -4,6 +4,8 @@ import {
   ConflictException,
   ForbiddenException,
   InternalServerErrorException,
+  NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -29,22 +31,34 @@ import {
   users,
 } from '../../database/schema/index.js';
 
+// Prepare fixtures need a showtime that has not started (sales close at its start time).
+const FUTURE_SHOWTIME_AT = new Date('2099-01-01T10:00:00.000Z');
+
 function ticketLimitResult({
   performanceId = 'performance-1',
   maxTicketsPerUser = 999,
   activeTicketCount = 0,
+  showtimeStartsAt = new Date(Date.now() + 24 * 60 * 60 * 1000),
 }: {
   performanceId?: string;
   maxTicketsPerUser?: number;
   activeTicketCount?: number;
+  showtimeStartsAt?: Date;
 } = {}) {
+  // db.execute also serves the pre-approval showtime cutoff lookup.
   return {
     rows: [{
       performance_id: performanceId,
       max_tickets_per_user: maxTicketsPerUser,
       active_ticket_count: activeTicketCount,
+      date_time: showtimeStartsAt,
     }],
   };
+}
+
+/** tx.execute for the prepare transaction's FOR KEY SHARE account re-check. */
+function activeBuyerAccountExecute(accountStatus = 'active') {
+  return vi.fn().mockResolvedValue({ rows: [{ account_status: accountStatus }] });
 }
 
 function createMockDb() {
@@ -59,14 +73,19 @@ function createMockDb() {
 
 function createMockTossClient() {
   return {
-    confirmPayment: vi.fn().mockResolvedValue({
-      paymentKey: 'pk_test_123',
-      orderId: 'GRP-20260403-ABCDE',
+    confirmPayment: vi.fn().mockImplementation((params: {
+      paymentKey: string;
+      orderId: string;
+      amount: number;
+    }) => Promise.resolve({
+      paymentKey: params.paymentKey,
+      orderId: params.orderId,
       method: '카드',
-      totalAmount: 150000,
+      totalAmount: params.amount,
+      currency: 'KRW',
       status: 'DONE',
       approvedAt: '2026-04-03T10:00:00+09:00',
-    }),
+    })),
     cancelPayment: vi.fn().mockImplementation((
       _paymentKey: string,
       reason: string,
@@ -108,6 +127,7 @@ function createMockBookingService() {
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
     refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
     releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
+    markPaymentConfirmAttempted: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -409,6 +429,8 @@ describe('ReservationService', () => {
     performanceStatus?: string;
     bookingStartsAt?: Date | null;
     paymentWindowMinutes?: number;
+    dateTime?: Date;
+    allowedPaymentMethods?: string[];
   }) {
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
@@ -417,8 +439,9 @@ describe('ReservationService', () => {
         performanceId: 'performance-1',
         performancePublishState: 'published', performanceStatus: dto.performanceStatus ?? 'selling',
         bookingStartsAt: dto.bookingStartsAt ?? null,
-        dateTime: new Date(),
+        dateTime: dto.dateTime ?? FUTURE_SHOWTIME_AT,
         maxTicketsPerUser: 4,
+        allowedPaymentMethods: dto.allowedPaymentMethods ?? ['CARD', 'FOREIGN_EASY_PAY'],
         changePolicyEnabled: false,
         paymentWindowMinutes: dto.paymentWindowMinutes ?? 7,
         seatHoldMinutes: 10,
@@ -440,6 +463,9 @@ describe('ReservationService', () => {
     amount?: number;
     status?: string;
     seats?: Array<string | SeatSelection>;
+    dateTime?: Date;
+    allowedPaymentMethods?: string[];
+    checkoutPaymentMethod?: Record<string, unknown> | null;
   }) {
     const seats = (dto.seats ?? ['A-1', 'A-2']).map((seat) => (
       typeof seat === 'string' ? seat : seat.seatId
@@ -454,13 +480,15 @@ describe('ReservationService', () => {
         showtimeId: dto.showtimeId,
         status: dto.status ?? 'PENDING_PAYMENT',
         totalAmount: amount,
+        checkoutPaymentMethod: dto.checkoutPaymentMethod ?? null,
       }]))
       .mockReturnValueOnce(chainResult([{
         id: dto.showtimeId,
         performanceId: 'performance-1',
         performancePublishState: 'published', performanceStatus: 'selling',
-        dateTime: new Date(),
+        dateTime: dto.dateTime ?? FUTURE_SHOWTIME_AT,
         maxTicketsPerUser: 4,
+        allowedPaymentMethods: dto.allowedPaymentMethods ?? ['CARD', 'FOREIGN_EASY_PAY'],
         changePolicyEnabled: false,
         paymentWindowMinutes: 7,
         seatHoldMinutes: 10,
@@ -494,6 +522,7 @@ describe('ReservationService', () => {
         tossOrderId: args.orderId,
         status: 'PENDING_PAYMENT',
         totalAmount: args.amount,
+        checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
       }]))
       .mockReturnValueOnce(chainResult(reservationSeatRowsForAmount(seats, args.amount)));
   }
@@ -509,6 +538,7 @@ describe('ReservationService', () => {
     benefitEntitlements?: Array<Record<string, unknown>>;
     userEmail?: string;
     isEmailVerified?: boolean;
+    storedAdmissionToken?: string;
     diagnostic?: {
       diagnosticKind: string;
       diagnosticCode: string;
@@ -543,6 +573,7 @@ describe('ReservationService', () => {
                       status: args.status ?? 'CONFIRMED',
                       totalAmount: args.amount,
                       showtimeId: 'showtime-1',
+                      ...(args.storedAdmissionToken ? { admissionToken: args.storedAdmissionToken } : {}),
                       paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
                       cancelDeadline: new Date(),
                       cancelledAt: null,
@@ -712,10 +743,17 @@ describe('ReservationService', () => {
       ]));
     });
 
-    it('should generate reservation number matching GRP-YYYYMMDD-XXXXX format', () => {
+    it('generates GRP-<KST date>-<8 base32 chars> reservation numbers', () => {
       const result = service.generateReservationNumber();
-      expect(result).toMatch(/^GRP-\d{8}-[A-Z0-9]{5}$/);
+      expect(result).toMatch(/^GRP-\d{8}-[0-9A-HJKMNP-TV-Z]{8}$/);
     });
+
+    it('uses the KST calendar date even when UTC is still on the previous day', () => {
+      // 2026-10-01T15:30Z is 2026-10-02 00:30 KST.
+      expect(service.generateReservationNumber(new Date('2026-10-01T15:30:00.000Z')))
+        .toMatch(/^GRP-20261002-/);
+    });
+
   });
 
   describe('amount calculation', () => {
@@ -982,6 +1020,7 @@ describe('ReservationService', () => {
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
       expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
         items: dto.consentItems,
+        sourceFlow: 'booking',
       });
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
@@ -1167,7 +1206,7 @@ describe('ReservationService', () => {
           id: dto.showtimeId,
           performanceId: 'performance-1',
           performancePublishState: 'published', performanceStatus: 'selling',
-          dateTime: new Date(),
+          dateTime: FUTURE_SHOWTIME_AT,
           maxTicketsPerUser: 4,
           changePolicyEnabled: false,
           paymentWindowMinutes: 7,
@@ -1208,7 +1247,7 @@ describe('ReservationService', () => {
           id: dto.showtimeId,
           performanceId: 'performance-1',
           performancePublishState: 'published', performanceStatus: 'selling',
-          dateTime: new Date(),
+          dateTime: FUTURE_SHOWTIME_AT,
           maxTicketsPerUser: 4,
           changePolicyEnabled: false,
           paymentWindowMinutes: 7,
@@ -1260,6 +1299,7 @@ describe('ReservationService', () => {
         setupPrepareBase({ ...dto, paymentWindowMinutes: 10 });
 
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1280,7 +1320,6 @@ describe('ReservationService', () => {
         );
         expect(insertedValues[0]).toEqual(expect.objectContaining({
           queueSessionId: dto.queueAdmission.queueSessionId,
-          admissionToken: dto.queueAdmission.admissionToken,
           refreshFamilyId: dto.queueAdmission.refreshFamilyId,
           deviceSlotKey: dto.queueAdmission.deviceSlotKey,
           admittedAt: new Date(dto.queueAdmission.admittedAt),
@@ -1288,6 +1327,9 @@ describe('ReservationService', () => {
           reentryGraceUntilAt: new Date(dto.queueAdmission.reentryGraceUntilAt),
           paymentDeadlineAt: new Date(expectedDeadlineAt),
         }));
+        // The cookie-only admission token must never be persisted (audit #68).
+        expect(insertedValues[0]).not.toHaveProperty('admissionToken');
+        expect(JSON.stringify(insertedValues[0])).not.toContain(dto.queueAdmission.admissionToken);
       } finally {
         vi.useRealTimers();
       }
@@ -1348,6 +1390,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1441,6 +1484,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1536,6 +1580,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1634,6 +1679,7 @@ describe('ReservationService', () => {
         const insertedValues: unknown[] = [];
         setupPrepareBase(dto);
         const mockTx = {
+          execute: activeBuyerAccountExecute(),
           insert: vi.fn().mockReturnValue({
             values: vi.fn((values: unknown) => {
               insertedValues.push(values);
@@ -1718,7 +1764,7 @@ describe('ReservationService', () => {
 
       mockDb.select
         .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', performancePublishState: 'published', dateTime: new Date() }]))
+        .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', performancePublishState: 'published', dateTime: FUTURE_SHOWTIME_AT }]))
         .mockReturnValueOnce(chainResult([
           { tierName: 'VIP', price: 100000 },
           { tierName: 'R', price: 80000 },
@@ -1734,6 +1780,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn((values: unknown) => {
             insertedValues.push(values);
@@ -1782,7 +1829,7 @@ describe('ReservationService', () => {
           id: dto.showtimeId,
           performanceId: 'performance-1',
           performancePublishState: 'published',
-          dateTime: new Date(),
+          dateTime: FUTURE_SHOWTIME_AT,
           maxTicketsPerUser: 2,
           changePolicyEnabled: false,
           paymentWindowMinutes: 7,
@@ -1808,6 +1855,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn((values: unknown) => {
             insertedValues.push(values);
@@ -1853,7 +1901,7 @@ describe('ReservationService', () => {
           id: dto.showtimeId,
           performanceId: 'performance-1',
           performancePublishState: 'published',
-          dateTime: new Date(),
+          dateTime: FUTURE_SHOWTIME_AT,
           maxTicketsPerUser: 1,
           changePolicyEnabled: false,
           paymentWindowMinutes: 7,
@@ -1921,6 +1969,7 @@ describe('ReservationService', () => {
       };
       setupPrepareBase(dto);
       const mockTx = {
+        execute: activeBuyerAccountExecute(),
         insert: vi.fn().mockReturnValue({
           values: vi.fn(() => ({
             returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
@@ -1952,6 +2001,64 @@ describe('ReservationService', () => {
         mockTx,
       );
     });
+
+    it('prepareReservation re-reads the buyer account under FOR KEY SHARE before inserting (audit #44)', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-ACCOUNT-LOCK-ORDER',
+        seats: [seatSelection('A-1')],
+        amount: 52000,
+        consentItems: makeConsentItems(),
+      };
+      setupPrepareBase(dto);
+      const order: string[] = [];
+      const execute = vi.fn(async (query: SQL) => {
+        order.push(new PgDialect().sqlToQuery(query).sql);
+        return { rows: [{ account_status: 'active' }] };
+      });
+      const mockTx = {
+        execute,
+        insert: vi.fn(() => {
+          order.push('insert');
+          return {
+            values: vi.fn(() => ({
+              returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+            })),
+          };
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+      await service.prepareReservation(dto, userId);
+
+      expect(order[0]).toBe('SELECT account_status FROM users WHERE id = $1 FOR KEY SHARE');
+      expect(order.slice(1)).toEqual(['insert', 'insert']);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['withdrawn', 'merged'])(
+      'prepareReservation refuses a buyer whose account became %s while prepare waited for the lock',
+      async (accountStatus) => {
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: `GRP-ACCOUNT-${accountStatus.toUpperCase()}`,
+          seats: [seatSelection('A-1')],
+          amount: 52000,
+          consentItems: makeConsentItems(),
+        };
+        setupPrepareBase(dto);
+        const mockTx = { execute: activeBuyerAccountExecute(accountStatus), insert: vi.fn() };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const error = await service.prepareReservation(dto, randomUUID()).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).message).toBe('탈퇴 처리된 계정입니다');
+        expect(mockTx.insert).not.toHaveBeenCalled();
+        expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
+      },
+    );
 
     it('prepareReservation rejects missing active lock before creating pending reservation', async () => {
       const userId = randomUUID();
@@ -2160,6 +2267,292 @@ describe('ReservationService', () => {
     });
   });
 
+  describe('prepareReservation - sale gates and order identity', () => {
+    const cardPayment = { method: 'CARD' as const, provider: 'CARD' as const, currency: 'KRW' };
+    const paypalPayment = { method: 'FOREIGN_EASY_PAY' as const, provider: 'PAYPAL' as const, currency: 'USD' };
+    const kakaoPayPayment = { method: 'SIMPLE_PAY' as const, provider: 'KAKAOPAY' as const, currency: 'KRW' };
+    const fullAdmin = {
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+      isEmailVerified: true,
+      isPhoneVerified: true,
+    };
+    const scannerAdmin = {
+      role: 'admin',
+      adminCapabilityBundle: 'scanner',
+      adminCapabilities: [],
+      isEmailVerified: true,
+      isPhoneVerified: true,
+    };
+
+    function prepareDto(
+      orderId: string,
+      paymentMethod: typeof cardPayment | typeof paypalPayment | typeof kakaoPayPayment = cardPayment,
+    ) {
+      return {
+        showtimeId: randomUUID(),
+        orderId,
+        seats: [seatSelection('A-1')],
+        amount: 52000,
+        consentItems: makeConsentItems(),
+        paymentMethod,
+      };
+    }
+
+    function uniqueViolation(constraint: string) {
+      return Object.assign(new Error('duplicate key value violates unique constraint'), {
+        code: '23505',
+        constraint,
+      });
+    }
+
+    it('rejects a new prepare once the showtime has started, before touching seat locks (audit #2)', async () => {
+      const dto = prepareDto('GRP-STARTED-NEW');
+      setupPrepareBase({ ...dto, dateTime: new Date(Date.now() - 60_000) });
+
+      const promise = service.prepareReservation(dto, randomUUID());
+      await expect(promise).rejects.toThrow(ForbiddenException);
+      await expect(promise).rejects.toThrow('이미 시작된 회차는 예매할 수 없습니다.');
+
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockBookingService.setOwnedSeatLockTtl).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('closes sales exactly at the showtime start, even for Admin Booking Bypass (audit #2)', async () => {
+      vi.useFakeTimers();
+      const startsAt = new Date('2026-10-05T10:00:00.000Z');
+      vi.setSystemTime(startsAt);
+      try {
+        const dto = prepareDto('GRP-STARTED-ADMIN');
+        setupPrepareBase({ ...dto, dateTime: startsAt });
+
+        await expect(service.prepareReservation(dto, { id: randomUUID(), ...fullAdmin }))
+          .rejects.toThrow('이미 시작된 회차는 예매할 수 없습니다.');
+        expect(mockDb.transaction).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects a retried prepare of an existing pending order after the showtime started (audit #2)', async () => {
+      const userId = randomUUID();
+      const dto = {
+        ...prepareDto('GRP-STARTED-EXISTING'),
+        seats: [seatSelection('A-1'), seatSelection('A-2')],
+        amount: 104000,
+      };
+      setupExistingPendingOrder({ ...dto, userId, dateTime: new Date(Date.now() - 60_000) });
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects.toThrow('이미 시작된 회차는 예매할 수 없습니다.');
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let a restricted scanner admin bypass an upcoming performance (audit #25)', async () => {
+      const dto = prepareDto('GRP-SCANNER-UPCOMING');
+      setupPrepareBase({ ...dto, performanceStatus: 'upcoming' });
+
+      await expect(service.prepareReservation(dto, { id: randomUUID(), ...scannerAdmin }))
+        .rejects.toThrow('예매는 추후 오픈 예정입니다');
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('keeps Admin Booking Bypass for a full admin on an upcoming performance (audit #25)', async () => {
+      const dto = prepareDto('GRP-FULL-ADMIN-UPCOMING');
+      setupPrepareBase({ ...dto, performanceStatus: 'upcoming' });
+
+      await expect(service.prepareReservation(dto, { id: randomUUID(), ...fullAdmin }))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-created' }));
+    });
+
+    it('treats a role-only admin actor without forwarded capability claims as a Buyer (audit #25)', async () => {
+      const dto = prepareDto('GRP-ROLE-ONLY-UPCOMING');
+      setupPrepareBase({ ...dto, performanceStatus: 'upcoming' });
+
+      await expect(service.prepareReservation(
+        dto,
+        { id: randomUUID(), role: 'admin', isEmailVerified: true, isPhoneVerified: true },
+      )).rejects.toThrow('예매는 추후 오픈 예정입니다');
+    });
+
+    it('rejects a payment method the performance does not allow before holding seats (audit #70)', async () => {
+      const dto = prepareDto('GRP-METHOD-NOT-ALLOWED', paypalPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD'] });
+
+      const promise = service.prepareReservation(dto, randomUUID());
+      await expect(promise).rejects.toThrow(ConflictException);
+      await expect(promise).rejects.toThrow(
+        '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해주세요.',
+      );
+
+      expect(mockBookingService.setOwnedSeatLockTtl).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts a method listed in the performance policy (audit #70)', async () => {
+      const dto = prepareDto('GRP-METHOD-ALLOWED', cardPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD'] });
+
+      await expect(service.prepareReservation(dto, randomUUID()))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-created' }));
+    });
+
+    it('accepts domestic easy pay (KAKAOPAY) when the policy lists SIMPLE_PAY (audit #70)', async () => {
+      const dto = prepareDto('GRP-SIMPLE-PAY-ALLOWED', kakaoPayPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD', 'SIMPLE_PAY'] });
+
+      await expect(service.prepareReservation(dto, randomUUID()))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-created' }));
+      expect(mockBookingService.setOwnedSeatLockTtl).toHaveBeenCalled();
+    });
+
+    it('rejects domestic easy pay when the policy omits SIMPLE_PAY (audit #70)', async () => {
+      const dto = prepareDto('GRP-SIMPLE-PAY-NOT-ALLOWED', kakaoPayPayment);
+      setupPrepareBase({ ...dto, allowedPaymentMethods: ['CARD', 'TRANSFER', 'FOREIGN_EASY_PAY'] });
+
+      await expect(service.prepareReservation(dto, randomUUID())).rejects.toThrow(ConflictException);
+      expect(mockBookingService.setOwnedSeatLockTtl).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects switching an existing order to a disallowed method (audit #70)', async () => {
+      const userId = randomUUID();
+      const dto = prepareDto('GRP-METHOD-SWITCH', paypalPayment);
+      setupExistingPendingOrder({
+        ...dto,
+        userId,
+        seats: dto.seats,
+        allowedPaymentMethods: ['CARD'],
+        checkoutPaymentMethod: cardPayment,
+      });
+
+      await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
+        '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해주세요.',
+      );
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps resuming an existing order whose fixed method was allowed when chosen (audit #70)', async () => {
+      const userId = randomUUID();
+      const dto = prepareDto('GRP-METHOD-FIXED', cardPayment);
+      setupExistingPendingOrder({
+        ...dto,
+        userId,
+        seats: dto.seats,
+        allowedPaymentMethods: ['TRANSFER'],
+        checkoutPaymentMethod: cardPayment,
+      });
+
+      await expect(service.prepareReservation(dto, userId))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-existing' }));
+    });
+
+    it('regenerates the reservation number after a unique collision instead of failing (audit #69)', async () => {
+      const dto = prepareDto('GRP-NUMBER-COLLISION');
+      setupPrepareBase(dto);
+      const usedNumbers: string[] = [];
+      const txFor = (outcome: () => Promise<unknown>) => ({
+        execute: activeBuyerAccountExecute(),
+        insert: () => ({
+          values: (values: { reservationNumber?: string }) => {
+            if (values.reservationNumber) usedNumbers.push(values.reservationNumber);
+            return { returning: outcome };
+          },
+        }),
+      });
+      mockDb.transaction.mockReset();
+      mockDb.transaction
+        .mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(txFor(
+          () => Promise.reject(uniqueViolation('reservations_reservation_number_unique')),
+        )))
+        .mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(txFor(
+          () => Promise.resolve([{ id: 'reservation-after-retry' }]),
+        )));
+
+      await expect(service.prepareReservation(dto, randomUUID()))
+        .resolves.toEqual(expect.objectContaining({ reservationId: 'reservation-after-retry' }));
+      expect(mockDb.transaction).toHaveBeenCalledTimes(2);
+      expect(usedNumbers).toHaveLength(2);
+      expect(usedNumbers[0]).not.toBe(usedNumbers[1]);
+    });
+
+    it('stops after bounded reservation number retries', async () => {
+      const dto = prepareDto('GRP-NUMBER-EXHAUSTED');
+      setupPrepareBase(dto);
+      mockDb.transaction.mockReset();
+      mockDb.transaction.mockRejectedValue(uniqueViolation('reservations_reservation_number_unique'));
+
+      await expect(service.prepareReservation(dto, randomUUID())).rejects.toMatchObject({ code: '23505' });
+      expect(mockDb.transaction).toHaveBeenCalledTimes(3);
+    });
+
+    it('answers a concurrent duplicate orderId through the idempotent path (audit #69)', async () => {
+      const dto = prepareDto('GRP-ORDER-RACE');
+      setupPrepareBase(dto);
+      mockDb.transaction.mockReset();
+      mockDb.transaction.mockRejectedValueOnce(Object.assign(new Error('insert failed'), {
+        cause: uniqueViolation('reservations_toss_order_id_unique'),
+      }));
+      // The concurrent winner belongs to another account: the replay must not expose it.
+      mockDb.select.mockReturnValueOnce(chainResult([{
+        id: 'reservation-winner',
+        userId: randomUUID(),
+        showtimeId: dto.showtimeId,
+        status: 'PENDING_PAYMENT',
+      }]));
+
+      await expect(service.prepareReservation(dto, randomUUID()))
+        .rejects.toThrow('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
+      expect(mockDb.transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('reservation detail and confirm representation', () => {
+    it('never returns a stored admission token in reservation detail (audit #68)', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      setupReservationDetailMocks({
+        reservationId,
+        userId,
+        amount: 104000,
+        storedAdmissionToken: 'legacy-raw-admission-token',
+      });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(detail.queueAdmission.admissionToken).toBe('cookie-bound');
+      expect(JSON.stringify(detail)).not.toContain('legacy-raw-admission-token');
+    });
+
+    it('returns the payment confirm detail in the requested display locale (audit #88)', async () => {
+      const finalization = {
+        confirmAndCreateReservation: vi.fn().mockResolvedValue({ reservationId: 'reservation-confirmed' }),
+      };
+      const localizedService = new ReservationService(
+        mockDb as never,
+        mockTossClient as unknown as TossPaymentsClient,
+        mockBookingService as unknown as BookingService,
+        mockBookingGateway as unknown as BookingGateway,
+        mockFeatureFlags as unknown as FeatureFlagsService,
+        mockConsentService as unknown as ConsentService,
+        undefined,
+        finalization as never,
+      );
+      const detailSpy = vi.spyOn(localizedService, 'getReservationDetail')
+        .mockResolvedValue({ id: 'reservation-confirmed' } as never);
+      const dto = { paymentKey: 'pk_locale', orderId: 'GRP-LOCALE', amount: 52000 };
+
+      await localizedService.confirmAndCreateReservation(dto, 'user-1', 'th');
+
+      expect(finalization.confirmAndCreateReservation).toHaveBeenCalledWith(dto, 'user-1');
+      expect(detailSpy).toHaveBeenCalledWith('reservation-confirmed', 'user-1', 'th');
+    });
+  });
+
   describe('list', () => {
     it('should return filtered reservations by status for given userId', async () => {
       const userId = randomUUID();
@@ -2350,6 +2743,7 @@ describe('ReservationService', () => {
             tossOrderId: orderId,
             status: 'PENDING_PAYMENT',
             totalAmount: 150000,
+            checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
           }]),
         }),
       });
@@ -2778,7 +3172,7 @@ describe('ReservationService', () => {
         'pk_test_123',
         '좌석 점유 만료로 인한 자동 취소',
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -2790,7 +3184,7 @@ describe('ReservationService', () => {
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
-    it('cancels Toss and rejects when the order confirm lock is lost after Toss confirm', async () => {
+    it('returns 503 without cancelling Toss when another finalizer holds the order confirm lock after Toss confirm', async () => {
       setupConfirmReservationBase({
         reservationId,
         showtimeId,
@@ -2801,23 +3195,20 @@ describe('ReservationService', () => {
       mockBookingService.refreshPaymentConfirmLock
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false);
+      mockBookingService.acquirePaymentConfirmLock
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      mockDb.select.mockReturnValueOnce(chainResult([]));
 
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
+      )).rejects.toThrow(ServiceUnavailableException);
 
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
-        'pk_test_123',
-        '결제 확인 중복 처리로 인한 자동 취소',
-        {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
-          secretKeyScope: 'default',
-        },
-      );
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -2834,9 +3225,9 @@ describe('ReservationService', () => {
         userId,
         amount: 150000,
       });
-      mockBookingService.refreshPaymentConfirmLock
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
+      mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
+        new ConflictException(LOCK_EXPIRED_MESSAGE),
+      );
       mockTossClient.cancelPayment.mockRejectedValueOnce(new Error('Toss cancel failed'));
 
       await expect(service.confirmAndCreateReservation(
@@ -2847,9 +3238,9 @@ describe('ReservationService', () => {
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pk_test_123',
-        '결제 확인 중복 처리로 인한 자동 취소',
+        '좌석 점유 만료로 인한 자동 취소',
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -2859,7 +3250,7 @@ describe('ReservationService', () => {
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
-    it('cancels Toss and rejects when confirm lock refresh throws after Toss confirm', async () => {
+    it('returns 503 without cancelling Toss when confirm lock refresh throws after Toss confirm', async () => {
       setupConfirmReservationBase({
         reservationId,
         showtimeId,
@@ -2870,23 +3261,17 @@ describe('ReservationService', () => {
       mockBookingService.refreshPaymentConfirmLock
         .mockResolvedValueOnce(true)
         .mockRejectedValueOnce(new Error('Redis eval failed'));
+      mockDb.select.mockReturnValueOnce(chainResult([]));
 
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow(InternalServerErrorException);
+      )).rejects.toThrow(ServiceUnavailableException);
 
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
-        'pk_test_123',
-        '결제 확인 상태 검증 실패로 인한 자동 취소',
-        {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
-          secretKeyScope: 'default',
-        },
-      );
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -3136,7 +3521,7 @@ describe('ReservationService', () => {
         'pk_test_123',
         expect.stringContaining('판매 불가능'),
         {
-          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
           secretKeyScope: 'default',
         },
       );
@@ -3158,7 +3543,16 @@ describe('ReservationService', () => {
         amount: 150000,
       });
       mockDb.transaction.mockRejectedValueOnce(new Error('duplicate key value violates unique constraint'));
-      mockDb.select.mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-race-winner',
+          reservationId,
+          paymentKey: 'pk_test_123',
+          tossOrderId: orderId,
+          status: 'DONE',
+          asyncStatus: 'sync',
+        }]))
+        .mockReturnValueOnce(chainResult([{ status: 'CONFIRMED' }]));
       setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
 
       await expect(service.confirmAndCreateReservation(
@@ -3171,8 +3565,14 @@ describe('ReservationService', () => {
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
       expect(mockBookingService.assertOwnedSeatLocks.mock.invocationCallOrder[0])
         .toBeLessThan(mockDb.transaction.mock.invocationCallOrder[0]!);
-      expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      // The committed order is sold: post-commit cleanup runs as for a direct commit.
+      expect(mockBookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+        userId,
+        showtimeId,
+        ['1F:A-1', '1F:A-2'],
+        { skipUnavailableCheck: true },
+      );
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, '1F:A-1', 'sold', userId);
       const lockToken = mockBookingService.acquirePaymentConfirmLock.mock.calls[0]?.[1];
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
@@ -3601,6 +4001,62 @@ describe('ReservationService', () => {
         reservationId,
         paymentId: 'payment-1',
       });
+    });
+
+    it('still returns a confirmed booking when read-path QR self-heal issuance fails', async () => {
+      const qrTicketService = {
+        ensureIssuedTicketsForReservation: vi.fn().mockRejectedValue(
+          new Error('timeout exceeded when trying to connect'),
+        ),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      const detail = await qrAwareService.getReservationDetail(reservationId, userId);
+
+      expect(detail).toMatchObject({ id: reservationId, status: 'CONFIRMED' });
+      expect(detail.ticketItems.every((ticketItem) => ticketItem.qrCredential === null)).toBe(true);
+      expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledOnce();
+    });
+
+    it('reports a committed payment as completed when the post-confirm detail read fails', async () => {
+      const finalizedReservationId = randomUUID();
+      Object.assign(service, {
+        reservationFinalizationService: {
+          confirmAndCreateReservation: vi.fn().mockResolvedValue({
+            reservationId: finalizedReservationId,
+          }),
+        },
+      });
+      mockDb.select.mockImplementationOnce(() => {
+        throw new Error('timeout exceeded when trying to connect');
+      });
+
+      const result = service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId: 'GRP-DETAIL-READ-FAIL', amount: 150000 },
+        userId,
+      );
+      await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(result).rejects.toThrow('결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.');
+    });
+
+    it('does not report a payment as completed when the post-confirm detail read answers 404', async () => {
+      Object.assign(service, {
+        reservationFinalizationService: {
+          confirmAndCreateReservation: vi.fn().mockResolvedValue({
+            reservationId: randomUUID(),
+          }),
+        },
+      });
+      // Not this caller's reservation (for example the legacy payment row path).
+      mockDb.select.mockImplementationOnce(() => chainResult([]));
+
+      const result = service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId: 'GRP-DETAIL-NOT-OWNER', amount: 150000 },
+        userId,
+      );
+      await expect(result).rejects.toBeInstanceOf(NotFoundException);
+      await expect(result).rejects.not.toBeInstanceOf(ServiceUnavailableException);
     });
 
     it('marks social placeholder emails as verification-required for ticket email delivery', async () => {

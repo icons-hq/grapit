@@ -30,6 +30,8 @@ describe('NaverStrategy', () => {
       provider: 'naver',
       providerId: 'naver-id-123',
       email: 'naver@test.com',
+      // Naver does not assert verification, so Grabit must verify the address itself.
+      emailVerified: false,
       name: 'Naver User',
     });
   });

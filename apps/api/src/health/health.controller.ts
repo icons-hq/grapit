@@ -11,6 +11,7 @@ export class HealthController {
     private readonly redisIndicator: RedisHealthIndicator,
   ) {}
 
+  /** Valkey reachability (PING); the API startup probe and smoke checks. */
   @Public()
   @SkipThrottle()
   @Get()
@@ -18,6 +19,21 @@ export class HealthController {
   check() {
     return this.health.check([
       () => this.redisIndicator.isHealthy('redis'),
+    ]);
+  }
+
+  /**
+   * The API liveness probe. No dependency I/O: it fails only while a Valkey
+   * client is stuck in the terminal `end` state, which only a restart fixes.
+   * A Valkey or database outage keeps it up.
+   */
+  @Public()
+  @SkipThrottle()
+  @Get('live')
+  @HealthCheck()
+  live() {
+    return this.health.check([
+      () => this.redisIndicator.isLive('redis'),
     ]);
   }
 }

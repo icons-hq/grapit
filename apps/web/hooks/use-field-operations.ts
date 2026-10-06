@@ -34,7 +34,13 @@ export interface ScannerOfflineQueueItem {
   deviceAttemptId: string;
   state: 'pending' | 'synced' | 'rejected';
   attemptedAt: string;
+  /** Seat of the scanned ticket, when the device recorded it. */
+  seatLabel?: string | null;
   reason?: string | null;
+  /** Server result of a synced/rejected attempt (a ScannerCheckInResult value). */
+  result?: string | null;
+  resultLabel?: string | null;
+  rejectionReason?: string | null;
 }
 
 export interface ScannerOfflineSyncResult {
@@ -119,7 +125,10 @@ export function useFieldCheckInVerify({
   const tokenRef = input.token ?? input.qrUrl ?? '';
 
   return useQuery({
-    queryKey: ['field', 'check-in', 'verify', tokenRef, input.showtimeId ?? ''],
+    // One cached result per scan attempt. The server records a rejected verify
+    // once per attempt, so a re-scan of the same QR is a fresh check and a
+    // refetch of the same scan never reports itself as a new attempt.
+    queryKey: ['field', 'check-in', 'verify', tokenRef, input.showtimeId ?? '', input.deviceAttemptId ?? ''],
     queryFn: async () => {
       const response = await apiClient.post<FieldCheckInVerifyResponse>(
         '/api/v1/field/check-in/verify',

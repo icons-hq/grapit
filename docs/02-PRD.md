@@ -36,6 +36,7 @@ The public surface supports a focused catalog rather than a large category marke
 - Home surfaces include banners, hot events, new events, genre entry points, and localized shell navigation.
 - Search supports keyword search with genre, locale, ended-state, page, and limit query contracts.
 - Performance detail surfaces show title, venue, schedule, price tiers, castings, detail images, sales information, booking availability, and localized fallback indicators.
+- Buyer-facing sale status on list, search, and detail is judged against the booking start time: a booking start still in the future reads as upcoming even when the operator status is selling or closing soon, and an upcoming performance whose booking start has passed reads as on sale. The API list/search cards, catalog status filters, hot list, and the public detail API use the same rule; the admin detail read is a separate endpoint and does not apply it. Open pages switch the badge and schedule at the booking start without a reload. List rows, cards and the detail page judge the start on the same server-corrected clock as the booking button, so a skewed device clock cannot show "on sale" in the list and "coming soon" on the detail page. While the sitewide booking flag is still loading or failing with no known value, booking stays closed but badges keep the catalog status instead of reading as upcoming. A closing-soon performance whose booking start is still in the future therefore reads as upcoming and, right after its start, as on sale until the page fetches it again. The upcoming home filter refetches once, 5–60 seconds (per-client jitter, server clock) after the nearest booking start among its rows that was pending when the page was fetched, also in a background tab. The on-sale filter only holds rows whose start has passed and does not poll, so a newly opened performance appears there the next time the list is loaded (a revisit or filter change after the 60-second client stale time); the unfiltered list relies on the client-side switch. The hot list cache expires at the next booking start of any published performance, since a newly opened performance can enter it. A performance whose showtimes have all started reads as ended on list, search, home and detail even while its operator status is still selling or closing soon, so it never shows an on-sale badge or an active booking button; lists that hide ended performances hide it, and a performance without showtimes keeps the rules above. Before the booking start, the detail page keeps the performance period on its schedule card and adds the booking open time in KST, the same line the home list shows.
 
 ### 3.2 Auth, Verification, And Consent
 
@@ -44,8 +45,10 @@ Auth must protect scarce booking resources and admin surfaces.
 - Email-based registration uses three visible steps: credentials, itemized consent, and profile/phone verification.
 - Social login supports Kakao, Naver, and Google callback flows.
 - Email verification and SMS/phone verification are required before ordinary buyers can book.
-- Refresh-token state supports device-family management and logout.
-- Itemized consent capture is shared by signup, social completion, and booking flows.
+- Refresh-token state supports device-family management and logout. Several tabs refreshing at once, or a temporary API failure during refresh, must not sign the buyer out.
+- Social sign-in is protected against login CSRF and forwarded registration links. Social-only sign-up completes without an email code; a password account linked to a social login keeps its own email verification unless the provider verified the same address.
+- Login email matching is case-insensitive.
+- Itemized consent capture is shared by signup, social completion, and booking flows. Each row records the version and language of the legal document actually shown; booking records only the booking terms and privacy notice rows it displays.
 - Legal pages are public and linked through the frontend legal routes.
 - Account profile update and withdrawal are available from My Page/user endpoints.
 
@@ -54,10 +57,16 @@ Auth must protect scarce booking resources and admin surfaces.
 Booking is gated by runtime feature flags and queue admission.
 
 - `BOOKING_ENABLED` is the API-side runtime flag. Client-public names are not accepted as API authority.
-- When booking is disabled, non-admin buyers cannot create seat locks, prepare reservations, or confirm payment.
+- When booking is disabled, non-admin buyers cannot create seat locks, prepare reservations, or confirm payment. Admin Booking Bypass belongs to full admins only; scanner, finance and other restricted admin bundles book like Buyers.
 - Queue entry is event/performance scoped and returns admission state used by booking mutation guards.
+- Queue entry is refused for unknown, unpublished, or ended performances and when every showtime has already started; a buyer already waiting is told the same once the last showtime starts. Before the booking start, the booking route shows a countdown and joins the queue automatically at the open time; when the open time is not announced it re-checks about every 15 seconds.
+- The waiting screen shows the position and an estimated maximum wait ("up to about N minutes") computed from the admission cycles (remaining seats of the showtimes still on sale and the longest admission window); because a confirmed purchase returns its slot early, it promises no minimum wait. The maximum holds only while the remaining seats stay as they are: when seats sell during the wait, the next estimate grows, and the screen says so. It does not show a per-position fixed estimate and shows "not available" instead of a misleading number when no estimate is possible.
 - Queue admission is carried through the booking flow and checked again during reservation prepare and payment confirm.
-- Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, and manual open rules.
+- An admission ends when its active window ends. Joining the queue again after that gives a new waiting position, unless an order prepared during that admission is still awaiting payment while its queue session is still retained (until 5 minutes after the payment-recovery grace or after the session expired): then the buyer can only complete (or cancel) that payment and is not admitted to choose seats again. After that retention, joining again gives a new waiting position even if the order is still payable.
+- Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, allowed payment methods, and manual open rules.
+- The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Seat lock and reservation prepare also count seats another account of the same phone holds in an unexpired pending payment. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
+- Sales for a showtime close at its scheduled start time. Seat lock and reservation prepare reject a started showtime for every actor.
+- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods. Checkout keeps the selected seats and asks the buyer to choose another method. The admin performance form offers exactly the categories checkout can submit: card (domestic and overseas), bank transfer, domestic easy pay (Toss Pay, Naver Pay, Kakao Pay) and foreign easy pay.
 
 ### 3.4 Seat Selection
 
@@ -74,10 +83,13 @@ Seat selection is SVG-based and floor-aware.
 Payment and reservation finalization are server-authoritative.
 
 - Toss Payments is the current payment provider integration.
-- The payment branch API chooses synchronous or asynchronous handling based on payment method.
-- Payment confirm validates amount, order identity, lock ownership, queue admission, and payment state before finalizing reservation state.
+- The queue admission token stays in its httpOnly cookie; reservations do not store it and responses do not echo it.
+- The payment confirm response uses the buyer's display locale for translated performance titles.
+- The payment branch API chooses synchronous or asynchronous handling based on payment method. It admits a Prepared Checkout by the same order binding as payment confirm, so resuming a payment works only in the browser session that prepared it (or one with a live queue admission); elsewhere it is refused before the buyer authenticates with the payment provider.
+- Payment confirm validates amount, order identity, lock ownership, queue admission (bound to the pending order until its server payment deadline), and payment state before finalizing reservation state. A confirmed purchase returns its queue slot to the waiting line. When confirm succeeds, that queue admission ends: choosing more seats needs a new queue entry, while another order already prepared in the same admission can still be confirmed through its own order binding.
 - Toss webhook handling records provider events and re-checks provider state before applying final state changes.
-- A confirmed reservation with completed payment issues a QR ticket and schedules QR reminder email when eligible.
+- A confirmed reservation with completed payment issues a seat-level QR credential per active Ticket Item and schedules one QR reminder email per reservation when eligible.
+- Ticket emails (manual resend and D-1 reminder) include every active seat's Seat Identity and QR token; a reservation is reminded at most once even when background workers run in parallel.
 - Reservation detail must remain readable after field entry.
 - QR credential validity and venue admission state are intentionally separate:
   - `qrTicket.status` describes credential validity.
@@ -91,7 +103,7 @@ Buyers can review and manage reservations.
 - My Page lists reservations and reservation details.
 - Reservation detail shows payment, refund, cancellation deadline, seats, QR ticket, and entry status.
 - Buyer cancellation updates reservation and seat inventory when allowed.
-- Buyer refund requests are blocked once the showtime start time has passed.
+- Buyer refund requests are blocked after the cancellation window (23:59 KST on the day before the show) and once the showtime start time has passed. After the window only an admin Full Refund Override can refund.
 - Refund preview and refund request APIs expose refund timeline and expected customer-service state.
 - Admin refund can hold cancelled seats for controlled reopening and records operational audit evidence.
 
@@ -105,16 +117,19 @@ Field operations are web-first and scanner-account based.
 - Normal user accounts are denied on scanner-only surfaces.
 - Staff manually confirms entry after seeing ticket context.
 - Consuming one QR processes only the scanned Ticket Item. Other seats, including those owned by the same buyer for the same showtime, remain independent. Historical batch admission results are preserved (ADR 0011).
-- Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results.
+- Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results, including rejections found at verification before any entry action. Each scan is attributed to the showtime the scanner selected.
 - Benefit redemption requires the separate `field.benefits.redeem` capability and online confirmation; it never consumes admission.
-- Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence.
-- Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, rejections, and offline backlog.
+- Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence. Syncing confirms entry, so it requires both `field.scan.sync` and `field.scan.consume`.
+- Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, and rejections. Offline backlog stays on each field device until sync, so the monitor directs staff to the devices instead of showing a server count.
 
 ### 3.8 Admin Operations
 
 Admin is an operational console, not a marketing CMS.
 
 - Event management covers performance creation/editing, publish workflow, venue/transport fields, castings, detail images, price tiers, showtimes, banners, and seat maps.
+  - Publication approval shows the server-computed sale opening: a scheduled KST start, manual opening when an upcoming performance has no start time, or immediate sale. A stored sale start that has already passed blocks approval, and publishing a performance whose sale is already open requires an explicit immediate-sale confirmation. Sale start inputs outside 2000–2100 KST are rejected.
+  - Price tiers must be priced above 0 and tier names are trimmed on input. Preparation blocks publication until every configured seat has a sellable assignment charged at the displayed tier price.
+  - Only never-published performances without booking, scan, or seat-operation history can be deleted, and each deletion is audited as `event.delete` with the deleted performance snapshot. Published performances are archived (sale status ended) instead.
 - Booking admin covers reservation list/detail, CSV export, admin refund, and manual open.
 - Seat operations cover disable, reactivate, manual open, and history.
 - Support operations cover operations inbox, assignment, escalation, FAQ, notice, and support content review.
@@ -203,6 +218,8 @@ Admin is an operational console, not a marketing CMS.
 - Public UI supports `ko`, `en`, `th`, and `zh-CN`.
 - Korean routes are prefixless; foreign locales use locale-prefixed routes where the routing layer applies them.
 - Localized date/time/currency formatting should be used for buyer-facing flows.
+- The performance period is date-only: it is shown as KST calendar dates in the Gregorian calendar for every locale. Viewer-local time conversion is only for exact instants such as showtimes, and it also uses the Gregorian calendar.
+- Every explicit language change (language switcher or the suggestion banner) stores the preference (cookie, and `preferredLocale` when signed in) and does a full page navigation so the next-intl provider locale and `<html lang>` follow the new URL.
 - Booking, auth, QR, legal, and field-operation copy must avoid relying on color alone.
 - Critical buttons and scanner workflows must remain usable on mobile browsers.
 

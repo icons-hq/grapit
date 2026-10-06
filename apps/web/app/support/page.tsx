@@ -6,6 +6,9 @@ import { Button } from '@/components/ui/button';
 import { useLocale } from 'next-intl';
 
 import { useSupportContent } from '@/hooks/use-support-content';
+import { cn } from '@/lib/cn';
+import { formatCopy } from '@/lib/i18n/client-copy';
+import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -66,19 +69,65 @@ export default function SupportPage() {
         </h2>
         <div className="mt-4 space-y-3">
           {supportContent.isLoading ? <p role="status">{copy.loading}</p> : supportContent.isError ? null : notices.length > 0 ? (
-            notices.map((notice) => (
-              <article
-                key={notice.id}
-                className="rounded-lg border border-gray-200 bg-white p-4"
-              >
-                <h3 className="break-words text-sm font-semibold text-gray-950">
-                  {notice.title}
-                </h3>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">
-                  {notice.body}
-                </p>
-              </article>
-            ))
+            notices.map((notice) => {
+              const isUrgent =
+                notice.priority === 'urgent' || notice.category === 'urgent';
+              const fallbackLanguage =
+                notice.locale !== activeLocale &&
+                (notice.locale === 'ko' || notice.locale === 'en')
+                  ? copy.noticeLanguages[notice.locale]
+                  : null;
+
+              return (
+                <article
+                  key={notice.id}
+                  lang={notice.locale}
+                  className={cn(
+                    'rounded-lg border bg-white p-4',
+                    isUrgent ? 'border-red-300' : 'border-gray-200',
+                  )}
+                >
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    {notice.category !== 'general' && (
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-md px-2 py-0.5 font-semibold',
+                          isUrgent
+                            ? 'bg-red-50 text-red-700'
+                            : 'bg-gray-100 text-gray-700',
+                        )}
+                      >
+                        {copy.noticeCategories[notice.category]}
+                      </span>
+                    )}
+                    {notice.publishedAt && (
+                      <span className="text-gray-600">
+                        {formatCopy(copy.noticePostedAt, {
+                          date: formatEventTimeWithKstAnchor(
+                            notice.publishedAt,
+                            activeLocale,
+                            { includeLocalTime: false },
+                          ).kst,
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="mt-2 break-words text-sm font-semibold text-gray-950">
+                    {notice.title}
+                  </h3>
+                  {fallbackLanguage && (
+                    <p lang={activeLocale} className="mt-1 text-xs text-gray-600">
+                      {formatCopy(copy.noticeOriginalLanguage, {
+                        language: fallbackLanguage,
+                      })}
+                    </p>
+                  )}
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">
+                    {notice.body}
+                  </p>
+                </article>
+              );
+            })
           ) : (
             <p className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-700">
               {copy.emptyNotice}

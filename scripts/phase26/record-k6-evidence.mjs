@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_OUTPUT =
   '.planning/phases/26-m1-canary-cutover-gates/evidence/26-06-load.json';
@@ -8,6 +10,27 @@ const APPROVAL_TOKEN = 'PHASE26_DEDICATED_TEST_EVENT_APPROVED';
 const P95_THRESHOLD_MS = 2000;
 const ERROR_RATE_THRESHOLD = 0.01;
 const STATUSES = new Set(['PASS', 'FAIL', 'BLOCKED', 'ACCEPTED_RISK']);
+// A gate name is a promise about load: PASS requires the measured peak of
+// concurrent VUs (k6 `vus` max) to reach it. Mirrors GATES in
+// scripts/k6/lib/phase26-load.js (asserted by the unit test).
+export const GATE_TARGET_VUS = { LOAD_10K_BASELINE: 10000, LOAD_20K_STRESS: 20000 };
+// Every purchase step must be exercised (tagged by scripts/k6/lib/phase26-load.js).
+export const REQUIRED_FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
+// Minimum share of all HTTP requests, so a read-only run cannot pass as a queue load.
+export const MIN_FLOW_SHARE = { queue: 0.05 };
+// Mirrors QUEUE_MAX_ACTIVE_ADMISSIONS in apps/api/src/modules/queue/queue.service.ts
+// (asserted by the unit test). Only admitted buyers can lock, so purchase traffic
+// is bounded by this cap, not by the VU count: buyers left WAITING poll the
+// queue and make lock a fraction of a percent of all requests in a healthy run.
+export const QUEUE_ACTIVE_ADMISSION_LIMIT = 1000;
+// Purchase steps are judged by absolute volume instead: at least half of one
+// full admission wave must reach each step.
+const MIN_PURCHASE_FLOW_REQUESTS = QUEUE_ACTIVE_ADMISSION_LIMIT / 2;
+export const MIN_FLOW_REQUESTS = {
+  lock: MIN_PURCHASE_FLOW_REQUESTS,
+  prepare: MIN_PURCHASE_FLOW_REQUESTS,
+  confirm: MIN_PURCHASE_FLOW_REQUESTS,
+};
 
 function usage() {
   return `Usage:
@@ -30,7 +53,12 @@ Options:
   --accepted-risk            Convert FAIL/BLOCKED to ACCEPTED_RISK only with --approved-by
 
 The recorder preserves non-PASS states. Missing summaries, missing approval, or
-threshold failures never become PASS. Evidence is metadata-only and redacted.`;
+threshold failures never become PASS. A check is BLOCKED (never PASS) when the
+measured peak VUs are below the gate target (${GATE_TARGET_VUS.LOAD_10K_BASELINE}/${GATE_TARGET_VUS.LOAD_20K_STRESS}), when any of
+${REQUIRED_FLOWS.join('/')} has no tagged requests, when queue traffic is below
+${MIN_FLOW_SHARE.queue * 100}% of requests, or when lock/prepare/confirm each have fewer than
+${MIN_PURCHASE_FLOW_REQUESTS} requests (half of the API's ${QUEUE_ACTIVE_ADMISSION_LIMIT} active queue admissions).
+Evidence is metadata-only and redacted.`;
 }
 
 function parseArgs(argv) {
@@ -150,7 +178,7 @@ async function buildSummaryEvidence(args) {
     acceptance: {
       p95ThresholdMs: P95_THRESHOLD_MS,
       errorRateThreshold: ERROR_RATE_THRESHOLD,
-      classification: 'PASS requires both baseline and stress p95/error-rate thresholds plus approval token.',
+      classification: 'PASS requires both baseline and stress p95/error-rate thresholds (overall and per flow), peak VUs at the gate target, every purchase flow measured (queue share and lock/prepare/confirm volume floors), plus approval token.',
     },
   });
 }
@@ -180,7 +208,7 @@ function validateApproval(args) {
   return { status: 'PASS', reason: null };
 }
 
-async function readK6Summary(gateId, path) {
+export async function readK6Summary(gateId, path) {
   if (!path) {
     return loadCheck(gateId, 'BLOCKED', { reason: 'Missing k6 summary path' });
   }
@@ -209,16 +237,73 @@ async function readK6Summary(gateId, path) {
     });
   }
 
-  const status = p95 < P95_THRESHOLD_MS && errorRate < ERROR_RATE_THRESHOLD ? 'PASS' : 'FAIL';
+  return classifySummary(gateId, parsed, { p95, errorRate, samples, source: maskIdentifier(path) });
+}
+
+export function classifySummary(gateId, parsed, { p95, errorRate, samples, source }) {
+  const failures = [];
+  const coverageGaps = [];
+  if (!(p95 < P95_THRESHOLD_MS)) failures.push(`overall p95 ${roundMetric(p95)}ms >= ${P95_THRESHOLD_MS}ms`);
+  if (!(errorRate < ERROR_RATE_THRESHOLD)) failures.push(`overall error rate ${roundMetric(errorRate)} >= ${ERROR_RATE_THRESHOLD}`);
+
+  const targetVus = GATE_TARGET_VUS[gateId];
+  const peakVus = readMetricNumber(parsed, 'vus', ['max']);
+  if (peakVus === null) {
+    coverageGaps.push('missing k6 vus max (peak concurrent VUs)');
+  } else if (peakVus < targetVus) {
+    coverageGaps.push(`peak concurrent VUs ${Math.round(peakVus)} below gate target ${targetVus}`);
+  }
+
+  const total = samples ?? 0;
+  const flows = {};
+  for (const flow of REQUIRED_FLOWS) {
+    const requests = readMetricNumber(parsed, `http_reqs{flow:${flow}}`, ['count']);
+    const flowErrorRate = readMetricNumber(parsed, `http_req_failed{flow:${flow}}`, ['rate', 'value']);
+    const flowP95 = readMetricNumber(parsed, `http_req_duration{flow:${flow}}`, ['p(95)', 'p95', '95']);
+    const share = requests !== null && total > 0 ? requests / total : null;
+    flows[flow] = {
+      requests: requests === null ? 0 : Math.round(requests),
+      share: share === null ? null : roundMetric(share),
+      errorRate: flowErrorRate === null ? null : roundMetric(flowErrorRate),
+      p95Ms: flowP95 === null ? null : roundMetric(flowP95),
+    };
+    if (!requests) {
+      coverageGaps.push(`${flow} path not measured (no http_reqs{flow:${flow}})`);
+      continue;
+    }
+    if (MIN_FLOW_SHARE[flow] !== undefined && (share === null || share < MIN_FLOW_SHARE[flow])) {
+      coverageGaps.push(`${flow} share ${share === null ? 'unknown' : roundMetric(share)} below ${MIN_FLOW_SHARE[flow]}`);
+    }
+    if (MIN_FLOW_REQUESTS[flow] !== undefined && requests < MIN_FLOW_REQUESTS[flow]) {
+      coverageGaps.push(`${flow} requests ${Math.round(requests)} below ${MIN_FLOW_REQUESTS[flow]}`);
+    }
+    if (flowErrorRate === null || flowP95 === null) {
+      coverageGaps.push(`${flow} per-flow error rate or p95 missing`);
+    } else {
+      if (!(flowErrorRate < ERROR_RATE_THRESHOLD)) failures.push(`${flow} error rate ${roundMetric(flowErrorRate)} >= ${ERROR_RATE_THRESHOLD}`);
+      if (!(flowP95 < P95_THRESHOLD_MS)) failures.push(`${flow} p95 ${roundMetric(flowP95)}ms >= ${P95_THRESHOLD_MS}ms`);
+    }
+  }
+
+  const status = failures.length > 0 ? 'FAIL' : coverageGaps.length > 0 ? 'BLOCKED' : 'PASS';
+  const reasons = [...failures, ...coverageGaps];
   return loadCheck(gateId, status, {
+    ...(reasons.length > 0 ? { reason: reasons.join('; ') } : {}),
     p95Ms: roundMetric(p95),
     errorRate: roundMetric(errorRate),
     attempts: samples === null ? null : Math.round(samples),
+    peakVus: peakVus === null ? null : Math.round(peakVus),
+    targetVus,
+    flows,
     thresholds: {
       p95Ms: `<${P95_THRESHOLD_MS}`,
       errorRate: `<${ERROR_RATE_THRESHOLD}`,
+      peakVus: `>=${targetVus}`,
+      requiredFlows: REQUIRED_FLOWS,
+      minFlowShare: MIN_FLOW_SHARE,
+      minFlowRequests: MIN_FLOW_REQUESTS,
     },
-    source: maskIdentifier(path),
+    source,
   });
 }
 
@@ -283,9 +368,9 @@ function baseEvidence(args, overrides) {
     },
     commandShapes: {
       baseline:
-        'docker run --rm -i grafana/k6 run -e ... --summary-export /out/phase26-baseline-summary.json - < scripts/k6/phase26-baseline.js',
+        'docker run --rm -v "$PWD/scripts/k6:/scripts:ro" -v <private>:/private:ro -v <out>:/out grafana/k6 run -e ... --summary-export /out/phase26-baseline-summary.json /scripts/phase26-baseline.js',
       stress:
-        'docker run --rm -i grafana/k6 run -e ... --summary-export /out/phase26-stress-summary.json - < scripts/k6/phase26-stress.js',
+        'docker run --rm -v "$PWD/scripts/k6:/scripts:ro" -v <private>:/private:ro -v <out>:/out grafana/k6 run -e ... --summary-export /out/phase26-stress-summary.json /scripts/phase26-stress.js',
       recorder: 'node scripts/phase26/record-k6-evidence.mjs --baseline <json> --stress <json>',
     },
     checks: overrides.checks,
@@ -363,7 +448,17 @@ function roundMetric(value) {
   return Math.round(value * 1000) / 1000;
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}

@@ -7,7 +7,6 @@ import {
   keepPreviousData,
 } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
@@ -18,6 +17,8 @@ import type {
   AdminBookingFunnelStatus,
   AdminBookingListResponse,
   AdminReservationExportFilter,
+  AdminRefundRequest,
+  AdminRefundResult,
   PaymentStatus,
   RefundPreviewResponse,
   TicketItemRefundPreviewResponse,
@@ -196,6 +197,10 @@ export function useAdminBookings(params: {
       );
     },
     placeholderData: keepPreviousData,
+    // 503 = the server cancelled a too-broad aggregate (statement timeout).
+    // Re-running the same scope would only spend the same primary CPU again.
+    retry: (failureCount, error) =>
+      (error as { statusCode?: number } | null)?.statusCode !== 503 && failureCount < 1,
   });
 }
 
@@ -224,6 +229,8 @@ export function useAdminRefundPreview(
       });
       return apiClient.get<RefundPreviewResponse>(
         `/api/v1/admin/bookings/${id}/refund-preview?${searchParams.toString()}`,
+        // The refund form shows a failed preview inline with a re-check button.
+        { showErrorToast: false },
       );
     },
     enabled: Boolean(id) && enabled,
@@ -238,19 +245,25 @@ export function useAdminRefund() {
       reason,
       fullRefundOverride,
       enteredTicketOverride,
-    }: {
-      id: string;
-      reason: string;
-      fullRefundOverride?: boolean;
-      enteredTicketOverride?: boolean;
-    }) =>
-      apiClient.post(`/api/v1/admin/bookings/${id}/refund`, {
-        reason,
-        fullRefundOverride,
-        enteredTicketOverride,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
+      expectedRefundableAmount,
+      expectedProviderRefundAmountMinor,
+    }: { id: string } & AdminRefundRequest) =>
+      apiClient.post<AdminRefundResult>(
+        `/api/v1/admin/bookings/${id}/refund`,
+        {
+          reason,
+          fullRefundOverride,
+          enteredTicketOverride,
+          expectedRefundableAmount,
+          expectedProviderRefundAmountMinor,
+        } satisfies AdminRefundRequest,
+        // The dashboard shows one outcome-specific message per attempt.
+        { showErrorToast: false },
+      ),
+    onSettled: () => {
+      // A rejected or conflicting refund can also change state (restored
+      // rights, stale quote), so refresh the list, detail and preview.
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
     },
   });
 }
@@ -260,20 +273,9 @@ export function useReservationExport() {
     mutationFn: async (
       filters: ReservationExportPayload,
     ): Promise<ReservationExportDownload> => {
-      const { accessToken } = useAuthStore.getState();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const response = await fetch(apiUrl('/api/v1/admin/bookings/export'), {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify(filters),
+      // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+      const response = await apiClient.raw('POST', '/api/v1/admin/bookings/export', filters, {
+        showErrorToast: false,
       });
 
       if (!response.ok) {

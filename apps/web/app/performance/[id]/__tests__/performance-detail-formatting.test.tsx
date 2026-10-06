@@ -127,7 +127,8 @@ describe('PerformanceDetailPage i18n formatting', () => {
       </Suspense>,
     );
 
-    expect(await screen.findAllByText(/KST/)).toHaveLength(2);
+    // The performance period is one KST date range, not two converted instants.
+    expect(await screen.findAllByText(/KST/)).toHaveLength(1);
     expect(screen.getByText('KRW 110,000')).toBeDefined();
     expect(screen.queryByText(/THB|USD|approx/i)).toBeNull();
     expect(screen.queryByText(/exchange rate may change|환율/)).toBeNull();
@@ -191,7 +192,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByText('Hidden public sales body')).toBeNull();
   });
 
-  it('localizes the upcoming label instead of date anchors for upcoming performances', async () => {
+  it('localizes the upcoming badge and keeps the performance period for upcoming performances', async () => {
     fixturePerformance.status = 'upcoming';
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
       id: string;
@@ -210,7 +211,10 @@ describe('PerformanceDetailPage i18n formatting', () => {
 
     expect(await screen.findAllByText('เร็วๆ นี้')).not.toHaveLength(0);
     expect(screen.queryByText('오픈예정')).toBeNull();
-    expect(screen.queryByText(/KST/)).toBeNull();
+    // The period stays visible before booking opens (audit #170/#35); without a
+    // booking start there is no open time to add under it.
+    expect(screen.getByText(/KST$/, { selector: 'time' }).textContent).toContain('4 ก.ค. 2026');
+    expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
   });
 
   it('shows the upcoming badge instead of the Korean on-sale badge while booking is disabled', async () => {

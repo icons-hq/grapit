@@ -8,7 +8,15 @@ import {
   BookingService,
   LOCK_EXPIRED_MESSAGE,
   LOCK_OTHER_OWNER_MESSAGE,
+  lockedSeatsSweepGuardKey,
+  SEAT_STATUS_CACHE_TTL_MS,
+  seatStatusCacheKey,
 } from '../booking.service.js';
+import { BookingGateway } from '../booking.gateway.js';
+import {
+  buildSocketIoRoomChannel,
+  encodeSocketIoRoomEvent,
+} from '../providers/socket-io-redis-emitter.js';
 
 /**
  * Phase 07-05 integration spec — PROVES Lua scripts execute correctly on a
@@ -28,7 +36,13 @@ import {
  * Lua script execute at all on Valkey 8 and produce the expected Redis state".
  */
 
-function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingService {
+function createBookingService(
+  redis: IORedis,
+  maxTicketsPerUser = 1,
+  // Seat keys of this user's orders still awaiting payment in the showtime
+  // (the reservations ⋈ reservation_seats read of unlock and lock-all).
+  pendingPaymentSeatKeys: string[] = [],
+): BookingService {
   const unavailableRows: Array<{ id: string; status: string }> = [];
   function queryRows<T>(rows: T[]) {
     return {
@@ -42,13 +56,23 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
       from: () => ({
         where: () => queryRows(unavailableRows),
         innerJoin: () => {
-          const rows = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+          const selects = (field: string) => Object.prototype.hasOwnProperty.call(selection ?? {}, field);
+          // One row type for every fixture, so queryRows infers a single T.
+          const rows: Array<Record<string, unknown>> = selects('seatId')
+            ? pendingPaymentSeatKeys.map((pendingSeatKey) => ({ seatId: pendingSeatKey }))
+            : selects('seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
                 },
               }]
-            : [{ performancePublishState: 'published', performanceStatus: 'selling', bookingStartsAt: null }];
+            : [{
+                // Sales close at the showtime start, so the fixture showtime has not started.
+                showtimeDateTime: new Date('2099-01-01T10:00:00.000Z'),
+                performancePublishState: 'published',
+                performanceStatus: 'selling',
+                bookingStartsAt: null,
+              }];
           return {
             where: () => queryRows(rows),
             leftJoin: () => ({
@@ -212,7 +236,104 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
       .toEqual({
         showtimeId,
         seats: { [seatKey]: 'locked' },
+        generatedAt: expect.any(Number),
       });
+  });
+
+  it('reads seat status without removing stale members and sweeps them once per interval (audit #8)', async () => {
+    const service = createBookingService(redis);
+    const staleRuntimeSeatId = toRuntimeSeatId(otherSeatKey);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    // A lock whose key expired by TTL leaves its member behind.
+    await redis.sadd(lockedSeatsKey, staleRuntimeSeatId);
+    // Hold the sweep guard so the read path alone can be observed.
+    await redis.set(lockedSeatsSweepGuardKey(showtimeId), 'held', 'PX', 60_000);
+
+    await expect(service.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
+    });
+    expect(await redis.smembers(lockedSeatsKey)).toEqual(
+      expect.arrayContaining([runtimeSeatId, staleRuntimeSeatId]),
+    );
+    expect(await redis.pttl(seatStatusCacheKey(showtimeId))).toBeGreaterThan(0);
+    expect(await redis.pttl(seatStatusCacheKey(showtimeId)))
+      .toBeLessThanOrEqual(SEAT_STATUS_CACHE_TTL_MS);
+
+    await redis.del(lockedSeatsSweepGuardKey(showtimeId));
+    await expect(service.sweepStaleLockedSeats(showtimeId)).resolves.toBe(true);
+    expect(await redis.smembers(lockedSeatsKey)).toEqual([runtimeSeatId]);
+    await expect(service.sweepStaleLockedSeats(showtimeId)).resolves.toBe(false);
+  });
+
+  it('serves the shared seat status snapshot to another instance until it expires', async () => {
+    const first = createBookingService(redis);
+    const second = createBookingService(redis);
+    await first.lockSeat(userId, showtimeId, seatKey);
+
+    await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
+    });
+    // Released after the snapshot was taken: a reader may see the snapshot
+    // for at most SEAT_STATUS_CACHE_TTL_MS.
+    await first.unlockSeat(userId, showtimeId, seatKey);
+    await expect(second.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+      generatedAt: expect.any(Number),
+    });
+    // The instance that applied the change applies it on top of the older
+    // snapshot instead of recomputing.
+    await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: {},
+      generatedAt: expect.any(Number),
+    });
+    // No recomputation: the shared snapshot is still the pre-release one.
+    const shared = JSON.parse((await redis.get(seatStatusCacheKey(showtimeId))) ?? 'null') as {
+      response: { seats: Record<string, string> };
+    } | null;
+    expect(shared?.response.seats).toEqual({ [seatKey]: 'locked' });
+
+    await new Promise((resolve) => setTimeout(resolve, SEAT_STATUS_CACHE_TTL_MS + 50));
+    await expect(createBookingService(redis).getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: {},
+      generatedAt: expect.any(Number),
+    });
+  });
+
+  it('delivers a seat update published without a Socket.IO server to a Redis adapter subscriber (audit #151)', async () => {
+    const subscriber = redis.duplicate();
+    const room = `showtime:${showtimeId}`;
+    const channel = buildSocketIoRoomChannel('/booking', room);
+    try {
+      const messages: Buffer[] = [];
+      const received = new Promise<Buffer[]>((resolve) => {
+        subscriber.on('pmessageBuffer', (_pattern: Buffer, messageChannel: Buffer, message: Buffer) => {
+          if (messageChannel.toString() !== channel) return;
+          messages.push(message);
+          if (messages.length === 2) resolve(messages);
+        });
+      });
+      // Same pattern the Socket.IO Redis adapter subscribes to.
+      await subscriber.psubscribe('socket.io#/booking#*');
+
+      const gateway = new BookingGateway(redis);
+      await expect(gateway.publishSeatUpdate(showtimeId, seatKey, 'available')).resolves.toBe(true);
+
+      // seat-update.v2 first, then the legacy event for pre-v2 web bundles.
+      const payload = { seatId: seatKey, status: 'available' };
+      expect(await received).toEqual([
+        encodeSocketIoRoomEvent('/booking', room, 'seat-update.v2', payload),
+        encodeSocketIoRoomEvent('/booking', room, 'seat-update', payload),
+      ]);
+    } finally {
+      subscriber.disconnect();
+    }
   });
 
   it('rejects duplicate lock on same seat through BookingService.lockSeat', async () => {
@@ -244,6 +365,31 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     const lockedSeats = await redis.smembers(lockedSeatsKey);
     expect(lockedSeats).not.toContain(runtimeSeatId);
+  });
+
+  it("lock-all from one session keeps the seats of the same user's order awaiting payment on another device", async () => {
+    // PC and phone use the same account. The phone prepared 1F:A-1 and is in
+    // Toss authentication; the PC session expired and sends lock-all.
+    const service = createBookingService(redis, 3, [seatKey]);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, otherSeatKey);
+    await service.lockSeat(userId, showtimeId, thirdSeatKey);
+
+    const { unlockedSeats } = await service.unlockAllSeats(userId, showtimeId);
+    expect([...unlockedSeats].sort()).toEqual([otherSeatKey, thirdSeatKey]);
+
+    expect(await redis.get(lockKey)).toBe(userId);
+    expect(await redis.smembers(userSeatsKey)).toEqual([runtimeSeatId]);
+    expect(await redis.smembers(lockedSeatsKey)).toEqual([runtimeSeatId]);
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(otherSeatKey)}`)).toBeNull();
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(thirdSeatKey)}`)).toBeNull();
+
+    // A single unlock of the seat being paid for is refused as well.
+    await expect(service.unlockSeat(userId, showtimeId, seatKey)).resolves.toBe(false);
+    expect(await redis.get(lockKey)).toBe(userId);
+
+    // The phone's payment confirm still owns its seat lock.
+    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatKey])).resolves.toBeUndefined();
   });
 
   it('unlock for non-owner returns 0 (no-op)', async () => {

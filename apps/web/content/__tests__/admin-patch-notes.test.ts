@@ -3,8 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { adminPatchNotes, latestAdminPatchNotes } from '../admin-patch-notes';
 
 describe('adminPatchNotes', () => {
-  it('links the admin redesign release as the latest note', () => {
+  it('links the open audit remediation release as the latest note', () => {
     expect(adminPatchNotes[0]).toEqual(expect.objectContaining({
+      prNumber: 235,
+      date: '2026-10-02',
+      category: 'patch',
+      githubUrl: 'https://github.com/icons-hq/grapit/pull/235',
+      title: '오픈 전 점검의 결제·예매·운영 안전장치 보강',
+    }));
+    expect(adminPatchNotes[0]?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('보상 취소'),
+        expect.stringContaining('판매 마감'),
+        expect.stringContaining('미리보기 재확인'),
+      ]),
+    );
+  });
+
+  it('keeps the admin redesign release right after the audit release', () => {
+    expect(adminPatchNotes[1]).toEqual(expect.objectContaining({
       prNumber: 234,
       githubUrl: 'https://github.com/icons-hq/grapit/pull/234',
       title: '티켓 운영 중심으로 관리자 화면과 메뉴 개선',

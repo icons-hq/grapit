@@ -7,7 +7,7 @@ import type { SocialProfile } from '../interfaces/social-profile.interface.js';
 interface GoogleProfile {
   id: string;
   displayName: string;
-  emails?: Array<{ value: string; verified?: boolean }>;
+  emails?: Array<{ value: string; verified?: boolean | string }>;
 }
 
 @Injectable()
@@ -22,13 +22,16 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   extractProfile(profile: GoogleProfile): SocialProfile {
-    const email = profile.emails?.[0]?.value;
+    const primaryEmail = profile.emails?.[0];
+    const email = primaryEmail?.value;
     const name = profile.displayName || '';
 
     return {
       provider: 'google',
       providerId: String(profile.id),
       email,
+      // passport-google-oauth20 copies the OpenID `email_verified` claim into `verified`.
+      emailVerified: Boolean(email) && (primaryEmail?.verified === true || primaryEmail?.verified === 'true'),
       name,
     };
   }

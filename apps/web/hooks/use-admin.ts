@@ -1,16 +1,14 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import {
   invalidatePublicBannerQueries,
   invalidatePublicPerformanceQueries,
 } from '@/lib/catalog-freshness';
+import type { ConsentAuditFilters } from '@/components/admin/consent-audit-table';
 import type {
-  ConsentAuditFilters,
-  ConsentAuditRow,
-} from '@/components/admin/consent-audit-table';
-import type {
+  ConsentAuditPage,
   PerformanceListResponse,
   PerformanceWithDetails,
   Banner,
@@ -91,6 +89,8 @@ export interface PublishPerformanceInput {
     ko: { title: boolean; description: boolean };
     en: { title: boolean; description: boolean };
   };
+  /** Required by the API when publishing opens buyer sales at once. */
+  immediateSaleConfirmed?: boolean;
 }
 
 function toApiDateTime(value?: string): string | undefined {
@@ -246,16 +246,20 @@ export function usePublishTranslationDraft() {
   });
 }
 
+/** Newest-first consent audit pages; each "더 보기" follows the server keyset cursor. */
 export function useAdminConsentAudit(filters: ConsentAuditFilters) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['admin', 'consent-audit', filters],
-    queryFn: () => {
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
       const searchParams = buildConsentAuditSearchParams(filters);
+      if (pageParam) searchParams.set('cursor', pageParam);
       const query = searchParams.toString();
-      return apiClient.get<ConsentAuditRow[]>(
+      return apiClient.get<ConsentAuditPage>(
         `/api/v1/admin/consent-audit${query ? `?${query}` : ''}`,
       );
     },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 }
 

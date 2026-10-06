@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, eq, and, gte, lt } from 'drizzle-orm';
+import { sql, eq, and, gte, isNotNull, lt } from 'drizzle-orm';
 import type {
   DashboardSummaryDto,
   DashboardRevenueDto,
@@ -21,14 +21,13 @@ import {
   kstBoundaryToUtc,
   kstTodayBoundaryUtc,
   buildDailyBucketSkeleton,
-  buildWeeklyBucketSkeleton,
+  buildWeeklyBucketSkeletonForWindow,
 } from './kst-boundary.js';
 
 /**
  * D-12: 대시보드 캐시 TTL은 항상 60초. cache.set 호출 시 반드시 3번째 인자로 명시.
  */
 const DASHBOARD_CACHE_TTL = 60;
-const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
 
 /**
  * D-10: Top 10 공연은 최근 30일 고정 윈도우. 사용자 조절 없음.
@@ -124,6 +123,13 @@ export class AdminDashboardService {
                 )`,
               ),
             ),
+          // Every approved charge that could not be issued and was refunded in full
+          // (async DONE seat conflict, ticket limit, amount/currency mismatch,
+          // unsupported or disallowed method, confirm-time compensation, and any
+          // kind added later) ends as FAILED reservation + CANCELED payment with a
+          // paid_at and no Ticket Items. Gross counted it by paid_at, so offset it
+          // by that state rather than by one cancel reason (same bucket as the
+          // admin booking funnel's compensated cancels).
           this.db
             .select({
               count: sql<number>`count(distinct ${payments.id})::int`,
@@ -135,7 +141,7 @@ export class AdminDashboardService {
               and(
                 eq(reservations.status, 'FAILED'),
                 eq(payments.status, 'CANCELED'),
-                eq(payments.cancelReason, ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON),
+                isNotNull(payments.paidAt),
                 gte(payments.cancelledAt, startUtc),
                 lt(payments.cancelledAt, endUtc),
                 sql`not exists (
@@ -208,14 +214,25 @@ export class AdminDashboardService {
         .orderBy(bucketExpr);
 
       // review MEDIUM 6: skeleton으로 빈 날짜/주 0으로 채움.
+      // 주별 skeleton은 WHERE 윈도우(kstBoundaryToUtc(days))와 같은 기간의 모든 ISO 주를
+      // 덮어야 한다. 가장 오래된 부분 주가 빠지면 그 주 매출이 차트·합계에서 사라진다.
       const skeleton =
         granularity === 'week'
-          ? buildWeeklyBucketSkeleton(Math.ceil(days / 7))
+          ? buildWeeklyBucketSkeletonForWindow(days)
           : buildDailyBucketSkeleton(days);
       const rowMap = new Map(rows.map((r) => [r.bucket, r]));
-      return skeleton.map(
+      const filled = skeleton.map(
         (b) => rowMap.get(b) ?? { bucket: b, revenue: 0, count: 0 },
       );
+      // 방어적 병합: skeleton에 없는 DB bucket도 버리지 않는다. 라벨(YYYY-MM-DD,
+      // IYYY-"W"IW)은 zero-padded라 문자열 정렬이 시간순과 같다.
+      const skeletonBuckets = new Set(skeleton);
+      const unmatched = rows.filter((r) => !skeletonBuckets.has(r.bucket));
+      return unmatched.length === 0
+        ? filled
+        : [...filled, ...unmatched].sort((left, right) =>
+            left.bucket.localeCompare(right.bucket),
+          );
     });
   }
 

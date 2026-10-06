@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import {
+  LOCK_FAILURE_RESYNC_COOLDOWN_MS,
+  getSeatConflictState,
   useBookingPaymentSnapshot,
   useCancelPendingReservation,
   useConfirmPayment,
@@ -134,6 +136,9 @@ function setAdminAuth() {
     isPhoneVerified: true,
     marketingConsent: false,
     role: 'admin',
+    // Admin Booking Bypass needs the full-admin claims /users/me returns.
+    adminCapabilityBundle: 'admin',
+    adminCapabilities: [],
     createdAt: '2026-05-06T00:00:00.000Z',
   });
 }
@@ -313,7 +318,31 @@ describe('use-booking payment mutations', () => {
     });
 
     await result.current.mutateAsync(payload);
-    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm', payload, {
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=ko', payload, {
+      showErrorToast: false,
+    });
+  });
+
+  it('useConfirmPayment() requests the confirm detail in the current display locale', async () => {
+    const payload: ConfirmPaymentRequest = {
+      paymentKey: 'test_payment_key_th',
+      orderId: 'GRP-CONFIRM-TH',
+      amount: 50000,
+    };
+    postMock.mockResolvedValueOnce({ id: 'reservation-confirm-th', status: 'CONFIRMED' });
+    const previousPath = window.location.pathname;
+    window.history.pushState({}, '', '/th/booking/performance-1/complete');
+
+    try {
+      const { result } = renderHook(() => useConfirmPayment(), {
+        wrapper: createWrapper().Wrapper,
+      });
+      await result.current.mutateAsync(payload);
+    } finally {
+      window.history.pushState({}, '', previousPath);
+    }
+
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=th', payload, {
       showErrorToast: false,
     });
   });
@@ -384,7 +413,7 @@ describe('use-booking payment mutations', () => {
     await expect(result.current.mutateAsync(payload)).resolves.toMatchObject({
       id: 'reservation-confirm-disabled',
     });
-    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm', payload, {
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm?locale=ko', payload, {
       showErrorToast: false,
     });
   });
@@ -481,6 +510,8 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
       showtimeId: 'showtime-disabled',
       seatId: 'A-1',
+    }, {
+      showErrorToast: false,
     });
   });
 
@@ -604,6 +635,9 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
       showtimeId: 'showtime-floor-aware',
       seatId: '2F:A-1',
+    }, {
+      // The seat page reports lock failures once per seat; no generic toast.
+      showErrorToast: false,
     });
   });
 
@@ -629,6 +663,15 @@ describe('use-booking payment mutations', () => {
     deleteMock.mockResolvedValueOnce(undefined);
 
     const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked', '1F:A-2': 'locked' },
+    });
+    queryClient.setQueryData(['my-locks', 'showtime-floor-aware'], {
+      seatIds: ['1F:A-1'],
+      expiresAt: Date.now() + 60_000,
+      requestSeq: 1,
+    });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderHook(() => useUnlockSeat(), {
       wrapper: Wrapper,
@@ -640,11 +683,315 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['seat-status', 'showtime-floor-aware'],
-    });
-    expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ['my-locks', 'showtime-floor-aware'],
     });
+    // audit #8: no full seat-status reload per release; the released seat is
+    // patched locally while the socket (which would broadcast it) is down.
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: ['seat-status', 'showtime-floor-aware'],
+    });
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-2': 'locked' },
+    });
+    expect(queryClient.getQueryData(['my-locks', 'showtime-floor-aware'])).toMatchObject({
+      seatIds: [],
+      expiresAt: null,
+    });
+  });
+
+  it('useUnlockSeat() leaves seat-status to the server broadcast while the socket is connected', async () => {
+    deleteMock.mockResolvedValueOnce(undefined);
+    useBookingStore.getState().setConnected(true);
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked' },
+    });
+    const { result } = renderHook(() => useUnlockSeat(), {
+      wrapper: Wrapper,
+    });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: '1F:A-1',
+    });
+
+    // The unlock may have been a no-op (lock already expired and re-taken by
+    // someone else); only the server broadcast knows, so keep the state.
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked' },
+    });
+  });
+
+  it('useLockSeat() patches seat-status and my-locks locally instead of reloading the whole seat map', async () => {
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'lock-1F-A-2',
+      seatId: '1F:A-2',
+      seatKey: '1F:A-2',
+      floorKey: '1F',
+      expiresAt,
+    });
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'sold' },
+    });
+    queryClient.setQueryData(['my-locks', 'showtime-floor-aware'], {
+      seatIds: [],
+      expiresAt: null,
+      requestSeq: 1,
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: 'A-2',
+      floorKey: '1F',
+      floorLabel: '1층',
+      seatKey: '1F:A-2',
+    });
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'sold', '1F:A-2': 'locked' },
+    });
+    // requestSeq is kept: the patch is local knowledge, not a fresh snapshot.
+    expect(queryClient.getQueryData(['my-locks', 'showtime-floor-aware'])).toEqual({
+      seatIds: ['1F:A-2'],
+      expiresAt,
+      requestSeq: 1,
+    });
+  });
+
+  it('useLockSeat() marks only the contended seat on a seat 409 and never reloads seat-status for it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      postMock
+        .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409))
+        .mockRejectedValueOnce(new ApiClientError('이미 판매된 좌석입니다', 409))
+        .mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다.', 409));
+
+      const { Wrapper, queryClient } = createWrapper();
+      queryClient.setQueryData(['seat-status', 'showtime-conflict'], {
+        showtimeId: 'showtime-conflict',
+        seats: {},
+      });
+      queryClient.setQueryData(['my-locks', 'showtime-conflict'], {
+        seatIds: [],
+        expiresAt: null,
+        requestSeq: 1,
+      });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const reloadsOf = (queryKey: unknown[]) => invalidateSpy.mock.calls.filter(
+        ([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKey),
+      );
+      const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+      for (const seatId of ['A-1', 'A-2', 'A-3']) {
+        await expect(result.current.mutateAsync({
+          showtimeId: 'showtime-conflict',
+          seatId,
+          floorKey: '1F',
+          seatKey: `1F:${seatId}`,
+        })).rejects.toMatchObject({ statusCode: 409 });
+      }
+      await vi.advanceTimersByTimeAsync(LOCK_FAILURE_RESYNC_COOLDOWN_MS * 3);
+
+      // audit #8: a conflict per click must not turn into a full O(N) reload
+      // per click; audit #27: the stale seat no longer looks available.
+      expect(reloadsOf(['seat-status', 'showtime-conflict'])).toHaveLength(0);
+      expect(queryClient.getQueryData(['seat-status', 'showtime-conflict'])).toEqual({
+        showtimeId: 'showtime-conflict',
+        seats: { '1F:A-1': 'locked', '1F:A-2': 'sold', '1F:A-3': 'locked' },
+      });
+      // "Held by someone else" is also the answer when the seat is already
+      // ours (another tab), so my-locks is read back: once right away and one
+      // trailing read for the conflicts inside the cooldown.
+      expect(reloadsOf(['my-locks', 'showtime-conflict'])).toEqual([
+        [{ queryKey: ['my-locks', 'showtime-conflict'] }, { cancelRefetch: true }],
+        [{ queryKey: ['my-locks', 'showtime-conflict'] }, { cancelRefetch: true }],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('useLockSeat() does not read my-locks back for sold, refunding or disabled seats', async () => {
+    postMock
+      .mockRejectedValueOnce(new ApiClientError('이미 판매된 좌석입니다', 409))
+      .mockRejectedValueOnce(new ApiClientError('환불 처리 중인 좌석입니다', 409))
+      .mockRejectedValueOnce(new ApiClientError('운영자가 판매를 중지한 좌석입니다', 409));
+
+    const { Wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    for (const seatId of ['A-1', 'A-2', 'A-3']) {
+      await expect(result.current.mutateAsync({
+        showtimeId: 'showtime-closed-seats',
+        seatId,
+        floorKey: '1F',
+      })).rejects.toMatchObject({ statusCode: 409 });
+    }
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it('useLockSeat() reads my-locks once more after a first load that was in flight when the lock landed', async () => {
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'lock-1F-A-1',
+      seatId: '1F:A-1',
+      seatKey: '1F:A-1',
+      floorKey: '1F',
+      expiresAt,
+    });
+    let finishFirstLoad!: (snapshot: { seatIds: string[]; expiresAt: number | null; requestSeq: number }) => void;
+    const myLocksFn = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirstLoad = resolve;
+      }))
+      .mockResolvedValue({ seatIds: ['1F:A-1'], expiresAt, requestSeq: 3 });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => {
+      useQuery({ queryKey: ['my-locks', 'showtime-first-load'], queryFn: myLocksFn });
+      return useLockSeat();
+    }, { wrapper: Wrapper });
+    await waitFor(() => expect(myLocksFn).toHaveBeenCalledTimes(1));
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-first-load',
+      seatId: 'A-1',
+      floorKey: '1F',
+      seatKey: '1F:A-1',
+    });
+    // The first load (sent before the lock) cannot be restarted: TanStack
+    // shares it with every fetch until it settles.
+    expect(myLocksFn).toHaveBeenCalledTimes(1);
+
+    finishFirstLoad({ seatIds: [], expiresAt: null, requestSeq: 1 });
+
+    // One read sent after the lock follows, so the page gets a snapshot it
+    // can trust (holds from before a reload are restored).
+    await waitFor(() => expect(myLocksFn).toHaveBeenCalledTimes(2));
+  });
+
+  it('useLockSeat() reloads my-locks at most once per cooldown on per-user limit 409s and keeps the seat map', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      postMock.mockRejectedValue(new ApiClientError('최대 2석까지 선택할 수 있습니다', 409));
+      const { Wrapper, queryClient } = createWrapper();
+      queryClient.setQueryData(['seat-status', 'showtime-limit'], {
+        showtimeId: 'showtime-limit',
+        seats: {},
+      });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const myLocksReloads = () => invalidateSpy.mock.calls.filter(
+        ([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(['my-locks', 'showtime-limit']),
+      );
+      const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+      for (const seatId of ['A-1', 'A-2', 'A-3']) {
+        await expect(result.current.mutateAsync({
+          showtimeId: 'showtime-limit',
+          seatId,
+          floorKey: '1F',
+          seatKey: `1F:${seatId}`,
+        })).rejects.toMatchObject({ statusCode: 409 });
+      }
+
+      // One reload right away; the later conflicts share one trailing reload.
+      expect(myLocksReloads()).toHaveLength(1);
+      expect(myLocksReloads()[0]?.[1]).toEqual({ cancelRefetch: true });
+      await vi.advanceTimersByTimeAsync(LOCK_FAILURE_RESYNC_COOLDOWN_MS);
+      expect(myLocksReloads()).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(LOCK_FAILURE_RESYNC_COOLDOWN_MS * 2);
+      expect(myLocksReloads()).toHaveLength(2);
+
+      // The seat is available; only the user is at the limit.
+      expect(invalidateSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['seat-status', 'showtime-limit'] }),
+        expect.anything(),
+      );
+      expect(queryClient.getQueryData(['seat-status', 'showtime-limit'])).toEqual({
+        showtimeId: 'showtime-limit',
+        seats: {},
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('useLockSeat() reads my-locks back after a transport failure (the lock may exist) but not after a 403', async () => {
+    postMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new ApiClientError('이미 시작된 회차는 예매할 수 없습니다.', 403));
+
+    const { Wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    await expect(result.current.mutateAsync({
+      showtimeId: 'showtime-network',
+      seatId: 'A-1',
+      floorKey: '1F',
+    })).rejects.toBeInstanceOf(TypeError);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      { queryKey: ['my-locks', 'showtime-network'] },
+      { cancelRefetch: true },
+    );
+
+    await expect(result.current.mutateAsync({
+      showtimeId: 'showtime-closed',
+      seatId: 'A-1',
+      floorKey: '1F',
+    })).rejects.toMatchObject({ statusCode: 403 });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('getSeatConflictState() separates seat conflicts from per-user limits', () => {
+    expect(getSeatConflictState(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다.', 409))).toBe('locked');
+    expect(getSeatConflictState(new ApiClientError('환불 처리 중인 좌석입니다', 409))).toBe('held');
+    expect(getSeatConflictState(new ApiClientError('운영자가 판매를 중지한 좌석입니다', 409))).toBe('disabled');
+    expect(getSeatConflictState(new ApiClientError('이 공연은 1인 최대 4매까지 예매할 수 있습니다', 409))).toBeNull();
+    expect(getSeatConflictState(new ApiClientError('이미 판매된 좌석입니다', 400))).toBeNull();
+    expect(getSeatConflictState(new Error('이미 판매된 좌석입니다'))).toBeNull();
+  });
+
+  it('useLockSeat() settles every concurrent mutateAsync call with its own result', async () => {
+    let rejectFirst: (error: unknown) => void = () => undefined;
+    postMock
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }))
+      .mockResolvedValueOnce({
+        success: true,
+        lockId: 'lock-1F-A-2',
+        seatId: '1F:A-2',
+        expiresAt: Date.now() + 60_000,
+      });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    const first = result.current.mutateAsync({ showtimeId: 'showtime-race', seatId: 'A-1', floorKey: '1F' });
+    const second = result.current.mutateAsync({ showtimeId: 'showtime-race', seatId: 'A-2', floorKey: '1F' });
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+    rejectFirst(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409));
+
+    // audit #10: per-call mutate() callbacks of the first call would be
+    // dropped once the second call starts; the promises are not.
+    await expect(first).rejects.toMatchObject({ statusCode: 409 });
+    await expect(second).resolves.toMatchObject({ lockId: 'lock-1F-A-2' });
   });
 
   it('usePrepareReservation() uses floor-aware store seats and cached event policy instead of legacy payload defaults', async () => {
@@ -723,7 +1070,7 @@ describe('use-booking payment mutations', () => {
     );
   });
 
-  it('useBookingPaymentSnapshot() exposes a separate paymentDeadlineAt from lock expiry', () => {
+  it('useBookingPaymentSnapshot() follows the checkout deadline before prepare, not an entry-time estimate (audit #95)', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-08T10:00:00.000Z'));
 
@@ -760,10 +1107,44 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(result.current.lockExpiresAt).toBe('2026-05-08T10:10:00.000Z');
-    expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:07:00.000Z');
+    // The server payment window (7 min) starts at prepare; until then the seat lock
+    // and the queue access window bound checkout.
+    expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:10:00.000Z');
+    expect(result.current.bookingPolicy.paymentWindowMinutes).toBe(7);
     expect(result.current.allowedPaymentMethods).toEqual(['CARD', 'FOREIGN_EASY_PAY']);
+    expect(result.current.allowedPaymentMethodsKnown).toBe(true);
+
+    // Eight minutes on the review screen: the lock is still alive, so is checkout.
+    act(() => {
+      vi.advanceTimersByTime(8 * 60_000);
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(2 * 60_000);
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(true);
 
     vi.useRealTimers();
+  });
+
+  it('useBookingPaymentSnapshot() marks the payment method list as a fallback without a cached policy', () => {
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-uncached-policy',
+      performanceId: 'performance-uncached',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2099-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: Date.parse('2099-05-08T10:10:00.000Z'),
+    });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), { wrapper: Wrapper });
+
+    expect(result.current.allowedPaymentMethods).toEqual(['CARD']);
+    expect(result.current.allowedPaymentMethodsKnown).toBe(false);
   });
 
   it('updates the seat-selection timer when the server payment deadline is shorter than the selection hold', () => {
@@ -815,6 +1196,37 @@ describe('use-booking payment mutations', () => {
     expect(result.current.lockExpiresAt).toBe('2026-06-09T03:33:00.000Z');
     expect(result.current.paymentDeadlineAt).toBe('2026-06-09T03:33:00.000Z');
     expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it('useBookingPaymentSnapshot() flips isPaymentDeadlineExpired when the deadline passes while mounted', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T03:25:00.000Z'));
+
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-payment-expiry',
+      performanceId: 'performance-1',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2026-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: new Date('2026-06-09T03:26:00.000Z').getTime(),
+    });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), {
+      wrapper: Wrapper,
+    });
+    expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(60_000 + 100);
+    });
+
+    // A mount-time snapshot used to keep the pay button enabled after this.
+    expect(result.current.isPaymentDeadlineExpired).toBe(true);
 
     vi.useRealTimers();
   });
@@ -1403,4 +1815,14 @@ it('keeps a bank-transfer widget selection distinct from a card checkout', () =>
     paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
     requiresOverseasDisclaimer: false,
   });
+  expect(resolvePaymentMethodSelection('계좌이체').paymentMethod.method).toBe('TRANSFER');
+});
+
+it('classifies virtual account and phone payments exactly instead of as a card (audit #70)', () => {
+  expect(resolvePaymentMethodSelection('VIRTUAL_ACCOUNT').paymentMethod.method).toBe('VIRTUAL_ACCOUNT');
+  expect(resolvePaymentMethodSelection('가상계좌').paymentMethod.method).toBe('VIRTUAL_ACCOUNT');
+  expect(resolvePaymentMethodSelection('MOBILE_PHONE').paymentMethod.method).toBe('MOBILE_PHONE');
+  expect(resolvePaymentMethodSelection('휴대폰').paymentMethod.method).toBe('MOBILE_PHONE');
+  expect(resolvePaymentMethodSelection('PAYCO')).toMatchObject({ unsupported: true });
+  expect(resolvePaymentMethodSelection('PAYCO').paymentMethod.method).not.toBe('CARD');
 });

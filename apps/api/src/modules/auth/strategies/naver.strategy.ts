@@ -34,6 +34,8 @@ export class NaverStrategy extends NaverPassportStrategy {
       provider: 'naver',
       providerId: String(profile.id),
       email,
+      // Naver's profile API does not assert that this address was verified.
+      emailVerified: false,
       name,
     };
   }

@@ -1,6 +1,11 @@
+import type { EventEmitter } from 'node:events';
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import IORedis, { Cluster, type RedisOptions } from 'ioredis';
+import {
+  evalQueueScriptInMemory,
+  isQueueScript,
+} from '../../queue/queue-redis-scripts.js';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
@@ -295,6 +300,9 @@ class InMemoryRedis {
     const keys = keysAndArgs.slice(0, numKeys).map(String);
     const args = keysAndArgs.slice(numKeys).map(String);
 
+    if (isQueueScript(script)) {
+      return evalQueueScriptInMemory(this, script, keys, args);
+    }
     if (script.includes('ASSERT_OWNED_SEAT_LOCKS_LUA')) {
       return this.evalAssertOwnedSeatLocks(keys, args);
     }
@@ -309,6 +317,9 @@ class InMemoryRedis {
     }
     if (script.includes('REFRESH_PAYMENT_CONFIRM_LOCK_LUA')) {
       return this.evalRefreshPaymentConfirmLock(keys, args);
+    }
+    if (script.includes('READ_VALID_LOCKED_SEATS_LUA')) {
+      return this.evalReadValidLockedSeats(keys, args);
     }
     if (keys.length === 3 && args.length === 3 && script.includes('VERIFIED')) {
       return this.evalVerifyAndIncrement(keys, args);
@@ -552,6 +563,14 @@ class InMemoryRedis {
     return alive;
   }
 
+  private evalReadValidLockedSeats(keys: string[], args: string[]): string[] {
+    const [lockedSeatsKey] = keys;
+    const [keyPrefix] = args;
+
+    return Array.from(this.sets.get(lockedSeatsKey) ?? [])
+      .filter((sid) => this.store.has(`${keyPrefix}${sid}`));
+  }
+
   private getSortedSetEntries(key: string): Array<[string, number]> {
     return Array.from(this.sortedSets.get(key)?.entries() ?? []).sort((a, b) => {
       if (a[1] === b[1]) {
@@ -637,7 +656,8 @@ function parseRedisUrl(url: string): URL {
 
 function buildRedisOptions(parsedUrl: URL): RedisOptions {
   return {
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
     ...(parsedUrl.username ? { username: decodeURIComponent(parsedUrl.username) } : {}),
     ...(parsedUrl.password ? { password: decodeURIComponent(parsedUrl.password) } : {}),
     ...(parsedUrl.protocol === 'rediss:' ? { tls: {} } : {}),
@@ -650,7 +670,7 @@ function assertClusterRedisUrlPath(parsedUrl: URL): void {
   }
 }
 
-function sanitizeRedisErrorMessage(message: string): string {
+export function sanitizeRedisErrorMessage(message: string): string {
   return message
     .replace(REDIS_URL_PATTERN, '[redacted redis url]')
     .replace(AUTH_HEADER_PATTERN, '[redacted authorization header]')
@@ -663,7 +683,12 @@ function sanitizeRedisErrorMessage(message: string): string {
 }
 
 function registerRedisErrorLogging(client: IORedis | Cluster): void {
-  client.on('error', (err: Error) => {
+  // Both clients are EventEmitters. Calling `on` through the union fails to
+  // type-check (TS2349) when the ioredis overload sets of the two classes are
+  // resolved together, as in a program that also includes the integration
+  // specs.
+  const emitter: EventEmitter = client;
+  emitter.on('error', (err: Error) => {
     const safeMessage = sanitizeRedisErrorMessage(err.message);
     if (safeMessage.includes('ECONNREFUSED')) {
       if (!redisWarned) {
@@ -677,6 +702,229 @@ function registerRedisErrorLogging(client: IORedis | Cluster): void {
 }
 
 let redisWarned = false;
+
+export const REDIS_RECONNECT_BASE_DELAY_MS = 200;
+export const REDIS_RECONNECT_MAX_DELAY_MS = 1_000;
+export const REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS = 1_000;
+/** Commands queued while disconnected fail after this many reconnect attempts + 1. */
+export const REDIS_MAX_RETRIES_PER_REQUEST = 3;
+/**
+ * TCP/TLS connect budget per attempt (ioredis default 10s). Valkey is in the
+ * same region, so a slower connect is an outage; failing the attempt sooner
+ * keeps the offline-queue flush cycle short when packets are dropped.
+ */
+export const REDIS_CONNECT_TIMEOUT_MS = 3_000;
+export const REDIS_CLUSTER_UNAVAILABLE_MESSAGE =
+  'Valkey cluster is unavailable; command dropped while reconnecting';
+
+/**
+ * Reconnect delay shared by the standalone `retryStrategy` and the cluster
+ * `clusterRetryStrategy`, including the Socket.IO subscriber that inherits
+ * them through `duplicate()`.
+ *
+ * It never returns a non-number: ioredis moves a client to the terminal `end`
+ * state as soon as the strategy returns null, so a Valkey failover or network
+ * flap longer than the retry budget used to leave the API instance unable to
+ * lock seats, admit queue sessions or broadcast until it was recycled.
+ * Requests issued during an outage still fail: standalone ioredis flushes its
+ * offline queue every `maxRetriesPerRequest + 1` reconnect attempts, and the
+ * cluster client does the same through `clusterReconnectDelayWithQueueFlush`.
+ */
+export function redisReconnectDelay(times: number): number {
+  const attempt = Number.isFinite(times) && times > 0 ? Math.floor(times) : 1;
+  return Math.min(attempt * REDIS_RECONNECT_BASE_DELAY_MS, REDIS_RECONNECT_MAX_DELAY_MS);
+}
+
+type FlushableRedisClient = { flushQueue?: (error: Error) => void };
+
+function flushOfflineCommands(client: unknown, error: Error): void {
+  if (typeof client !== 'object' || client === null) return;
+  const flushable = client as FlushableRedisClient;
+  if (typeof flushable.flushQueue === 'function') {
+    flushable.flushQueue(error);
+  }
+}
+
+/**
+ * `clusterRetryStrategy` for the shared cluster client. ioredis Cluster parks
+ * every command in its offline queue while it is not ready and, unlike the
+ * standalone client, applies no `maxRetriesPerRequest` to that queue: with a
+ * strategy that never gives up, requests issued during a Valkey outage would
+ * wait until it ended (or the HTTP timeout) and then all run at once on
+ * recovery, including seat locks for clients that already left. This drops
+ * the queued commands every `REDIS_MAX_RETRIES_PER_REQUEST + 1` attempts, the
+ * same cadence as standalone, and keeps reconnecting.
+ *
+ * ioredis invokes the strategy with the Cluster as `this`.
+ */
+export function clusterReconnectDelayWithQueueFlush(this: unknown, times: number): number {
+  if (Number.isInteger(times) && times > 0 && times % (REDIS_MAX_RETRIES_PER_REQUEST + 1) === 0) {
+    flushOfflineCommands(this, new Error(REDIS_CLUSTER_UNAVAILABLE_MESSAGE));
+  }
+  return redisReconnectDelay(times);
+}
+
+type GuardableRedisClient = {
+  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+  connect?: (...args: unknown[]) => Promise<unknown>;
+  quit?: (...args: unknown[]) => unknown;
+  disconnect?: (reconnect?: boolean) => unknown;
+  /** ioredis reads `enableOfflineQueue` from here each time a command is sent. */
+  options?: { enableOfflineQueue?: boolean };
+};
+
+const intentionallyClosedRedisClients = new WeakSet<object>();
+const endRecoveryRegisteredClients = new WeakSet<object>();
+/** Clients whose offline queue a link-down quit() turned off. */
+const offlineQueueDisabledByQuit = new WeakSet<object>();
+
+/**
+ * Statuses in which the link to Valkey is down and ioredis would park QUIT in
+ * the offline queue behind other commands while its reconnect timer keeps the
+ * process alive.
+ */
+const REDIS_LINK_DOWN_STATUSES = new Set(['connecting', 'reconnecting', 'close']);
+
+function isRedisLinkDown(client: object): boolean {
+  const status = (client as { status?: unknown }).status;
+  return typeof status === 'string' && REDIS_LINK_DOWN_STATUSES.has(status);
+}
+
+function markIntentionalCloseOnShutdownCalls(client: GuardableRedisClient): void {
+  const originalQuit = client.quit;
+  const originalDisconnect = client.disconnect;
+  if (typeof originalQuit === 'function') {
+    client.quit = (...args: unknown[]) => {
+      intentionallyClosedRedisClients.add(client);
+      if (typeof originalDisconnect === 'function' && isRedisLinkDown(client)) {
+        // Nothing can be flushed to Valkey gracefully: fail what is queued
+        // and stop reconnecting so a bounded worker can exit during an outage.
+        flushOfflineCommands(client, new Error('Connection is closed.'));
+        originalDisconnect.call(client, false);
+        // A reconnecting standalone client or a cluster never reaches `end`
+        // from here, so later commands (a drain cut off by the run deadline)
+        // would wait in an offline queue nothing flushes any more. Make them
+        // fail at once instead; ioredis reads the option per command.
+        if (client.options && client.options.enableOfflineQueue !== false) {
+          client.options.enableOfflineQueue = false;
+          offlineQueueDisabledByQuit.add(client);
+        }
+        const callback = args.find((arg): arg is (err: null, result: 'OK') => void =>
+          typeof arg === 'function');
+        callback?.(null, 'OK');
+        return Promise.resolve('OK');
+      }
+      return originalQuit.apply(client, args);
+    };
+  }
+
+  if (typeof originalDisconnect === 'function') {
+    client.disconnect = (reconnect?: boolean) => {
+      // ioredis treats disconnect(true) as "drop and reconnect"; only a plain
+      // disconnect() / disconnect(false) is a shutdown.
+      if (!reconnect) {
+        intentionallyClosedRedisClients.add(client);
+      }
+      return originalDisconnect.call(client, reconnect);
+    };
+  }
+}
+
+/**
+ * Safety net for the `end` state. With `redisReconnectDelay` ioredis only
+ * ends a connection after quit()/disconnect(); any other `end` is unexpected
+ * and would otherwise leave seat locking, queue admission, throttling and
+ * Socket.IO pub/sub dead on a long-lived instance. Log it and reconnect.
+ */
+export function registerRedisEndRecovery(
+  client: unknown,
+  label: string,
+  reconnectDelayMs = REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS,
+): void {
+  if (typeof client !== 'object' || client === null) return;
+  const guardable = client as GuardableRedisClient;
+  if (typeof guardable.on !== 'function' || typeof guardable.connect !== 'function') return;
+  if (endRecoveryRegisteredClients.has(client)) return;
+  endRecoveryRegisteredClients.add(client);
+
+  markIntentionalCloseOnShutdownCalls(guardable);
+  // Connected again after a shutdown call (explicit connect()): re-arm, and
+  // give back the offline queue a link-down quit() turned off.
+  guardable.on('ready', () => {
+    intentionallyClosedRedisClients.delete(client);
+    if (offlineQueueDisabledByQuit.delete(client) && guardable.options) {
+      guardable.options.enableOfflineQueue = true;
+    }
+  });
+  guardable.on('end', () => {
+    if (intentionallyClosedRedisClients.has(client)) return;
+
+    console.error(
+      `[redis] ${label} connection ended unexpectedly; reconnecting in ${reconnectDelayMs}ms`,
+    );
+    const timer = setTimeout(() => {
+      if (intentionallyClosedRedisClients.has(client)) return;
+      guardable.connect?.().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[redis] ${label} reconnect failed:`, sanitizeRedisErrorMessage(message));
+      });
+    }, reconnectDelayMs);
+    timer.unref?.();
+  });
+}
+
+/**
+ * Guarded clients the API liveness probe watches, by guard label: the shared
+ * client and the Socket.IO subscriber. A process has one client per label; a
+ * newer client registered under the same label replaces the older one.
+ */
+const livenessTrackedRedisClients = new Map<string, WeakRef<object>>();
+
+function readRedisClientStatus(client: unknown): string | undefined {
+  if (typeof client !== 'object' || client === null) return undefined;
+  const status = (client as { status?: unknown }).status;
+  return typeof status === 'string' ? status : undefined;
+}
+
+/**
+ * Labels of the clients left in ioredis' terminal `end` state: the given
+ * shared client and every guarded client of this process.
+ *
+ * `end` is the only state an instance cannot leave by itself. A reconnecting
+ * or closed link (Valkey down or failing over) recovers on its own, since the
+ * reconnect strategy never gives up, and a fresh instance could not reach
+ * Valkey either, so it is not a liveness failure. `end` follows only a
+ * quit()/disconnect() (a shutdown), and an unexpected one is reconnected by
+ * {@link registerRedisEndRecovery} about a second later; a client still in
+ * `end` across consecutive liveness probes has stopped recovering, and only a
+ * restart brings seat locks, the queue, throttling and pub/sub back.
+ */
+export function findEndedRedisClients(sharedClient?: unknown): string[] {
+  const clients = new Map<object, string>();
+  if (typeof sharedClient === 'object' && sharedClient !== null) {
+    clients.set(sharedClient, 'shared client');
+  }
+  for (const [label, ref] of livenessTrackedRedisClients) {
+    const client = ref.deref();
+    if (client) {
+      clients.set(client, label);
+    }
+  }
+  return [...clients]
+    .filter(([client]) => readRedisClientStatus(client) === 'end')
+    .map(([, label]) => label);
+}
+
+/**
+ * Attaches the sanitized error logger and the unexpected-end recovery to a
+ * client, and puts it under the API liveness probe ({@link findEndedRedisClients}).
+ * Used for the shared client and the Socket.IO subscriber.
+ */
+export function registerRedisClientGuards(client: IORedis | Cluster, label: string): void {
+  registerRedisErrorLogging(client);
+  registerRedisEndRecovery(client, label);
+  livenessTrackedRedisClients.set(label, new WeakRef(client));
+}
 
 /**
  * Unified Redis provider: single ioredis TCP client for both seat locking
@@ -728,10 +976,7 @@ export const redisProvider: Provider = {
         scaleReads: 'master',
         enableReadyCheck: true,
         redisOptions,
-        clusterRetryStrategy: (times: number) => {
-          if (times > 5) return null;
-          return Math.min(times * 500, 5000);
-        },
+        clusterRetryStrategy: clusterReconnectDelayWithQueueFlush,
       });
 
       attachRedisRuntimeMetadata(client, {
@@ -739,18 +984,16 @@ export const redisProvider: Provider = {
         client: 'ioredis-cluster',
         configured: true,
       });
-      registerRedisErrorLogging(client);
+      registerRedisClientGuards(client, 'cluster client');
       client.connect().catch(() => {});
       return client;
     }
 
     const client = new IORedis(url, {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
       lazyConnect: true,
-      retryStrategy: (times: number) => {
-        if (times > 5) return null;
-        return Math.min(times * 500, 5000);
-      },
+      retryStrategy: redisReconnectDelay,
     });
 
     attachRedisRuntimeMetadata(client, {
@@ -758,7 +1001,7 @@ export const redisProvider: Provider = {
       client: 'ioredis-standalone',
       configured: true,
     });
-    registerRedisErrorLogging(client);
+    registerRedisClientGuards(client, 'standalone client');
     client.connect().catch(() => {});
     return client;
   },

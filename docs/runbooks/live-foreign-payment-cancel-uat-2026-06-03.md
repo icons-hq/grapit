@@ -92,6 +92,9 @@ Use Chrome logged into Toss 상점관리자. Capture redacted screenshots only.
 - [ ] 해외카드 is enabled on the intended KRW or USD MID according to contract.
 - [ ] PayPal is enabled on the intended USD foreign-payment MID.
 - [ ] Alipay or Alipay Plus is enabled on the intended foreign-easy-pay MID.
+- [ ] TrueMoney and PayPay stay disabled in the `uspay` variant. Grabit has no
+      provider-charge quote for them: the server rejects a `TRUEMONEY` checkout
+      branch and refunds any captured TrueMoney DONE automatically.
 - [ ] Payment UI includes the expected payment methods and `variantKey`.
 - [ ] Agreement UI exists and is linked to the same payment UI.
 - [ ] Webhook endpoint points to production API.
@@ -171,6 +174,84 @@ Alipay must not be treated as done just because the cancel API returned.
   object with `cancelStatus=DONE` closes the internal state.
 - If no webhook arrives within 10 minutes, stop new live tests and escalate with
   provider query evidence.
+- `CANCEL_STATUS_CHANGED` carries only `cancelRequestId`. The API resolves it
+  through `cancel_<row id>` primary keys first, then the full value stored on
+  the seat-level command (`cancel_<commandId>`), refund retries
+  (`cancelRequest` and `previousAttempts[*]`), and async DONE compensation
+  records. A resolved seat cancel finalizes only that Ticket Item; a replay for
+  an already cancelled item is acknowledged as a duplicate.
+- An out-of-order event whose state the provider already passed (for example
+  `IN_PROGRESS`/`DONE` after `CANCELED`, or a cancel `IN_PROGRESS` after the
+  same request is `DONE`) returns 200 with `IGNORED_STALE_PROVIDER_STATE`.
+  Identity mismatches (paymentKey, orderId, amount, unknown cancel request)
+  still return 400.
+
+## Async DONE Compensation
+
+An async DONE that cannot be issued is refunded in full instead of being left
+at the PG: seat taken by another checkout after the checkout lock expired (a
+late DONE for a `FAILED` order never takes a seat the same buyer re-locked for a
+newer reservation), ticket limit, amount or currency mismatch with the stored
+quote (a USD quote never accepts a same-number KRW charge), an unsupported
+provider (TrueMoney), a payment method the order or the performance policy
+does not allow (`payment_method_not_allowed`: the provider lookup's `method`
+and `easyPay.provider` must match the frozen Checkout Payment Method and be in
+the performance's allowed methods intersected with
+`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`; virtual account and mobile phone never
+pass), or a second paymentKey for an order whose payment is already accepted,
+cancelled or compensated (including a buyer-cancelled reservation or an
+earlier refunded late DONE).
+
+- The method policy is decided only on the provider lookup of the paymentKey,
+  never on callback or browser values. The pending return
+  (`POST /payments/async-return`) serves only orders checked out with an
+  asynchronously approved foreign wallet (Alipay+, TrueMoney); any other order
+  gets 409 without a provider call, and the browser's `provider` parameter is
+  ignored (the wallet comes from the provider lookup or the frozen checkout
+  method).
+- A deposited virtual account DONE is never cancelled automatically: its full
+  refund needs the buyer's refund account. The row stays `DONE/cancel_pending`
+  (unissuable) with an `attention` record (`attempts=0`), a
+  `ASYNC_DONE_COMPENSATION_ATTENTION` diagnostic and an error log; refund it at
+  the provider manually.
+
+- The payment row stays `DONE` + `async_status=cancel_pending` until the PG
+  reports the cancel complete, so confirm and DONE replays cannot issue it.
+  `payments.provider_metadata.asyncDoneCompensation` records the cancel
+  command, every `cancelRequestId`, attempts and state. A second paymentKey has
+  no payment row of its own: the order's existing row keeps its status (for
+  example `DONE` for a confirmed order) and the cancel is recorded in that row's
+  `duplicatePaymentCompensations[]`.
+- A cancel `ABORTED` webhook is recorded as `ASYNC_DONE_COMPENSATION_CANCEL_ABORTED`
+  (ledger code and payment failure diagnostic).
+- A `DONE/cancel_pending` row claimed by payment confirm
+  (`confirmCompensationClaim: true`, no `asyncDoneCompensation` record) belongs
+  to its `payment-confirm-reconcile` job: the sweep never adopts it, and its
+  cancel `ABORTED` is left to that job. The reconcile job in turn never touches
+  a row this sweep owns. A `CANCELED` webhook that completes either kind records
+  the owner's compensated-cancel code.
+- The recovery sweep (`AsyncDoneCompensationRecoveryWorker`, every minute where
+  background processing runs and once per bounded worker window) queries the
+  PG: completed cancels converge locally to `CANCELED/compensation_cancelled`
+  and `FAILED`; `IN_PROGRESS` is re-checked after 10 minutes and becomes
+  `attention` (error log, `ASYNC_DONE_COMPENSATION_ATTENTION`) once the provider
+  has kept it `IN_PROGRESS` for 24 hours after the first cancel request; a DONE
+  without a live cancel is re-cancelled with a new idempotency key and
+  `cancelRequestId` suffix `-r<n>`. After 5 requests the record becomes
+  `attention`, logs an error and writes `ASYNC_DONE_COMPENSATION_ATTENTION`.
+  The sweep reads candidates in creation order page by page and skips rows not
+  yet due, so up to 100 due orders are processed per run however many open
+  compensations are waiting.
+  A provider query that keeps failing (wrong secret scope or key, provider
+  outage) is logged as a warning on each attempt, counted in `queryFailures`
+  since `queryFailingSince`, and becomes `attention` after at least 3
+  consecutive failures over one hour.
+- `payments.amount` is the KRW ledger. A compensated charge reported in another
+  currency without a quote (for example a TrueMoney USD amount) keeps the
+  reservation's KRW total on the row; the provider amount and currency are in
+  `asyncDoneCompensation.payment`.
+- `attention` rows need manual provider reconciliation. Do not edit the row to
+  issue tickets.
 
 ## Evidence Ledger
 
@@ -241,6 +322,29 @@ from seat_inventories
 where showtime_id = '<allowlisted-test-showtime-id>'
   and seat_key in ('<seat-1>', '<seat-2>', '<seat-3>')
 order by seat_key;
+```
+
+Open or attention async DONE compensations, and rejected DONE rows from before
+automatic compensation (those still need a provider check and a manual refund
+decision):
+
+```sql
+select
+  p.toss_order_id,
+  p.status,
+  p.async_status,
+  r.status as reservation_status,
+  p.provider_metadata->'asyncDoneCompensation'->>'state' as compensation_state,
+  p.provider_metadata->'asyncDoneCompensation'->>'attempts' as compensation_attempts,
+  p.provider_metadata->'asyncDoneCompensation'->>'lastError' as compensation_last_error,
+  jsonb_array_length(coalesce(p.provider_metadata->'duplicatePaymentCompensations', '[]'::jsonb)) as duplicate_charges
+from payments p
+join reservations r on r.id = p.reservation_id
+where p.async_status in ('cancel_pending', 'payment_amount_mismatch', 'payment_provider_unsupported')
+   or p.provider_metadata->>'asyncDoneCompensationOpen' = 'true'
+   or p.provider_metadata->'asyncDoneCompensation'->>'state' = 'attention'
+   or p.provider_metadata->'duplicatePaymentCompensations' is not null
+order by p.created_at;
 ```
 
 ## DB Correction Policy

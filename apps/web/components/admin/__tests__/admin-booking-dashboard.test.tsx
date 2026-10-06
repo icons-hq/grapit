@@ -747,6 +747,51 @@ describe('AdminBookingDashboard', () => {
       expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('page=2');
     });
   });
+
+  it('keeps the header and every filter on a timed-out list and shows the error only in the results area', async () => {
+    const user = userEvent.setup();
+    const hint = '조회 범위가 넓어 제한 시간 안에 예매를 집계하지 못했습니다. 공연·회차나 예매·결제 상태를 선택해 범위를 좁혀주세요';
+    const fallback = mocks.apiGet.getMockImplementation()!;
+    let listCalls = 0;
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/v1/admin/bookings?')) {
+        listCalls += 1;
+        throw Object.assign(new Error(hint), { statusCode: 503 });
+      }
+      return fallback(url);
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    const results = await screen.findByRole('alert', { name: '예매 조회 오류' });
+    expect(results).toHaveTextContent('예매를 조회하지 못했습니다');
+    expect(results).toHaveTextContent(hint);
+    // The operator narrows the scope with the filters that are still on screen.
+    expect(screen.getByRole('heading', { name: '예매·취소' })).toBeInTheDocument();
+    expect(screen.getByLabelText('예매 검색')).toBeInTheDocument();
+    for (const label of ['공연', '회차', '예매 상태', '결제 상태', '좌석 등급', '층', '결제 수단', '국내/해외']) {
+      expect(screen.getByRole('combobox', { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getByLabelText('좌석 검색')).toBeInTheDocument();
+    expect(screen.queryByText(/검색 결과 \d+건/)).not.toBeInTheDocument();
+    expect(screen.queryByText('판매 좌석')).not.toBeInTheDocument();
+
+    await user.click(within(results).getByRole('button', { name: '다시 조회' }));
+    await waitFor(() => expect(listCalls).toBe(2));
+
+    await selectOption(user, '예매 상태', '판매 완료');
+    await waitFor(() => expect(listCalls).toBe(3));
+  });
+
+  it('shows the aggregate reuse note next to the result count instead of only inside the collapsed statistics', async () => {
+    mocks.apiGet.mockResolvedValue(bookingsResponse({ total: 7 }));
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    const count = await screen.findByText(/검색 결과 7건/);
+    expect(count).toHaveTextContent('최대 30초 전 집계');
+    expect(count.closest('details')).toBeNull();
+  });
 });
 
 async function selectOption(

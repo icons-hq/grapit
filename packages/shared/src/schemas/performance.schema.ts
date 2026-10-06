@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SUPPORTED_LOCALES } from '../constants/locales';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '../checkout-payment-method';
 import {
   BANNER_DEVICE_TARGETS,
   BANNER_PLACEMENTS,
@@ -7,7 +8,6 @@ import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   GENRES,
   PERFORMANCE_PUBLISH_LIFECYCLE,
-  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
   PERFORMANCE_STATUSES,
 } from '../types/performance.types';
 
@@ -22,6 +22,18 @@ const booleanQueryParam = z.preprocess((value) => {
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
+/**
+ * Sale opening times outside this KST year range are input mistakes (for example
+ * a browser emitting year 0002 while the operator types a year digit by digit).
+ */
+export const PERFORMANCE_BOOKING_START_YEAR_RANGE = { min: 2000, max: 2100 } as const;
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function kstYearOf(value: string): number {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms + KST_OFFSET_MS).getUTCFullYear() : Number.NaN;
+}
+
 export const performancePublishLifecycleSchema = z.enum(
   PERFORMANCE_PUBLISH_LIFECYCLE,
 );
@@ -30,11 +42,21 @@ export const bannerPlacementSchema = z.enum(BANNER_PLACEMENTS);
 export const bannerDeviceTargetSchema = z.enum(BANNER_DEVICE_TARGETS);
 export const bannerStatusSchema = z.enum(BANNER_STATUSES);
 
+/** Public catalog list pages beyond this are rejected (cache key bound). */
+export const PERFORMANCE_QUERY_MAX_PAGE = 1000;
+/** Matches `performances.subcategory` varchar(100); longer input never matches. */
+export const PERFORMANCE_QUERY_SUB_MAX_LENGTH = 100;
+
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
-  sub: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  // Public, unthrottled catalog input that reaches a cache key: keep it
+  // bounded. An empty value still means "no subcategory filter".
+  sub: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().max(PERFORMANCE_QUERY_SUB_MAX_LENGTH).optional(),
+  ),
+  page: z.coerce.number().int().min(1).max(PERFORMANCE_QUERY_MAX_PAGE).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   sort: z.enum(['latest', 'popular']).default('latest'),
   ended: booleanQueryParam,
@@ -52,6 +74,13 @@ export const searchQuerySchema = z.object({
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 
+/**
+ * A `scheduled` banner goes live at its startsAt; without one it is never shown
+ * (public banner filter), so it cannot be stored that way.
+ */
+export const SCHEDULED_BANNER_REQUIRES_START_MESSAGE =
+  '예약됨 상태는 시작 시각이 필요합니다. 시작 시각이 없으면 노출되지 않습니다';
+
 export const createBannerSchema = z.object({
   imageUrl: z.string().url('올바른 이미지 URL을 입력해주세요'),
   linkUrl: z.string().url().nullable().optional(),
@@ -63,6 +92,13 @@ export const createBannerSchema = z.object({
   sortOrder: z.number().int().min(0).default(0),
   isActive: z.boolean().default(true),
 }).superRefine((value, ctx) => {
+  if (value.status === 'scheduled' && !value.startsAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+      path: ['startsAt'],
+    });
+  }
   if (!value.startsAt || !value.endsAt) return;
   if (Date.parse(value.endsAt) < Date.parse(value.startsAt)) {
     ctx.addIssue({
@@ -76,7 +112,8 @@ export type CreateBannerInput = z.input<typeof createBannerSchema>;
 
 export const seatMapConfigSchema = z.object({
   tiers: z.array(z.object({
-    tierName: z.string().min(1),
+    // Seat assignment matches price tiers by name, so both sides are trimmed at the boundary.
+    tierName: z.string().trim().min(1),
     color: z.string().min(1),
     seatIds: z.array(z.string()),
   })),
@@ -93,13 +130,25 @@ export const performanceSeatMapSchema = z.object({
 });
 export type PerformanceSeatMapInput = z.infer<typeof performanceSeatMapSchema>;
 
+type CheckoutConfigurablePaymentMethod = (typeof CHECKOUT_CONFIGURABLE_PAYMENT_METHODS)[number];
+
+function isCheckoutConfigurablePaymentMethod(
+  method: string,
+): method is CheckoutConfigurablePaymentMethod {
+  return (CHECKOUT_CONFIGURABLE_PAYMENT_METHODS as readonly string[]).includes(method);
+}
+
 export const performanceBookingPolicySchema = z.object({
   maxTicketsPerUser: z
     .number()
     .int()
     .positive('최대 예매 가능 매수는 1 이상이어야 합니다'),
+  // Only categories buyer checkout can submit and the admin form offers. VIRTUAL_ACCOUNT and
+  // MOBILE_PHONE stay readable on legacy rows (PERFORMANCE_ALLOWED_PAYMENT_METHODS) but
+  // can no longer be stored, so an API call or draft apply cannot allow a method no
+  // operator can see.
   allowedPaymentMethods: z
-    .array(z.enum(PERFORMANCE_ALLOWED_PAYMENT_METHODS))
+    .array(z.enum(CHECKOUT_CONFIGURABLE_PAYMENT_METHODS))
     .min(1, '최소 1개의 결제 수단이 필요합니다'),
   changePolicyEnabled: z.boolean(),
   paymentWindowMinutes: z
@@ -127,6 +176,17 @@ export const performanceBookingPolicySchema = z.object({
       message: '취소 좌석 hold 최대 시간은 최소 시간보다 작을 수 없습니다',
       path: ['cancelledSeatHoldMaxMinutes'],
     });
+  }
+  if (value.bookingStartsAt) {
+    const year = kstYearOf(value.bookingStartsAt);
+    const { min, max } = PERFORMANCE_BOOKING_START_YEAR_RANGE;
+    if (!(year >= min && year <= max)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `판매 시작 일시는 ${min}년부터 ${max}년 사이의 한국 시간으로 입력해주세요`,
+        path: ['bookingStartsAt'],
+      });
+    }
   }
 });
 export type PerformanceBookingPolicyInput = z.infer<
@@ -194,8 +254,9 @@ export const createPerformanceSchema = z.object({
   publishedAt: isoDatetime('게시 시각').nullable().optional(),
   publishedByUserId: z.string().uuid().nullable().optional(),
   priceTiers: z.array(z.object({
-    tierName: z.string().min(1, '등급명을 입력해주세요').max(50),
-    price: z.number().int().min(0, '가격은 0 이상이어야 합니다'),
+    tierName: z.string().trim().min(1, '등급명을 입력해주세요').max(50),
+    // Free seats are not a supported sale policy; 0 is almost always a missing price.
+    price: z.number().int().positive('가격은 0보다 커야 합니다'),
     sortOrder: z.number().int().min(0).default(0),
   })).min(1, '최소 1개의 가격 등급이 필요합니다'),
   showtimes: z.array(z.object({
@@ -211,7 +272,11 @@ export const createPerformanceSchema = z.object({
   seatMaps: z.array(performanceSeatMapSchema).optional().default([]),
   bookingPolicy: performanceBookingPolicySchema
     .optional()
-    .default(DEFAULT_PERFORMANCE_BOOKING_POLICY),
+    .default(() => ({
+      ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+      allowedPaymentMethods: DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods
+        .filter(isCheckoutConfigurablePaymentMethod),
+    })),
 });
 
 export type CreatePerformanceInput = z.infer<typeof createPerformanceSchema>;

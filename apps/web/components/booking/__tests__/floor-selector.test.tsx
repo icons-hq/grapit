@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { BookingPage } from '@/components/booking/booking-page';
@@ -11,6 +11,7 @@ import { useBookingStore } from '@/stores/use-booking-store';
 type MyLocksMockData = {
   seatIds: string[];
   expiresAt: number | null;
+  requestSeq?: number;
 };
 
 const {
@@ -73,23 +74,31 @@ vi.mock('@/hooks/use-socket', () => ({
   useBookingSocket: vi.fn(),
 }));
 
+type ServerResponseOptions = { onServerResponse?: (showtimeId: string) => void };
+
+function withServerResponse(mock: (...args: never[]) => unknown, options?: ServerResponseOptions) {
+  return (...args: never[]) => Promise.resolve()
+    .then(() => mock(...args))
+    .finally(() => options?.onServerResponse?.((args[0] as unknown as { showtimeId: string }).showtimeId));
+}
+
 vi.mock('@/hooks/use-booking', () => ({
   useSeatStatus: () => ({
     data: {
       seats: seatStatusSeatsMock(),
     },
   }),
-  useMyLocks: () => ({ data: myLocksDataMock() }),
-  useLockSeat: () => ({
-    mutate: lockSeatMutateMock,
+  useMyLocks: () => ({ data: myLocksDataMock(), refetch: vi.fn() }),
+  useLockSeat: (options?: ServerResponseOptions) => ({
+    mutateAsync: withServerResponse(lockSeatMutateMock, options),
     isPending: false,
   }),
-  useUnlockSeat: () => ({
-    mutate: unlockSeatMutateMock,
+  useUnlockSeat: (options?: ServerResponseOptions) => ({
+    mutateAsync: withServerResponse(unlockSeatMutateMock, options),
     isPending: false,
   }),
-  useUnlockAllSeats: () => ({
-    mutate: unlockAllMutateMock,
+  useUnlockAllSeats: (options?: ServerResponseOptions) => ({
+    mutateAsync: withServerResponse(unlockAllMutateMock, options),
     isPending: false,
   }),
 }));
@@ -238,7 +247,14 @@ function seedBookingState() {
 }
 
 describe('BookingPage floor selector', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
+    // Fixture showtime is 2026-07-04 09:00Z; keep it open for sale.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T00:00:00.000Z'));
     seedBookingState();
     lockSeatMutateMock.mockReset();
     unlockSeatMutateMock.mockReset();
@@ -253,21 +269,15 @@ describe('BookingPage floor selector', () => {
       '2F:A-1': 'available',
     });
     myLocksDataMock.mockReturnValue({ seatIds: [], expiresAt: null });
-    lockSeatMutateMock.mockImplementation((variables, options) => {
-      options?.onSuccess?.(
-        {
-          success: true,
-          lockId: `lock-${variables.seatId}`,
-          seatId: variables.seatId,
-          seatKey: variables.seatKey ?? variables.seatId,
-          floorKey: variables.floorKey,
-          floorLabel: variables.floorLabel,
-          expiresAt: Date.now() + 600000,
-        },
-        variables,
-        undefined as never,
-      );
-    });
+    lockSeatMutateMock.mockImplementation((variables) => ({
+      success: true,
+      lockId: `lock-${variables.seatId}`,
+      seatId: variables.seatId,
+      seatKey: variables.seatKey ?? variables.seatId,
+      floorKey: variables.floorKey,
+      floorLabel: variables.floorLabel,
+      expiresAt: Date.now() + 600000,
+    }));
   });
 
   it('preserves selections across floor switching and renders removable tags plus bottom summary', async () => {
@@ -328,6 +338,9 @@ describe('BookingPage floor selector', () => {
     myLocksDataMock.mockReturnValue({
       seatIds: ['1F:A-1'],
       expiresAt: Date.now() + 7 * 60 * 1000,
+      // Fetched after this page mounted (a snapshot cached from before the
+      // mount is not trusted and is fetched again).
+      requestSeq: Number.MAX_SAFE_INTEGER,
     });
 
     renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
@@ -359,21 +372,17 @@ describe('BookingPage floor selector', () => {
 
   it('surfaces backend 409 messages instead of replacing every conflict with other-owner copy', async () => {
     const user = userEvent.setup();
-    lockSeatMutateMock.mockImplementation((variables, options) => {
-      options?.onError?.(
-        new ApiClientError('이 공연은 1인 최대 4매까지 예매할 수 있습니다', 409),
-        variables,
-        undefined as never,
-      );
+    lockSeatMutateMock.mockImplementation(() => {
+      throw new ApiClientError('이 공연은 1인 최대 4매까지 예매할 수 있습니다', 409);
     });
 
     renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
 
     await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
 
-    expect(toastInfoMock).toHaveBeenCalledWith(
+    await waitFor(() => expect(toastInfoMock).toHaveBeenCalledWith(
       '이 공연은 1인 최대 4매까지 예매할 수 있습니다',
-    );
+    ));
     expect(toastInfoMock).not.toHaveBeenCalledWith('이미 다른 사용자가 선택한 좌석입니다');
   });
 

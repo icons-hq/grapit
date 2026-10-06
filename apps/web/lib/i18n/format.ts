@@ -138,6 +138,8 @@ function formatLocalTime(
 ): string {
   return new Intl.DateTimeFormat(locale, {
     timeZone,
+    // th defaults to the Buddhist calendar (2569); keep the year aligned with the KST anchor.
+    calendar: 'gregory',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

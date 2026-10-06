@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { AdminDashboardService } from '../admin-dashboard.service.js';
 import type { DashboardPeriod } from '@grabit/shared';
 
@@ -72,6 +74,28 @@ describe('AdminDashboardService', () => {
     });
   });
 
+  describe('summary compensated cancels', () => {
+    it('offsets every refunded unissued charge by state, not by one cancel reason (audit #70 x u02)', async () => {
+      mockCache.get.mockResolvedValue(null);
+      const whereSpy = vi.fn((_condition: SQL) => createChainMock([{ count: 0, sum: 0 }]));
+      mockDb.select.mockReturnValue({
+        from: vi.fn(() => ({ innerJoin: vi.fn(() => ({ where: whereSpy })), where: whereSpy })),
+      });
+
+      await service.getSummary();
+
+      // Fourth summary query: compensated cancels of charges that gross counted.
+      const compensated = new PgDialect().sqlToQuery(whereSpy.mock.calls[3]![0]);
+      expect(compensated.sql).toContain('"reservations"."status" = $');
+      expect(compensated.sql).toContain('"payments"."status" = $');
+      expect(compensated.sql).toContain('"payments"."paid_at" is not null');
+      expect(compensated.sql).toContain('not exists');
+      expect(compensated.params).toEqual(expect.arrayContaining(['FAILED', 'CANCELED']));
+      // Ticket limit, amount mismatch, unsupported method and confirm compensations carry other reasons.
+      expect(compensated.sql).not.toContain('cancel_reason');
+    });
+  });
+
   describe('kst-boundary', () => {
     it('applies KST day boundary via where clause referencing reservations.createdAt', async () => {
       mockCache.get.mockResolvedValue(null);
@@ -106,6 +130,58 @@ describe('AdminDashboardService', () => {
       // review MEDIUM 6: 빈 DB 결과에도 bucket skeleton이 채워져서 최소 1개 이상 (90d → 13 weeks skeleton)
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('revenue-weekly oldest partial week', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      // Monday..Friday: today-89 falls in the ISO week before the 13th week
+      // counted back from today, which the old skeleton dropped.
+      ['Monday', '2026-04-20T03:00:00.000Z', '2026-W04'],
+      ['Wednesday', '2026-04-22T03:00:00.000Z', '2026-W04'],
+      ['Friday', '2026-04-24T03:00:00.000Z', '2026-W04'],
+      ['Sunday', '2026-04-26T03:00:00.000Z', '2026-W05'],
+    ])('keeps the oldest partial week revenue when today is %s', async (_day, now, oldestWeek) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(now));
+      mockCache.get.mockResolvedValue(null);
+      const orderBySpy = vi.fn(() =>
+        createChainMock([
+          { bucket: oldestWeek, revenue: 120000, count: 2 },
+          { bucket: '2026-W17', revenue: 50000, count: 1 },
+        ]),
+      );
+      const groupBySpy = vi.fn(() => ({ orderBy: orderBySpy }));
+      const whereSpy = vi.fn(() => ({ groupBy: groupBySpy }));
+      mockDb.select.mockReturnValue({ from: vi.fn(() => ({ where: whereSpy })) });
+
+      const result = await service.getRevenueTrend('90d' as DashboardPeriod);
+
+      expect(result[0]).toEqual({ bucket: oldestWeek, revenue: 120000, count: 2 });
+      expect(result.at(-1)?.bucket).toBe('2026-W17');
+      expect(result.reduce((sum, row) => sum + row.revenue, 0)).toBe(170000);
+      expect(new Set(result.map((row) => row.bucket)).size).toBe(result.length);
+    });
+
+    it('never drops a DB bucket that falls outside the skeleton', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-04-20T03:00:00.000Z'));
+      mockCache.get.mockResolvedValue(null);
+      const orderBySpy = vi.fn(() =>
+        createChainMock([{ bucket: '2025-W52', revenue: 1000, count: 1 }]),
+      );
+      const groupBySpy = vi.fn(() => ({ orderBy: orderBySpy }));
+      const whereSpy = vi.fn(() => ({ groupBy: groupBySpy }));
+      mockDb.select.mockReturnValue({ from: vi.fn(() => ({ where: whereSpy })) });
+
+      const result = await service.getRevenueTrend('90d' as DashboardPeriod);
+
+      expect(result[0]).toEqual({ bucket: '2025-W52', revenue: 1000, count: 1 });
+      expect(result.reduce((sum, row) => sum + row.revenue, 0)).toBe(1000);
     });
   });
 

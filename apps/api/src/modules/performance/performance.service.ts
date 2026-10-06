@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne, or, lte } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray, ne, or, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -25,8 +26,10 @@ import type {
   PerformanceQuery,
   SeatMap,
 } from '@grabit/shared';
-import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
-import { CacheService } from './cache.service.js';
+import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogNotEndedCondition, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
+import { CacheService, type CacheLoadResult } from './cache.service.js';
+import { CATALOG_CACHE_GENERATION_SCOPES } from './catalog-cache-keys.js';
+import { PerformanceViewCounter } from './performance-view-counter.service.js';
 import {
   overlayReviewedCardTranslations,
   overlayReviewedDetailTranslations,
@@ -43,7 +46,16 @@ type FindPerformanceByIdOptions = {
 
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v4-opening-boundary';
 const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v3-venue-access';
+const HOME_BANNER_CACHE_VERSION = 'home-visible-v1';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
+/**
+ * Empty list pages (unknown subcategory, page past the end) are cached only
+ * briefly so arbitrary query combinations cannot pin keys in Valkey.
+ */
+export const EMPTY_LIST_CACHE_TTL_SECONDS = 10;
+const UNAVAILABLE_CACHE_GENERATION = 'unavailable';
+const HOME_BANNER_PLACEMENTS = ['home_hero', 'home_secondary'] as const;
+const HOME_BANNER_STATUSES = ['active', 'scheduled'] as const;
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
 
@@ -166,6 +178,36 @@ function cacheTtlUntilNextBookingStart(
   return Math.max(1, Math.min(DEFAULT_CACHE_TTL_SECONDS, ...nextStartsInSeconds));
 }
 
+/** Fixed-length, delimiter-free cache key segment for free-form input. */
+function hashCacheKeySegment(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('base64url').slice(0, 22);
+}
+
+function cacheGenerationSegment(generation: string | null): string {
+  return `g${generation ?? UNAVAILABLE_CACHE_GENERATION}`;
+}
+
+type HomeBannerRow = typeof banners.$inferSelect;
+
+/**
+ * A home banner is public only when the operator published it for a home
+ * placement and its schedule window contains `now`. `scheduled` banners go
+ * live at their startsAt; without a startsAt they stay hidden.
+ */
+export function isHomeBannerLive(
+  banner: Pick<HomeBannerRow, 'isActive' | 'status' | 'placement' | 'startsAt' | 'endsAt'>,
+  now: Date = new Date(),
+): boolean {
+  if (!banner.isActive) return false;
+  if (!(HOME_BANNER_PLACEMENTS as readonly string[]).includes(banner.placement)) return false;
+  if (!(HOME_BANNER_STATUSES as readonly string[]).includes(banner.status)) return false;
+  if (banner.status === 'scheduled' && !banner.startsAt) return false;
+  const nowMs = now.getTime();
+  if (banner.startsAt && banner.startsAt.getTime() > nowMs) return false;
+  if (banner.endsAt && banner.endsAt.getTime() <= nowMs) return false;
+  return true;
+}
+
 function toOptionalIsoString(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : value;
@@ -187,7 +229,9 @@ function maskHiddenPerformanceCopy(
 export class PerformanceService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly cacheService: CacheService,
+    @Inject(CacheService) private readonly cacheService: CacheService,
+    @Inject(PerformanceViewCounter)
+    private readonly viewCounter: PerformanceViewCounter,
   ) {}
 
   async findByGenre(
@@ -196,11 +240,28 @@ export class PerformanceService {
   ): Promise<PerformanceListResponse> {
     const { page = 1, limit = 20, sort = 'latest', ended = false, sub, status } = query;
     const locale = resolvePerformanceTranslationLocale(query.locale);
+    const generation = await this.cacheService.getGeneration(
+      CATALOG_CACHE_GENERATION_SCOPES.list,
+    );
+    // `sub` is free-form text (bounded by the shared query schema); hash it so
+    // the key stays fixed-length and delimiter-free.
+    const subSegment = sub ? `sub-${hashCacheKeySegment(sub)}` : 'none';
+    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${cacheGenerationSegment(generation)}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${subSegment}:${status ?? 'all'}`;
 
-    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}:${status ?? 'all'}`;
-    const cached = await this.cacheService.get<PerformanceListResponse>(cacheKey);
-    if (cached) return cached;
+    return this.cacheService.getOrLoad(
+      cacheKey,
+      () => this.loadGenreList(genre, { page, limit, sort, ended, sub, status }, locale),
+      { readThrough: generation !== null },
+    );
+  }
 
+  private async loadGenreList(
+    genre: string,
+    query: Required<Pick<PerformanceQuery, 'page' | 'limit' | 'sort' | 'ended'>>
+      & Pick<PerformanceQuery, 'sub' | 'status'>,
+    locale: string,
+  ): Promise<CacheLoadResult<PerformanceListResponse>> {
+    const { page, limit, sort, ended, sub, status } = query;
     const offset = (page - 1) * limit;
 
     const conditions = [
@@ -218,7 +279,9 @@ export class PerformanceService {
     const queryTime = new Date();
     const statusCondition = publicCatalogStatusCondition(status, queryTime);
     if (statusCondition) conditions.push(statusCondition);
-    else if (!ended) conditions.push(ne(performances.status, 'ended'));
+    // Hide what the cards would show as ended, including performances whose
+    // showtimes have all started while the operator status still says selling.
+    else if (!ended) conditions.push(publicCatalogNotEndedCondition(queryTime));
 
     const whereClause = and(...conditions);
 
@@ -246,7 +309,7 @@ export class PerformanceService {
             join booking_policies next_policy on next_policy.performance_id = next_performance.id
             where next_performance.publish_state = 'published'
               and next_performance.genre = ${genre}
-              and next_performance.status = 'upcoming'
+              and next_performance.status <> 'ended'
               and next_policy.booking_starts_at > ${queryTime}
               ${sub ? sql`and next_performance.subcategory = ${sub}` : sql``}
           )`,
@@ -271,9 +334,16 @@ export class PerformanceService {
     const nextBookingStartsAt = countResult[0]?.nextBookingStartsAt;
     const cacheTtl = nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
       ? 1
-      : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...data.map((row) => row.bookingStartsAt)]);
-    await this.cacheService.set(cacheKey, result, cacheTtl);
-    return result;
+      : cacheTtlUntilNextBookingStart([
+        nextBookingStartsAt,
+        ...data.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+      ]);
+    return {
+      value: result,
+      ttlSeconds: data.length === 0
+        ? Math.min(EMPTY_LIST_CACHE_TTL_SECONDS, cacheTtl)
+        : cacheTtl,
+    };
   }
 
   async findById(
@@ -282,29 +352,50 @@ export class PerformanceService {
     options: FindPerformanceByIdOptions = {},
   ): Promise<PerformanceWithDetails | null> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
-    const includeHiddenCopy = options.includeHiddenCopy === true;
+
+    if (options.includeHiddenCopy === true) {
+      // Guarded admin reads: never cached, never counted as public views, and
+      // they expose the stored status so an edit form does not persist the
+      // derived 'selling' status back over 'upcoming'.
+      const loaded = await this.loadPerformanceDetail(id, targetLocale, true);
+      return loaded?.detail ?? null;
+    }
+
+    // The generation is read before the DB so a load that raced an admin
+    // commit can only populate the superseded key (catalog freshness bumps
+    // the generation after every commit, including visibility changes).
+    const generation = await this.cacheService.getGeneration(
+      CATALOG_CACHE_GENERATION_SCOPES.detail(id),
+    );
+    const cacheKey = `cache:performances:detail:${id}:${targetLocale}:${PERFORMANCE_DETAIL_CACHE_VERSION}:${cacheGenerationSegment(generation)}`;
+    const detail = await this.cacheService.getOrLoad<PerformanceWithDetails | null>(
+      cacheKey,
+      async () => {
+        const loaded = await this.loadPerformanceDetail(id, targetLocale, false);
+        if (!loaded) return { value: null, ttlSeconds: null };
+        return {
+          value: maskHiddenPerformanceCopy(loaded.detail),
+          ttlSeconds: cacheTtlUntilNextBookingStart([loaded.bookingStartsAt]),
+        };
+      },
+      { readThrough: generation !== null },
+    );
+
+    if (detail) {
+      // Write-behind: no DB write or row lock on the public read path.
+      this.viewCounter.record(id);
+    }
+    return detail;
+  }
+
+  private async loadPerformanceDetail(
+    id: string,
+    targetLocale: string,
+    includeHiddenCopy: boolean,
+  ): Promise<{ detail: PerformanceWithDetails; bookingStartsAt: string | null } | null> {
     const visibilityCondition = includeHiddenCopy
       ? eq(performances.id, id)
       : and(eq(performances.id, id), eq(performances.publishState, 'published'));
-
-    // Increment view count BEFORE the cache check so view counters keep
-    // accruing on every request, not just on DB hits (per plan acceptance).
-    // no-op if ID doesn't exist or is hidden from the current read path.
-    const visibilityRows = await this.db
-      .update(performances)
-      .set({ viewCount: sql`${performances.viewCount} + 1` })
-      .where(visibilityCondition)
-      .returning({ id: performances.id });
-
-    if (visibilityRows.length === 0) {
-      return null;
-    }
-
-    const cacheKey = `cache:performances:detail:${id}:${targetLocale}:${PERFORMANCE_DETAIL_CACHE_VERSION}`;
-    if (!includeHiddenCopy) {
-      const cached = await this.cacheService.get<PerformanceWithDetails>(cacheKey);
-      if (cached) return cached;
-    }
 
     // Get performance with venue
     const [performanceRow] = await this.db
@@ -368,10 +459,12 @@ export class PerformanceService {
           endDate: perf.endDate?.toISOString() ?? '',
           runtime: perf.runtime,
           ageRating: perf.ageRating,
-          status: resolveEffectivePerformanceStatus(
-            perf.status,
-            bookingPolicy.bookingStartsAt,
-          ),
+          status: includeHiddenCopy
+            ? perf.status
+            : resolveEffectivePerformanceStatus(
+              perf.status,
+              bookingPolicy.bookingStartsAt,
+            ),
           salesInfo: perf.salesInfo,
           salesInfoVisible: perf.salesInfoVisible,
           viewCount: perf.viewCount,
@@ -407,75 +500,113 @@ export class PerformanceService {
         targetLocale,
       );
 
-    const response = includeHiddenCopy
-      ? result
-      : maskHiddenPerformanceCopy(result);
-
-    if (!includeHiddenCopy) {
-      await this.cacheService.set(
-        cacheKey,
-        response,
-        cacheTtlUntilNextBookingStart([bookingPolicy.bookingStartsAt]),
-      );
-    }
-    return response;
+    return { detail: result, bookingStartsAt: bookingPolicy.bookingStartsAt ?? null };
   }
 
   async getHomeBanners(): Promise<Banner[]> {
-    const cacheKey = 'cache:home:banners';
-    const cached = await this.cacheService.get<Banner[]>(cacheKey);
-    if (cached) return cached;
+    const generation = await this.cacheService.getGeneration(
+      CATALOG_CACHE_GENERATION_SCOPES.banner,
+    );
+    const cacheKey = `cache:home:banners:${HOME_BANNER_CACHE_VERSION}:${cacheGenerationSegment(generation)}`;
+    return this.cacheService.getOrLoad(
+      cacheKey,
+      () => this.loadHomeBanners(),
+      { readThrough: generation !== null },
+    );
+  }
 
+  private async loadHomeBanners(
+    now: Date = new Date(),
+  ): Promise<CacheLoadResult<Banner[]>> {
+    // Candidates include not-yet-started banners so the cache TTL can stop at
+    // their startsAt; isHomeBannerLive decides what is public right now.
     const rows = await this.db
       .select()
       .from(banners)
-      .where(eq(banners.isActive, true))
+      .where(
+        and(
+          eq(banners.isActive, true),
+          inArray(banners.status, [...HOME_BANNER_STATUSES]),
+          inArray(banners.placement, [...HOME_BANNER_PLACEMENTS]),
+          or(isNull(banners.endsAt), gt(banners.endsAt, now)),
+        ),
+      )
       .orderBy(banners.sortOrder);
 
-    const result: Banner[] = rows.map((b) => ({
-      id: b.id,
-      imageUrl: b.imageUrl,
-      linkUrl: b.linkUrl,
-      placement: b.placement,
-      deviceTarget: b.deviceTarget,
-      status: b.status,
-      startsAt: toOptionalIsoString(b.startsAt),
-      endsAt: toOptionalIsoString(b.endsAt),
-      sortOrder: b.sortOrder,
-      isActive: b.isActive,
-    }));
+    const result: Banner[] = rows
+      .filter((b) => isHomeBannerLive(b, now))
+      .map((b) => ({
+        id: b.id,
+        imageUrl: b.imageUrl,
+        linkUrl: b.linkUrl,
+        placement: b.placement,
+        deviceTarget: b.deviceTarget,
+        status: b.status,
+        startsAt: toOptionalIsoString(b.startsAt),
+        endsAt: toOptionalIsoString(b.endsAt),
+        sortOrder: b.sortOrder,
+        isActive: b.isActive,
+      }));
 
-    await this.cacheService.set(cacheKey, result);
-    return result;
+    return {
+      value: result,
+      // Expire at the next schedule boundary (a banner starting or ending).
+      ttlSeconds: cacheTtlUntilNextBookingStart(
+        rows.flatMap((b) => [b.startsAt, b.endsAt]),
+        now,
+      ),
+    };
   }
 
   async getHotPerformances(
     locale?: string | null,
   ): Promise<PerformanceCardData[]> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
-    const cacheKey = `cache:home:hot:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${targetLocale}`;
-    const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
-    if (cached) return cached;
+    const generation = await this.cacheService.getGeneration(
+      CATALOG_CACHE_GENERATION_SCOPES.home,
+    );
+    const cacheKey = `cache:home:hot:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${cacheGenerationSegment(generation)}:${targetLocale}`;
+    return this.cacheService.getOrLoad(
+      cacheKey,
+      () => this.loadHotPerformances(targetLocale),
+      { readThrough: generation !== null },
+    );
+  }
 
-    const rows = await this.db
-      .select(publicCatalogCardSelection)
+  private async loadHotPerformances(
+    targetLocale: string,
+  ): Promise<CacheLoadResult<PerformanceCardData[]>> {
+    const queryTime = new Date();
+    const [rows, nextOpeningRows] = await Promise.all([
+      this.db
+        .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(
           and(
             eq(performances.publishState, 'published'),
-            or(
-              inArray(performances.status, ['selling', 'closing_soon']),
-              and(
-                eq(performances.status, 'upcoming'),
-                lte(bookingPolicies.bookingStartsAt, new Date()),
-              ),
-            ),
+            publicCatalogStatusCondition('selling', queryTime),
           ),
         )
-      .orderBy(desc(performances.viewCount))
-      .limit(4);
+        .orderBy(desc(performances.viewCount))
+        .limit(4),
+      // Only opened rows are listed, so the next opening that may enter the hot
+      // list has to bound the cache TTL separately.
+      this.db
+        .select({
+          nextBookingStartsAt: sql<Date | string | null>`min(${bookingPolicies.bookingStartsAt})`,
+        })
+        .from(performances)
+        .innerJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(
+          and(
+            eq(performances.publishState, 'published'),
+            ne(performances.status, 'ended'),
+            gt(bookingPolicies.bookingStartsAt, queryTime),
+          ),
+        ),
+    ]);
 
     const cards: PerformanceCardData[] = rows.map(mapPublicCatalogCard);
     const result = await overlayReviewedCardTranslations(
@@ -484,22 +615,37 @@ export class PerformanceService {
       targetLocale,
     );
 
-    await this.cacheService.set(
-      cacheKey,
-      result,
-      cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
-    );
-    return result;
+    const nextBookingStartsAt = nextOpeningRows[0]?.nextBookingStartsAt;
+    return {
+      value: result,
+      ttlSeconds: nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
+        ? 1
+        // A listed row leaves the hot list once its last showtime starts.
+        : cacheTtlUntilNextBookingStart([
+          nextBookingStartsAt,
+          ...rows.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+        ]),
+    };
   }
 
   async getNewPerformances(
     locale?: string | null,
   ): Promise<PerformanceCardData[]> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
-    const cacheKey = `cache:home:new:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${targetLocale}`;
-    const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
-    if (cached) return cached;
+    const generation = await this.cacheService.getGeneration(
+      CATALOG_CACHE_GENERATION_SCOPES.home,
+    );
+    const cacheKey = `cache:home:new:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${cacheGenerationSegment(generation)}:${targetLocale}`;
+    return this.cacheService.getOrLoad(
+      cacheKey,
+      () => this.loadNewPerformances(targetLocale),
+      { readThrough: generation !== null },
+    );
+  }
 
+  private async loadNewPerformances(
+    targetLocale: string,
+  ): Promise<CacheLoadResult<PerformanceCardData[]>> {
     const rows = await this.db
       .select(publicCatalogCardSelection)
         .from(performances)
@@ -508,7 +654,7 @@ export class PerformanceService {
         .where(
           and(
             eq(performances.publishState, 'published'),
-          inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
+          publicCatalogNotEndedCondition(),
         ),
       )
       .orderBy(desc(performances.createdAt))
@@ -521,11 +667,11 @@ export class PerformanceService {
       targetLocale,
     );
 
-    await this.cacheService.set(
-      cacheKey,
-      result,
-      cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
-    );
-    return result;
+    return {
+      value: result,
+      ttlSeconds: cacheTtlUntilNextBookingStart(
+        rows.flatMap((row) => [row.bookingStartsAt, row.lastShowtimeAt]),
+      ),
+    };
   }
 }

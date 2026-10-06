@@ -122,13 +122,8 @@ const KPI_DEFINITIONS = [
     tone: 'red',
     value: (summary: NormalizedSummary) => summary.rejectedScanCount,
   },
-  {
-    key: 'offline-pending',
-    label: '동기화 대기',
-    icon: WifiOff,
-    tone: 'amber',
-    value: (summary: NormalizedSummary) => summary.offlinePendingCount,
-  },
+  // No server KPI for offline pending: those attempts stay on each device until
+  // synced, so a server count is always 0. DeviceBacklogNotice says where to look.
   {
     key: 'offline-synced',
     label: '동기화 완료',
@@ -145,18 +140,21 @@ const KPI_DEFINITIONS = [
   },
 ] as const;
 
+// Each option matches the results the server records. '중복' covers both
+// duplicate and already_used, like the duplicate KPI and alert. Offline pending
+// is never recorded on the server, so it is not offered.
 const OUTCOME_OPTIONS = [
   { value: 'all', label: '전체 결과' },
   { value: 'entered', label: '입장 처리' },
   { value: 'duplicate', label: '중복' },
-  { value: 'tampered', label: '위조/거절' },
+  { value: 'tampered', label: '위조/확인 불가' },
+  { value: 'wrong_showtime', label: '다른 회차' },
+  { value: 'expired', label: '만료' },
   { value: 'refunded_cancelled', label: '환불/취소' },
-  { value: 'offline_pending', label: '오프라인 보류' },
 ] as const;
 
 const OFFLINE_STATE_OPTIONS = [
   { value: 'all', label: '전체 동기화' },
-  { value: 'pending', label: '대기' },
   { value: 'synced', label: '동기화 완료' },
   { value: 'rejected', label: '충돌/거절' },
 ] as const;
@@ -177,7 +175,6 @@ interface NormalizedSummary {
   entryRatePercent: number;
   duplicateScanCount: number;
   rejectedScanCount: number;
-  offlinePendingCount: number;
   offlineSyncedCount: number;
   alerts: NormalizedAlert[];
   updatedAt?: string;
@@ -203,7 +200,15 @@ interface NormalizedLog {
   source?: 'online' | 'offline_sync';
   ticketRef: string;
   scannedAt?: string;
+  rejectionReason?: string;
 }
+
+/**
+ * The server records a scan of a Ticket Item whose cancellation is not
+ * confirmed yet (audit #115) as refunded_cancelled with its own reason.
+ */
+const CANCELLATION_PENDING_REASON_PREFIX = '취소 처리 중';
+const CANCELLATION_PENDING_LABEL = '취소 처리 중(환불 미확정)';
 
 export function FieldMonitor({
   summary: controlledSummary,
@@ -293,7 +298,7 @@ export function FieldMonitor({
       </div>
 
       <MonitorFilters filters={filters} updateFilter={updateFilter} scanners={scanners} />
-      <p className="text-sm text-gray-600">요약은 선택한 회차 전체 기준입니다. 결과·동기화·스캐너·기간 필터는 아래 스캔 로그에만 적용됩니다. 조회 날짜와 표시 시각은 한국 시간(KST)입니다.</p>
+      <p className="text-sm text-gray-600">요약은 선택한 회차 전체 기준입니다. 중복·거절 스캔과 스캔 로그는 검표 화면에서 이 회차를 선택하고 확인한 기록입니다. 결과·동기화·스캐너·기간 필터는 아래 스캔 로그에만 적용됩니다. 조회 날짜와 표시 시각은 한국 시간(KST)입니다.</p>
       {stateMessage && <p role="status" className="rounded-lg border border-gray-200 bg-white p-5 text-gray-600">{stateMessage}</p>}
       {summaryReady && summary?.updatedAt && <p className="text-sm text-gray-500">최근 조회 {formatTimestamp(summary.updatedAt)} KST{summaryQuery.isFetching || logsQuery.isFetching ? ' · 갱신 중' : ''}</p>}
 
@@ -326,12 +331,18 @@ export function FieldMonitor({
         ))}
       </div>
 
-      {summaryReady && logsReady && <AlertPanel alerts={summary?.alerts ?? []} />}
+      <DeviceBacklogNotice />
+
+      {summaryReady && logsReady && <AlertPanel alerts={summary?.alerts ?? []} logs={logs} />}
 
       {logsReady && <ScanLogTable logs={logs} />}
     </section>
   );
 }
+
+// Same height and width as the native select and date inputs beside them. The
+// shared trigger sets its height through data-size, which a plain h-11 loses to.
+const SELECT_TRIGGER_CLASS = 'h-11 w-full data-[size=default]:h-11';
 
 function MonitorFilters({
   filters,
@@ -369,7 +380,7 @@ function MonitorFilters({
             updateFilter('outcome', value as FieldCheckInOutcome | 'all')
           }
         >
-          <SelectTrigger className="h-11" aria-label="스캔 결과 필터">
+          <SelectTrigger className={SELECT_TRIGGER_CLASS} aria-label="스캔 결과 필터">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -386,7 +397,7 @@ function MonitorFilters({
             updateFilter('syncState', value as FieldOfflineSyncState | 'all')
           }
         >
-          <SelectTrigger className="h-11" aria-label="오프라인 상태 필터">
+          <SelectTrigger className={SELECT_TRIGGER_CLASS} aria-label="오프라인 상태 필터">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -397,7 +408,7 @@ function MonitorFilters({
             ))}
           </SelectContent>
         </Select>
-        <select className="h-11 min-w-0 rounded-md border border-gray-200 bg-white px-3 text-sm"
+        <select className="h-11 w-full min-w-0 rounded-md border border-gray-200 bg-white px-3 text-sm"
           value={filters.scannerUserId ?? 'all'} aria-label="스캐너 계정 필터"
           onChange={(event) => updateFilter('scannerUserId', event.target.value)}>
           <option value="all">전체 담당자</option>
@@ -468,7 +479,23 @@ function KpiCard({
   );
 }
 
-function AlertPanel({ alerts }: { alerts: readonly NormalizedAlert[] }) {
+function DeviceBacklogNotice() {
+  return (
+    <div
+      data-testid="field-monitor-device-backlog-notice"
+      className="flex items-start gap-3 rounded-lg border border-[#FDE68A] bg-[#FFFBEB] p-4 text-[#8B6306]"
+    >
+      <WifiOff className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+      <p className="text-sm leading-[1.5]">
+        <span className="font-semibold">동기화 대기는 이 화면에 집계되지 않습니다.</span>{' '}
+        통신이 끊긴 동안 처리한 입장은 각 현장 단말의 동기화 대기 목록에만 있고, 동기화하기 전에는 입장 완료·중복 스캔에도 반영되지 않습니다.
+        단말마다 대기 목록을 확인하고 연결이 복구되면 보류 스캔 동기화를 실행하도록 안내하세요.
+      </p>
+    </div>
+  );
+}
+
+function AlertPanel({ alerts, logs }: { alerts: readonly NormalizedAlert[]; logs: readonly NormalizedLog[] }) {
   return (
     <Card
       data-testid="field-monitor-alerts"
@@ -500,6 +527,9 @@ function AlertPanel({ alerts }: { alerts: readonly NormalizedAlert[] }) {
                   <p className="text-sm font-semibold leading-[1.4]">
                     {alert.message}
                   </p>
+                  {alert.type === 'refunded_cancelled_attempt' && (
+                    <RefundedCancelledBreakdown total={alert.count ?? 0} logs={logs} />
+                  )}
                   <p className="mt-1 text-sm leading-[1.4]">
                     {formatTimestamp(alert.detectedAt)}
                   </p>
@@ -523,6 +553,25 @@ function AlertPanel({ alerts }: { alerts: readonly NormalizedAlert[] }) {
   );
 }
 
+/**
+ * Splits the refunded/cancelled alert. The server counts both cases together
+ * for the whole showtime; the split comes from the loaded scan log (latest 100
+ * rows, filters applied), and rows outside it are reported as not split.
+ */
+function RefundedCancelledBreakdown({ total, logs }: { total: number; logs: readonly NormalizedLog[] }) {
+  const refundedCancelled = logs.filter((log) => log.outcome === 'refunded_cancelled');
+  const pending = refundedCancelled.filter(isCancellationPendingLog).length;
+  const confirmed = refundedCancelled.length - pending;
+  const outsideLog = Math.max(total - refundedCancelled.length, 0);
+
+  return (
+    <p data-testid="field-monitor-refunded-breakdown" className="mt-1 text-sm font-semibold leading-[1.4]">
+      취소 처리 중 {pending}건 · 환불/취소 {confirmed}건
+      {outsideLog > 0 ? ` · 스캔 로그 밖 ${outsideLog}건(구분 전)` : ''}
+    </p>
+  );
+}
+
 function ScanLogTable({ logs }: { logs: readonly NormalizedLog[] }) {
   return (
     <Card className="border-gray-200 bg-white shadow-sm">
@@ -531,13 +580,34 @@ function ScanLogTable({ logs }: { logs: readonly NormalizedLog[] }) {
           스캔 로그 · 최근 100개
         </CardTitle>
       </CardHeader>
-      <CardContent className="overflow-x-auto p-4 pt-2">
+      <CardContent className="p-4 pt-2">
+        {/* Phones get one card per scan instead of a table scrolled sideways. */}
+        <ul aria-label="스캔 로그 목록" className="space-y-2 sm:hidden">
+          {logs.length === 0 ? (
+            <li className="py-6 text-center text-sm text-gray-600">선택한 조건에 해당하는 스캔 기록이 없습니다</li>
+          ) : (
+            logs.map((log) => (
+              <li key={log.id} className="rounded-lg border border-gray-200 p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 break-keep font-semibold text-gray-900">{log.seatLabel}</p>
+                  <span className="shrink-0 tabular-nums text-gray-600">{formatTime(log.scannedAt)}</span>
+                </div>
+                <p className="mt-1 font-semibold text-gray-900">{labelOutcome(log)}</p>
+                {log.rejectionReason && <p className="mt-1 break-keep text-gray-600">{log.rejectionReason}</p>}
+                <p className="mt-1 text-xs text-gray-500">
+                  {log.reservationNumber} · {labelSource(log)} · {log.scannerName}
+                </p>
+              </li>
+            ))
+          )}
+        </ul>
+        <div data-testid="field-monitor-log-table" className="hidden sm:block">
         <Table aria-label="스캔 로그">
           <TableHeader>
             <TableRow>
               <TableHead>좌석</TableHead>
-              <TableHead>예매번호</TableHead>
               <TableHead>결과</TableHead>
+              <TableHead>예매번호</TableHead>
               <TableHead>오프라인</TableHead>
               <TableHead>스캐너</TableHead>
               <TableHead>티켓 참조</TableHead>
@@ -555,22 +625,38 @@ function ScanLogTable({ logs }: { logs: readonly NormalizedLog[] }) {
               logs.map((log) => (
                 <TableRow key={log.id}>
                   <TableCell className="font-semibold">{log.seatLabel}</TableCell>
+                  <TableCell className="whitespace-normal">
+                    <span className="font-semibold">{labelOutcome(log)}</span>
+                    {log.rejectionReason && (
+                      <span className="mt-0.5 block max-w-[240px] break-keep text-xs text-gray-500">{log.rejectionReason}</span>
+                    )}
+                  </TableCell>
                   <TableCell className="font-semibold">
                     {log.reservationNumber}
                   </TableCell>
-                  <TableCell>{labelOutcome(log.outcome)}</TableCell>
-                  <TableCell>{log.source === 'online' ? '온라인' : ({ pending: '대기', synced: '동기화 완료', rejected: '충돌/거절' } as Record<string, string>)[log.syncState] ?? '미확인'}</TableCell>
+                  <TableCell>{labelSource(log)}</TableCell>
                   <TableCell title={log.scannerUserId}>{log.scannerName}</TableCell>
                   <TableCell>{log.ticketRef}</TableCell>
-                  <TableCell>{formatTimestamp(log.scannedAt)}</TableCell>
+                  <TableCell className="tabular-nums">{formatShortTimestamp(log.scannedAt)}</TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
+        </div>
       </CardContent>
     </Card>
   );
+}
+
+function isCancellationPendingLog(log: NormalizedLog): boolean {
+  return log.outcome === 'refunded_cancelled'
+    && Boolean(log.rejectionReason?.startsWith(CANCELLATION_PENDING_REASON_PREFIX));
+}
+
+function labelSource(log: NormalizedLog): string {
+  if (log.source === 'online') return '온라인';
+  return ({ pending: '대기', synced: '동기화 완료', rejected: '충돌/거절' } as Record<string, string>)[log.syncState] ?? '미확인';
 }
 
 function normalizeSummary(summary?: SummaryInput | null): NormalizedSummary | null {
@@ -596,9 +682,6 @@ function normalizeSummary(summary?: SummaryInput | null): NormalizedSummary | nu
       summary.duplicateScanCount ?? summary.duplicateScans,
     ),
     rejectedScanCount: toNumber(summary.rejectedScanCount ?? summary.rejectedScans),
-    offlinePendingCount: toNumber(
-      summary.offlinePendingCount ?? summary.offlinePending,
-    ),
     offlineSyncedCount: toNumber(
       summary.offlineSyncedCount ?? summary.offlineSynced,
     ),
@@ -643,6 +726,7 @@ function normalizeLogs(logs: readonly LogInput[] | undefined): NormalizedLog[] {
     source: log.source,
     ticketRef: String(log.redactedTokenRef ?? log.maskedTicketRef ?? 'redacted'),
     scannedAt: log.scannedAt,
+    rejectionReason: log.rejectionReason?.trim() || undefined,
   }));
 }
 
@@ -659,8 +743,9 @@ function toneClass(tone: 'green' | 'amber' | 'red' | 'neutral'): string {
   }
 }
 
-function labelOutcome(outcome: string): string {
-  switch (outcome) {
+function labelOutcome(log: NormalizedLog): string {
+  if (isCancellationPendingLog(log)) return CANCELLATION_PENDING_LABEL;
+  switch (log.outcome) {
     case 'entered':
     case 'success':
       return '입장 처리';
@@ -672,8 +757,11 @@ function labelOutcome(outcome: string): string {
     case 'offline_pending':
       return '오프라인 보류';
     case 'tampered':
-    case 'expired':
+      return '위조/확인 불가';
     case 'wrong_showtime':
+      return '다른 회차';
+    case 'expired':
+      return '만료';
     case 'rejected':
     default:
       return '거절';
@@ -695,6 +783,34 @@ function formatTimestamp(value?: string): string {
     timeStyle: 'short',
     timeZone: 'Asia/Seoul',
   }).format(date);
+}
+
+const KST_PARTS = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+function kstParts(value?: string): Partial<Record<Intl.DateTimeFormatPartTypes, string>> | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Object.fromEntries(KST_PARTS.formatToParts(date).map((part) => [part.type, part.value]));
+}
+
+/** `10.03 19:30` (KST) for the scan log table. */
+function formatShortTimestamp(value?: string): string {
+  const parts = kstParts(value);
+  return parts ? `${parts.month}.${parts.day} ${parts.hour}:${parts.minute}` : value ?? '-';
+}
+
+/** `19:30` (KST) for the phone scan log cards. */
+function formatTime(value?: string): string {
+  const parts = kstParts(value);
+  return parts ? `${parts.hour}:${parts.minute}` : value ?? '-';
 }
 
 function toNumber(value: unknown): number {

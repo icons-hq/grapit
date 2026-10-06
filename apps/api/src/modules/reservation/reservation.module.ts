@@ -3,7 +3,7 @@ import { PaymentModule } from '../payment/payment.module.js';
 import { BookingModule } from '../booking/booking.module.js';
 import { ReservationController } from './reservation.controller.js';
 import { ReservationService } from './reservation.service.js';
-import { ReservationFinalizationService } from './reservation-finalization.service.js';
+import { ReservationFinalizationModule } from './reservation-finalization.module.js';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { ConsentModule } from '../consent/consent.module.js';
 import { TicketModule } from '../ticket/ticket.module.js';
@@ -19,9 +19,10 @@ import { RefundModule } from '../refund/refund.module.js';
     TicketModule,
     CancellationModule,
     RefundModule,
+    ReservationFinalizationModule,
   ],
   controllers: [ReservationController],
-  providers: [ReservationService, ReservationFinalizationService],
+  providers: [ReservationService],
   exports: [ReservationService],
 })
 export class ReservationModule {}

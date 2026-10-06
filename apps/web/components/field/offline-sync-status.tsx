@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, CheckCircle2, Clock3, RefreshCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -51,6 +51,25 @@ export function OfflineSyncStatus({
     },
     { pending: 0, synced: 0, rejected: 0 },
   );
+  const pendingItems = queue.filter((item) => item.state === 'pending');
+  const resolvedItems = queue.filter((item) => item.state !== 'pending');
+  const receiptsSummary = `동기화 완료 ${counts.synced}건 · 거절 ${counts.rejected}건 보기`;
+
+  // Receipts of settled scans stay on the device for 7 days. Folded by default,
+  // they no longer push the scan result below the first screen.
+  if (pendingItems.length === 0 && resolvedItems.length > 0) {
+    return (
+      <Card data-testid="offline-sync-status" className="gap-0 border-gray-200 bg-white py-0 shadow-sm">
+        <CardContent className="p-0">
+          <ResolvedReceipts
+            items={resolvedItems}
+            summary={`보류 스캔 0건 · ${receiptsSummary}`}
+            className="border-0 bg-transparent"
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card
@@ -79,39 +98,13 @@ export function OfflineSyncStatus({
           ))}
         </div>
 
-        {queue.length > 0 && (
+        {pendingItems.length > 0 && (
           <div className="space-y-2">
-            {queue.map((item) => {
-              const style = STATE_STYLES[item.state];
-              const Icon = style.icon;
-
-              return (
-                <div
-                  key={item.deviceAttemptId}
-                  className={cn(
-                    'rounded-lg border px-3 py-2 text-sm font-semibold',
-                    style.row,
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p>
-                        {formatTimestamp(item.attemptedAt)} · {style.label}
-                      </p>
-                      {item.reason && (
-                        <p className="mt-1 text-sm leading-[1.4]">{item.reason}</p>
-                      )}
-                    </div>
-                    <Badge className={style.badge}>
-                      <Icon className="h-3 w-3" />
-                      {style.label}
-                    </Badge>
-                  </div>
-                </div>
-              );
-            })}
+            {pendingItems.map((item) => <QueueRow key={item.deviceAttemptId} item={item} />)}
           </div>
         )}
+
+        {resolvedItems.length > 0 && <ResolvedReceipts items={resolvedItems} summary={receiptsSummary} />}
 
         <Button
           type="button"
@@ -125,6 +118,54 @@ export function OfflineSyncStatus({
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+function ResolvedReceipts({
+  items,
+  summary,
+  className,
+}: {
+  items: readonly ScannerOfflineQueueItem[];
+  summary: string;
+  className?: string;
+}) {
+  return (
+    <details
+      data-testid="offline-sync-receipts"
+      className={cn('group rounded-lg border border-gray-200 bg-gray-50', className)}
+    >
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-4 text-sm font-semibold text-gray-700 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 break-keep">{summary}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="space-y-2 px-3 pb-3">
+        {items.map((item) => <QueueRow key={item.deviceAttemptId} item={item} />)}
+      </div>
+    </details>
+  );
+}
+
+function QueueRow({ item }: { item: ScannerOfflineQueueItem }) {
+  const style = STATE_STYLES[item.state];
+  const Icon = style.icon;
+
+  return (
+    <div data-testid="offline-sync-row" className={cn('rounded-lg border px-3 py-2 text-sm font-semibold', style.row)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {item.seatLabel && <p className="break-keep">{item.seatLabel}</p>}
+          <p className={item.seatLabel ? 'mt-0.5 font-normal' : undefined}>{formatTimestamp(item.attemptedAt)}</p>
+          {item.reason && (
+            <p className="mt-1 text-sm leading-[1.4]">{item.reason}</p>
+          )}
+        </div>
+        <Badge className={cn('shrink-0 whitespace-nowrap break-keep', style.badge)}>
+          <Icon className="h-3 w-3" />
+          {style.label}
+        </Badge>
+      </div>
+    </div>
   );
 }
 

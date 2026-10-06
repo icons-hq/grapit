@@ -14,6 +14,8 @@ export const reservations = pgTable('reservations', {
   reservationNumber: varchar('reservation_number', { length: 30 }).notNull().unique(),
   tossOrderId: varchar('toss_order_id', { length: 200 }).unique(),
   queueSessionId: varchar('queue_session_id', { length: 200 }),
+  // Deprecated: admission tokens are cookie-only and never persisted. Migration 0039 replaced
+  // historical raw values with 'sha256:<hex>' digests.
   admissionToken: varchar('admission_token', { length: 500 }),
   refreshFamilyId: varchar('refresh_family_id', { length: 200 }),
   deviceSlotKey: varchar('device_slot_key', { length: 200 }),

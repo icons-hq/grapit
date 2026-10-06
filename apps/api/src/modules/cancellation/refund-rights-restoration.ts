@@ -2,8 +2,9 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { CancellationQuote } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
-import { refunds, ticketItems, tickets, ticketBenefitEntitlements } from '../../database/schema/index.js';
+import { refunds, ticketItems, tickets } from '../../database/schema/index.js';
 import { readStoredPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
+import { restoreCancellationPendingBenefitEntitlements } from '../../database/benefit-entitlement-restoration.js';
 type RefundRecord = typeof refunds.$inferSelect;
 
 function metadataQuote(value: unknown): CancellationQuote | null {
@@ -41,10 +42,8 @@ export async function restoreRejectedRefundRights(db: DrizzleDB, requested: Refu
         eq(tickets.status, 'revoked'), eq(tickets.revokedAt, current.requestedAt),
       ));
     }
-    await tx.update(ticketBenefitEntitlements).set({ state: 'active', inactiveReason: null, updatedAt: now }).where(and(
-      inArray(ticketBenefitEntitlements.ticketItemId, selectedIds), eq(ticketBenefitEntitlements.state, 'inactive'),
-      eq(ticketBenefitEntitlements.inactiveReason, 'cancellation_pending'),
-    ));
+    // Benefit runs and configuration may have changed while the items were pending.
+    await restoreCancellationPendingBenefitEntitlements(tx, selectedIds, now);
     const [failed] = await tx.update(refunds).set({ status: 'failed', failedAt: now,
       resultCode: failure.code, resultMessage: failure.message,
       failureReason: failure.message, customerServiceCtaVisible: true, updatedAt: now,

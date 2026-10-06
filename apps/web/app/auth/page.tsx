@@ -15,7 +15,7 @@ export default function AuthPage() {
   const router = useRouter();
   const locale = useLocale();
   const authCopy = getAuthLaunchCopy(locale);
-  const { isInitialized, accessToken, user } = useAuthStore();
+  const { isInitialized, accessToken, user, sessionRestorePending } = useAuthStore();
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -37,6 +37,16 @@ export default function AuthPage() {
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-[400px]">
+        {/* The API could not confirm the session yet. lib/auth keeps retrying it
+            and, once restored, the effect above returns to returnTo. */}
+        {sessionRestorePending && (
+          <p
+            role="status"
+            className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-[1.5] text-amber-900"
+          >
+            {authCopy.navigation.sessionRestorePending}
+          </p>
+        )}
         <Tabs defaultValue="login" className="w-full">
           <TabsList className="w-full">
             <TabsTrigger value="login">{authCopy.tabs.login}</TabsTrigger>

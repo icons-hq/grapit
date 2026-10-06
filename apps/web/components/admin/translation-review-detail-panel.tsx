@@ -9,6 +9,13 @@ import { Textarea } from '@/components/ui/textarea';
 import type { ReviewTranslationDraftInput } from '@/hooks/use-admin';
 import type { TranslationQueueRow } from './translation-review-table';
 
+/**
+ * Same prefix the API writes when automatic translation is unavailable
+ * (`MANUAL_TRANSLATION_MARKER_PREFIX` in apps/api deepl.client). The API
+ * rejects review and publish while the text still starts with it.
+ */
+const MANUAL_TRANSLATION_MARKER_PREFIX = '[manual-review:';
+
 interface TranslationReviewDetailPanelProps {
   draft: TranslationQueueRow | null;
   onReviewDraft: (input: ReviewTranslationDraftInput) => Promise<unknown>;
@@ -56,17 +63,22 @@ export function TranslationReviewDetailPanel({
   const sourceText =
     typeof draft.sourceText === 'string' ? draft.sourceText.trim() : '';
   const isMissingSourceText = sourceText.length === 0;
+  const needsManualTranslation = translatedText
+    .trimStart()
+    .startsWith(MANUAL_TRANSLATION_MARKER_PREFIX);
   const canReview =
     (draft.status === 'draft' || (draft.status === 'review' && translatedText.trim() !== draft.translatedText.trim())) &&
     !isBlocked &&
     !isStale &&
     !isMissingSourceText &&
+    !needsManualTranslation &&
     translatedText.trim().length > 0;
   const canPublish =
     hasPublishPermission &&
     !isBlocked &&
     !isStale &&
     !isMissingSourceText &&
+    !needsManualTranslation &&
     ((draft.status === 'review' && translatedText.trim() === draft.translatedText.trim()) ||
       (draft.status === 'draft' && reviewedDraftId === draft.id && translatedText.trim() === reviewedText));
 
@@ -114,6 +126,16 @@ export function TranslationReviewDetailPanel({
       {isStale && (
         <div className="mt-4 rounded-lg bg-[#FFFBEB] p-3 text-sm font-semibold text-[#8B6306]">
           원문 변경됨 상태입니다. 다시 초안을 생성한 뒤 검수하세요.
+        </div>
+      )}
+
+      {needsManualTranslation && !isBlocked && !isStale && draft.status !== 'published' && (
+        <div
+          role="note"
+          className="mt-4 rounded-lg bg-[#FFFBEB] p-3 text-sm font-semibold text-[#8B6306]"
+        >
+          자동 번역을 사용할 수 없어 한국어 원문이 그대로 담긴 초안입니다. 앞의
+          [manual-review:…] 표시를 지우고 번역문을 직접 입력한 뒤 검수 완료하세요.
         </div>
       )}
 

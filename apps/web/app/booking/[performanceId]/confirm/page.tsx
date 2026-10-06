@@ -28,6 +28,15 @@ import {
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
+import {
+  getQueueAccessClosedCopy,
+  getQueueResumeRefusedCopy,
+  isQueueAccessDeadline,
+  isQueueAccessRejection,
+  parseServerDeadline,
+} from '@/lib/booking/queue-access';
+import { isShowtimeSalesClosedError } from '@/lib/booking/showtime-sales';
 import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
@@ -39,8 +48,15 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { apiClient } from '@/lib/api-client';
 import {
+  BOOKING_CONSENT_ITEM_KEYS,
+  CONSENT_DOCUMENT_VERSIONS,
+  CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   TICKET_SERVICE_FEE_KRW,
+  isCheckoutConfigurablePaymentMethod,
+  isCheckoutPaymentMethodAllowed,
+  isForeignCheckout,
   isSameCheckoutPaymentMethod,
+  resolveConsentDocumentLanguage,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
 } from '@grabit/shared';
 import type { FloorAwareSeatSelection, PrepareReservationResponse, SeatSelection } from '@grabit/shared';
@@ -55,13 +71,6 @@ const LOCK_FAILURE_MESSAGES = [
   '이미 다른 사용자가 선택한 좌석입니다.',
 ] as const;
 
-const BOOKING_CONSENT_VERSION = '2026-04-28';
-const BOOKING_CONSENT_KEYS = [
-  'terms',
-  'privacy',
-  'pipa_required',
-] as const;
-
 const LEGACY_FLOOR_KEY = 'default';
 const LEGACY_FLOOR_LABEL = '기본';
 
@@ -74,6 +83,28 @@ function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection
 
 function isLockFailureMessage(message: string): boolean {
   return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
+}
+
+/** Prepare's 409 for a method outside the performance policy; the buyer can pick another method. */
+function isPaymentMethodNotAllowedError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err && Number(err.statusCode) === 409
+    && err.message === CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
+}
+
+/**
+ * An error checkout itself raised before the handoff (the payment widget's checks), whose
+ * message is already in the page locale. Server rejections (status code), provider SDK
+ * errors (`code`) and network failures carry Korean or browser text instead.
+ */
+function isPageLocaleCheckoutError(err: unknown): boolean {
+  return err instanceof Error && !(err instanceof TypeError)
+    && !('statusCode' in err) && !('code' in err);
+}
+
+/** Any queue 403 (window ended, admission missing, order bound to another browser session). */
+function isQueueAccessRejectionError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err
+    && isQueueAccessRejection(Number(err.statusCode), err.message);
 }
 
 function getLocalizedLockFailureMessage(
@@ -101,11 +132,24 @@ function ConfirmPageContent() {
   const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
     useBookingStore();
   const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
+  // Prepare needs the queue access window on the server, whatever the seat
+  // lock or payment countdown says (audit #32). Resuming a prepared order does
+  // not (see resumesPreparedCheckout).
+  const queueAccessExpiresAt = useBookingStore((s) => s.queueAccessExpiresAt);
+  const queueAccessWindowClosed = useServerTimeReached(queueAccessExpiresAt);
+  const queueAccessCopy = getQueueAccessClosedCopy(locale);
+  const resumeRefusedCopy = getQueueResumeRefusedCopy(locale);
+  // C1 sales cutoff: once the showtime starts (server clock), prepare answers 403, so the
+  // pay button closes at the same instant instead of after a failed request.
+  const showtimeStarted = useServerTimeReached(parseServerDeadline(showDateTime));
+  const showtimeClosedMessage = t('seatSelection.showtimeClosed');
   const user = useAuthStore((s) => s.user);
   const {
     paymentDeadlineAt,
     lockExpiresAt,
     bookingPolicy,
+    allowedPaymentMethods,
+    allowedPaymentMethodsKnown,
     isPaymentDeadlineExpired,
   } = useBookingPaymentSnapshot();
 
@@ -116,7 +160,14 @@ function ConfirmPageContent() {
   const reselectingRef = useRef(false);
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
+  // The payment widget failed to load and shows this message instead of the methods
+  // and payment terms, so the pay button must not ask for those terms.
+  const [widgetLoadError, setWidgetLoadError] = useState<string | null>(null);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
+  const [paymentMethodRejected, setPaymentMethodRejected] = useState(false);
+  // The handoff of a resumed order was refused with a queue 403 (order bound to
+  // another browser session and no live admission here).
+  const [resumeAccessRefused, setResumeAccessRefused] = useState(false);
   const [paymentReturnError, setPaymentReturnError] = useState<PaymentFailureGuidance | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [preparedReview, setPreparedReview] = useState<PrepareReservationResponse | null>(null);
@@ -250,9 +301,14 @@ function ConfirmPageContent() {
   }, [bookingPath, cancelPending, refetchRecovery, returnOrderId, router, unlockAll]);
 
   const handleExpire = useCallback(() => {
-    toast.error(confirmCopy.lockExpiredRedirect);
+    const { expiresAt, queueAccessExpiresAt: accessEndsAt } = useBookingStore.getState();
+    toast.error(
+      isQueueAccessDeadline(expiresAt, accessEndsAt)
+        ? queueAccessCopy.toast
+        : confirmCopy.lockExpiredRedirect,
+    );
     if (returnOrderId) void refetchRecovery();
-  }, [confirmCopy, refetchRecovery, returnOrderId]);
+  }, [confirmCopy, queueAccessCopy, refetchRecovery, returnOrderId]);
 
   const handleWidgetReady = useCallback(() => {
     setWidgetReady(true);
@@ -265,6 +321,7 @@ function ConfirmPageContent() {
   const handlePaymentMethodChange = useCallback((selection: PaymentMethodSelection) => {
     setSelectedPaymentMethod(selection);
     setOverseasDisclaimerAgreed(false);
+    setPaymentMethodRejected(false);
     setPreparedReview((current) => current?.paymentMethod
       && isSameCheckoutPaymentMethod(current.paymentMethod, selection.paymentMethod) ? current : null);
   }, [setSelectedPaymentMethod, setOverseasDisclaimerAgreed, setPreparedReview]);
@@ -316,15 +373,55 @@ function ConfirmPageContent() {
   const methodMatchesRestoredOrder = !restoredMethod || !selectedPaymentMethod
     || isSameCheckoutPaymentMethod(restoredMethod, paymentMethod);
   const lockedMethodMismatch = Boolean(recovery.reservation?.checkoutStartedAt) && !methodMatchesRestoredOrder;
+  // The server re-checks only a new or changed method, so the order's fixed method may resume.
+  const methodFixedByOrder = restoredMethod
+    ? isSameCheckoutPaymentMethod(restoredMethod, paymentMethod)
+    : false;
+  // A virtual account, phone bill or unsupported widget method is refused under every
+  // policy, cached or not, and even for an order whose saved method it matches (audit #70).
+  // Same rule as the widget's isPayableWidgetSelection, which re-checks before handoff.
+  const selectionNotPayable = selectedPaymentMethod !== null
+    && (selectedPaymentMethod.unsupported === true
+      || !isCheckoutConfigurablePaymentMethod(selectedPaymentMethod.paymentMethod));
+  const paymentMethodNotAllowed = paymentMethodRejected || selectionNotPayable || (
+    allowedPaymentMethodsKnown === true
+    && Array.isArray(allowedPaymentMethods)
+    && !methodFixedByOrder
+    && !isCheckoutPaymentMethodAllowed(paymentMethod, allowedPaymentMethods)
+  );
   const visibleQuote = preparedReview?.providerChargeQuote
     ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
+  // A Prepared Checkout before Provider Handoff keeps its order, seats, method and
+  // quote (ADR 0010), so paying it again with the saved method needs no new prepare:
+  // the handoff (`POST /payments/branch`) re-validates the method and the seat locks,
+  // and both the handoff and payment confirm are admitted through the order binding
+  // (the browser session that prepared it) until the payment deadline. Prepare needs
+  // the queue access window, which has usually closed when a buyer comes back from the
+  // booking route's payment recovery screen or the reservation list, so these resumes
+  // skip it. Another browser session is refused at the handoff with a queue 403, before
+  // the provider checkout. A foreign method without a stored quote (or a changed
+  // method) still prepares, inside the window.
+  const restoredReservation = recovery.reservation;
+  const resumesPreparedCheckout = Boolean(returnOrderId)
+    && recovery.state === 'ready'
+    && Boolean(restoredReservation?.id)
+    && methodFixedByOrder
+    && (Boolean(restoredReservation?.providerChargeQuote)
+      || !isForeignCheckout(paymentMethod));
+  const queueAccessClosed = queueAccessWindowClosed && !resumesPreparedCheckout;
+  const resumeRefused = resumeAccessRefused && resumesPreparedCheckout;
 
   async function handlePayment() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
+    if (showtimeStarted) return;
+    if (queueAccessClosed) return;
+    if (resumeRefused) return;
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
+    if (paymentMethodNotAllowed) return;
+    if (widgetLoadError) return;
     if (
       !paymentWidgetRef.current
       || !agreed
@@ -339,6 +436,7 @@ function ConfirmPageContent() {
     setPaymentReturnError(null);
     setIsProcessing(true);
     let prepareSucceeded = false;
+    let resumedWithoutPrepare = false;
     const requestedBooking = useBookingStore.getState();
     const isCurrentBookingRequest = () => {
       const current = useBookingStore.getState();
@@ -354,17 +452,37 @@ function ConfirmPageContent() {
       returnUrl.searchParams.set('resumeOrderId', orderId);
       window.history.replaceState(null, '', `${returnUrl.pathname}${returnUrl.search}`);
 
-      // 1. Create pending reservation on server before payment
+      // 1. Create pending reservation on server before payment, or reuse the
+      //    prepared order when resuming it with its saved method.
       const now = new Date();
-      const result = await prepareMutation.mutateAsync({
+      const resumedCheckout: PrepareReservationResponse | null =
+        resumesPreparedCheckout && restoredReservation
+          ? {
+              reservationId: restoredReservation.id,
+              orderId,
+              queueAdmission: restoredReservation.queueAdmission,
+              paymentDeadlineAt: restoredReservation.paymentDeadlineAt,
+              bookingPolicy,
+              paymentMethod,
+              ...(restoredReservation.providerChargeQuote
+                ? {
+                    checkoutEnabled: true,
+                    providerChargeQuote: restoredReservation.providerChargeQuote,
+                  }
+                : {}),
+            }
+          : null;
+      resumedWithoutPrepare = resumedCheckout !== null;
+      const result = resumedCheckout ?? await prepareMutation.mutateAsync({
         orderId,
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats.map(toFloorAwareSeatSelection),
         amount: totalPrice,
-        consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
+        // Only the rows TermsAgreement shows, in the document language it renders.
+        consentItems: BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
           key,
-          version: BOOKING_CONSENT_VERSION,
-          language: locale,
+          version: CONSENT_DOCUMENT_VERSIONS[key],
+          language: resolveConsentDocumentLanguage(locale),
           accepted: true,
           sourceFlow: 'booking' as const,
         })),
@@ -422,6 +540,13 @@ function ConfirmPageContent() {
       }
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
+      // Server rejections arrive in Korean; the checkout closures (sales closed, any queue
+      // admission refusal) have locale copy, and other locales never see the raw text.
+      const localizedRejection = isShowtimeSalesClosedError(err)
+        ? showtimeClosedMessage
+        : isQueueAccessRejectionError(err)
+        ? queueAccessCopy.toast
+        : null;
       let uncreatedOrder = false;
       if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
         && 'statusCode' in err && [400, 403, 409, 422].includes(Number(err.statusCode))) {
@@ -446,11 +571,31 @@ function ConfirmPageContent() {
         }
       }
       if (mountedRef.current) setIsProcessing(false);
-      if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
-        setLockFailureMessage(locale === 'ko' ? getLocalizedLockFailureMessage(errorMessage, confirmCopy) : confirmCopy.paymentRequestFailed);
+      if (resumedWithoutPrepare && isQueueAccessRejectionError(err)) {
+        // The handoff refused this browser session for the order before any provider
+        // checkout; the order stays payable from the session bound to it.
+        if (mountedRef.current) setResumeAccessRefused(true);
+        toast.error(resumeRefusedCopy.toast);
+        if (returnOrderId) void refetchRecovery();
         return;
       }
-      toast.error(errorMessage);
+      if (isPaymentMethodNotAllowedError(err)) {
+        // Not a seat failure: keep the seats and let the buyer choose an allowed method.
+        setPaymentMethodRejected(true);
+        if (returnOrderId) void refetchRecovery();
+        return;
+      }
+      if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
+        setLockFailureMessage(localizedRejection
+          ?? (isLockFailureMessage(errorMessage)
+            ? getLocalizedLockFailureMessage(errorMessage, confirmCopy)
+            : locale === 'ko' ? errorMessage : confirmCopy.paymentRequestFailed));
+        return;
+      }
+      toast.error(localizedRejection
+        ?? ((locale === 'ko' || isPageLocaleCheckoutError(err)) && errorMessage.trim()
+          ? errorMessage
+          : confirmCopy.paymentRequestFailed));
       if (returnOrderId) void refetchRecovery();
     }
   }
@@ -513,22 +658,37 @@ function ConfirmPageContent() {
 
   const ctaDisabled = isReselecting || !bookingAvailable
     || lockedMethodMismatch
+    || paymentMethodNotAllowed
     || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
+    || showtimeStarted
+    || queueAccessClosed
+    || resumeRefused
     || !agreed
     || !widgetAgreementAgreed
     || isProcessing
     || !widgetReady
+    || Boolean(widgetLoadError)
     || isPaymentDeadlineExpired
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
   const ctaText = !bookingAvailable
     ? bookingDisabledMessage
+    : showtimeStarted
+    ? showtimeClosedMessage
+    : resumeRefused
+    ? resumeRefusedCopy.title
+    : queueAccessClosed
+    ? queueAccessCopy.title
     : lockFailureMessage
     ? t('paymentRecovery.reselectPrompt')
     : isPaymentDeadlineExpired
     ? t('paymentRecovery.expiredCta')
     : isProcessing
     ? confirmCopy.processing
+    : paymentMethodNotAllowed
+    ? checkoutCopy.chooseAnotherMethod
+    : widgetLoadError
+    ? widgetLoadError
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
@@ -585,13 +745,64 @@ function ConfirmPageContent() {
               variant="outline"
               className="mt-3"
               onClick={handleLockFailureRecovery}
+              disabled={isReselecting || isProcessing}
             >
               {t('paymentRecovery.reselectCta')}
             </Button>
           </section>
         )}
 
-        {isPaymentDeadlineExpired && (
+        {showtimeStarted && !lockFailureMessage && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-700">{showtimeClosedMessage}</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {t('paymentRecovery.reselectCta')}
+            </Button>
+          </section>
+        )}
+
+        {queueAccessClosed && !showtimeStarted && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{queueAccessCopy.title}</p>
+            <p className="mt-1 text-sm text-red-700">{queueAccessCopy.body}</p>
+            {/* Rejoining cancels the pending order and releases the seats, so it must
+                not run while prepare or the provider handoff is in flight. */}
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {queueAccessCopy.rejoin}
+            </Button>
+          </section>
+        )}
+
+        {resumeRefused && !showtimeStarted && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{resumeRefusedCopy.title}</p>
+            <p className="mt-1 text-sm text-red-700">{resumeRefusedCopy.body}</p>
+            {/* Rejoining cancels this order and releases its seats. */}
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {queueAccessCopy.rejoin}
+            </Button>
+          </section>
+        )}
+
+        {isPaymentDeadlineExpired && !queueAccessClosed && !resumeRefused && !showtimeStarted && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-red-700">
               {t('paymentRecovery.expiredTitle')}
@@ -599,6 +810,15 @@ function ConfirmPageContent() {
             <p className="mt-1 text-sm text-red-700">
               {t('paymentRecovery.expiredBody')}
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={handlePaymentReturnRecovery}
+              disabled={isReselecting || isProcessing}
+            >
+              {t('paymentRecovery.reselectCta')}
+            </Button>
           </section>
         )}
 
@@ -615,6 +835,11 @@ function ConfirmPageContent() {
           <section role="status" className="flex flex-col gap-2 border-t border-border pt-4">
             <p className="text-sm">{checkoutCopy.savedMethod}: <strong>{getCheckoutMethodLabel(restoredMethod, locale)}</strong></p>
             {lockedMethodMismatch && <p className="text-sm text-muted-foreground">{checkoutCopy.methodLocked}</p>}
+          </section>
+        )}
+        {paymentMethodNotAllowed && (selectionNotPayable || !lockedMethodMismatch) && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-700">{checkoutCopy.methodNotAllowed}</p>
           </section>
         )}
         <section className="space-y-3" inert={isProcessing}>
@@ -637,6 +862,7 @@ function ConfirmPageContent() {
               onPaymentMethodChange={handlePaymentMethodChange}
               onWidgetAgreementChange={handleWidgetAgreementChange}
               onPaymentDeadlineChange={handlePaymentDeadlineChange}
+              onLoadError={setWidgetLoadError}
             />
           )}
         </section>

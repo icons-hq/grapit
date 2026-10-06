@@ -2,6 +2,9 @@ import { test, expect, type Route } from '@playwright/test';
 import { injectBookingFixture } from './fixtures/booking-store';
 import { loginAsTestUser } from './helpers/auth';
 
+/** The confirm request carries the display locale (`?locale=`), so match any query. */
+const CONFIRM_ROUTE = '**/api/v1/payments/confirm**';
+
 /**
  * Toss Payments E2E tests.
  *
@@ -44,6 +47,7 @@ test.describe('Toss Payments E2E', () => {
     page,
   }) => {
     let confirmIntercepted = false;
+    let confirmRequestUrl: string | null = null;
 
     await enableBooking(page);
 
@@ -54,8 +58,9 @@ test.describe('Toss Payments E2E', () => {
     await loginAsTestUser(page);
 
     // 1. Register intercept BEFORE any navigation so complete page's POST is caught.
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    await page.route(CONFIRM_ROUTE, async (route: Route) => {
       confirmIntercepted = true;
+      confirmRequestUrl = route.request().url();
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -167,6 +172,8 @@ test.describe('Toss Payments E2E', () => {
       timeout: 10000,
       message: 'POST /api/v1/payments/confirm was not intercepted',
     }).toBe(true);
+    // The confirmed detail renders the complete screen, so it is requested in the display locale.
+    expect(new URL(confirmRequestUrl ?? 'http://invalid').searchParams.get('locale')).toBe('ko');
 
     // 8. Assert complete page shows success state.
     await expect(page.getByRole('heading', { name: '예매가 완료되었습니다' })).toBeVisible({
@@ -288,7 +295,7 @@ test.describe('Toss Payments E2E', () => {
         }),
       });
     });
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    await page.route(CONFIRM_ROUTE, async (route: Route) => {
       confirmIntercepted = true;
       await route.fulfill({ status: 500, body: 'unexpected confirm call' });
     });
@@ -315,7 +322,7 @@ test.describe('Toss Payments E2E', () => {
   }) => {
     await loginAsTestUser(page);
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    await page.route(CONFIRM_ROUTE, async (route: Route) => {
       await route.fulfill({
         status: 409,
         contentType: 'application/json',
@@ -349,12 +356,14 @@ test.describe('Toss Payments E2E', () => {
     await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
   });
 
-  test('complete page: unavailable lookup after confirm error offers status recovery', async ({
+  test('complete page: transient confirm errors retry, then offer to resend confirm while lookup is unavailable', async ({
     page,
   }) => {
+    let confirmCount = 0;
     await loginAsTestUser(page);
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    await page.route(CONFIRM_ROUTE, async (route: Route) => {
+      confirmCount += 1;
       await route.fulfill({
         status: 500,
         contentType: 'application/json',
@@ -381,14 +390,20 @@ test.describe('Toss Payments E2E', () => {
       '/booking/e2e-test-performance/complete?paymentKey=test_payment_key_recovery_failure&orderId=test_order_recovery_failure&amount=50000',
     );
 
+    // A transient 5xx is sent again automatically (3 retries, 1s/2s/4s back-off) before the
+    // page reports it; only the browser holds the paymentKey, so the buyer can resend the
+    // confirm for the same payment instead of being offered a new one.
     await expect(page.getByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeVisible({
-      timeout: 10000,
+      timeout: 20000,
     });
+    expect(confirmCount).toBe(4);
     await expect(
-      page.getByText('결제 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인하거나 예매 내역을 확인해주세요.'),
-    ).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole('button', { name: '상태 다시 확인' })).toBeVisible();
+      page.getByText('결제 인증은 끝났지만 결제 확인을 아직 완료하지 못했어요. 잠시 후 결제 확인을 다시 요청해 주세요. 결제는 한 번만 승인됩니다.'),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '결제 확인 다시 요청' })).toBeEnabled();
     await expect(page.getByRole('button', { name: '예매 내역 확인' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
+    await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
     await expect(page.locator('.animate-spin')).not.toBeVisible();
   });
 
@@ -398,7 +413,7 @@ test.describe('Toss Payments E2E', () => {
     let confirmIntercepted = false;
     await loginAsTestUser(page);
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    await page.route(CONFIRM_ROUTE, async (route: Route) => {
       confirmIntercepted = true;
       await route.fulfill({ status: 500, body: 'unexpected confirm call' });
     });

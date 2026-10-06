@@ -143,11 +143,16 @@ accepted evidence, then capture post-enable smoke for the buyer path.
 
 - [ ] Confirm every required evidence gate in this runbook is
       `EVIDENCE_ACCEPTED` or explicitly `WAIVED`.
-- [ ] Capture current `bookingEnabled:false` runtime flag state.
+- [ ] Capture current `bookingEnabled:false` runtime flag state and the
+      repository variable `BOOKING_ENABLED=false` (API, Web and worker read
+      the same variable at deploy time).
 - [ ] Capture `/admin/cutover/gates` state and confirm whether
-      `finalEnableAllowed:true` is present.
+      `finalEnableAllowed:true` is present for a ledger whose `opening` names
+      this opening and whose `freshness.state` is `fresh`. The packaged
+      phase26 ledger is a historical record and is always stale/unscoped.
 - [ ] Confirm owner approval for the exact enablement window.
-- [ ] Confirm close-booking command/path and rollback owner.
+- [ ] Confirm the close-booking path (the kill switch in
+      `managed-demo-cost-floor.md#sitewide-booking-kill-switch`) and rollback owner.
 
 ### Execution Checklist
 
@@ -161,8 +166,10 @@ accepted evidence, then capture post-enable smoke for the buyer path.
 ### Required Evidence
 
 - [ ] Pre-enable `bookingEnabled:false` runtime flag evidence.
-- [ ] `/admin/cutover/gates` evidence with `finalEnableAllowed:true`, or an
-      explicit waiver explaining why this was bypassed.
+- [ ] `/admin/cutover/gates` evidence with `finalEnableAllowed:true` for a
+      fresh ledger scoped to this opening, or an explicit waiver that records
+      the per-performance publication, sale-status and sale-time checks and
+      the owner approval used instead.
 - [ ] Owner approval and timestamp.
 - [ ] Post-enable `bookingEnabled:true` runtime flag evidence.
 - [ ] Post-enable smoke results.
@@ -237,13 +244,26 @@ Performance while ordinary Buyers remain blocked until public sale opens.
       Performance from the production checkout UI and provider widget.
 - [ ] Cross-check the matrix against API `allowedPaymentMethods` and provider
       admin settings, but do not treat code-supported payment lists as the
-      primary source.
+      primary source. Reservation prepare now rejects (409) any method missing
+      from `allowedPaymentMethods`, so the performance setting must list every
+      method category in the matrix (`CARD` covers domestic and overseas cards,
+      `FOREIGN_EASY_PAY` covers Alipay/PayPal/TrueMoney, `SIMPLE_PAY` covers
+      Toss Pay/Naver Pay/Kakao Pay, `TRANSFER` covers bank transfer). Before the
+      enforcing release, run the deploy-blocking check for every published
+      performance in `show-relaunch-reliability.md` (missing policy rows count
+      as `CARD` only). The admin performance form can save `SIMPLE_PAY` only
+      from that release on; the runbook gives the order when the widget shows
+      domestic easy pay.
 - [ ] Confirm current Toss live configuration for every method/provider path in
       the matrix.
 - [ ] Confirm deployed API/web revisions and environment flag state.
 - [ ] Confirm the target Performance remains `오픈예정` and ordinary Buyers are
       blocked.
 - [ ] Confirm the authorized admin account that can use Admin Booking Bypass.
+      Only a full admin (`admin` bundle, or a legacy admin without bundle and
+      explicit capabilities) bypasses; scanner/finance/operator bundles are
+      treated as Buyers. Verify the shared scanner account gets 403 from
+      `POST /api/v1/queue/performances/:id/enter` while the sale is closed.
 - [ ] Select one low-risk test seat for each method/provider path, or document
       when the same seat will be reused after cleanup verification.
 - [ ] Confirm final settlement, reconciliation, refund/cancel, and controlled
@@ -374,6 +394,12 @@ locks, ranking/cache, throttling, and Socket.IO pub/sub health.
 ### Required Evidence
 
 - [ ] Valkey mode and endpoint class, redacted as needed.
+- [ ] `gcloud memorystore instances describe --format=json` output checked by
+      `node scripts/managed-demo/verify-valkey-sale-posture.mjs` with the
+      opening and venue-entry windows as `--protect` values: `replicaCount`
+      at least 1, `MULTI_ZONE`, `nodeType`, `mode`, `maxmemory-policy=noeviction`,
+      weekly `maintenancePolicy`, and no `maintenanceSchedule` inside a
+      protected window (reschedule it otherwise).
 - [ ] Queue admission success and failure behavior.
 - [ ] Seat lock conflict and expiry behavior.
 - [ ] Socket.IO cross-instance event evidence.
@@ -382,12 +408,15 @@ locks, ranking/cache, throttling, and Socket.IO pub/sub health.
 ### Pass Criteria
 
 - No in-memory fallback is involved.
+- The Valkey posture check passes for every protected window.
 - Queue, lock, throttle, cache, and Socket.IO behaviors match launch needs.
 - No duplicate booking or unsafe lock state appears.
 
 ### Fail / Stop Criteria
 
 - App silently falls back to local memory.
+- The instance has zero replicas, an evicting `maxmemory-policy`, no weekly
+  maintenance window, or maintenance scheduled inside an opening/entry window.
 - Lock conflict or expiry produces unsafe booking state.
 - Socket.IO pub/sub fails across instances.
 
@@ -625,6 +654,25 @@ during the first 24 hours.
 - [ ] Confirm named primary owner and backup contact.
 - [ ] Confirm alert routing for Sentry, Cloud Run, Cloud SQL, Valkey,
       Cloudflare, payment provider, SMS provider, and business metrics.
+- [ ] Confirm the Sentry API and web projects keep Data Scrubber and Use
+      Default Scrubbers on, with `phone`, `paymentKey`, `refreshToken`,
+      `tossWebhookSecret` and `ticket` (the field QR link parameter) in
+      Additional Sensitive Fields (second layer behind the code redaction in
+      `docs/03-ARCHITECTURE.md` section 9).
+- [ ] Create and dry-run Sentry alert rules for new API events tagged
+      `http.status_code:500`, for spikes of events tagged `toss.code`
+      (Toss failures answered with `502`), and for spikes of events tagged
+      `http.status_code:503`: a Toss 5xx or timeout during payment confirm
+      is answered with `503` (`PAYMENT_CONFIRM_OUTCOME_UNKNOWN`, the
+      `TossPaymentError` linked as its cause) and carries no `toss.code`
+      tag, so neither of the first two rules fires on a Toss approval
+      outage. Check spike protection and rate limits so an incident burst
+      does not exhaust the quota.
+- [ ] Create a Cloud Monitoring alert policy on the Cloud Run API 5xx ratio,
+      separate from Sentry.
+- [ ] After the API and web deploy, trigger the admin Sentry test endpoint
+      and confirm in the Sentry UI that the event arrives and `Authorization`
+      and `Cookie` show `[Filtered]`.
 - [ ] Confirm dashboard links and access.
 - [ ] Confirm close-booking, rollback, provider incident, and customer support
       escalation paths.
@@ -644,7 +692,10 @@ during the first 24 hours.
 
 - [ ] Owner schedule and backup.
 - [ ] Dashboard/access confirmation.
-- [ ] Alert delivery test.
+- [ ] Alert delivery test, including the Sentry 500/`toss.code`/503-spike
+      rules and the Cloud Run 5xx policy.
+- [ ] Sentry Data Scrubber settings and a redacted test event (masked
+      screenshot or event ID).
 - [ ] First-24h checklist artifact.
 - [ ] Incident decision log, even if no incidents occurred.
 
@@ -721,10 +772,73 @@ for launch, not merely that fallback code exists.
       API environment.
 - [ ] Confirm fallback static copy is acceptable only as degraded behavior, not
       as final content approval.
+- [ ] Confirm no notice is left with `status = 'published'` but
+      `review_state <> 'published'` (rows hidden by the pre-fix edit/review
+      behavior). Re-publish the ones that should be live:
+      `SELECT id, locale, category, title FROM support_notices WHERE status = 'published' AND review_state <> 'published';`
+- [ ] Review FAQ/notice rows shown as `게시 가능` in admin that were live
+      before an edit; edits made before the fix silently unpublished them.
+
+### Operating Rules After The Support Content Fix
+
+- Saved changes reach the public page within about one minute, not
+  immediately. The API caches each locale for 30 seconds and every admin
+  mutation clears it, but a public read that started before the save commits
+  can cache the old content for another 30 seconds, and browsers keep the
+  response for 30 seconds (`Cache-Control: private, max-age=30`). Check a
+  change after a minute with a hard refresh (Cmd/Ctrl+Shift+R) or in a
+  private window.
+- Editing a published ko/en or manual translation keeps it live. Editing an
+  assisted th/zh-CN translation takes it off the public page until `검수 완료`
+  and `게시` are done again; admin asks for confirmation before saving.
+- `검수 완료` approves draft/review rows and is rejected for published rows.
+- Restoring archived content: select the row and press `보관 해제` (the review
+  button on an archived row), then `게시`. Unarchiving does not publish; it
+  returns the row to `게시 가능`, or to `검수 필요` for an assisted th/zh-CN
+  translation, which needs `검수 완료` first. Both steps write
+  `support.content.review` / `support.content.publish` audit rows. A notice
+  translation cannot be restored while another unarchived version of the same
+  locale exists in its translation group (400 `이미 같은 언어의 번역본이
+  있습니다`); archive that version first, so a locale never shows two
+  versions of one notice.
+- Archived rows cannot be edited in admin (`수정` is disabled with
+  `보관 해제 후 수정하세요`); restore them with `보관 해제` first. An edit sent
+  to an archived row through the API keeps it archived and is recorded as
+  `support.content.update`. Publishing a notice is also refused while another
+  unarchived version of its locale exists in its translation group (400
+  `같은 언어의 게시 중인 번역본이 있습니다` or `같은 언어의 번역본이 이미
+  있습니다`); archive one of them first.
+- Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`); a
+  scheduled start or end can appear up to about a minute late for the reasons
+  above.
+- Notices in the `긴급` (`urgent`) category are listed first even when stored
+  with a lower priority (rows created before the category default existed).
+- `urgent`, `maintenance`, and `payment` notices fall back by locale: a viewer
+  whose locale has no published version in the same translation group sees
+  the en version, then the ko version, labeled as untranslated. Register
+  translations with `번역본 등록` on the source notice so the fallback stops
+  when the translation is published; a notice created separately with `공지
+  등록` is not linked and both versions show (the form warns about this for
+  en/th/zh-CN in these categories). Notices created before this change are
+  not linked and do not fall back until a translation is registered; linking
+  one writes a `support.content.update` audit row on the source notice.
+- For an urgent/payment/maintenance notice during open, publish the ko source
+  first, then register and publish en, th, and zh-CN through `번역본 등록`.
+- Every create/update/review/publish/archive writes `support.content.*` admin
+  audit rows with the previous and new title/body; check them in
+  `/admin/audit`.
+- If another operator saved the same row first, save returns 409.
+  `최신 내용 다시 불러오기` asks for confirmation because it discards the
+  unsaved edit: copy it first, reload, then reapply the change. Opening
+  another row, switching the FAQ/공지 tab, or starting a new entry while the
+  form has unsaved input asks the same way before it is discarded.
 
 ### Execution Checklist
 
 - [ ] Publish or verify approved FAQ/notice records through admin.
+- [ ] For each launch urgent/payment/maintenance notice, confirm ko/en/th/zh-CN
+      versions are linked in `언어별 공지` and published, or record the
+      accepted fallback.
 - [ ] Smoke `/support`, `/en/support`, `/th/support`, and `/zh-CN/support`.
 - [ ] Confirm API returns only public fields and published rows.
 - [ ] Confirm footer support link reaches localized support page.

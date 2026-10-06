@@ -10,6 +10,7 @@ import {
   ADMIN_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLES,
+  resolveAdminCapabilitySnapshot,
   type AdminCapability,
   type AdminCapabilityBundle,
   type AdminUserDetail as ApiAdminUserDetail,
@@ -21,8 +22,6 @@ import {
   type AdminUserSupportThreadSummary as ApiAdminUserSupportThreadSummary,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
-import { useAuthStore } from '@/stores/use-auth-store';
 
 export {
   ADMIN_CAPABILITIES,
@@ -95,7 +94,10 @@ export interface AdminUserListItem {
   country: string;
   marketingConsent: boolean;
   adminCapabilityBundle: AdminCapabilityBundle | null;
+  /** Guard-effective capabilities (bundle defaults / superuser resolved). */
   adminCapabilities: AdminCapability[];
+  /** True when the account resolves to superuser (`admin` bundle). */
+  adminSuperuser?: boolean;
   accountStatus: AdminUserAccountStatus;
   withdrawnAt?: string | null;
   withdrawalReason?: string | null;
@@ -241,21 +243,13 @@ export function useAdminUserExport() {
     mutationFn: async (
       payload: AdminUserExportRequest,
     ): Promise<AdminUserExportDownload> => {
-      const { accessToken } = useAuthStore.getState();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const response = await fetch(apiUrl('/api/v1/admin/users/export'), {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ reason: payload.reason.trim() }),
-      });
+      // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+      const response = await apiClient.raw(
+        'POST',
+        '/api/v1/admin/users/export',
+        { reason: payload.reason.trim() },
+        { showErrorToast: false },
+      );
 
       if (!response.ok) {
         throw new Error(await resolveUserExportErrorMessage(response));
@@ -293,6 +287,8 @@ export function useUpdateAdminUserPermissions() {
           reason: reason.trim(),
           confirmed,
         },
+        // The permission editor reports a rejection itself (one toast and an inline alert).
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminUsersQueryKey });
@@ -407,7 +403,8 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
       withdrawnAt: response.withdrawnAt ?? null,
       withdrawalReason: response.withdrawalReason ?? null,
       withdrawalSource: response.withdrawalSource ?? null,
-      adminCapabilities: resolveEffectiveCapabilities(
+      ...resolveEffectiveAccess(
+        response.role,
         response.adminCapabilityBundle,
         response.adminCapabilities,
       ),
@@ -451,7 +448,8 @@ function mapListItem(
       withdrawnAt: item.withdrawnAt ?? null,
       withdrawalReason: item.withdrawalReason ?? null,
       withdrawalSource: item.withdrawalSource ?? null,
-      adminCapabilities: resolveEffectiveCapabilities(
+      ...resolveEffectiveAccess(
+        item.role,
         item.adminCapabilityBundle,
         item.adminCapabilities,
       ),
@@ -470,9 +468,16 @@ function mapListItem(
     country: item.country,
     marketingConsent: item.marketingConsent,
     adminCapabilityBundle: item.adminCapabilityBundle,
-    adminCapabilities: resolveEffectiveCapabilities(
+    ...resolveEffectiveAccess(
+      item.role,
       item.adminCapabilityBundle,
       item.adminCapabilities,
+      item.adminSuperuser === undefined
+        ? undefined
+        : {
+            adminSuperuser: item.adminSuperuser,
+            effectiveAdminCapabilities: item.effectiveAdminCapabilities ?? [],
+          },
     ),
     accountStatus: normalizeAdminUserAccountStatus(item.accountStatus),
     withdrawnAt: item.withdrawnAt ?? null,
@@ -515,14 +520,41 @@ function normalizeAdminUserAccountStatus(
   return 'active';
 }
 
-function resolveEffectiveCapabilities(
+/**
+ * Mirrors the API guards (RolesGuard + AdminCapabilitiesGuard): only role=admin
+ * accounts have admin access, and the `admin` bundle is superuser regardless of
+ * any stored capability list (audit #42). The API sends its own resolution of
+ * the stored row (`adminSuperuser`, `effectiveAdminCapabilities`); it wins over
+ * re-resolving here, because the list/detail bundle is normalised and an
+ * unknown stored bundle arrives as null, which would read as the legacy
+ * role-only superuser (u12).
+ */
+function resolveEffectiveAccess(
+  role: AdminUserRole,
   bundle: AdminCapabilityBundle | null,
   capabilities: readonly AdminCapability[],
-): AdminCapability[] {
-  const normalized = normalizeAdminCapabilities(capabilities);
-  if (normalized.length > 0) return normalized;
-  if (bundle) return [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[bundle]];
-  return [];
+  serverAccess?: { adminSuperuser: boolean; effectiveAdminCapabilities: readonly AdminCapability[] },
+): Pick<AdminUserListItem, 'adminCapabilities' | 'adminSuperuser'> {
+  if (role !== 'admin') {
+    return { adminCapabilities: [], adminSuperuser: false };
+  }
+  if (serverAccess) {
+    return {
+      adminCapabilities: normalizeAdminCapabilities(serverAccess.effectiveAdminCapabilities),
+      adminSuperuser: serverAccess.adminSuperuser,
+    };
+  }
+
+  const snapshot = resolveAdminCapabilitySnapshot({
+    id: 'admin-user',
+    role,
+    adminCapabilityBundle: bundle,
+    adminCapabilities: normalizeAdminCapabilities(capabilities),
+  });
+  return {
+    adminCapabilities: [...snapshot.capabilities],
+    adminSuperuser: snapshot.superuser,
+  };
 }
 
 function normalizeSupportSummary(

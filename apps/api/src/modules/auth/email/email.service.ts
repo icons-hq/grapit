@@ -13,12 +13,20 @@ export interface SendEmailResult {
   error?: string;
 }
 
+export interface QrTicketEmailSeat {
+  /** Seat Identity shown to the buyer and field staff, e.g. "1층 · VIP A열 1번". */
+  seatLabel: string;
+  /** Seat-level QR credential token for that Ticket Item. */
+  token: string;
+}
+
 export interface SendQrTicketReminderEmailInput {
   reservationNumber: string;
   performanceTitle: string;
   showDateTime: string;
   venue: string;
-  ticketToken: string;
+  /** Every active seat of the reservation, in seat order. */
+  tickets: QrTicketEmailSeat[];
   ticketUrl: string;
   locale?: string;
 }
@@ -227,10 +235,13 @@ export class EmailService {
       `<p style="margin:0 0 4px">예매번호: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
       `<p style="margin:0 0 4px">공연일시: ${escapeHtml(showDateTime)}</p>`,
       `<p style="margin:0 0 16px">장소: ${escapeHtml(input.venue)}</p>`,
-      `<p style="margin:0 0 8px">마이페이지에서 바로 확인:</p>`,
+      `<p style="margin:0 0 8px">마이페이지에서 좌석별 QR 확인:</p>`,
       `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
-      '<p style="margin:0 0 8px">QR 토큰</p>',
-      `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px">${escapeHtml(input.ticketToken)}</pre>`,
+      `<p style="margin:0 0 8px">좌석별 QR 토큰 (${input.tickets.length}매)</p>`,
+      ...input.tickets.map((ticket) => [
+        `<p style="margin:12px 0 4px"><strong>${escapeHtml(ticket.seatLabel)}</strong></p>`,
+        `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px;margin:0">${escapeHtml(ticket.token)}</pre>`,
+      ].join('')),
       '</div>',
     ].join('');
 

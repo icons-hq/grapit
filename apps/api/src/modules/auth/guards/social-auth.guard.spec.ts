@@ -3,13 +3,15 @@ import type { ExecutionContext } from '@nestjs/common';
 import type { Response } from 'express';
 
 describe('SocialAuthGuards', () => {
-  let mockResponse: Partial<Response>;
+  let mockResponse: Partial<Record<keyof Response, ReturnType<typeof vi.fn>>>;
   let mockContext: Partial<ExecutionContext>;
   let mockConfigService: { get: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     mockResponse = {
       redirect: vi.fn(),
+      cookie: vi.fn(),
+      clearCookie: vi.fn(),
     };
 
     mockContext = {
@@ -59,55 +61,128 @@ describe('SocialAuthGuards', () => {
       );
     });
 
-    it('should pass supported locale query as OAuth state on provider start', async () => {
-      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+    function startOptions(guard: unknown, query: Record<string, unknown>) {
       mockContext.switchToHttp = vi.fn().mockReturnValue({
-        getRequest: vi.fn().mockReturnValue({ query: { locale: 'en' } }),
+        getRequest: vi.fn().mockReturnValue({ query }),
         getResponse: vi.fn().mockReturnValue(mockResponse),
       });
-
-      const guard = new KakaoAuthGuard(mockConfigService as never);
-      const options = (guard as unknown as {
-        getAuthenticateOptions(context: ExecutionContext): { state?: string };
+      return (guard as {
+        getAuthenticateOptions(context: ExecutionContext): { state: string };
       }).getAuthenticateOptions(mockContext as ExecutionContext);
+    }
 
-      expect(options).toEqual({ state: 'en' });
+    it('issues a signed, nonce-bound OAuth state and a matching httpOnly nonce cookie on provider start', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+
+      const options = startOptions(guard, { locale: 'en' });
+
+      const params = new URLSearchParams(options.state);
+      expect(params.get('locale')).toBe('en');
+      expect(params.get('provider')).toBe('kakao');
+      expect(params.get('sig')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(mockResponse.cookie).toHaveBeenCalledWith(
+        'grabit_oauth_state',
+        params.get('nonce'),
+        expect.objectContaining({ httpOnly: true, secure: true, sameSite: 'lax', path: '/api/v1/auth/social' }),
+      );
     });
 
     it('should include a safe returnTo target in OAuth state on provider start', async () => {
       const { KakaoAuthGuard } = await import('./social-auth.guard.js');
-      mockContext.switchToHttp = vi.fn().mockReturnValue({
-        getRequest: vi.fn().mockReturnValue({
-          query: { locale: 'ko', returnTo: '/booking/performance-auth' },
-        }),
-        getResponse: vi.fn().mockReturnValue(mockResponse),
-      });
-
       const guard = new KakaoAuthGuard(mockConfigService as never);
-      const options = (guard as unknown as {
-        getAuthenticateOptions(context: ExecutionContext): { state?: string };
-      }).getAuthenticateOptions(mockContext as ExecutionContext);
 
-      expect(options).toEqual({
-        state: 'locale=ko&returnTo=%2Fbooking%2Fperformance-auth',
-      });
+      const options = startOptions(guard, { locale: 'ko', returnTo: '/booking/performance-auth' });
+
+      const params = new URLSearchParams(options.state);
+      expect(params.get('locale')).toBe('ko');
+      expect(params.get('returnTo')).toBe('/booking/performance-auth');
     });
 
     it('should reject unsafe returnTo targets from OAuth state', async () => {
       const { KakaoAuthGuard } = await import('./social-auth.guard.js');
-      mockContext.switchToHttp = vi.fn().mockReturnValue({
-        getRequest: vi.fn().mockReturnValue({
-          query: { locale: 'ko', returnTo: 'https://evil.test/booking' },
-        }),
-        getResponse: vi.fn().mockReturnValue(mockResponse),
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+
+      for (const returnTo of ['https://evil.test/booking', '/.//evil.test']) {
+        const options = startOptions(guard, { locale: 'ko', returnTo });
+        expect(new URLSearchParams(options.state).has('returnTo')).toBe(false);
+      }
+    });
+
+    describe('provider callback state verification', () => {
+      async function startAndCapture() {
+        const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+        const guard = new KakaoAuthGuard(mockConfigService as never);
+        const options = startOptions(guard, { locale: 'en', returnTo: '/booking/show-1' });
+        const nonce = mockResponse.cookie!.mock.calls.at(-1)![1] as string;
+        return { guard, state: options.state, nonce };
+      }
+
+      function callbackContext(query: Record<string, unknown>, cookies: Record<string, unknown>) {
+        const response = { redirect: vi.fn(), clearCookie: vi.fn() };
+        const context = {
+          switchToHttp: vi.fn().mockReturnValue({
+            getRequest: vi.fn().mockReturnValue({ query, cookies }),
+            getResponse: vi.fn().mockReturnValue(response),
+          }),
+        } as unknown as ExecutionContext;
+        return { context, response };
+      }
+
+      it('lets passport exchange the code when the signed state matches this browser nonce cookie', async () => {
+        const { guard, state, nonce } = await startAndCapture();
+        const passport = vi
+          .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)) as { canActivate: () => unknown }, 'canActivate')
+          .mockResolvedValue(true);
+        const { context, response } = callbackContext({ code: 'provider-code', state }, { grabit_oauth_state: nonce });
+
+        await expect(guard.canActivate(context)).resolves.toBe(true);
+
+        expect(passport).toHaveBeenCalledTimes(1);
+        expect(response.redirect).not.toHaveBeenCalled();
+        expect(response.clearCookie).toHaveBeenCalledWith('grabit_oauth_state', expect.objectContaining({ path: '/api/v1/auth/social' }));
+        passport.mockRestore();
       });
 
-      const guard = new KakaoAuthGuard(mockConfigService as never);
-      const options = (guard as unknown as {
-        getAuthenticateOptions(context: ExecutionContext): { state?: string };
-      }).getAuthenticateOptions(mockContext as ExecutionContext);
+      it.each([
+        ['a captured callback replayed in a browser without the nonce cookie', (state: string) => ({ state }), () => ({})],
+        ['a nonce cookie from a different login attempt', (state: string) => ({ state }), () => ({ grabit_oauth_state: 'other-attempt-nonce' })],
+        ['a legacy unsigned locale state', () => ({ state: 'ko' }), (nonce: string) => ({ grabit_oauth_state: nonce })],
+        ['a tampered returnTo', (state: string) => ({ state: state.replace('returnTo=%2Fbooking%2Fshow-1', 'returnTo=%2Fmypage') }), (nonce: string) => ({ grabit_oauth_state: nonce })],
+      ])('rejects %s before exchanging the authorization code', async (_label, buildQuery, buildCookies) => {
+        const { guard, state, nonce } = await startAndCapture();
+        const passport = vi
+          .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(guard)) as { canActivate: () => unknown }, 'canActivate')
+          .mockResolvedValue(true);
+        const { context, response } = callbackContext(
+          { code: 'attacker-code', ...buildQuery(state) },
+          buildCookies(nonce),
+        );
 
-      expect(options).toEqual({ state: 'ko' });
+        // Rejected callbacks redirect and leave req.user unset, like a passport failure.
+        expect(await guard.canActivate(context)).toBe(true);
+
+        expect(passport).not.toHaveBeenCalled();
+        const redirect = response.redirect.mock.calls[0]![0] as string;
+        expect(redirect).toContain('/auth/callback?error=oauth_failed&provider=kakao');
+        passport.mockRestore();
+      });
+
+      it('rejects a state signed for another provider', async () => {
+        const { GoogleAuthGuard } = await import('./social-auth.guard.js');
+        const { state, nonce } = await startAndCapture();
+        const googleGuard = new GoogleAuthGuard(mockConfigService as never);
+        const passport = vi
+          .spyOn(Object.getPrototypeOf(Object.getPrototypeOf(googleGuard)) as { canActivate: () => unknown }, 'canActivate')
+          .mockResolvedValue(true);
+        const { context, response } = callbackContext({ code: 'code', state }, { grabit_oauth_state: nonce });
+
+        await googleGuard.canActivate(context);
+
+        expect(passport).not.toHaveBeenCalled();
+        expect(response.redirect.mock.calls[0]![0]).toContain('error=oauth_failed&provider=google');
+        passport.mockRestore();
+      });
     });
 
     it('should preserve locale and returnTo state on OAuth failure redirects', async () => {

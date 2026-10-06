@@ -1,6 +1,7 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
-import { inspect } from 'node:util';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { BenefitDefinition } from '@grabit/shared';
@@ -10,7 +11,6 @@ import {
   ticketBenefitConfigurations,
   ticketBenefitEntitlements,
   ticketBenefits,
-  ticketItems,
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { AdminBenefitsController } from './admin-benefits.controller.js';
@@ -91,6 +91,15 @@ type QueryCall = {
   where?: unknown;
 };
 
+type ExecuteCall = { sql: string; params: unknown[] };
+type ExecuteOptions = {
+  inactivatedCount?: number;
+  createdCount?: number;
+  failWith?: unknown;
+};
+
+const dialect = new PgDialect();
+
 function chainResult<T>(rows: T[], call?: QueryCall) {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
@@ -138,8 +147,10 @@ function createMockDb(
     ],
   ]),
   insertConflictReturningRows?: Map<unknown, unknown[]>,
+  executeOptions: ExecuteOptions = {},
 ) {
   const selectCalls: QueryCall[] = [];
+  const executeCalls: ExecuteCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
   const insertConflictDoNothingCalls: Array<{ table: unknown; values: unknown }> = [];
   const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
@@ -154,7 +165,23 @@ function createMockDb(
   };
 
   const tx = {
-    execute: vi.fn(() => chainResult([{ id: SHOWTIME_ID }])),
+    execute: vi.fn((query: SQL) => {
+      const rendered = dialect.sqlToQuery(query);
+      executeCalls.push(rendered);
+      if (executeOptions.failWith && rendered.sql.includes('FROM showtimes')) {
+        return Promise.reject(executeOptions.failWith);
+      }
+      if (rendered.sql.includes('FROM showtimes')) {
+        return chainResult([{ id: SHOWTIME_ID }]);
+      }
+      if (rendered.sql.includes('changed AS')) {
+        return chainResult([{ count: executeOptions.inactivatedCount ?? 0 }]);
+      }
+      if (rendered.sql.includes('inserted AS')) {
+        return chainResult([{ count: executeOptions.createdCount ?? 0 }]);
+      }
+      return chainResult([]);
+    }),
     select: vi.fn((selection?: unknown) => {
       const call: QueryCall = { selection };
       selectCalls.push(call);
@@ -197,6 +224,7 @@ function createMockDb(
     db,
     tx,
     selectCalls,
+    executeCalls,
     insertCalls,
     insertConflictDoNothingCalls,
     updateCalls,
@@ -207,8 +235,9 @@ function createDependencies(
   selectRows: unknown[][] = [],
   insertReturningRows?: Map<unknown, unknown[]>,
   insertConflictReturningRows?: Map<unknown, unknown[]>,
+  executeOptions: ExecuteOptions = {},
 ) {
-  const db = createMockDb(selectRows, insertReturningRows, insertConflictReturningRows);
+  const db = createMockDb(selectRows, insertReturningRows, insertConflictReturningRows, executeOptions);
   const adminAuditService = {
     write: vi.fn().mockResolvedValue({ id: 'audit-1' }),
   } as unknown as AdminAuditService & { write: Mock };
@@ -217,16 +246,20 @@ function createDependencies(
   return { service, adminAuditService, ...db };
 }
 
-function expectPredicateToContain(predicate: unknown, fragments: string[]) {
-  const predicateText = inspect(predicate, { depth: 30 });
-  for (const fragment of fragments) {
-    expect(predicateText).toContain(fragment);
-  }
+function syncStatements(executeCalls: ExecuteCall[]) {
+  return executeCalls.filter((call) => call.sql.includes('ticket_benefit_entitlements'));
+}
+
+function desiredParam(call: ExecuteCall | undefined): unknown {
+  const json = call?.params.find((param) =>
+    typeof param === 'string' && param.startsWith('{'),
+  );
+  return JSON.parse(String(json));
 }
 
 describe('AdminBenefitsService', () => {
-  it('locks the showtime row before configuration writes, audit, and included sync', async () => {
-    const { service, tx, adminAuditService } = createDependencies([
+  it('locks the showtime row with lock and statement timeouts before configuration writes, audit, and included sync', async () => {
+    const { service, tx, executeCalls, adminAuditService } = createDependencies([
       [],
       [],
       [],
@@ -240,12 +273,85 @@ describe('AdminBenefitsService', () => {
       { now: NOW },
     );
 
-    expect(tx.execute).toHaveBeenCalledTimes(1);
-    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 10 })).toContain('FOR NO KEY UPDATE');
-    expect(tx.execute.mock.invocationCallOrder[0])
+    expect(executeCalls[0]?.sql).toContain('set_config');
+    expect(executeCalls[0]?.params).toEqual(['3s', '30s']);
+    expect(executeCalls[0]?.sql).toMatch(/set_config\('lock_timeout', \$1, true\)/);
+    expect(executeCalls[0]?.sql).toMatch(/set_config\('statement_timeout', \$2, true\)/);
+    expect(executeCalls[1]?.sql).toContain('FOR NO KEY UPDATE');
+    expect(tx.execute.mock.invocationCallOrder[1])
       .toBeLessThan(tx.insert.mock.invocationCallOrder[0]!);
-    expect(tx.execute.mock.invocationCallOrder[0])
+    expect(tx.execute.mock.invocationCallOrder[1])
       .toBeLessThan(adminAuditService.write.mock.invocationCallOrder[0]!);
+  });
+
+  it.each([
+    ['55P03', ConflictException, '잠시 후 다시 시도'],
+    ['57014', ServiceUnavailableException, '제한 시간'],
+  ] as const)('maps PostgreSQL %s from the benefit lock to an operator-facing error', async (code, ErrorType, message) => {
+    const driverError = Object.assign(new Error('Failed query'), { cause: { code } });
+    const { service, insertCalls, adminAuditService } = createDependencies(
+      [],
+      undefined,
+      undefined,
+      { failWith: driverError },
+    );
+
+    const result = service.saveConfiguration(
+      SHOWTIME_ID,
+      ACTOR_ID,
+      { benefits: [includedBenefit()], reason: 'lock timeout' },
+      { now: NOW },
+    );
+
+    await expect(result).rejects.toBeInstanceOf(ErrorType);
+    await expect(result).rejects.toThrow(message);
+    expect(insertCalls).toEqual([]);
+    expect(adminAuditService.write).not.toHaveBeenCalled();
+  });
+
+  it('rejects mutual exclusion rules that the runner would ignore before opening a transaction', async () => {
+    const { service, db } = createDependencies();
+    const included = includedBenefit({ identity: 'vip-poster', mutuallyExclusiveWith: ['vip-raffle'] });
+    const limited = limitedBenefit({ identity: 'vip-raffle' });
+
+    await expect(service.saveConfiguration(
+      SHOWTIME_ID,
+      ACTOR_ID,
+      { benefits: [included, limited], reason: 'included exclusion' },
+      { now: NOW },
+    )).rejects.toThrow('기본 포함 특전에는 함께 배정하지 않을 특전을 설정할 수 없습니다');
+    await expect(service.saveConfiguration(
+      SHOWTIME_ID,
+      ACTOR_ID,
+      {
+        benefits: [
+          includedBenefit({ identity: 'vip-poster' }),
+          limitedBenefit({ identity: 'vip-raffle', mutuallyExclusiveWith: ['vip-poster'] }),
+        ],
+        reason: 'limited to included exclusion',
+      },
+      { now: NOW },
+    )).rejects.toThrow('한정 특전끼리만');
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('stores more than 120 characters of mutual exclusion identities', async () => {
+    const identities = Array.from({ length: 4 }, (_, index) =>
+      `benefit_${String(index).padStart(8, '0')}-0000-4000-8000-000000000000`);
+    const benefits = identities.map((identity, index) => limitedBenefit({
+      identity,
+      selectionPriority: index + 1,
+      mutuallyExclusiveWith: identities.filter((other) => other !== identity),
+    }));
+    const { service, insertCalls } = createDependencies([[], []]);
+
+    await service.saveConfiguration(SHOWTIME_ID, ACTOR_ID, { benefits, reason: '1인 1개' }, { now: NOW });
+
+    const rows = insertCalls.find((call) => call.table === ticketBenefits)?.values as Array<{
+      mutualExclusionGroup: string;
+    }>;
+    expect(rows[0]?.mutualExclusionGroup.length).toBeGreaterThan(120);
+    expect(rows[0]?.mutualExclusionGroup.split(',')).toEqual(identities.slice(1));
   });
 
   it('creates or updates the active configuration for a showtime', async () => {
@@ -446,21 +552,13 @@ describe('AdminBenefitsService', () => {
     );
   });
 
-  it('syncs included benefits to existing active ticket items immediately', async () => {
-    const {
-      service,
-      selectCalls,
-      insertCalls,
-      insertConflictDoNothingCalls,
-    } = createDependencies([
-      [],
-      [],
-      [
-        { id: 'ticket-vip-1', tierName: 'VIP' },
-        { id: 'ticket-r-1', tierName: 'R' },
-      ],
-      [],
-    ]);
+  it('syncs included benefits to existing active ticket items with set-based SQL instead of per-row parameters', async () => {
+    const { service, executeCalls, insertCalls } = createDependencies(
+      [[], []],
+      undefined,
+      undefined,
+      { createdCount: 2600 },
+    );
 
     await service.saveConfiguration(
       SHOWTIME_ID,
@@ -482,202 +580,84 @@ describe('AdminBenefitsService', () => {
       { now: NOW },
     );
 
-    const entitlementInsert = insertCalls.find(
-      (call) => call.table === ticketBenefitEntitlements,
-    )?.values;
-    expect(entitlementInsert).toEqual([
-      expect.objectContaining({
-        showtimeId: SHOWTIME_ID,
-        ticketItemId: 'ticket-vip-1',
-        benefitIdentity: 'vip-drink',
-        benefitKind: 'included',
-        source: 'configuration',
-        runId: null,
-        state: 'active',
-        displayCopySnapshot: copy('VIP 음료'),
-      }),
-    ]);
-    expect(insertConflictDoNothingCalls).toEqual([
-      expect.objectContaining({
-        table: ticketBenefitEntitlements,
-      }),
-    ]);
-
-    const ticketItemQuery = selectCalls.find((call) => call.table === ticketItems);
-    expect(ticketItemQuery?.where).toBeDefined();
-    expectPredicateToContain(ticketItemQuery?.where, ['status', 'active']);
-
-    const entitlementQuery = selectCalls.find(
-      (call) => call.table === ticketBenefitEntitlements,
-    );
-    expect(entitlementQuery?.where).toBeDefined();
-    expectPredicateToContain(entitlementQuery?.where, [
-      'source',
-      'configuration',
-      'benefitKind',
-      'included',
-      'state',
-      'active',
-    ]);
-  });
-
-  it('keeps one duplicate active configuration included entitlement and inactivates the rest', async () => {
-    const { service, tx, updateCalls, insertCalls } = createDependencies([
-      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
-      [
-        {
-          id: 'entitlement-keep',
-          ticketItemId: 'ticket-vip-1',
-          benefitIdentity: 'vip-drink',
-        },
-        {
-          id: 'entitlement-duplicate',
-          ticketItemId: 'ticket-vip-1',
-          benefitIdentity: 'vip-drink',
-        },
-      ],
-    ]);
-
-    await expect(
-      service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
-        db: tx as never,
-        benefits: [includedBenefit({
-          identity: 'vip-drink',
-          displayCopy: copy('VIP 음료'),
-          eligibleTierNames: ['VIP'],
-        })],
-        now: NOW,
-      }),
-    ).resolves.toEqual({
-      createdCount: 0,
-      inactivatedCount: 1,
+    expect(insertCalls.some((call) => call.table === ticketBenefitEntitlements)).toBe(false);
+    const statements = syncStatements(executeCalls);
+    expect(statements).toHaveLength(3);
+    const insert = statements.find((call) => call.sql.includes('INSERT INTO ticket_benefit_entitlements'));
+    expect(insert?.sql).toContain('ON CONFLICT DO NOTHING');
+    expect(insert?.sql).toContain("ti.status = 'active'");
+    expect(insert?.sql).toContain("'configuration'::ticket_benefit_entitlement_source");
+    expect(insert?.params.length).toBeLessThanOrEqual(5);
+    expect(desiredParam(insert)).toEqual({
+      'vip-drink': { tiers: ['VIP'], copy: copy('VIP 음료') },
     });
-
-    expect(insertCalls.some((call) => call.table === ticketBenefitEntitlements))
-      .toBe(false);
-    expect(updateCalls).toEqual(
-      expect.arrayContaining([
-        {
-          table: ticketBenefitEntitlements,
-          values: expect.objectContaining({
-            state: 'inactive',
-            inactiveReason: 'duplicate_configuration_entitlement',
-          }),
-        },
-      ]),
-    );
   });
 
-  it('inactivates included entitlements when ticket items are no longer eligible before lock', async () => {
-    const { service, updateCalls, insertCalls } = createDependencies([
-      [],
-      [configurationRow()],
-      [dbBenefit(includedBenefit({
-        identity: 'vip-drink',
-        eligibleTierNames: ['VIP'],
-      }))],
-      [
-        { id: 'ticket-vip-1', tierName: 'VIP' },
-        { id: 'ticket-r-1', tierName: 'R' },
-      ],
-      [
-        {
-          id: 'entitlement-vip',
-          ticketItemId: 'ticket-vip-1',
-          benefitIdentity: 'vip-drink',
-        },
-      ],
-    ]);
+  it('refreshes existing display copies with one UPDATE that skips unchanged rows', async () => {
+    const { service, tx, executeCalls } = createDependencies();
 
-    await service.saveConfiguration(
-      SHOWTIME_ID,
-      ACTOR_ID,
-      {
-        benefits: [includedBenefit({
-          identity: 'vip-drink',
-          eligibleTierNames: ['R'],
-        })],
-        reason: 'R석으로 적용 대상 변경',
-      },
-      { now: NOW },
-    );
-
-    expect(updateCalls).toEqual(
-      expect.arrayContaining([
-        {
-          table: ticketBenefitEntitlements,
-          values: expect.objectContaining({
-            state: 'inactive',
-            inactiveReason: 'configuration_changed',
-          }),
-        },
-      ]),
-    );
-    expect(insertCalls.find((call) => call.table === ticketBenefitEntitlements)?.values)
-      .toEqual([
-        expect.objectContaining({
-          ticketItemId: 'ticket-r-1',
-          benefitIdentity: 'vip-drink',
-          state: 'active',
-        }),
-      ]);
-  });
-
-  it('uses conflict-safe inserts when included entitlements are missing', async () => {
-    const { service, tx, insertConflictDoNothingCalls } = createDependencies([
-      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
-      [],
-    ]);
-
-    await expect(service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+    await service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
       db: tx as never,
       benefits: [includedBenefit({
         identity: 'vip-drink',
-        displayCopy: copy('VIP 음료'),
+        displayCopy: copy('VIP 음료 오탈자 수정'),
         eligibleTierNames: ['VIP'],
       })],
       now: NOW,
-    })).resolves.toEqual({
-      createdCount: 1,
-      inactivatedCount: 0,
     });
 
-    expect(insertConflictDoNothingCalls).toEqual([
-      expect.objectContaining({
-        table: ticketBenefitEntitlements,
-        values: [
-          expect.objectContaining({
-            ticketItemId: 'ticket-vip-1',
-            benefitIdentity: 'vip-drink',
-            source: 'configuration',
-            runId: null,
-          }),
-        ],
-      }),
-    ]);
+    const refresh = syncStatements(executeCalls).filter((call) =>
+      call.sql.includes('SET display_copy_snapshot'));
+    expect(refresh).toHaveLength(1);
+    expect(refresh[0]?.sql).toMatch(/IS DISTINCT FROM \(\$\d+::jsonb -> e\.benefit_identity::text -> 'copy'\)/);
+    expect(refresh[0]?.sql).toContain("e.state = 'active'");
+    expect(refresh[0]?.sql).not.toContain('ticket_items');
+    expect(desiredParam(refresh[0])).toEqual({
+      'vip-drink': { tiers: ['VIP'], copy: copy('VIP 음료 오탈자 수정') },
+    });
   });
 
-  it('does not count conflict-skipped included entitlement inserts as created', async () => {
-    const insertConflictReturningRows = new Map<unknown, unknown[]>([
-      [ticketBenefitEntitlements, []],
-    ]);
-    const { service, tx } = createDependencies([
-      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
+  it('inactivates included entitlements whose ticket is no longer eligible and reports the count', async () => {
+    const { service, tx, executeCalls } = createDependencies(
       [],
-    ], undefined, insertConflictReturningRows);
+      undefined,
+      undefined,
+      { inactivatedCount: 7, createdCount: 3 },
+    );
 
     await expect(service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
       db: tx as never,
-      benefits: [includedBenefit({
-        identity: 'vip-drink',
-        displayCopy: copy('VIP 음료'),
-        eligibleTierNames: ['VIP'],
-      })],
+      benefits: [includedBenefit({ identity: 'vip-drink', eligibleTierNames: ['R'] })],
       now: NOW,
-    })).resolves.toEqual({
-      createdCount: 0,
-      inactivatedCount: 0,
+    })).resolves.toEqual({ createdCount: 3, inactivatedCount: 7 });
+
+    const inactivate = syncStatements(executeCalls).find((call) => call.sql.includes('changed AS'));
+    expect(inactivate?.sql).toContain("inactive_reason = 'configuration_changed'");
+    expect(inactivate?.sql).toContain('ti.id = e.ticket_item_id');
+    expect(inactivate?.sql).toContain("ti.status = 'active'");
+    expect(inactivate?.params).toEqual(expect.arrayContaining([SHOWTIME_ID, NOW.toISOString()]));
+    expect(desiredParam(inactivate)).toEqual({
+      'vip-drink': { tiers: ['R'], copy: copy('무료 음료') },
     });
+  });
+
+  it('only inactivates when no included benefit remains', async () => {
+    const { service, tx, executeCalls } = createDependencies(
+      [],
+      undefined,
+      undefined,
+      { inactivatedCount: 2 },
+    );
+
+    await expect(service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+      db: tx as never,
+      benefits: [limitedBenefit()],
+      now: NOW,
+    })).resolves.toEqual({ createdCount: 0, inactivatedCount: 2 });
+
+    const statements = syncStatements(executeCalls);
+    expect(statements).toHaveLength(1);
+    expect(desiredParam(statements[0])).toEqual({});
   });
 
   it('keeps unsaved test snapshots side-effect-free and does not update active configuration', async () => {

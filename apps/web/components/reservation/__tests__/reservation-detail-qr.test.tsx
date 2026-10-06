@@ -7,6 +7,7 @@ import { ReservationDetailView } from '@/components/reservation/reservation-deta
 import { apiClient } from '@/lib/api-client';
 import type { BenefitEntitlement, ReservationDetail } from '@grabit/shared';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -350,6 +351,33 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText(getVisibleCopy(locale).reservation.detail.beforePayment)).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['ko', '/mypage', '환불 및 재오픈 안내', '취소 마감 안내'],
+    ['en', '/en/mypage', 'Refund and seat reopening notice', 'Cancellation deadline'],
+  ] as const)('titles the refund notice and the cancellation deadline cards differently (%s)', (locale, path, refundTitle, deadlineTitle) => {
+    window.history.replaceState({}, '', path);
+    const copy = getVisibleCopy(locale).reservation.cancel;
+    expect(copy.title).toBe(refundTitle);
+    expect(copy.deadlineTitle).toBe(deadlineTitle);
+
+    render(<ReservationDetailView reservation={createReservation()} onCancel={vi.fn()} isCancelling={false} />);
+
+    // Both cards render for a confirmed booking; neither title repeats.
+    expect(screen.getAllByRole('heading', { level: 2, name: refundTitle })).toHaveLength(1);
+    const deadlineHeading = screen.getByRole('heading', { level: 2, name: deadlineTitle });
+    expect(deadlineHeading.parentElement).toHaveTextContent(
+      getVisibleCopy(locale).bookingExtra.completeCard.cancellationDeadline,
+    );
+  });
+
+  it('gives the cancellation deadline card its own title in every locale', () => {
+    for (const locale of ['ko', 'en', 'th', 'zh-CN']) {
+      const copy = getVisibleCopy(locale).reservation.cancel;
+      expect(copy.deadlineTitle).toBeTruthy();
+      expect(copy.deadlineTitle).not.toBe(copy.title);
+    }
+  });
+
   it('keeps an unpaid order with no payment timestamp explicitly unpaid', () => {
     const reservation = createReservation({ status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [] });
     render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
@@ -548,6 +576,46 @@ describe('ReservationDetailView QR ticket card', () => {
       reservationNumber: 'GRP-27-DETAIL-QR',
       tossOrderId: 'GRP-20260604-7O7YM',
     }));
+  });
+
+  it('judges the resume-payment deadline on the server clock, not a fast device clock', () => {
+    vi.useFakeTimers();
+    // The device runs 3 minutes fast; the server is at 06:06, deadline 06:08.
+    setSystemTime('2026-05-22T06:09:00.000Z');
+    resetServerClockForTests();
+    recordServerTimeSample({
+      serverNowMs: Date.parse('2026-05-22T06:06:00.000Z'),
+      requestStartedAtMs: Date.now() - 50,
+      responseReceivedAtMs: Date.now() + 50,
+    });
+
+    try {
+      render(
+        <ReservationDetailView
+          reservation={createReservation({
+            status: 'PENDING_PAYMENT',
+            paidAt: null,
+            paymentInfo: {
+              paymentKey: rawPaymentKey,
+              method: 'CARD',
+              amount: 160000,
+              status: 'READY',
+              paidAt: null,
+              paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+            },
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+            ticketItems: [],
+          })}
+          onCancel={vi.fn()}
+          isCancelling={false}
+          onResumePayment={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: '결제 계속하기' })).toBeInTheDocument();
+    } finally {
+      resetServerClockForTests();
+    }
   });
 
   it('keeps a handed-off payment without a callback in status review after its local deadline', () => {

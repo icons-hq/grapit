@@ -5,16 +5,25 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
-import { isSameCheckoutPaymentMethod } from '@grabit/shared';
+import {
+  CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
+  isCheckoutPaymentMethodAllowed,
+  isSameCheckoutPaymentMethod,
+} from '@grabit/shared';
 import { fetchReviewedPerformanceTranslations } from '../translation/performance-translation-overlay.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
+import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
+import { restoreCancellationPendingBenefitEntitlements } from '../../database/benefit-entitlement-restoration.js';
+import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import {
   reservations,
   reservationSeats,
@@ -67,6 +76,7 @@ import {
   buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { assertShowtimeSalesOpen } from '../booking/showtime-sales-cutoff.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
@@ -112,6 +122,8 @@ type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
 type BookingActor = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: readonly string[] | null;
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -127,6 +139,7 @@ type ShowtimeBookingContext = {
   bookingStartsAt: Date | null;
   dateTime: Date;
   maxTicketsPerUser: number;
+  allowedPaymentMethods: readonly string[];
   bookingPolicy: BookingPolicy;
 };
 type ReservationSeatRow = typeof reservationSeats.$inferSelect;
@@ -139,6 +152,8 @@ type TicketItemCancellationContext = {
   reservationNumber?: string;
   reservationStatus: string;
   reservationCreatedAt: Date;
+  /** Booking day anchor for the fee schedule: provider approval time, legacy fallback to creation. */
+  bookingConfirmedAt: Date;
   cancelDeadline: Date | null;
   showtimeAt: Date;
   paymentId: string;
@@ -180,7 +195,8 @@ type PreparedTicketItemCancellation = {
   quote: TicketItemCancellationQuote;
   reason: string;
   isPendingRetry: boolean;
-  paymentCancelRequest: PaymentCancelRequest;
+  /** Null when nothing is refundable: the item is cancelled locally without a provider command. */
+  paymentCancelRequest: PaymentCancelRequest | null;
   isFullPaymentCancellation: boolean;
   finalizerContext: FullPaymentCancellationContext;
   now: Date;
@@ -233,6 +249,70 @@ function mapPerformanceBookingPolicy(
     seatHoldMinutes:
       policy?.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes,
   };
+}
+
+// Crockford base32 (no I/L/O/U): 32^8 ≈ 1.1e12 numbers per KST day.
+const RESERVATION_NUMBER_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const RESERVATION_NUMBER_RANDOM_LENGTH = 8;
+const RESERVATION_NUMBER_MAX_ATTEMPTS = 3;
+const RESERVATION_NUMBER_UNIQUE_CONSTRAINT = 'reservations_reservation_number_unique';
+const RESERVATION_ORDER_ID_UNIQUE_CONSTRAINT = 'reservations_toss_order_id_unique';
+/** Shared with checkout, which keeps the buyer on the payment step for this 409. */
+export const PAYMENT_METHOD_NOT_ALLOWED_MESSAGE = CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
+
+/** Constraint name of a PostgreSQL unique violation (23505), unwrapping driver error causes. */
+function uniqueViolationConstraint(error: unknown): string | null {
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current; depth += 1) {
+    const candidate = current as { code?: unknown; constraint?: unknown; cause?: unknown };
+    if (candidate.code === '23505') {
+      return typeof candidate.constraint === 'string' ? candidate.constraint : null;
+    }
+    current = candidate.cause;
+  }
+  return null;
+}
+
+/** Performance-configured checkout methods; an empty list means the platform default. */
+function resolveAllowedPaymentMethods(methods: readonly string[] | null | undefined): readonly string[] {
+  return methods?.length ? methods : DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods;
+}
+
+function assertPaymentMethodAllowed(
+  paymentMethod: PaymentMethod | undefined,
+  allowedPaymentMethods: readonly string[],
+): void {
+  if (paymentMethod && !isCheckoutPaymentMethodAllowed(paymentMethod, allowedPaymentMethods)) {
+    throw new ConflictException(PAYMENT_METHOD_NOT_ALLOWED_MESSAGE);
+  }
+}
+
+/** Same wording the auth flow uses for withdrawn or merged accounts. */
+export const INACTIVE_BUYER_ACCOUNT_MESSAGE = '탈퇴 처리된 계정입니다';
+
+/**
+ * First statement of the pending-reservation transaction: re-reads the buyer's
+ * account_status under FOR KEY SHARE (audit #44). Withdrawal locks the same
+ * users row FOR UPDATE before it reads blockers, and only that lock conflicts
+ * with KEY SHARE (profile updates take NO KEY UPDATE and are not blocked). So a
+ * prepare either commits first and the withdrawal sees its PENDING_PAYMENT, or
+ * waits for the withdrawal and is refused here. Both sides lock users before
+ * reservations, so the order cannot deadlock.
+ */
+export async function lockActiveBuyerAccount(
+  tx: Pick<DrizzleDB, 'execute'>,
+  userId: string,
+): Promise<void> {
+  const result = await tx.execute(
+    sql`SELECT account_status FROM users WHERE id = ${userId} FOR KEY SHARE`,
+  );
+  const row = result.rows[0] as { account_status?: string | null } | undefined;
+  if (!row) {
+    throw new NotFoundException('사용자를 찾을 수 없습니다');
+  }
+  if ((row.account_status ?? 'active') !== 'active') {
+    throw new ForbiddenException(INACTIVE_BUYER_ACCOUNT_MESSAGE);
+  }
 }
 
 function assertBookingVerificationComplete(actor: BookingActor): void {
@@ -350,14 +430,14 @@ export class ReservationService {
       );
   }
 
-  generateReservationNumber(): string {
-    const now = new Date();
-    const dateStr = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0'),
-    ].join('');
-    const random = Math.random().toString(36).substring(2, 7).toUpperCase();
+  /** GRP-<KST date>-<8 CSPRNG base32 chars>; prepare retries the rare unique collision. */
+  generateReservationNumber(now: Date = new Date()): string {
+    const dateStr = seoulDateFormatter.format(now).replaceAll('-', '');
+    const random = Array.from(
+      randomBytes(RESERVATION_NUMBER_RANDOM_LENGTH),
+      // 256 is a multiple of 32, so masking keeps every character equally likely.
+      (byte) => RESERVATION_NUMBER_ALPHABET[byte & 31],
+    ).join('');
     return `GRP-${dateStr}-${random}`;
   }
 
@@ -404,24 +484,12 @@ export class ReservationService {
     }
   }
 
+  /** Counts the buyer's verified phone identity, not only this account (see ticket-limit.ts). */
   private async countUserActiveTicketsForPerformance(
     userId: string,
     performanceId: string,
   ): Promise<number> {
-    const result = await this.db.execute(sql`
-      SELECT count(*)::int AS active_ticket_count
-      FROM ticket_items ti
-      INNER JOIN reservations r ON r.id = ti.reservation_id
-      INNER JOIN showtimes s ON s.id = ti.showtime_id
-      WHERE r.user_id = ${userId}
-        AND s.performance_id = ${performanceId}
-        AND r.status = 'CONFIRMED'
-        AND ti.status IN ('active', 'cancellation_pending')
-    `);
-    const count = (result.rows[0] as { active_ticket_count?: unknown } | undefined)
-      ?.active_ticket_count;
-
-    return typeof count === 'number' ? count : Number(count ?? 0);
+    return countBuyerActiveTicketsForPerformance(this.db, userId, performanceId);
   }
 
   private async assertUserTicketLimitAvailable(input: {
@@ -895,16 +963,17 @@ export class ReservationService {
     return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
   }
 
+  /** `bookedAt` is the booking confirmation (provider approval) time, not the seat-selection time. */
   private calculateTicketItemCancellationQuote(input: {
     price: number;
     serviceFee: number;
-    reservationCreatedAt: Date;
+    bookedAt: Date;
     showtimeAt: Date;
     now?: Date;
   }): TicketItemCancellationQuote {
     const now = input.now ?? new Date();
     const today = this.getSeoulDayOrdinal(now);
-    const bookingDay = this.getSeoulDayOrdinal(input.reservationCreatedAt);
+    const bookingDay = this.getSeoulDayOrdinal(input.bookedAt);
     const showDay = this.getSeoulDayOrdinal(input.showtimeAt);
     const daysBeforeShow = showDay - today;
 
@@ -1011,6 +1080,7 @@ export class ReservationService {
         bookingStartsAt: bookingPolicies.bookingStartsAt,
         dateTime: showtimes.dateTime,
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+        allowedPaymentMethods: bookingPolicies.allowedPaymentMethods,
         changePolicyEnabled: bookingPolicies.changePolicyEnabled,
         paymentWindowMinutes: bookingPolicies.paymentWindowMinutes,
         seatHoldMinutes: bookingPolicies.seatHoldMinutes,
@@ -1033,6 +1103,7 @@ export class ReservationService {
       dateTime: showtime.dateTime,
       maxTicketsPerUser:
         showtime.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
+      allowedPaymentMethods: resolveAllowedPaymentMethods(showtime.allowedPaymentMethods),
       bookingPolicy: mapPerformanceBookingPolicy({
         maxTicketsPerUser: showtime.maxTicketsPerUser ?? undefined,
         changePolicyEnabled: showtime.changePolicyEnabled ?? undefined,
@@ -1051,7 +1122,7 @@ export class ReservationService {
     if (performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
-    if (actor.role === 'admin') {
+    if (canUseAdminBookingBypass(actor)) {
       return;
     }
     if (performancePublishState !== 'published') {
@@ -1073,7 +1144,6 @@ export class ReservationService {
     const actor = typeof actorOrUserId === 'string'
       ? { id: actorOrUserId, isEmailVerified: true, isPhoneVerified: true }
       : actorOrUserId;
-    const userId = actor.id;
     this.featureFlags.assertBookingEnabled(actor);
     assertBookingVerificationComplete(actor);
     await this.assertBookingConsent(dto as PrepareReservationRequest & {
@@ -1081,6 +1151,17 @@ export class ReservationService {
     });
 
     this.assertUniqueSeatIds(dto.seats);
+
+    return this.prepareReservationOrder(dto, actor, requestMeta, true);
+  }
+
+  private async prepareReservationOrder(
+    dto: PrepareReservationRequest,
+    actor: BookingActor,
+    requestMeta: ConsentRequestMeta,
+    replayOnOrderConflict: boolean,
+  ): Promise<PrepareReservationResponse> {
+    const userId = actor.id;
 
     // 1. Idempotency: if a reservation already exists for this orderId, return it
     const [existing] = await this.db
@@ -1139,6 +1220,7 @@ export class ReservationService {
         actor,
         existingShowtime.performancePublishState,
       );
+      assertShowtimeSalesOpen(existingShowtime.dateTime);
 
       const canonicalSeats = await this.getCanonicalSeatSelections(
         dto.seats,
@@ -1171,6 +1253,10 @@ export class ReservationService {
       if (methodChanged || needsQuote) {
         if (existing.checkoutStartedAt) {
           throw new ConflictException('결제수단이 고정된 예매입니다. 기존 결제수단으로 상태를 확인해주세요.');
+        }
+        // An unchanged method was checked when it was fixed; only a new choice is re-checked.
+        if (methodChanged) {
+          assertPaymentMethodAllowed(dto.paymentMethod, existingShowtime.allowedPaymentMethods);
         }
         const nextCharge = this.buildForeignProviderChargePrepare({
           paymentMethod: dto.paymentMethod, reservationPayableAmount: expectedAmount, now: new Date(),
@@ -1234,6 +1320,8 @@ export class ReservationService {
       actor,
       showtime.performancePublishState,
     );
+    assertShowtimeSalesOpen(showtime.dateTime);
+    assertPaymentMethodAllowed(dto.paymentMethod, showtime.allowedPaymentMethods);
 
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
@@ -1267,7 +1355,6 @@ export class ReservationService {
       userId, dto.showtimeId, canonicalSeats.map((seat) => seat.seatKey),
       Math.max(1, Math.ceil((paymentDeadlineAt.getTime() - Date.now()) / 1000)),
     );
-    const reservationNumber = this.generateReservationNumber();
     const cancelDeadline = this.calculateCancelDeadline(showtime.dateTime);
     const foreignEasyPayCharge = this.buildForeignProviderChargePrepare({
       paymentMethod: dto.paymentMethod,
@@ -1275,7 +1362,8 @@ export class ReservationService {
       now: preparedAt,
     });
 
-    const result = await this.db.transaction(async (tx) => {
+    const insertPendingReservation = (reservationNumber: string) => this.db.transaction(async (tx) => {
+      await lockActiveBuyerAccount(tx as DrizzleDB, userId);
       const [reservation] = await tx
         .insert(reservations)
         .values({
@@ -1287,7 +1375,7 @@ export class ReservationService {
           totalAmount: expectedAmount,
           checkoutPaymentMethod: dto.paymentMethod,
           queueSessionId: dto.queueAdmission?.queueSessionId,
-          admissionToken: dto.queueAdmission?.admissionToken,
+          // The admission token is a cookie-only bearer value; it is never persisted.
           refreshFamilyId: dto.queueAdmission?.refreshFamilyId,
           deviceSlotKey: dto.queueAdmission?.deviceSlotKey,
           admittedAt: this.toOptionalDate(dto.queueAdmission?.admittedAt),
@@ -1326,6 +1414,26 @@ export class ReservationService {
       return reservation!;
     });
 
+    let result: Awaited<ReturnType<typeof insertPendingReservation>>;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        result = await insertPendingReservation(this.generateReservationNumber(preparedAt));
+        break;
+      } catch (error) {
+        const constraint = uniqueViolationConstraint(error);
+        if (constraint === RESERVATION_NUMBER_UNIQUE_CONSTRAINT && attempt < RESERVATION_NUMBER_MAX_ATTEMPTS) {
+          this.logger.warn(`Reservation number collision; regenerating. orderId=${dto.orderId} attempt=${attempt}`);
+          continue;
+        }
+        if (constraint === RESERVATION_ORDER_ID_UNIQUE_CONSTRAINT && replayOnOrderConflict) {
+          // A concurrent prepare of the same orderId won: answer through the idempotent path,
+          // which also rejects another user's order with 404.
+          return this.prepareReservationOrder(dto, actor, requestMeta, false);
+        }
+        throw error;
+      }
+    }
+
     return {
       reservationId: result.id,
       orderId: dto.orderId,
@@ -1354,14 +1462,17 @@ export class ReservationService {
       throw new BadRequestException('예매 동의 항목이 필요합니다');
     }
 
+    // Explicit flow: booking requires only the rows checkout shows (terms, privacy).
     await this.consentService.assertRequiredConsents({
       items: dto.consentItems,
+      sourceFlow: 'booking',
     });
   }
 
   async confirmAndCreateReservation(
     dto: ConfirmPaymentRequest,
     actorOrUserId: string | BookingActor,
+    locale?: string,
   ): Promise<ReservationDetail> {
     const actor = typeof actorOrUserId === 'string'
       ? { id: actorOrUserId, isEmailVerified: true, isPhoneVerified: true }
@@ -1375,7 +1486,24 @@ export class ReservationService {
       userId,
     );
 
-    return this.getReservationDetail(result.reservationId, userId);
+    try {
+      return await this.getReservationDetail(result.reservationId, userId, locale);
+    } catch (detailError) {
+      // A 4xx answer (not found, not the owner) is a definitive result of the
+      // read and is not evidence of a completed payment for this caller.
+      if (detailError instanceof HttpException && detailError.getStatus() < 500) {
+        throw detailError;
+      }
+      // The payment is already committed; a failed read must not be shown as
+      // a failed payment. The buyer recovers the booking from its order ID.
+      this.logger.warn(
+        `Reservation detail read failed after confirmed payment. reservationId=${result.reservationId}`,
+        detailError instanceof Error ? detailError.stack : String(detailError),
+      );
+      throw new ServiceUnavailableException(
+        '결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.',
+      );
+    }
   }
 
   async getMyReservations(userId: string, status?: ReservationStatus, locale?: string): Promise<ReservationListItem[]> {
@@ -1467,7 +1595,6 @@ export class ReservationService {
           status: reservations.status,
           totalAmount: reservations.totalAmount,
           queueSessionId: reservations.queueSessionId,
-          admissionToken: reservations.admissionToken,
           refreshFamilyId: reservations.refreshFamilyId,
           deviceSlotKey: reservations.deviceSlotKey,
           admittedAt: reservations.admittedAt,
@@ -1562,10 +1689,19 @@ export class ReservationService {
       && this.qrTicketService
       && ticketItemRows.some((ticketItem) => ticketItem.status === 'active')
     ) {
-      qrTickets = await this.qrTicketService.ensureIssuedTicketsForReservation({
-        reservationId,
-        paymentId: payment.id,
-      });
+      // Self-healing issuance is a side effect of the read; its failure must
+      // not hide a confirmed booking. The next read retries it.
+      try {
+        qrTickets = await this.qrTicketService.ensureIssuedTicketsForReservation({
+          reservationId,
+          paymentId: payment.id,
+        });
+      } catch (issueError) {
+        this.logger.warn(
+          `QR self-heal issuance failed during reservation read. reservationId=${reservationId}`,
+          issueError instanceof Error ? issueError.stack : String(issueError),
+        );
+      }
     }
     const ticketItemDtos = ticketItemRows.length > 0
       ? this.mapTicketItems(
@@ -1639,7 +1775,8 @@ export class ReservationService {
         : null,
       queueAdmission: {
         queueSessionId: row.reservation.queueSessionId ?? '',
-        admissionToken: row.reservation.admissionToken ?? '',
+        // Cookie-only bearer value: never stored or echoed (same marker as prepare).
+        admissionToken: 'cookie-bound',
         refreshFamilyId: row.reservation.refreshFamilyId ?? '',
         deviceSlotKey: row.reservation.deviceSlotKey ?? '',
         admittedAt: row.reservation.admittedAt?.toISOString() ?? new Date(0).toISOString(),
@@ -1981,6 +2118,10 @@ export class ReservationService {
       throw new NotFoundException('예매를 찾을 수 없습니다');
     }
 
+    const reservationCreatedAt = this.toDate(
+      row['reservation_created_at'] as Date | string,
+      'reservation_created_at',
+    );
     return {
       reservationId: String(row['reservation_id']),
       userId: String(row['user_id']),
@@ -1989,10 +2130,10 @@ export class ReservationService {
         ? String(row['reservation_number'])
         : undefined,
       reservationStatus: String(row['reservation_status']),
-      reservationCreatedAt: this.toDate(
-        row['reservation_created_at'] as Date | string,
-        'reservation_created_at',
-      ),
+      reservationCreatedAt,
+      bookingConfirmedAt: row['payment_paid_at']
+        ? this.toDate(row['payment_paid_at'] as Date | string, 'payment_paid_at')
+        : reservationCreatedAt,
       cancelDeadline: row['cancel_deadline'] ? this.toDate(row['cancel_deadline'] as Date | string, 'cancel_deadline') : null,
       showtimeAt: this.toDate(row['showtime_at'] as Date | string, 'showtime_at'),
       paymentId: String(row['payment_id']),
@@ -2418,17 +2559,21 @@ export class ReservationService {
     if (!payment || payment.status !== 'DONE') throw new BadRequestException('취소할 수 없는 결제 상태입니다');
     const rows = await this.db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservationId));
     const quote = this.calculateTicketItemCancellationQuote({ price: selected.price, serviceFee: selected.serviceFee,
-      reservationCreatedAt: new Date(detail.createdAt), showtimeAt: new Date(detail.showDateTime) });
+      bookedAt: payment.paidAt ?? new Date(detail.createdAt), showtimeAt: new Date(detail.showDateTime) });
     const snapshot = withCompletedRefunds(payment, rows);
-    const command = buildTicketItemPaymentCancelRequest({ payment: snapshot,
+    // Nothing refundable means no provider command and no provider balance requirement.
+    const command = quote.refundableAmount === 0 ? null : buildTicketItemPaymentCancelRequest({ payment: snapshot,
       ticketItem: { id: ticketItemId, refundableAmount: quote.refundableAmount },
       activeTicketItems: rows.filter((item) => item.status === 'active'), reason: 'Refund preview' });
     const currency = payment.providerChargeCurrency === 'USD' ? 'USD' : 'KRW';
     const scale = currency === 'USD' ? 100 : 1;
     const chargeMinor = payment.providerChargeAmountMinor ?? payment.amount;
     const balanceMinor = chargeMinor - (snapshot.providerRefundedAmountMinor ?? 0);
-    const amountMinor = command.options.cancelAmount === undefined ? balanceMinor : Math.round(command.options.cancelAmount * scale);
-    const provider = await this.tossClient.queryPayment(payment.paymentKey, { secretKeyScope: command.options.secretKeyScope });
+    const amountMinor = !command ? 0
+      : command.options.cancelAmount === undefined ? balanceMinor : Math.round(command.options.cancelAmount * scale);
+    const provider = command
+      ? await this.tossClient.queryPayment(payment.paymentKey, { secretKeyScope: command.options.secretKeyScope })
+      : null;
     const [fullRefund] = await this.db.select({ id: refunds.id, status: refunds.status, providerMetadata: refunds.providerMetadata })
       .from(refunds).where(eq(refunds.reservationId, reservationId)).limit(1);
     const [policy] = await this.db.select({ min: bookingPolicies.cancelledSeatHoldMinMinutes,
@@ -2438,9 +2583,9 @@ export class ReservationService {
     else if (selected.admissionState === 'ENTERED') blockedReason = '입장 처리된 티켓은 취소할 수 없습니다';
     else if (selected.benefitEntitlements.some((benefit) => benefit.state === 'redeemed')) blockedReason = '특전을 수령한 티켓은 취소할 수 없습니다';
     else if ((fullRefund && !hasRestoredRefundRights(fullRefund)) || rows.some((item) => item.status === 'cancellation_pending')) blockedReason = '다른 취소가 처리 중입니다. 결과 확인 후 다시 시도해주세요.';
-    else if (command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
-    else if (Math.round((provider.balanceAmount ?? -1) * scale) !== balanceMinor
-      || Math.round(provider.totalAmount * scale) !== chargeMinor) blockedReason = '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
+    else if (command && provider && command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
+    else if (provider && (Math.round((provider.balanceAmount ?? -1) * scale) !== balanceMinor
+      || Math.round(provider.totalAmount * scale) !== chargeMinor)) blockedReason = '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
     return { reservationId, reservationNumber: detail.reservationNumber, paymentKey: payment.paymentKey,
       refundableAmount: quote.refundableAmount, canRequestRefund: !blockedReason, blockedReason,
       selectedTicketItemId: ticketItemId, remainingTicketItemIds: rows.filter((item) => item.id !== ticketItemId && item.status === 'active').map((item) => item.id),
@@ -2489,6 +2634,7 @@ export class ReservationService {
             p.provider_charge_currency,
             p.provider_charge_amount_minor,
             p.status AS payment_status,
+            p.paid_at AS payment_paid_at,
             bp.cancelled_seat_hold_min_minutes,
             bp.cancelled_seat_hold_max_minutes,
             ti.id AS ticket_item_id,
@@ -2525,7 +2671,10 @@ export class ReservationService {
 
         const now = new Date();
         const isPendingRetry = context.ticketItemStatus === 'cancellation_pending';
-        if (isPendingRetry && !context.cancellationCommand) {
+        // A 0 KRW item prepared without a provider command (nothing refundable) only needs local completion.
+        const pendingLocalOnly = isPendingRetry && !context.cancellationCommand
+          && context.price === 0 && context.refundableAmount === 0;
+        if (isPendingRetry && !context.cancellationCommand && !pendingLocalOnly) {
           throw new ConflictException('이전 취소 요청의 결제사 결과를 확인해야 합니다. 고객센터로 문의해주세요.');
         }
         const quote = isPendingRetry
@@ -2537,7 +2686,7 @@ export class ReservationService {
           : this.calculateTicketItemCancellationQuote({
               price: context.price,
               serviceFee: context.serviceFee,
-              reservationCreatedAt: context.reservationCreatedAt,
+              bookedAt: context.bookingConfirmedAt,
               showtimeAt: context.showtimeAt,
             });
         const cancellationReason = isPendingRetry && context.cancelReason
@@ -2592,16 +2741,19 @@ export class ReservationService {
           context,
           activeTicketItems,
         });
-        const paymentCancelRequest = context.cancellationCommand ? {
+        // Nothing refundable (for example a 0 KRW tier after the booking day): no provider command can carry
+        // a zero amount, so the item is cancelled locally and its seat reopens without a PG call.
+        const localOnlyCancellation = !context.cancellationCommand && quote.refundableAmount === 0;
+        const paymentCancelRequest: PaymentCancelRequest | null = context.cancellationCommand ? {
           paymentKey: context.paymentKey, reason: context.cancellationCommand.reason,
           options: context.cancellationCommand.options,
-        } : this.buildTicketItemPaymentCancelRequest({
+        } : localOnlyCancellation ? null : this.buildTicketItemPaymentCancelRequest({
           context,
           quote,
           activeTicketItems,
           reason: cancellationReason,
         });
-        if (!context.cancellationCommand) {
+        if (paymentCancelRequest && !context.cancellationCommand) {
           const commandId = randomUUID();
           paymentCancelRequest.reason = `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
           paymentCancelRequest.options.idempotencyKey = `ticket-item-cancel:${ticketItemId}:${commandId}`;
@@ -2622,7 +2774,7 @@ export class ReservationService {
           };
         }
         if (!isPendingRetry && expected?.expectedProviderRefundAmountMinor !== undefined
-          && expected.expectedProviderRefundAmountMinor !== context.cancellationCommand.amountMinor) {
+          && expected.expectedProviderRefundAmountMinor !== (context.cancellationCommand?.amountMinor ?? 0)) {
           throw new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.');
         }
         await tx
@@ -2674,7 +2826,7 @@ export class ReservationService {
           isPendingRetry,
           paymentCancelRequest,
           isFullPaymentCancellation:
-            paymentCancelRequest.options.cancelAmount === undefined,
+            paymentCancelRequest !== null && paymentCancelRequest.options.cancelAmount === undefined,
           finalizerContext,
           now: preparedAt,
         };
@@ -2682,7 +2834,7 @@ export class ReservationService {
 
       if (!preparedCancellation) return this.getReservationDetail(reservationId, userId);
 
-      if (preparedCancellation.quote.refundableAmount > 0) {
+      if (preparedCancellation.paymentCancelRequest && preparedCancellation.quote.refundableAmount > 0) {
         tossCancelAttempted = true;
         const cancelOutcome = await this.cancelTicketItemPaymentOrConfirm({
           request: preparedCancellation.paymentCancelRequest,
@@ -2961,9 +3113,8 @@ export class ReservationService {
             eq(tickets.revokedAt, revokedAt),
           ),
         );
-      await tx.update(ticketBenefitEntitlements).set({ state: 'active', inactiveReason: null, updatedAt: now })
-        .where(and(eq(ticketBenefitEntitlements.ticketItemId, ticketItemId),
-          eq(ticketBenefitEntitlements.state, 'inactive'), eq(ticketBenefitEntitlements.inactiveReason, 'cancellation_pending')));
+      // Benefit runs and configuration may have changed while the item was pending.
+      await restoreCancellationPendingBenefitEntitlements(tx, [ticketItemId], now);
     });
   }
 

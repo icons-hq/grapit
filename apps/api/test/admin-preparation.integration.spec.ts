@@ -9,7 +9,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import * as schema from '../src/database/schema/index.js';
@@ -21,6 +21,8 @@ import { UploadService } from '../src/modules/admin/upload.service.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
 import { CacheService } from '../src/modules/performance/cache.service.js';
 import { CatalogFreshnessService } from '../src/modules/performance/catalog-freshness.service.js';
+import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { RolesGuard } from '../src/common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../src/common/guards/admin-capabilities.guard.js';
@@ -46,12 +48,14 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
   let pool: Pool;
   let actorId: string;
   let catalog: PerformanceService;
+  let freshness: CatalogFreshnessService;
+  // Translation reads and state transitions under test never call DeepL.
+  const unusedTranslationProvider = { translateText: async () => { throw new Error('not used'); } } as never;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'preparation_test' })
-      .withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'preparation_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'preparation_test', max: 5 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });
@@ -61,8 +65,8 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
       name: 'Preparation operator', phone: '+821000000000', gender: 'unspecified', birthDate: '1990-01-01', role: 'admin' });
     const cache = new CacheService({ get: async () => null, set: async () => 'OK',
       del: async () => 0, scan: async () => ['0', []] } as never);
-    const freshness = new CatalogFreshnessService(cache);
-    catalog = new PerformanceService(db, cache);
+    freshness = new CatalogFreshnessService(cache);
+    catalog = new PerformanceService(db, cache, new PerformanceViewCounter(db));
     const admin = new AdminService(db, freshness, new AdminAuditService(db));
     // Vitest's TS transform omits constructor metadata. Supply wiring only;
     // the HTTP routes, pipes, Reflector and both authorization guards are real.
@@ -103,6 +107,34 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     return { title: `Preparation ${randomUUID()}`, genre: 'artist_celebrity', venueName: 'Test theatre',
       startDate: '2099-01-01T18:00', endDate: '2099-01-01T20:00', ageRating: '전체 관람가',
       priceTiers: [{ tierName: 'VIP', price: 50000 }] };
+  }
+
+  async function createPublishableEvent(overrides: { status?: string; bookingStartsAt?: string;
+    priceTiers?: Array<{ tierName: string; price: number }>; tierName?: string } = {}) {
+    const payload = { ...input(), description: '공연 상세 안내', status: overrides.status ?? 'upcoming',
+      ...(overrides.priceTiers ? { priceTiers: overrides.priceTiers } : {}),
+      ...(overrides.bookingStartsAt ? { bookingPolicy: { maxTicketsPerUser: 2, allowedPaymentMethods: ['CARD'], changePolicyEnabled: false,
+        paymentWindowMinutes: 7, seatHoldMinutes: 10, cancelledSeatHoldMinMinutes: 1, cancelledSeatHoldMaxMinutes: 10,
+        manualOpenEnabled: true, bookingStartsAt: overrides.bookingStartsAt } } : {}),
+      showtimes: [{ dateTime: '2099-01-01T18:00' }],
+      seatMaps: [{ floorKey: '1F', floorLabel: '1층', svgUrl: 'https://example.test/seats.svg', totalSeats: 1,
+        seatConfig: { tiers: [{ tierName: overrides.tierName ?? 'VIP', color: '#336699', seatIds: ['A-1'] }] } }] };
+    const created = await request(app.getHttpServer()).post('/admin/performances').send(payload);
+    expect(created.status).toBe(201);
+    for (const field of ['title', 'description'] as const) {
+      const hash = createHash('sha256').update(payload[field]).digest('hex');
+      const [source] = await db.insert(schema.translationSources).values({ entityType: 'performance', entityId: created.body.id,
+        field, sourceText: payload[field], contentHash: hash }).returning();
+      await db.insert(schema.translationDrafts).values({ sourceId: source!.id, targetLocale: 'en', status: 'published',
+        translatedText: `Reviewed ${field}`, sourceContentHash: hash, reviewedBy: actorId, publishedAt: new Date() });
+    }
+    return created.body.id as string;
+  }
+
+  async function publishBody(id: string) {
+    const preparation = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body;
+    return { reason: '콘텐츠와 좌석 검수 완료', confirmed: true, expectedUpdatedAt: preparation.updatedAt, confirmedChangedFields: ['publishState'],
+      contentChecklist: { ko: { title: true, description: true }, en: { title: true, description: true } } };
   }
 
   it.each(['finance', 'scanner'])('denies %s performance creation through the real capability guard', async (bundle) => {
@@ -210,7 +242,137 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     expect((await pool.query('SELECT id FROM performances WHERE id=$1', [id])).rows).toHaveLength(0);
     expect((await request(app.getHttpServer()).get(`/admin/performance-drafts/${draft.body.id}`)).status).toBe(404);
     const audit = await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id });
-    expect(audit).toHaveLength(1);
+    expect(audit).toHaveLength(2);
+    expect(audit.find((entry) => entry.action === 'event.delete')).toMatchObject({ actorUserId: actorId, status: 'success',
+      reason: '공연 삭제', diff: { before: { performance: { title: expect.stringContaining('Preparation'), publishState: 'draft', showtimeCount: 0 } } } });
+  });
+
+  it('refuses to delete a published performance without bookings and keeps its showtimes', async () => {
+    const id = await createPublishableEvent();
+    const published = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send(await publishBody(id));
+    expect(published.status).toBe(201);
+    for (const bundle of ['operator', 'approver', 'admin']) {
+      const response = await request(app.getHttpServer()).delete(`/admin/performances/${id}`).set('x-test-bundle', bundle)
+        .send({ reason: '오픈 전 정리' });
+      expect(response.status).toBe(409);
+      expect(response.body.message).toContain('판매종료');
+    }
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}`)).body.showtimes).toHaveLength(1);
+    expect(await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.delete' })).toHaveLength(0);
+  });
+
+  it('requires explicit confirmation before publishing a performance whose sale is already open', async () => {
+    const id = await createPublishableEvent({ status: 'selling' });
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.saleOpening)
+      .toEqual({ mode: 'immediate', at: null, startElapsed: false });
+    const body = await publishBody(id);
+    const refused = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver').send(body);
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toContain('즉시 판매');
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.publishState).toBe('draft');
+    const confirmed = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send({ ...body, immediateSaleConfirmed: true });
+    expect(confirmed.status).toBe(201);
+    const audit = await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.publish' });
+    expect(audit.map((entry) => [entry.status, entry.diff.after.saleOpening])).toEqual(expect.arrayContaining([
+      ['failed', { mode: 'immediate', at: null, startElapsed: false, confirmed: false }],
+      ['success', { mode: 'immediate', at: null, startElapsed: false, confirmed: true }],
+    ]));
+  });
+
+  it('blocks publishing a performance whose stored sale start already passed', async () => {
+    const id = await createPublishableEvent({ bookingStartsAt: '2025-10-01T11:00:00.000Z' });
+    const preparation = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body;
+    expect(preparation.canPublish).toBe(false);
+    expect(preparation.checks.find((check: { key: string }) => check.key === 'sales')).toMatchObject({ ready: false });
+    const response = await request(app.getHttpServer()).post(`/admin/performances/${id}/publish`).set('x-test-bundle', 'approver')
+      .send({ ...(await publishBody(id)), immediateSaleConfirmed: true });
+    expect(response.status).toBe(400);
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.publishState).toBe('draft');
+  });
+
+  it('stores trimmed tier names so every configured seat stays sellable at the displayed price', async () => {
+    const id = await createPublishableEvent({ priceTiers: [{ tierName: 'VIP ', price: 50000 }], tierName: ' VIP ' });
+    const tiers = await pool.query('SELECT tier_name, price FROM price_tiers WHERE performance_id = $1', [id]);
+    expect(tiers.rows).toEqual([{ tier_name: 'VIP', price: 50000 }]);
+    const assigned = await pool.query(`SELECT t.tier_name, t.price, count(a.id)::int AS seats FROM performance_seat_tiers t
+      LEFT JOIN performance_seat_assignments a ON a.tier_id = t.id WHERE t.performance_id = $1 GROUP BY t.id`, [id]);
+    expect(assigned.rows).toEqual([{ tier_name: 'VIP', price: 50000, seats: 1 }]);
+    const seats = (await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.checks
+      .find((check: { key: string }) => check.key === 'seats');
+    expect(seats.ready).toBe(true);
+  });
+
+  it('rejects a zero-priced tier before it can be stored', async () => {
+    const response = await request(app.getHttpServer()).post('/admin/performances')
+      .send({ ...input(), priceTiers: [{ tierName: 'VIP', price: 50000 }, { tierName: 'R', price: 0 }] });
+    expect(response.status).toBe(400);
+  });
+
+  it('serializes a delete against a concurrent draft apply without a deadlock (audit #121)', async () => {
+    const payload = input();
+    const created = await request(app.getHttpServer()).post('/admin/performances').send(payload);
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+    const draft = await request(app.getHttpServer()).post('/admin/performance-drafts').send({
+      performanceId: id, baseUpdatedAt: created.body.updatedAt, data: { ...payload, title: '동시 반영 초안' }, step: 'review',
+    });
+    expect(draft.status).toBe(201);
+    const waitingOnDraft = async (count: number) => {
+      for (let attempt = 0; attempt < 300; attempt++) {
+        const active = await pool.query("select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%performance_drafts%'");
+        if (active.rowCount! >= count) return true;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    };
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('begin');
+      await blocker.query('select id from performance_drafts where id = $1 for update', [draft.body.id]);
+      // The apply queues for the draft row first, then the delete arrives. Taking the
+      // performance lock before the draft lock made this order a 40P01 deadlock (500).
+      const applying = request(app.getHttpServer()).post(`/admin/performance-drafts/${draft.body.id}/apply`)
+        .send({ expectedRevision: 1 }).then((response) => response);
+      expect(await waitingOnDraft(1)).toBe(true);
+      const deleting = request(app.getHttpServer()).delete(`/admin/performances/${id}`)
+        .send({ reason: '중복 등록 정리' }).then((response) => response);
+      expect(await waitingOnDraft(2)).toBe(true);
+      await blocker.query('commit');
+      const [applied, deleted] = await Promise.all([applying, deleting]);
+
+      expect([201, 404, 409]).toContain(applied.status);
+      expect([200, 404, 409]).toContain(deleted.status);
+      expect([applied.status, deleted.status].filter((status) => status === 200 || status === 201).length).toBeGreaterThan(0);
+      const remaining = await pool.query('SELECT id FROM performances WHERE id = $1', [id]);
+      expect(remaining.rows).toHaveLength(deleted.status === 200 ? 0 : 1);
+      if (deleted.status === 200) {
+        expect((await pool.query('SELECT id FROM performance_drafts WHERE performance_id = $1', [id])).rows).toHaveLength(0);
+        expect(await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.delete' }))
+          .toEqual([expect.objectContaining({ actorUserId: actorId, reason: '중복 등록 정리' })]);
+      }
+    } finally {
+      await blocker.query('rollback').catch(() => undefined);
+      blocker.release();
+    }
+  });
+
+  it('keeps a partial banner update from leaving a scheduled banner without a start (audit #51)', async () => {
+    const admin = app.get(AdminService);
+    const [unscheduled] = await db.insert(schema.banners).values({ imageUrl: 'https://example.test/a.jpg', status: 'active' }).returning();
+    const [scheduled] = await db.insert(schema.banners).values({ imageUrl: 'https://example.test/b.jpg', status: 'scheduled',
+      startsAt: new Date('2099-01-01T00:00:00.000Z') }).returning();
+
+    await expect(admin.updateBanner(unscheduled!.id, { status: 'scheduled' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(admin.updateBanner(scheduled!.id, { startsAt: null })).rejects.toBeInstanceOf(BadRequestException);
+    const rows = await pool.query('SELECT id, status, starts_at FROM banners WHERE id = ANY($1) ORDER BY image_url', [[unscheduled!.id, scheduled!.id]]);
+    expect(rows.rows.map((row) => [row.status, row.starts_at === null])).toEqual([['active', true], ['scheduled', false]]);
+
+    await expect(admin.updateBanner(scheduled!.id, { startsAt: null, status: 'paused' })).resolves.toMatchObject({ status: 'paused', startsAt: null });
+    await expect(admin.updateBanner(unscheduled!.id, { status: 'scheduled', startsAt: '2099-01-01T00:00:00.000Z' }))
+      .resolves.toMatchObject({ status: 'scheduled' });
+    await expect(admin.updateBanner(randomUUID(), { status: 'scheduled' })).rejects.toThrow('배너를 찾을 수 없습니다');
   });
 
   it('retains the applied draft and original performance when bookings block deletion', async () => {
@@ -256,7 +418,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     await request(app.getHttpServer()).put(`/admin/performances/${id}`).send({ description: '수정 후 아직 번역하지 않은 안내' });
     expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.canPublish).toBe(false);
     expect((await catalog.findById(id, 'en'))?.description).toBe('수정 후 아직 번역하지 않은 안내');
-    const queue = await new TranslationService(db).listQueue({ entityId: id, locale: 'en' });
+    const queue = await new TranslationService(db, unusedTranslationProvider, freshness).listQueue({ entityId: id, locale: 'en' });
     expect(queue.find((draft) => draft.field === 'description')?.status).toBe('stale');
   });
 
@@ -268,7 +430,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     const [draft] = await db.insert(schema.translationDrafts).values({ sourceId: source!.id, targetLocale: 'en',
       status: transition === 'publish' ? 'review' : 'draft', translatedText: 'Previous source', sourceContentHash: hash }).returning();
     const blocker = await pool.connect();
-    const translations = new TranslationService(db);
+    const translations = new TranslationService(db, unusedTranslationProvider, freshness);
     try {
       await blocker.query('begin');
       await blocker.query('select id from translation_drafts where id = $1 for update', [draft!.id]);
@@ -482,7 +644,8 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     const detail = (await request(app.getHttpServer()).get(`/admin/performances/${event.body.id}`)).body;
     // Missing Redis/broadcast adapters make any unauthorized continuation fail;
     // the public method must reject through the publication rule before reaching them.
-    const booking = new BookingService(undefined as never, db, undefined as never, new FeatureFlagsService(() => ({ BOOKING_ENABLED: 'true' })));
+    // The gateway stub is an empty object because the constructor probes it for onSeatUpdate.
+    const booking = new BookingService(undefined as never, db, {} as never, new FeatureFlagsService(() => ({ BOOKING_ENABLED: 'true' })));
     await expect(booking.lockSeat({ id: actorId, role: 'user', isEmailVerified: true, isPhoneVerified: true },
       detail.showtimes[0].id, '1F:A-1')).rejects.toBeInstanceOf(ForbiddenException);
   });

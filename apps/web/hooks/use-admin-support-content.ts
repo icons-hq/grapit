@@ -84,6 +84,10 @@ export interface AdminSupportNotice {
   translationUseLabel: '자동 번역 검수본' | null;
   canPublish: boolean;
   scheduledAt: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  /** Shared by locale versions of one notice; null for legacy unlinked rows. */
+  translationGroupId: string | null;
   reviewedByUserId: string | null;
   reviewedAt: string | null;
   publishedAt: string | null;
@@ -116,6 +120,8 @@ export interface UpdateSupportFaqInput {
   sortOrder?: number;
   isPinned?: boolean;
   translationUse?: SupportContentTranslationUse;
+  /** Server rejects the save with 409 when the row changed since this value. */
+  expectedUpdatedAt?: string;
 }
 
 export interface CreateSupportNoticeInput {
@@ -125,7 +131,10 @@ export interface CreateSupportNoticeInput {
   body: string;
   priority?: SupportNoticePriority;
   scheduledAt?: string | null;
+  endsAt?: string | null;
   translationUse?: SupportContentTranslationUse;
+  /** Links the new notice as a locale version of this existing notice. */
+  translationOfNoticeId?: string;
 }
 
 export interface UpdateSupportNoticeInput {
@@ -134,7 +143,9 @@ export interface UpdateSupportNoticeInput {
   body?: string;
   priority?: SupportNoticePriority;
   scheduledAt?: string | null;
+  endsAt?: string | null;
   translationUse?: SupportContentTranslationUse;
+  expectedUpdatedAt?: string;
 }
 
 export const supportContentQueryKey = ['admin', 'support-content'] as const;

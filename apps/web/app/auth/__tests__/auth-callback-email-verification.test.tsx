@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   searchParams: new URLSearchParams(),
   setAuth: vi.fn(),
-  user: null as null | { id: string; email: string },
+  user: null as null | { id: string; email: string; isEmailVerified?: boolean },
   isInitialized: false,
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -190,6 +190,43 @@ describe('AuthCallbackPage email verification pending states', () => {
     await waitFor(() => {
       expect(mocks.push).toHaveBeenCalledWith('/booking/performance-auth');
     });
+  });
+
+  it('sends a social login whose account email is still unverified to email verification first', async () => {
+    mocks.searchParams = new URLSearchParams(
+      `status=authenticated&returnTo=${encodeURIComponent('/booking/performance-auth')}`,
+    );
+    mocks.user = { id: 'user-1', email: 'typo@naver.co', isEmailVerified: false };
+    mocks.isInitialized = true;
+
+    render(<AuthCallbackPage />);
+
+    await waitFor(() => {
+      expect(mocks.push).toHaveBeenCalledWith(
+        '/auth/verify-email?email=typo%40naver.co&returnTo=%2Fbooking%2Fperformance-auth',
+      );
+    });
+  });
+
+  it('sends email verification when complete-registration returns the unverified password account it linked by identity', async () => {
+    // complete-registration linked the social login to an existing password
+    // account (verified phone + birth date + name) whose own email was never
+    // verified. A brand-new social-only sign-up is created verified instead.
+    mocks.searchParams = new URLSearchParams('status=needs_registration&registrationToken=registration-token');
+    mocks.apiPost.mockResolvedValue({
+      accessToken: 'social-access-token',
+      user: { id: 'user-1', email: 'naver.user@example.com', isEmailVerified: false },
+    });
+    render(<AuthCallbackPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'complete social consent' }));
+    await user.click(screen.getByRole('button', { name: 'complete social details' }));
+
+    await waitFor(() => {
+      expect(mocks.push).toHaveBeenCalledWith('/auth/verify-email?email=naver.user%40example.com');
+    });
+    expect(mocks.setAuth).toHaveBeenCalledWith('social-access-token', expect.objectContaining({ isEmailVerified: false }));
   });
 
   it('routes completed social registrations back to a safe booking return path', async () => {

@@ -7,7 +7,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -18,6 +18,7 @@ import { FinanceLedgerService } from '../src/modules/admin/finance-ledger.servic
 import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
 import { RolesGuard } from '../src/common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../src/common/guards/admin-capabilities.guard.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import type { TossPaymentsClient } from '../src/modules/payment/toss-payments.client.js';
 
@@ -31,10 +32,9 @@ describe('Finance ledger — authenticated HTTP and PostgreSQL', () => {
   beforeEach(() => provider.querySettlements.mockReset().mockResolvedValue([]));
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'finance_test' })
-      .withExposedPorts(5432).start();
-    const pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
+    const postgres = await startPostgresContainer({ database: 'finance_test' });
+    container = postgres.container;
+    const pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'finance_test', max: 5 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });

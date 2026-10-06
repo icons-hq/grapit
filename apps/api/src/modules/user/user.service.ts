@@ -18,6 +18,7 @@ import {
 import type { UpdateProfileInput } from '@grabit/shared/schemas/user.schema.js';
 import { accountWithdrawalSchema, type AccountWithdrawalInput } from '@grabit/shared/schemas/user.schema.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import {
   refreshTokens,
   reservations,
@@ -26,7 +27,11 @@ import {
   users,
 } from '../../database/schema/index.js';
 import { AdminAuditService } from '../admin/admin-audit.service.js';
-import { SmsService } from '../sms/sms.service.js';
+import {
+  SmsService,
+  releasePhoneClaimAndRethrow,
+  type PhoneVerificationClaim,
+} from '../sms/sms.service.js';
 
 @Injectable()
 export class UserService {
@@ -62,19 +67,36 @@ export class UserService {
       return this.mapToUserProfile(currentUser);
     }
 
-    const blockers = await this.findActiveReservationBlockers(userId);
-    if (blockers.length > 0) {
-      throw new ConflictException({
-        code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
-        message: '진행 중인 예매가 있어 회원 탈퇴를 처리할 수 없습니다',
-        blockers,
-      });
-    }
-
     const now = new Date();
     let updatedUser = currentUser;
 
     await this.db.transaction(async (tx) => {
+      // Lock the account row first, then re-check status and blockers on the
+      // locked row. Reservation prepare re-reads account_status under FOR KEY
+      // SHARE before inserting, so a prepare either commits before the blocker
+      // query below sees it or waits and is refused as withdrawn (audit #44).
+      const [locked] = await tx
+        .select({ accountStatus: users.accountStatus })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      if (!locked) {
+        throw new NotFoundException('사용자를 찾을 수 없습니다');
+      }
+      if (locked.accountStatus === 'withdrawn' || locked.accountStatus === 'merged') {
+        updatedUser = { ...currentUser, accountStatus: locked.accountStatus };
+        return;
+      }
+
+      const blockers = await this.findActiveReservationBlockers(userId, tx as DrizzleDB);
+      if (blockers.length > 0) {
+        throw new ConflictException({
+          code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+          message: '진행 중인 예매가 있어 회원 탈퇴를 처리할 수 없습니다',
+          blockers,
+        });
+      }
+
       const [row] = await tx
         .update(users)
         .set({
@@ -153,8 +175,17 @@ export class UserService {
     return this.mapToUserProfile(updatedUser);
   }
 
-  private async findActiveReservationBlockers(userId: string) {
-    const rows = await this.db
+  /**
+   * Same predicate as admin withdrawal (AdminUserService): a payment in flight
+   * (PENDING_PAYMENT, or a recently FAILED Alipay-family payment a late
+   * provider DONE can still revive to CONFIRMED with QR tickets) or a
+   * confirmed ticket for a showtime that has not started yet.
+   */
+  private async findActiveReservationBlockers(
+    userId: string,
+    db: Pick<DrizzleDB, 'select'>,
+  ) {
+    const rows = await db
       .select({
         id: reservations.id,
         reservationNumber: reservations.reservationNumber,
@@ -169,6 +200,7 @@ export class UserService {
           or(
             eq(reservations.status, 'PENDING_PAYMENT'),
             and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, new Date())),
+            lateDoneRevivableFailedReservationSql('reservations'),
           )!,
         ),
       )
@@ -177,7 +209,8 @@ export class UserService {
     return rows.map((row) => ({
       id: row.id,
       reservationNumber: row.reservationNumber,
-      status: row.status,
+      // A revivable FAILED row is reported as the payment in flight it is.
+      status: row.status === 'CONFIRMED' ? 'CONFIRMED' as const : 'PENDING_PAYMENT' as const,
       showtimeAt: row.showtimeAt?.toISOString() ?? null,
     }));
   }
@@ -218,11 +251,12 @@ export class UserService {
     if (data.marketingConsent !== undefined) {
       updateData.marketingConsent = data.marketingConsent;
     }
+    let phoneClaim: PhoneVerificationClaim | null = null;
     if (data.phone !== undefined && (data.phone !== currentUser.phone || !currentUser.isPhoneVerified)) {
       if (!data.phoneVerificationToken) {
         throw new BadRequestException('전화번호 인증이 필요합니다');
       }
-      this.smsService.verifyPhoneVerificationToken(data.phoneVerificationToken, {
+      phoneClaim = await this.smsService.claimPhoneVerificationToken(data.phoneVerificationToken, {
         phone: data.phone,
         purpose: 'profile_phone_change',
       });
@@ -230,7 +264,10 @@ export class UserService {
       updateData.isPhoneVerified = true;
     }
 
-    const user = await this.userRepository.updateProfile(userId, updateData);
+    const updateProfile = this.userRepository.updateProfile(userId, updateData);
+    const user = await (phoneClaim
+      ? updateProfile.catch(releasePhoneClaimAndRethrow(phoneClaim))
+      : updateProfile);
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
     }

@@ -1,4 +1,5 @@
 import { ExceptionFilter, Catch, ArgumentsHost } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import type { Response } from 'express';
 import { TossPaymentError } from '../../modules/payment/toss-payments.client.js';
 
@@ -31,6 +32,17 @@ export class TossPaymentExceptionFilter implements ExceptionFilter {
       statusCode = 409;
     } else {
       statusCode = 502;
+    }
+
+    if (statusCode === 502) {
+      // Provider/gateway failures must reach operators. The event carries only
+      // the provider code and the secret-redacted provider message; request
+      // bodies with paymentKey/orderId are dropped by the Sentry options in
+      // instrument.ts.
+      Sentry.captureException(exception, {
+        tags: { 'toss.code': exception.code, 'http.status_code': '502' },
+        fingerprint: ['toss-payment-error', exception.code],
+      });
     }
 
     response.status(statusCode).json({

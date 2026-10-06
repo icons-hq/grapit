@@ -4,6 +4,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   fieldMonitorLogFilterSchema,
   type FieldMonitorLogFilter,
@@ -15,6 +16,7 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { FieldMonitorService } from './field-monitor.service.js';
 
 const fieldMonitorSummaryQuerySchema = z
@@ -29,6 +31,9 @@ type FieldMonitorSummaryQuery = z.infer<typeof fieldMonitorSummaryQuerySchema>;
 @Controller('field/monitor')
 @UseGuards(RolesGuard)
 @Roles('admin')
+// Shared scanner accounts run several gate devices at once; bucket per account
+// and network with gate-peak headroom instead of the 60/min default.
+@Throttle({ default: ROUTE_THROTTLES.fieldOperations })
 export class FieldMonitorController {
   constructor(private readonly fieldMonitorService: FieldMonitorService) {}
 

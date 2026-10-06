@@ -1,24 +1,36 @@
+'use client';
+
 import Image from 'next/image';
 import Link from 'next/link';
 import { CalendarDays, ChevronRight, MapPin, Ticket } from 'lucide-react';
 import type { PerformanceCardData, SupportedLocale } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
-import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
+import {
+  formatBookingOpensAtKst,
+  parseBookingStartMs,
+  resolveBookingStartPerformanceStatus,
+} from './performance-display-status';
 
-export function PerformanceListRow({ performance, locale, bookingEnabled }: {
+export function PerformanceListRow({ performance, locale, bookingEnabled, flagsResolved = true }: {
   performance: PerformanceCardData; locale: SupportedLocale; bookingEnabled: boolean;
+  /** False while no runtime flag value is known; the badge is then not downgraded. */
+  flagsResolved?: boolean;
 }) {
   const copy = getVisibleCopy(locale).home;
-  const status = getDisplayPerformanceStatus(performance.status, bookingEnabled);
+  // Server-corrected clock, the same verdict the detail page and its booking CTA use.
+  const bookingStartReached = useServerTimeReached(parseBookingStartMs(performance.bookingStartsAt));
+  const saleStatus = resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !bookingStartReached);
+  const status = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
   const validStart = Boolean(performance.startDate) && Number.isFinite(Date.parse(performance.startDate));
   const start = formatCatalogDateRange(performance.startDate, performance.endDate, locale) ?? copy.dateUnknown;
   const price = performance.minPrice == null ? copy.priceUnknown
     : copy.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(locale).format(performance.minPrice)}`);
-  const opensAt = performance.status === 'upcoming' && performance.bookingStartsAt
-    ? formatEventTimeWithKstAnchor(performance.bookingStartsAt, locale, { includeLocalTime: false }).kst : null;
+  // Shown for every row still waiting for its booking start, including ones the operator already marked selling.
+  const opensAt = saleStatus === 'upcoming' ? formatBookingOpensAtKst(performance.bookingStartsAt, locale) : null;
 
   return <li className="border-b border-border last:border-b-0">
     <Link href={getLocalizedPathname(`/performance/${performance.id}`, locale)}

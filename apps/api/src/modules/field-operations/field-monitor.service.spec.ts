@@ -1,17 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { FieldMonitorSummary } from '@grabit/shared';
 
+import { reservations } from '../../database/schema/index.js';
 import { FieldMonitorService } from './field-monitor.service.js';
 
-function chainResult<T>(rows: T[], calls: string[] = []) {
+type ChainCall = { method: string; args: unknown[] };
+
+function chainResult<T>(rows: T[], calls: ChainCall[] = []) {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (prop === 'then') {
         return (resolve: (value: T[]) => void) => resolve(rows);
       }
 
-      return () => {
-        calls.push(String(prop));
+      return (...args: unknown[]) => {
+        calls.push({ method: String(prop), args });
         return new Proxy({}, handler);
       };
     },
@@ -27,6 +32,11 @@ function createDependencies() {
   const service = new FieldMonitorService(db as never);
 
   return { service, db };
+}
+
+const dialect = new PgDialect();
+function render(value: unknown): string {
+  return dialect.sqlToQuery(value as SQL).sql;
 }
 
 const VALID_SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
@@ -84,34 +94,28 @@ function objectGraphText(root: unknown): string {
   return values.join(' ');
 }
 
+const SUMMARY_INPUT = {
+  eventId: 'event-girl-rules-20260704',
+  showtimeId: VALID_SHOWTIME_ID,
+};
+
 describe('FieldMonitorService RED contract', () => {
-  it('returns KPI-first summary before scan log rows: entered, not-entered, entry rate, duplicate scans, rejected scans, offline pending, offline synced, and abnormal alerts', async () => {
+  it('returns KPI-first summary before scan log rows: entered, not-entered, entry rate, duplicate scans, rejected scans, offline synced, and abnormal alerts', async () => {
     const { service, db } = createDependencies();
     db.select
+      .mockReturnValueOnce(chainResult([{ totalTicketItems: 150, enteredCount: 120 }]))
       .mockReturnValueOnce(chainResult([
         {
-          totalReservations: 150,
-          enteredCount: 120,
           duplicateScanCount: 5,
           rejectedScanCount: 3,
-          offlinePendingCount: 4,
+          rejectedTamperedCount: 2,
+          refundedCancelledCount: 1,
           offlineSyncedCount: 8,
-        },
-      ]))
-      .mockReturnValueOnce(chainResult([
-        {
-          type: 'duplicate_spike',
-          severity: 'warning',
-          message: 'Duplicate scans exceeded baseline',
-          count: 5,
-          detectedAt: new Date('2026-07-04T09:10:00.000Z'),
+          duplicateDetectedAt: new Date('2026-07-04T09:10:00.000Z'),
         },
       ]));
 
-    const summary = await service.getSummary({
-      eventId: 'event-girl-rules-20260704',
-      showtimeId: VALID_SHOWTIME_ID,
-    });
+    const summary = await service.getSummary(SUMMARY_INPUT);
 
     expect(summary satisfies FieldMonitorSummary).toMatchObject({
       eventId: 'event-girl-rules-20260704',
@@ -121,14 +125,17 @@ describe('FieldMonitorService RED contract', () => {
       entryRate: 0.8,
       duplicateScanCount: 5,
       rejectedScanCount: 3,
-      offlinePendingCount: 4,
+      offlinePendingCount: 0,
       offlineSyncedCount: 8,
       latestAbnormalAlerts: [
         expect.objectContaining({
           type: 'duplicate_spike',
           severity: 'warning',
           count: 5,
+          detectedAt: '2026-07-04T09:10:00.000Z',
         }),
+        expect.objectContaining({ type: 'rejected_tampered_scan', count: 2 }),
+        expect.objectContaining({ type: 'refunded_cancelled_attempt', count: 1 }),
       ],
     });
     expect(Object.keys(summary).slice(0, 8)).toEqual([
@@ -147,29 +154,16 @@ describe('FieldMonitorService RED contract', () => {
   it('counts entered KPI from active ticket items instead of one success scan per reservation', async () => {
     const { service, db } = createDependencies();
     db.select
-      .mockReturnValueOnce(chainResult([
-        {
-          totalReservations: 708,
-          enteredCount: 128,
-          duplicateScanCount: 0,
-          rejectedScanCount: 0,
-          offlinePendingCount: 0,
-          offlineSyncedCount: 0,
-        },
-      ]))
-      .mockReturnValueOnce(chainResult([]));
+      .mockReturnValueOnce(chainResult([{ totalTicketItems: 708, enteredCount: 128 }]))
+      .mockReturnValueOnce(chainResult([{}]));
 
-    await service.getSummary({
-      eventId: 'event-girl-rules-20260704',
-      showtimeId: VALID_SHOWTIME_ID,
-    });
+    await service.getSummary(SUMMARY_INPUT);
 
     const statsSelect = db.select.mock.calls[0]?.[0] as Record<string, unknown>;
-    const totalReservationsSql = objectGraphText(statsSelect.totalReservations);
+    const totalTicketItemsSql = objectGraphText(statsSelect.totalTicketItems);
     const enteredCountSql = objectGraphText(statsSelect.enteredCount);
 
-    expect(totalReservationsSql).toContain('ticket_items');
-    expect(totalReservationsSql).toContain('active');
+    expect(totalTicketItemsSql).toContain('ticket_items');
     expect(enteredCountSql).toContain('ticket_items');
     expect(enteredCountSql).toContain('admission_state');
     expect(enteredCountSql).toContain('entered');
@@ -178,48 +172,71 @@ describe('FieldMonitorService RED contract', () => {
     expect(enteredCountSql).not.toContain('ticket_scan_events.result');
   });
 
-  it('raises abnormal alerts for duplicate spikes, rejected/tampered attempts, refunded/cancelled attempts, offline backlog, and sync failures', async () => {
+  it('counts scan KPIs and alerts from the scan ledger at the gate showtime, independent of booking state (audit #114)', async () => {
+    const { service, db } = createDependencies();
+    const admissionCalls: ChainCall[] = [];
+    const signalCalls: ChainCall[] = [];
+    db.select
+      .mockReturnValueOnce(chainResult([{ totalTicketItems: 2, enteredCount: 0 }], admissionCalls))
+      .mockReturnValueOnce(chainResult([
+        { duplicateScanCount: 0, rejectedScanCount: 2, rejectedTamperedCount: 1, refundedCancelledCount: 1 },
+      ], signalCalls));
+
+    const summary = await service.getSummary(SUMMARY_INPUT);
+
+    // The admission query no longer joins scan events, so a cancelled booking cannot hide a rejection.
+    expect(admissionCalls.some((call) => call.method === 'leftJoin')).toBe(false);
+
+    const from = signalCalls.find((call) => call.method === 'from');
+    expect(objectGraphText(from?.args[0])).toContain('ticket_scan_events');
+    const joins = signalCalls.filter((call) => call.method.endsWith('Join'));
+    expect(joins).toHaveLength(1);
+    expect(render(joins[0]!.args[1])).toBe('"showtimes"."id" = $1');
+    const where = render(signalCalls.find((call) => call.method === 'where')!.args[0]);
+    expect(where).toContain('"ticket_scan_events"."requested_showtime_id" = $');
+    expect(where).toContain('"ticket_scan_events"."requested_showtime_id" is null');
+    expect(where).not.toMatch(/reservations|payments|ticket_items/);
+
+    // KPI rejected count and the alerts come from the same rows and agree.
+    expect(summary.rejectedScanCount).toBe(2);
+    expect(summary.latestAbnormalAlerts.map((alert) => [alert.type, alert.count])).toEqual([
+      ['rejected_tampered_scan', 1],
+      ['refunded_cancelled_attempt', 1],
+    ]);
+  });
+
+  it('never reports device-local offline backlog or sync failures as server-observed (audit #119)', async () => {
     const { service, db } = createDependencies();
     db.select
+      .mockReturnValueOnce(chainResult([{ totalTicketItems: 150, enteredCount: 100 }]))
       .mockReturnValueOnce(chainResult([
         {
-          totalReservations: 150,
-          enteredCount: 100,
           duplicateScanCount: 12,
           rejectedScanCount: 9,
+          rejectedTamperedCount: 9,
+          refundedCancelledCount: 0,
           offlinePendingCount: 17,
-          offlineSyncedCount: 3,
+          offlineBacklogCount: 17,
+          syncFailureCount: 3,
         },
-      ]))
-      .mockReturnValueOnce(chainResult([
-        { type: 'duplicate_spike', severity: 'critical', count: 12 },
-        { type: 'rejected_tampered_scan', severity: 'critical', count: 4 },
-        { type: 'refunded_cancelled_attempt', severity: 'warning', count: 2 },
-        { type: 'offline_backlog', severity: 'warning', count: 17 },
-        { type: 'sync_failure', severity: 'critical', count: 3 },
       ]));
 
-    const summary = await service.getSummary({
-      eventId: 'event-girl-rules-20260704',
-      showtimeId: VALID_SHOWTIME_ID,
-    });
+    const summary = await service.getSummary(SUMMARY_INPUT);
 
+    expect(summary.offlinePendingCount).toBe(0);
     expect(summary.latestAbnormalAlerts.map((alert) => alert.type)).toEqual([
       'duplicate_spike',
       'rejected_tampered_scan',
-      'refunded_cancelled_attempt',
-      'offline_backlog',
-      'sync_failure',
     ]);
-    expect(summary.latestAbnormalAlerts.map((alert) => alert.message).join(' ')).toMatch(
-      /tampered|refunded|cancelled|offline|sync/i,
-    );
+    expect(summary.latestAbnormalAlerts.map((alert) => alert.severity)).toEqual(['critical', 'critical']);
+    const signalSelect = db.select.mock.calls[1]?.[0] as Record<string, unknown>;
+    expect(Object.keys(signalSelect)).not.toEqual(expect.arrayContaining(['offlinePendingCount']));
     expectNoRawMonitorLeak(summary);
   });
 
   it('keeps raw token, raw JTI, and PII out of secondary monitor log rows', async () => {
     const { service, db } = createDependencies();
-    const calls: string[] = [];
+    const calls: ChainCall[] = [];
     db.select.mockReturnValueOnce(chainResult([
       {
         id: 'scan-event-1',
@@ -255,8 +272,65 @@ describe('FieldMonitorService RED contract', () => {
         rejectionReason: 'tampered signature',
       }),
     ]);
-    expect(calls.indexOf('orderBy')).toBeGreaterThan(-1);
-    expect(calls.indexOf('orderBy')).toBeLessThan(calls.indexOf('limit'));
+    const methods = calls.map((call) => call.method);
+    expect(methods.indexOf('orderBy')).toBeGreaterThan(-1);
+    expect(methods.indexOf('orderBy')).toBeLessThan(methods.indexOf('limit'));
     expectNoRawMonitorLeak(rows);
+  });
+
+  it('lists scan logs by gate showtime and keeps unverifiable QR rows without a booking (audit #113, #114)', async () => {
+    const { service, db } = createDependencies();
+    const calls: ChainCall[] = [];
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        id: 'scan-event-tampered',
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: VALID_SHOWTIME_ID,
+        result: 'tampered',
+        syncState: 'not_required',
+        scannerUserId: 'scanner-user-1',
+        scannerName: 'Scanner',
+        reservationNumber: null,
+        seatLabel: null,
+        source: 'online',
+        metadata: { redactedTokenRef: 'qr:abc', stage: 'verify' },
+        scannedAt: new Date('2026-07-04T09:20:00.000Z'),
+        rejectionReason: '검증할 수 없는 QR 티켓입니다',
+      },
+    ], calls));
+
+    const rows = await service.listScanLogs({ eventId: 'event-girl-rules-20260704', showtimeId: VALID_SHOWTIME_ID });
+
+    expect(rows).toEqual([expect.objectContaining({
+      outcome: 'tampered', reservationNumber: null, seatLabel: null, redactedTokenRef: 'qr:abc',
+      showtimeId: VALID_SHOWTIME_ID,
+    })]);
+    const reservationJoin = calls.find((call) => call.method.endsWith('Join') && call.args[0] === reservations);
+    expect(reservationJoin?.method).toBe('leftJoin');
+    const where = render(calls.find((call) => call.method === 'where')!.args[0]);
+    expect(where).toContain('"gate_showtimes"."performance_id" = $');
+    expect(where).toContain('"ticket_scan_events"."requested_showtime_id" = $');
+  });
+
+  it.each([
+    // The duplicate KPI and duplicate_spike count both results; verify records already_used.
+    ['duplicate', ['duplicate', 'already_used']],
+    ['tampered', ['tampered']],
+    ['wrong_showtime', ['wrong_showtime']],
+    ['expired', ['expired']],
+    ['entered', ['success', 'offline_synced']],
+  ] as const)('filters the %s outcome by the scan results the KPIs count', async (outcome, results) => {
+    const { service, db } = createDependencies();
+    const calls: ChainCall[] = [];
+    db.select.mockReturnValueOnce(chainResult([], calls));
+
+    await service.listScanLogs({ eventId: 'event-girl-rules-20260704', showtimeId: VALID_SHOWTIME_ID, outcome });
+
+    const where = dialect.sqlToQuery(calls.find((call) => call.method === 'where')!.args[0] as SQL);
+    // A bound array inside any() rendered as a row constructor that PostgreSQL rejects.
+    expect(where.sql).not.toContain('any(');
+    const inList = where.sql.match(/"ticket_scan_events"\."result" in \(([^)]*)\)/);
+    const placeholders = inList?.[1]?.split(', ') ?? [];
+    expect(placeholders.map((placeholder) => where.params[Number(placeholder.slice(1)) - 1])).toEqual(results);
   });
 });

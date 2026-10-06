@@ -1,7 +1,9 @@
-import { Body, Controller, Post, Request } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Request, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { paymentMethodSchema } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
+import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { PaymentService } from './payment.service.js';
 
 const paymentBranchRequestSchema = z.object({
@@ -14,31 +16,98 @@ const paymentBranchRequestSchema = z.object({
 
 type PaymentBranchRequestDto = z.infer<typeof paymentBranchRequestSchema>;
 
+const paymentBranchReleaseSchema = z.object({
+  orderId: z.string().min(1, '주문 ID가 필요합니다'),
+});
+
+type PaymentBranchReleaseDto = z.infer<typeof paymentBranchReleaseSchema>;
+
 const asyncPaymentReturnSchema = z.object({
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
   amount: z.number().positive('결제 금액은 0보다 커야 합니다').optional(),
+  // Accepted for older clients and ignored: the wallet comes from the provider
+  // lookup and the order's frozen checkout method.
   provider: z.enum(['ALIPAY_PLUS', 'TRUEMONEY']).optional(),
 });
 
 type AsyncPaymentReturnDto = z.infer<typeof asyncPaymentReturnSchema>;
 
+/** The JWT claims the Sitewide Booking Gate and its Admin Booking Bypass read. */
+type AuthenticatedPaymentUser = {
+  id: string;
+  role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
+};
+
 @Controller('payments')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly featureFlags: FeatureFlagsService,
+  ) {}
 
+  /**
+   * Provider Handoff of a prepared order. It starts the provider checkout and
+   * extends the payment deadline, so it is admitted by the same rule as
+   * payment confirm (AdmissionGuard, order-bound path): the order binding of
+   * this browser (refresh token family and device slot), or the queue
+   * admission cookie as a fallback. A resume from another browser is refused
+   * here with a queue 403, before the buyer authenticates with the provider,
+   * instead of at confirm after the authentication.
+   *
+   * The Sitewide Booking Gate is checked here too, like prepare and confirm
+   * (with the same Admin Booking Bypass): a confirm page left open across a
+   * BOOKING_ENABLED=false switch could otherwise resume without a new prepare,
+   * record `checkoutStartedAt`, let the buyer authenticate with the provider
+   * and only then be refused at confirm, leaving the order processing until
+   * the abandoned handoff sweep.
+   */
+  @UseGuards(AdmissionGuard)
   @Post('branch')
   getTossPaymentBranch(
     @Body(new ZodValidationPipe(paymentBranchRequestSchema))
     body: PaymentBranchRequestDto,
-    @Request() req: { user: { id: string } },
+    @Request() req: { user: AuthenticatedPaymentUser },
   ) {
+    // The same actor shape as payment confirm (reservation.controller.ts).
+    const actor: AuthenticatedPaymentUser = {
+      id: req.user.id,
+      role: req.user.role,
+      adminCapabilityBundle: req.user.adminCapabilityBundle,
+      adminCapabilities: req.user.adminCapabilities,
+      isEmailVerified: req.user.isEmailVerified,
+      isPhoneVerified: req.user.isPhoneVerified,
+    };
+    this.featureFlags.assertBookingEnabled(actor);
     return this.paymentService.prepareTossPaymentBranch({
       ...body,
       userId: req.user.id,
     });
   }
 
+  /**
+   * Called by the checkout page whenever the provider SDK rejected `requestPayment`
+   * (before opening checkout, or after the buyer closed it), or when the branch response
+   * was lost or failed with a 5xx after a possible commit.
+   */
+  @Post('branch/release')
+  @HttpCode(200)
+  releaseTossPaymentHandoff(
+    @Body(new ZodValidationPipe(paymentBranchReleaseSchema))
+    body: PaymentBranchReleaseDto,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.paymentService.releaseTossPaymentHandoff({
+      orderId: body.orderId,
+      userId: req.user.id,
+    });
+  }
+
+  /** Pending return of an asynchronously approved foreign wallet order (others get 409). */
   @Post('async-return')
   async reconcileAsyncPaymentReturn(
     @Body(new ZodValidationPipe(asyncPaymentReturnSchema))

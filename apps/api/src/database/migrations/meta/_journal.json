@@ -274,6 +274,76 @@
       "when": 1790035200000,
       "tag": "0037_field_attempt_context",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790038800000,
+      "tag": "0038_booking_lookup_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790042400000,
+      "tag": "0039_buyer_phone_identity_and_admission_token_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790046000000,
+      "tag": "0040_benefit_mutex_text_and_repair_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790049600000,
+      "tag": "0041_support_content_audit_and_translation_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790053200000,
+      "tag": "0042_admin_audit_event_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790056800000,
+      "tag": "0043_held_cancelled_seat_hold_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790060400000,
+      "tag": "0044_field_scan_event_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1790064000000,
+      "tag": "0045_privacy_policy_v1_2_consent_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790067600000,
+      "tag": "0046_users_email_lower_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790071200000,
+      "tag": "0047_support_thread_audit_actions",
+      "breakpoints": true
     }
   ]
 }

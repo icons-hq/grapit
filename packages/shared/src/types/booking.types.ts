@@ -116,17 +116,27 @@ export interface UnlockAllResponse {
   unlockedSeats: string[];
 }
 
+/**
+ * Payload of the `seat-update` event in the unauthenticated `showtime:{id}`
+ * Socket.IO room. It never identifies who locked or bought a seat; clients
+ * learn the outcome of their own lock from the lock API response.
+ */
 export interface SeatUpdateEvent {
   seatId: string;
   seatKey?: string;
   floorKey?: string;
   status: SeatState;
-  userId?: string;
 }
 
 export interface SeatStatusResponse {
   showtimeId: string;
   seats: Record<string, SeatState>;
+  /**
+   * Server time (epoch ms) at which the underlying snapshot was read. It can
+   * be up to about 1s old; a seat-update event received after this instant is
+   * newer than the snapshot for that seat. Optional for older servers.
+   */
+  generatedAt?: number;
 }
 
 export type ReservationStatus =
@@ -189,6 +199,19 @@ export interface RefundPreviewResponse {
   cancellationQuote: CancellationQuote | null;
   providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
   blockedReason?: string | null;
+  /**
+   * Admin preview only: the PG payment could not be queried. The refund is blocked (fail closed) until
+   * the operator re-checks the preview; the request answers 503 in the same case.
+   */
+  providerCheckUnavailable?: boolean;
+  /**
+   * Admin preview only: a failed refund whose tickets are still revoked can be reconciled by requesting
+   * the admin refund again. `cancellationQuote` is the stored quote of that attempt; `canRequestRefund`
+   * stays false because no new refund starts.
+   */
+  adminRecoveryAvailable?: boolean;
+  /** Admin preview only: the recorded failure of the refund offered for recovery. */
+  adminRecoveryReason?: string | null;
 }
 
 export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
@@ -199,6 +222,26 @@ export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
 export interface CancellationExpectation {
   expectedRefundableAmount: number;
   expectedProviderRefundAmountMinor?: number;
+}
+
+/**
+ * Result of an admin refund request.
+ * - completed: the PG cancel finished and the reservation was cancelled.
+ * - processing: the PG has not confirmed yet (sent/processing, automatic retry).
+ * - rights_restored: the PG rejected the cancel; tickets and payment stay valid.
+ * - failed: the refund was recorded as failed and needs manual follow-up.
+ */
+export type AdminRefundOutcome = 'completed' | 'processing' | 'rights_restored' | 'failed';
+
+export interface AdminRefundResult {
+  outcome: AdminRefundOutcome;
+  message: string;
+  currentState: RefundTimelineState | null;
+  idempotent: boolean;
+  retryEnqueued: boolean;
+  refundableAmount: number;
+  refundTimeline: RefundTimeline | null;
+  providerRefund: RefundPreviewResponse['providerRefund'];
 }
 
 export type CancelledSeatHoldStatus = 'HELD' | 'RELEASED' | 'MANUAL_OPENED';
@@ -529,7 +572,11 @@ export interface CancelTicketItemRequest {
   reason: string;
 }
 
-export interface AdminRefundRequest {
+/**
+ * Body of `POST /api/v1/admin/bookings/:id/refund` (validated by `adminRefundSchema`). The expected
+ * amounts are the ones the operator confirmed in the preview; a recovery of a failed refund omits them.
+ */
+export interface AdminRefundRequest extends Partial<CancellationExpectation> {
   reason: string;
   fullRefundOverride?: boolean;
   enteredTicketOverride?: boolean;

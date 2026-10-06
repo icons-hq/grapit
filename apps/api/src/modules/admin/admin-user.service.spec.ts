@@ -1,10 +1,20 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { describe, expect, it, vi, type Mock } from 'vitest';
-import type { AdminUserDetail } from '@grabit/shared';
+import { ZodError } from 'zod';
+import {
+  ADMIN_CAPABILITIES,
+  ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
+  type AdminUserDetail,
+} from '@grabit/shared';
 
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+
+import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { AdminUserService } from './admin-user.service.js';
 
@@ -92,7 +102,24 @@ function detailStub(id = 'target-user'): AdminUserDetail {
   };
 }
 
-function createMockDb(adminRows: ReturnType<typeof userRow>[]) {
+interface ActiveReservationRow {
+  id: string;
+  reservationNumber: string;
+  /** FAILED only as a late DONE revivable Alipay-family payment. */
+  status: 'PENDING_PAYMENT' | 'CONFIRMED' | 'FAILED';
+  showtimeAt: Date | null;
+}
+
+interface BlockerCounts {
+  pendingPayment: number;
+  upcomingConfirmed: number;
+}
+
+function createMockDb(
+  adminRows: ReturnType<typeof userRow>[],
+  activeReservationRows: ActiveReservationRow[] = [],
+  blockerCounts?: BlockerCounts,
+) {
   const updateWhere = vi.fn().mockResolvedValue([]);
   const updateSet = vi.fn().mockReturnValue({ where: updateWhere });
   const update = vi.fn().mockReturnValue({ set: updateSet });
@@ -100,7 +127,19 @@ function createMockDb(adminRows: ReturnType<typeof userRow>[]) {
   const deleteFn = vi.fn().mockReturnValue({ where: deleteWhere });
 
   const selectWhere = vi.fn().mockResolvedValue(adminRows);
-  const selectFrom = vi.fn().mockReturnValue({ where: selectWhere });
+  // Withdrawal blocker queries: reservations LEFT JOIN showtimes. Awaiting the
+  // WHERE resolves the count aggregate; ORDER BY ... LIMIT n is the sample.
+  const counts: BlockerCounts = blockerCounts ?? {
+    pendingPayment: activeReservationRows.filter((row) => row.status !== 'CONFIRMED').length,
+    upcomingConfirmed: activeReservationRows.filter((row) => row.status === 'CONFIRMED').length,
+  };
+  const reservationLimit = vi.fn().mockResolvedValue(activeReservationRows);
+  const reservationOrderBy = vi.fn().mockReturnValue({ limit: reservationLimit });
+  const reservationWhere = vi.fn(() =>
+    Object.assign(Promise.resolve([counts]), { orderBy: reservationOrderBy }),
+  );
+  const leftJoin = vi.fn().mockReturnValue({ where: reservationWhere });
+  const selectFrom = vi.fn().mockReturnValue({ where: selectWhere, leftJoin });
   const select = vi.fn().mockReturnValue({ from: selectFrom });
 
   const tx = { update, delete: deleteFn, select };
@@ -116,7 +155,34 @@ function createMockDb(adminRows: ReturnType<typeof userRow>[]) {
     deleteFn,
     deleteWhere,
     select,
+    leftJoin,
+    reservationWhere,
+    reservationLimit,
   };
+}
+
+function setupPermissionService(options: {
+  actor: ReturnType<typeof userRow>;
+  target: ReturnType<typeof userRow>;
+  adminRows?: ReturnType<typeof userRow>[];
+  activeReservationRows?: ActiveReservationRow[];
+  blockerCounts?: BlockerCounts;
+}) {
+  const mockDb = createMockDb(
+    options.adminRows ?? [options.actor, options.target],
+    options.activeReservationRows,
+    options.blockerCounts,
+  );
+  const auditService = createAuditService();
+  const service = new AdminUserService(mockDb.db as never, auditService);
+
+  const findUserById = vi.spyOn(service as never, 'findUserById').mockImplementation((id: string) =>
+    Promise.resolve(id === options.actor.id ? options.actor : options.target),
+  );
+  vi.spyOn(service, 'getUserDetail').mockResolvedValue(detailStub(options.target.id));
+  vi.spyOn(service as never, 'enforceUserRefreshFamilyLimit').mockResolvedValue(undefined);
+
+  return { mockDb, auditService, service, findUserById };
 }
 
 function createAuditService() {
@@ -180,7 +246,18 @@ describe('AdminUserService permission updates', () => {
         resourceId: 'target-user',
         status: 'success',
         reason: 'CS operator rotation',
-        changedFields: ['adminCapabilityBundle', 'adminCapabilities'],
+        changedFields: [
+          'adminCapabilityBundle',
+          'adminCapabilities',
+          'adminSuperuser',
+          'effectiveAdminCapabilities',
+        ],
+        after: expect.objectContaining({
+          adminCapabilityBundle: 'operator',
+          adminCapabilities: ['support.manage'],
+          adminSuperuser: false,
+          effectiveAdminCapabilities: ['support.manage'],
+        }),
         ipAddress: '203.0.113.10',
         userAgent: 'Vitest Admin',
         requestId: 'req-admin-user-1',
@@ -546,5 +623,662 @@ describe('AdminUserService raw user export and statistics', () => {
     expect(stats.signupTrend).toHaveLength(30);
     expect(stats.signupTrend.at(-2)).toEqual({ date: '2026-05-17', count: 2 });
     expect(stats.signupTrend.at(-1)).toEqual({ date: '2026-05-18', count: 1 });
+  });
+});
+
+describe('AdminUserService admin bundle contract (audit #42, #144)', () => {
+  it('rejects narrowing the superuser admin bundle instead of silently granting every capability', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({
+      id: 'scanner-shared',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const { mockDb, auditService, service } = setupPermissionService({ actor, target });
+
+    await expect(
+      service.updatePermissions('actor-admin', 'scanner-shared', {
+        role: 'admin',
+        adminCapabilityBundle: 'admin',
+        adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+        reason: 'shared field scanner account',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(ZodError);
+
+    expect(mockDb.db.transaction).not.toHaveBeenCalled();
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('stores the admin bundle canonically and audits the effective superuser access', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({
+      id: 'target-user',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
+    });
+    const { mockDb, auditService, service } = setupPermissionService({ actor, target });
+
+    await service.updatePermissions('actor-admin', 'target-user', {
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [...ADMIN_CAPABILITIES],
+      reason: 'promote security owner',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+    }));
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedFields: expect.arrayContaining(['adminSuperuser', 'effectiveAdminCapabilities']),
+        after: expect.objectContaining({
+          adminCapabilityBundle: 'admin',
+          adminSuperuser: true,
+          effectiveAdminCapabilities: [...ADMIN_CAPABILITIES],
+        }),
+      }),
+      mockDb.tx,
+    );
+  });
+
+  it('persists bundle defaults explicitly when a non-admin bundle is saved without capabilities', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({
+      id: 'target-user',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const { mockDb, service } = setupPermissionService({ actor, target });
+
+    await service.updatePermissions('actor-admin', 'target-user', {
+      role: 'admin',
+      adminCapabilityBundle: 'finance',
+      adminCapabilities: [],
+      reason: 'finance reviewer',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      adminCapabilityBundle: 'finance',
+      adminCapabilities: [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.finance],
+    }));
+  });
+
+  it('revokes all admin access with a role-only change even when bundle and capabilities are left over', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({
+      id: 'compromised-admin',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'seat.manual_open'],
+    });
+    const { mockDb, auditService, service } = setupPermissionService({ actor, target });
+
+    await service.updatePermissions('actor-admin', 'compromised-admin', {
+      role: 'user',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'seat.manual_open'],
+      reason: 'credential leak suspected',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    }));
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({
+          role: 'user',
+          adminSuperuser: false,
+          effectiveAdminCapabilities: [],
+        }),
+      }),
+      mockDb.tx,
+    );
+  });
+});
+
+describe('AdminUserService delegation ceiling (audit #120)', () => {
+  const delegate = userRow({
+    id: 'delegate-admin',
+    adminCapabilityBundle: 'operator',
+    adminCapabilities: [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator, 'security.manage'],
+  });
+  const superuser = userRow({ id: 'root-admin', adminCapabilityBundle: 'admin' });
+
+  it('blocks a non-superuser security admin from promoting themselves to the admin bundle', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor: delegate,
+      target: delegate,
+      adminRows: [delegate, superuser],
+    });
+
+    await expect(
+      service.updatePermissions('delegate-admin', 'delegate-admin', {
+        role: 'admin',
+        adminCapabilityBundle: 'admin',
+        adminCapabilities: [],
+        reason: 'self escalation',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('blocks a delegate from granting capabilities they do not hold', async () => {
+    const target = userRow({
+      id: 'target-user',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const { mockDb, service } = setupPermissionService({ actor: delegate, target });
+
+    await expect(
+      service.updatePermissions('delegate-admin', 'target-user', {
+        role: 'admin',
+        adminCapabilityBundle: 'finance',
+        adminCapabilities: ['reservations.read', 'refund.admin_refund'],
+        reason: 'grant refund',
+        confirmed: true,
+      }),
+    ).rejects.toThrow(/refund\.admin_refund/);
+
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+  });
+
+  it('blocks a delegate from widening their own access', async () => {
+    const narrowDelegate = userRow({
+      id: 'narrow-delegate',
+      adminCapabilityBundle: 'reviewer',
+      adminCapabilities: ['support.manage', 'security.manage'],
+    });
+    const { mockDb, service } = setupPermissionService({
+      actor: narrowDelegate,
+      target: narrowDelegate,
+      adminRows: [narrowDelegate, superuser],
+    });
+
+    await expect(
+      service.updatePermissions('narrow-delegate', 'narrow-delegate', {
+        role: 'admin',
+        adminCapabilityBundle: 'reviewer',
+        adminCapabilities: ['support.manage', 'security.manage', 'audit.read'],
+        reason: 'self widen',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+  });
+
+  it('blocks a delegate from demoting or withdrawing a superuser account', async () => {
+    const permission = setupPermissionService({ actor: delegate, target: superuser });
+
+    await expect(
+      permission.service.updatePermissions('delegate-admin', 'root-admin', {
+        role: 'user',
+        adminCapabilityBundle: null,
+        adminCapabilities: [],
+        reason: 'lock out root',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(permission.mockDb.updateSet).not.toHaveBeenCalled();
+
+    const withdrawal = setupPermissionService({ actor: delegate, target: superuser });
+    await expect(
+      withdrawal.service.withdrawUser('delegate-admin', 'root-admin', {
+        reason: 'lock out root',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(withdrawal.mockDb.updateSet).not.toHaveBeenCalled();
+    expect(withdrawal.mockDb.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('still lets a delegate grant a subset of their own capabilities', async () => {
+    const target = userRow({
+      id: 'target-user',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const { mockDb, service } = setupPermissionService({ actor: delegate, target });
+
+    await service.updatePermissions('delegate-admin', 'target-user', {
+      role: 'admin',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'support.escalate'],
+      reason: 'CS shift',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'support.escalate'],
+    }));
+  });
+
+  it('keeps superusers unrestricted', async () => {
+    const target = userRow({
+      id: 'target-user',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const { mockDb, service } = setupPermissionService({ actor: superuser, target });
+
+    await service.updatePermissions('root-admin', 'target-user', {
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [],
+      reason: 'second security owner',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      adminCapabilityBundle: 'admin',
+    }));
+  });
+});
+
+describe('AdminUserService scanner bundle normalization (audit #122)', () => {
+  const scanner = userRow({
+    id: 'scanner-user',
+    email: 'scanner@example.com',
+    adminCapabilityBundle: 'scanner',
+    adminCapabilities: [],
+  });
+
+  it('keeps the scanner bundle in list/detail rows', async () => {
+    const service = new AdminUserService({} as never, createAuditService());
+    vi.spyOn(service as never, 'findUserById').mockResolvedValue(scanner);
+    vi.spyOn(service as never, 'fetchReservationSummaries').mockResolvedValue(new Map());
+    vi.spyOn(service as never, 'fetchRecentReservations').mockResolvedValue([]);
+    vi.spyOn(service as never, 'fetchSupportThreadSummary').mockResolvedValue({
+      total: 0,
+      open: 0,
+      escalated: 0,
+      recentThreads: [],
+    });
+
+    await expect(service.getUserDetail('scanner-user')).resolves.toMatchObject({
+      role: 'admin',
+      adminCapabilityBundle: 'scanner',
+    });
+  });
+
+  it('records the scanner bundle in the permission audit before snapshot and allows narrowing it', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const { mockDb, auditService, service } = setupPermissionService({ actor, target: scanner });
+
+    await service.updatePermissions('actor-admin', 'scanner-user', {
+      role: 'admin',
+      adminCapabilityBundle: 'scanner',
+      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+      reason: 'entry only scanner',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      adminCapabilityBundle: 'scanner',
+      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+    }));
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedFields: ['adminCapabilities', 'effectiveAdminCapabilities'],
+        before: expect.objectContaining({
+          adminCapabilityBundle: 'scanner',
+          adminSuperuser: false,
+          effectiveAdminCapabilities: [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.scanner],
+        }),
+      }),
+      mockDb.tx,
+    );
+  });
+
+  it('does not count a scanner account without explicit capabilities as a security admin', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const lastSecurityAdmin = userRow({ id: 'target-user', adminCapabilityBundle: 'admin' });
+    const { mockDb, service } = setupPermissionService({
+      actor,
+      target: lastSecurityAdmin,
+      // Only the target and a default scanner account are role=admin rows.
+      adminRows: [lastSecurityAdmin, scanner],
+    });
+
+    await expect(
+      service.updatePermissions('actor-admin', 'target-user', {
+        role: 'user',
+        adminCapabilityBundle: null,
+        adminCapabilities: [],
+        reason: 'decommission',
+        confirmed: true,
+      }),
+    ).rejects.toThrow(/마지막 security.manage/);
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminUserService unknown stored bundle (u12 consistency, audit #42 #122)', () => {
+  // role=admin with a bundle this build does not know: the shared resolver and
+  // the guards fail closed. The service must agree instead of falling back to
+  // the legacy role=admin superuser rule.
+  const unknownBundle = userRow({
+    id: 'unknown-bundle-admin',
+    email: 'unknown@example.com',
+    adminCapabilityBundle: 'superadmin',
+    adminCapabilities: [],
+  });
+  const delegate = userRow({
+    id: 'delegate-admin',
+    adminCapabilityBundle: 'operator',
+    adminCapabilities: [...ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator, 'security.manage'],
+  });
+
+  it('does not count it as a security admin when the last real one is demoted', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const lastSecurityAdmin = userRow({ id: 'target-user', adminCapabilityBundle: 'admin' });
+    const { mockDb, service } = setupPermissionService({
+      actor,
+      target: lastSecurityAdmin,
+      adminRows: [lastSecurityAdmin, unknownBundle],
+    });
+
+    await expect(
+      service.updatePermissions('actor-admin', 'target-user', {
+        role: 'user',
+        adminCapabilityBundle: null,
+        adminCapabilities: [],
+        reason: 'decommission',
+        confirmed: true,
+      }),
+    ).rejects.toThrow(/마지막 security.manage/);
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+  });
+
+  it('audits it as not superuser and lets a non-superuser delegate repair it', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor: delegate,
+      target: unknownBundle,
+      adminRows: [delegate, unknownBundle],
+    });
+
+    await service.updatePermissions('delegate-admin', 'unknown-bundle-admin', {
+      role: 'admin',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
+      reason: 'repair mistyped bundle',
+      confirmed: true,
+    });
+
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
+    }));
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        before: expect.objectContaining({
+          adminSuperuser: false,
+          effectiveAdminCapabilities: [],
+        }),
+      }),
+      mockDb.tx,
+    );
+  });
+
+  it('reports the guard-effective access in list and detail rows', async () => {
+    const service = new AdminUserService({} as never, createAuditService());
+    vi.spyOn(service as never, 'findUserById').mockResolvedValue(unknownBundle);
+    vi.spyOn(service as never, 'fetchReservationSummaries').mockResolvedValue(new Map());
+    vi.spyOn(service as never, 'fetchRecentReservations').mockResolvedValue([]);
+    vi.spyOn(service as never, 'fetchSupportThreadSummary').mockResolvedValue({
+      total: 0,
+      open: 0,
+      escalated: 0,
+      recentThreads: [],
+    });
+
+    await expect(service.getUserDetail('unknown-bundle-admin')).resolves.toMatchObject({
+      role: 'admin',
+      adminCapabilityBundle: null,
+      adminSuperuser: false,
+      effectiveAdminCapabilities: [],
+    });
+  });
+
+  it('reports legacy role-only admins as superuser in detail rows', async () => {
+    const legacy = userRow({ id: 'legacy-admin', adminCapabilityBundle: null, adminCapabilities: [] });
+    const service = new AdminUserService({} as never, createAuditService());
+    vi.spyOn(service as never, 'findUserById').mockResolvedValue({ ...legacy, adminCapabilityBundle: null });
+    vi.spyOn(service as never, 'fetchReservationSummaries').mockResolvedValue(new Map());
+    vi.spyOn(service as never, 'fetchRecentReservations').mockResolvedValue([]);
+    vi.spyOn(service as never, 'fetchSupportThreadSummary').mockResolvedValue({
+      total: 0,
+      open: 0,
+      escalated: 0,
+      recentThreads: [],
+    });
+
+    await expect(service.getUserDetail('legacy-admin')).resolves.toMatchObject({
+      adminCapabilityBundle: null,
+      adminSuperuser: true,
+      effectiveAdminCapabilities: [...ADMIN_CAPABILITIES],
+    });
+  });
+});
+
+describe('AdminUserService withdrawal blockers (audit #44)', () => {
+  const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+  const buyer = userRow({
+    id: 'buyer-user',
+    role: 'user',
+    adminCapabilityBundle: null,
+    adminCapabilities: [],
+  });
+
+  it('refuses to withdraw a member with a pending payment or an upcoming confirmed ticket', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [
+        {
+          id: 'reservation-pending',
+          reservationNumber: 'R-PENDING',
+          status: 'PENDING_PAYMENT',
+          showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+        },
+        {
+          id: 'reservation-confirmed',
+          reservationNumber: 'R-CONFIRMED',
+          status: 'CONFIRMED',
+          showtimeAt: new Date('2026-10-11T10:00:00.000Z'),
+        },
+      ],
+    });
+
+    const error = await service
+      .withdrawUser('actor-admin', 'buyer-user', {
+        reason: 'CS deletion request',
+        confirmed: true,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    const response = (error as ConflictException).getResponse() as Record<string, unknown>;
+    expect(response).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      blockers: [
+        { key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: 1 },
+        { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: 1 },
+      ],
+      reservations: [
+        expect.objectContaining({ reservationNumber: 'R-PENDING', status: 'PENDING_PAYMENT' }),
+        expect.objectContaining({
+          reservationNumber: 'R-CONFIRMED',
+          status: 'CONFIRMED',
+          showtimeAt: '2026-10-11T10:00:00.000Z',
+        }),
+      ],
+    });
+    // The message alone must explain the block (extra fields may be stripped).
+    expect((error as ConflictException).message).toContain('결제 진행 중 예매 1건');
+    expect((error as ConflictException).message).toContain('관람 예정 확정 예매 1건');
+    // The blocker queries (count + sample) run on the withdrawal transaction, and nothing is written.
+    expect(mockDb.leftJoin).toHaveBeenCalledTimes(2);
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(mockDb.deleteFn).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('withdraws a member whose reservations are all past or closed', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [],
+    });
+
+    await service.withdrawUser('actor-admin', 'buyer-user', {
+      reason: 'CS deletion request',
+      confirmed: true,
+    });
+
+    // The count aggregate ran; with nothing blocking, no sample is read.
+    expect(mockDb.leftJoin).toHaveBeenCalledTimes(1);
+    expect(mockDb.reservationLimit).not.toHaveBeenCalled();
+    expect(mockDb.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      accountStatus: 'withdrawn',
+      withdrawalSource: 'admin',
+    }));
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'user.withdraw', resourceId: 'buyer-user' }),
+      mockDb.tx,
+    );
+  });
+
+  it('reports every blocking reservation in the count, not only the sampled rows', async () => {
+    const sample: ActiveReservationRow[] = Array.from({ length: 10 }, (_, index) => ({
+      id: `reservation-${index}`,
+      reservationNumber: `R-${index}`,
+      status: 'PENDING_PAYMENT',
+      showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+    }));
+    const { mockDb, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: sample,
+      blockerCounts: { pendingPayment: 130, upcomingConfirmed: 7 },
+    });
+
+    const error = await service
+      .withdrawUser('actor-admin', 'buyer-user', { reason: 'CS deletion request', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      blockers: [
+        { key: 'pending_payment_reservations', count: 130 },
+        { key: 'upcoming_confirmed_reservations', count: 7 },
+      ],
+    });
+    expect((error as ConflictException).message).toContain('결제 진행 중 예매 130건');
+    expect((error as ConflictException).message).toContain('관람 예정 확정 예매 7건');
+    // Only the sample list is capped.
+    expect(mockDb.reservationLimit).toHaveBeenCalledWith(10);
+    expect(((error as ConflictException).getResponse() as { reservations: unknown[] }).reservations).toHaveLength(10);
+  });
+
+  it('refuses to withdraw a member whose recently failed Alipay payment a late DONE can still confirm (pay-server-5)', async () => {
+    const { mockDb, auditService, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [
+        {
+          id: 'reservation-alipay-failed',
+          reservationNumber: 'R-ALIPAY',
+          status: 'FAILED',
+          showtimeAt: new Date('2026-10-10T10:00:00.000Z'),
+        },
+      ],
+    });
+
+    const error = await service
+      .withdrawUser('actor-admin', 'buyer-user', { reason: 'CS deletion request', confirmed: true })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ACCOUNT_WITHDRAWAL_BLOCKED',
+      blockers: [{ key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: 1 }],
+      // A revivable FAILED row is a payment in flight, not a confirmed ticket.
+      reservations: [expect.objectContaining({ reservationNumber: 'R-ALIPAY', status: 'PENDING_PAYMENT' })],
+    });
+    expect((error as ConflictException).message).toContain('결제 진행 중 예매 1건');
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
+  it('blocks on the shared late DONE revivable predicate and counts it as a payment in flight', async () => {
+    const { mockDb, service } = setupPermissionService({
+      actor,
+      target: buyer,
+      adminRows: [actor],
+      activeReservationRows: [],
+    });
+
+    await service.withdrawUser('actor-admin', 'buyer-user', {
+      reason: 'CS deletion request',
+      confirmed: true,
+    });
+
+    const dialect = new PgDialect();
+    // Placeholder numbers depend on the position in the whole WHERE.
+    const render = (query: unknown) => dialect.sqlToQuery(query as SQL).sql
+      .replace(/\s+/g, ' ')
+      .replace(/\$\d+/g, '$n');
+    // Same definition as account merge: FAILED + changed within 24h + Alipay family.
+    const revivable = render(lateDoneRevivableFailedReservationSql('reservations'));
+    const where = (mockDb.reservationWhere.mock.calls[0] as unknown[])[0] as SQL;
+    expect(render(where)).toContain(`or ${revivable}`);
+    expect(dialect.sqlToQuery(where).params).toContain(24);
+    const countFields = mockDb.select.mock.calls
+      .map(([fields]) => fields as { pendingPayment?: SQL } | undefined)
+      .find((fields) => fields?.pendingPayment)!;
+    expect(render(countFields.pendingPayment))
+      .toContain(`"reservations"."status" in ('PENDING_PAYMENT', 'FAILED')`);
+  });
+
+  it('locks the target row before reading blockers and re-checks its status under the lock', async () => {
+    const { mockDb, auditService, service, findUserById } = setupPermissionService({
+      actor,
+      target: { ...buyer, accountStatus: 'withdrawn' },
+      adminRows: [actor],
+    });
+
+    await service.withdrawUser('actor-admin', 'buyer-user', {
+      reason: 'CS deletion request',
+      confirmed: true,
+    });
+
+    expect(findUserById).toHaveBeenNthCalledWith(1, 'buyer-user', mockDb.tx, { forUpdate: true });
+    // Already withdrawn on the locked row: nothing is read or written again.
+    expect(mockDb.leftJoin).not.toHaveBeenCalled();
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
   });
 });

@@ -2,9 +2,17 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { estimateConnectionDemand } from '../managed-demo/deploy-guards.mjs';
 
 const DEFAULT_PROJECT = 'grapit-491806';
+const API_SERVICE = 'grabit-api';
+// Mirror apps/api/src/modules/jobs/pgboss.provider.ts; the Deploy workflow's
+// connection budget (deploy-guards.mjs validateDeployConfig) uses the same rule.
+const DEFAULT_PGBOSS_POOL_MAX_PROCESSING = 3;
+const DEFAULT_PGBOSS_POOL_MAX_PRODUCER = 1;
 const DEFAULT_REGION = 'asia-northeast3';
 const DEFAULT_OUTPUT = '.planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json';
 const DEFAULT_SERVICES = ['grabit-api', 'grabit-web'];
@@ -211,27 +219,145 @@ async function readText(path) {
   }
 }
 
-function extractDeployPoolEvidence(deployYaml, drizzleProvider) {
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Reads a workflow-level env entry such as `KEY: ${{ vars.KEY || '4' }}`.
+ * Returns the default (`'4'`), `null` for a variable without a default
+ * (`${{ vars.KEY }}`), or `undefined` when the entry does not exist.
+ */
+export function readWorkflowEnvDefault(deployYaml, envName, varName = envName) {
+  const entry = new RegExp(
+    `^[ \\t]+${escapeRegExp(envName)}:[ \\t]*\\$\\{\\{[ \\t]*vars\\.${escapeRegExp(varName)}`
+      + `(?:[ \\t]*\\|\\|[ \\t]*'([^']*)')?[ \\t]*\\}\\}[ \\t]*$`,
+    'm',
+  ).exec(deployYaml);
+  if (!entry) return undefined;
+  return entry[1] ?? null;
+}
+
+/**
+ * Resolves one Cloud Run `env_vars` line (`KEY=value`) of deploy.yml. A
+ * `${{ env.NAME }}` template is resolved through the workflow env default.
+ */
+function readDeployEnvVar(deployYaml, key) {
+  const line = new RegExp(`^[ \\t]+${escapeRegExp(key)}=(.+?)[ \\t]*$`, 'm').exec(deployYaml);
+  if (!line) return 'missing';
+  const template = /^\$\{\{\s*env\.([A-Z0-9_]+)\s*\}\}$/.exec(line[1]);
+  if (!template) return redact(line[1]);
+  const value = readWorkflowEnvDefault(deployYaml, template[1]);
+  return typeof value === 'string' ? redact(value) : 'missing';
+}
+
+function integerOrNull(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return /^[0-9]+$/.test(text) ? Number(text) : null;
+}
+
+function input(value, source) {
+  return value === null || value === undefined ? { value: null, source: 'missing' } : { value, source };
+}
+
+/**
+ * DB pool evidence from deploy.yml plus, when collected, the live grabit-api
+ * service. Live values win over workflow defaults (repository variables can
+ * differ from them). The connection estimate uses the Deploy workflow's budget
+ * formula: API instances x (app pool + API pg-boss cap) + worker (app pool +
+ * worker pg-boss cap) + reserve. Every input records where it came from.
+ */
+export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi = null } = {}) {
   const poolKeys = ['DB_POOL_MAX', 'DB_POOL_IDLE_TIMEOUT_MS', 'DB_POOL_CONNECTION_TIMEOUT_MS'];
   const deployValues = {};
   for (const key of poolKeys) {
-    const match = deployYaml.match(new RegExp(`\\b${key}=([^\\s]+)`));
-    deployValues[key] = match ? redact(match[1]) : 'missing';
+    deployValues[key] = readDeployEnvVar(deployYaml, key);
   }
 
-  const apiMaxInstancesMatch = deployYaml.match(/--max-instances=(\d+)/);
+  const workflowDefaults = {
+    API_MAX_INSTANCES: readWorkflowEnvDefault(deployYaml, 'API_MAX_INSTANCES') ?? null,
+    DB_POOL_MAX: readWorkflowEnvDefault(deployYaml, 'DB_POOL_MAX') ?? null,
+    PGBOSS_POOL_MAX: readWorkflowEnvDefault(deployYaml, 'RUNTIME_PGBOSS_POOL_MAX', 'PGBOSS_POOL_MAX') ?? null,
+    DB_CONNECTION_RESERVE: readWorkflowEnvDefault(deployYaml, 'DB_CONNECTION_RESERVE') ?? null,
+    BACKGROUND_PROCESSING_ENABLED: readWorkflowEnvDefault(deployYaml, 'BACKGROUND_PROCESSING_ENABLED') ?? null,
+  };
+
+  const live = liveApi && liveApi.state !== STATES.BLOCKED ? liveApi : null;
+  const liveEnv = live?.env ?? {};
+  const pick = (liveValue, workflowValue) => {
+    if (liveValue !== null && liveValue !== undefined) return input(liveValue, 'live');
+    if (workflowValue !== null && workflowValue !== undefined) return input(workflowValue, 'workflow-default');
+    return input(null, 'missing');
+  };
+
+  const apiMaxInstances = pick(integerOrNull(live?.maxScale ?? undefined), integerOrNull(workflowDefaults.API_MAX_INSTANCES));
+  const dbPoolMax = pick(integerOrNull(liveEnv.DB_POOL_MAX), integerOrNull(workflowDefaults.DB_POOL_MAX));
+  const reserve = input(integerOrNull(workflowDefaults.DB_CONNECTION_RESERVE), 'workflow-default');
+  // Same parsing as the API: only "false" turns background processing off; unset is on.
+  // A live service without the variable runs the code default, not the workflow default.
+  const processes = (text) => String(text).trim().toLowerCase() !== 'false';
+  let backgroundProcessing = { value: true, source: 'code-default' };
+  if (live && typeof liveEnv.BACKGROUND_PROCESSING_ENABLED === 'string') {
+    backgroundProcessing = { value: processes(liveEnv.BACKGROUND_PROCESSING_ENABLED), source: 'live' };
+  } else if (!live && typeof workflowDefaults.BACKGROUND_PROCESSING_ENABLED === 'string') {
+    backgroundProcessing = { value: processes(workflowDefaults.BACKGROUND_PROCESSING_ENABLED), source: 'workflow-default' };
+  }
+  // The live API value is the API's real cap, but it can be a leftover of an earlier
+  // deploy (the API service merges env vars). The worker Job is rebuilt from the
+  // workflow on every deploy, so its cap is the workflow value or the code default.
+  const workflowPgBoss = input(integerOrNull(workflowDefaults.PGBOSS_POOL_MAX), 'workflow-default');
+  const runtimePgBoss = live ? input(integerOrNull(liveEnv.PGBOSS_POOL_MAX), 'live') : workflowPgBoss;
+  const apiPgBossPoolMax = runtimePgBoss.value !== null
+    ? runtimePgBoss
+    : {
+      value: backgroundProcessing.value ? DEFAULT_PGBOSS_POOL_MAX_PROCESSING : DEFAULT_PGBOSS_POOL_MAX_PRODUCER,
+      source: 'code-default',
+    };
+  const workerPgBossPoolMax = workflowPgBoss.value !== null
+    ? workflowPgBoss
+    : { value: DEFAULT_PGBOSS_POOL_MAX_PROCESSING, source: 'code-default' };
+
+  const inputs = {
+    apiMaxInstances,
+    dbPoolMax,
+    backgroundProcessing,
+    apiPgBossPoolMax,
+    workerPgBossPoolMax,
+    reserve,
+  };
+  const complete = [apiMaxInstances, dbPoolMax, reserve].every((entry) => entry.value !== null);
+  const demand = complete
+    ? estimateConnectionDemand({
+      apiMaxInstances: apiMaxInstances.value,
+      dbPoolMax: dbPoolMax.value,
+      apiPgBossPoolMax: apiPgBossPoolMax.value,
+      workerPgBossPoolMax: workerPgBossPoolMax.value,
+      reserve: reserve.value,
+    })
+    : null;
+
   const hasPgBouncer = /pgbouncer|pool_mode|transaction pooling/i.test(deployYaml)
     || /pgbouncer|pool_mode|transaction pooling/i.test(drizzleProvider);
 
   return {
     deployValues,
-    apiMaxInstances: apiMaxInstancesMatch ? Number(apiMaxInstancesMatch[1]) : null,
+    workflowDefaults,
+    apiMaxInstances: apiMaxInstances.value,
     drizzleProviderUsesPoolEnv: poolKeys.every((key) => drizzleProvider.includes(key)),
     pgbouncerConfigPresent: hasPgBouncer,
-    estimatedApiDbConnections:
-      apiMaxInstancesMatch && /^\d+$/.test(deployValues.DB_POOL_MAX)
-        ? Number(apiMaxInstancesMatch[1]) * Number(deployValues.DB_POOL_MAX)
-        : null,
+    connectionEstimate: {
+      inputs,
+      formula: demand?.formula ?? null,
+      api: demand?.api ?? null,
+      worker: demand?.worker ?? null,
+      reserve: demand?.reserve ?? null,
+      required: demand?.required ?? null,
+      note: 'Same formula as the Deploy workflow database preflight (deploy-guards.mjs). Counts one '
+        + 'revision; rollout overlap, migration and operator sessions must fit in the reserve.',
+    },
+    // API instances x (app pool + pg-boss pool); the full requirement is connectionEstimate.required.
+    estimatedApiDbConnections: demand?.api ?? null,
+    estimatedDbConnections: demand?.required ?? null,
   };
 }
 
@@ -521,7 +647,9 @@ async function main() {
     collectValkeySmoke(args),
   ]);
 
-  const poolEvidence = extractDeployPoolEvidence(deployYaml, drizzleProvider);
+  const poolEvidence = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
+    liveApi: cloudRun.find((service) => service.service === API_SERVICE) ?? null,
+  });
   const approval = approvalMetadata();
   const classifications = buildClassifications({
     cloudRun,
@@ -566,7 +694,17 @@ async function main() {
   process.stdout.write(`Wrote ${args.output}\n`);
 }
 
-main().catch((error) => {
-  console.error(`FAIL phase26 infra evidence: ${redact(error.message)}`);
-  process.exit(1);
-});
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
+  main().catch((error) => {
+    console.error(`FAIL phase26 infra evidence: ${redact(error.message)}`);
+    process.exit(1);
+  });
+}

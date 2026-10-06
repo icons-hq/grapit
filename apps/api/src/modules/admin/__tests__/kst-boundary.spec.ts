@@ -3,6 +3,7 @@ import {
   kstBoundaryToUtc,
   kstTodayBoundaryUtc,
   buildDailyBucketSkeleton,
+  buildWeeklyBucketSkeletonForWindow,
 } from '../kst-boundary.js';
 
 /**
@@ -80,6 +81,60 @@ describe('kst-boundary', () => {
       const oneDay = kstBoundaryToUtc(1);
       expect(today.startUtc.getTime()).toBe(oneDay.startUtc.getTime());
       expect(today.endUtc.getTime()).toBe(oneDay.endUtc.getTime());
+    });
+  });
+
+  describe('buildWeeklyBucketSkeletonForWindow alignment with kstBoundaryToUtc', () => {
+    function isoWeekOfKstDate(kstDate: string): string {
+      // Independent ISO week label: Thursday of the week decides the ISO year.
+      const date = new Date(`${kstDate}T00:00:00.000Z`);
+      const day = date.getUTCDay() || 7;
+      date.setUTCDate(date.getUTCDate() + 4 - day);
+      const yearStart = Date.UTC(date.getUTCFullYear(), 0, 1);
+      const week = Math.ceil(((date.getTime() - yearStart) / DAY_MS + 1) / 7);
+      return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+    }
+
+    function kstDateOf(utc: Date): string {
+      return new Date(utc.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    }
+
+    // 2026-04-20 is a Monday in KST. Walk one week so every weekday is "today".
+    it.each([0, 1, 2, 3, 4, 5, 6])(
+      'covers the oldest partial week of the 90-day window when today is weekday +%i from Monday',
+      (offsetDays) => {
+        vi.setSystemTime(new Date(FIXED_NOW.getTime() + offsetDays * DAY_MS));
+        const { startUtc, endUtc } = kstBoundaryToUtc(90);
+        const buckets = buildWeeklyBucketSkeletonForWindow(90);
+
+        const oldestWeek = isoWeekOfKstDate(kstDateOf(startUtc));
+        const newestWeek = isoWeekOfKstDate(kstDateOf(new Date(endUtc.getTime() - 1)));
+        expect(buckets[0]).toBe(oldestWeek);
+        expect(buckets.at(-1)).toBe(newestWeek);
+        expect(new Set(buckets).size).toBe(buckets.length);
+        // 90 days always touch 13 or 14 ISO weeks; every day maps to a bucket.
+        expect([13, 14]).toContain(buckets.length);
+        for (let day = 0; day < 90; day += 1) {
+          const kstDate = kstDateOf(new Date(startUtc.getTime() + day * DAY_MS));
+          expect(buckets).toContain(isoWeekOfKstDate(kstDate));
+        }
+      },
+    );
+
+    it('keeps ISO-year rollover labels across a calendar year boundary', () => {
+      // 2027-01-02 12:00 KST (Saturday) — that week is 2026-W53.
+      vi.setSystemTime(new Date('2027-01-02T03:00:00.000Z'));
+      const buckets = buildWeeklyBucketSkeletonForWindow(14);
+      expect(buckets).toEqual(['2026-W51', '2026-W52', '2026-W53']);
+    });
+
+    it('rejects non-positive windows', () => {
+      expect(() => buildWeeklyBucketSkeletonForWindow(0)).toThrow(RangeError);
+    });
+
+    it('offers only the window-aligned weekly skeleton (the week-count variant dropped the oldest partial week, #131)', async () => {
+      const kstBoundary = await import('../kst-boundary.js');
+      expect(Object.keys(kstBoundary)).not.toContain('buildWeeklyBucketSkeleton');
     });
   });
 

@@ -46,8 +46,16 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - name: Test Cloud Run v2 background worker deployment payload
-        run: node --test scripts/managed-demo/deploy-background-worker-v2.test.mjs
+      - name: Test managed-demo deploy scripts (worker payload, deploy guards, Valkey posture)
+        run: node --test scripts/managed-demo/*.test.mjs
+      - name: Test load-gate, smoke, preflight and cleanup scripts
+        run: >-
+          node --test scripts/k6/phase26-load.test.mjs scripts/phase26/record-k6-evidence.test.mjs
+          scripts/phase26/test-event-identity.test.mjs scripts/phase26/provision-load-buyers.test.mjs
+          scripts/phase26/infra-evidence.test.mjs scripts/phase26/rehearsal-smoke.test.mjs
+          scripts/revamp/production-preflight.test.mjs
+          scripts/revamp/pg-stub-preload.test.mjs scripts/revamp/isolated-capacity.test.mjs
+          scripts/smoke-valkey-production.test.mjs
 
       # [Phase 14 / SC-2 / REVIEWS.md HIGH#1] Integration tests — testcontainers-based
       # Valkey Cluster + Postgres smokes. Docker daemon on ubuntu-latest is sufficient

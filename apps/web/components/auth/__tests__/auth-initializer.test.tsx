@@ -24,11 +24,20 @@ describe('session initialization', () => {
   });
 
   it('finishes signed out when no refresh session exists', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     render(<StrictMode><AuthInitializer /></StrictMode>);
     await waitFor(() => expect(useAuthStore.getState().isInitialized).toBe(true));
     expect(useAuthStore.getState().user).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes signed out when the refresh session is rejected, after one cross-tab recheck', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<StrictMode><AuthInitializer /></StrictMode>);
+    await waitFor(() => expect(useAuthStore.getState().isInitialized).toBe(true));
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

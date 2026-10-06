@@ -53,6 +53,53 @@ test('renders one bounded v2 Job with secret references and managed-demo setting
   );
 });
 
+test('passes pg-boss and session limits to the worker only when set (u18a → u20 handoff)', () => {
+  const envNames = (env) =>
+    buildBackgroundWorkerJob(env).template.template.containers[0].env.map(({ name }) => name);
+  const unset = envNames({ ...validEnv, RUNTIME_DB_STATEMENT_TIMEOUT_MS: '' });
+  for (const name of ['PGBOSS_POOL_MAX', 'DB_STATEMENT_TIMEOUT_MS', 'DB_APPLICATION_NAME']) {
+    assert.ok(!unset.includes(name), `${name} keeps the worker code default`);
+  }
+
+  const container = buildBackgroundWorkerJob({
+    ...validEnv,
+    RUNTIME_PGBOSS_POOL_MAX: '3',
+    RUNTIME_PGBOSS_START_MAX_ATTEMPTS: '5',
+    RUNTIME_DB_STATEMENT_TIMEOUT_MS: '30000',
+    RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: '120000',
+    RUNTIME_SMS_ALLOWED_COUNTRIES: 'KR',
+    RUNTIME_PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED: 'false',
+  }).template.template.containers[0];
+  const value = (name) => container.env.find((entry) => entry.name === name)?.value;
+  assert.equal(value('PGBOSS_POOL_MAX'), '3');
+  assert.equal(value('PGBOSS_START_MAX_ATTEMPTS'), '5');
+  assert.equal(value('DB_STATEMENT_TIMEOUT_MS'), '30000');
+  assert.equal(value('DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS'), '120000');
+  assert.equal(value('SMS_ALLOWED_COUNTRIES'), undefined);
+  // The staged abandoned-handoff rollout survives Job redeploys (the spec is rebuilt each time).
+  assert.equal(value('PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED'), 'false');
+
+  assert.throws(
+    () => buildBackgroundWorkerJob({ ...validEnv, RUNTIME_DB_STATEMENT_TIMEOUT_MS: '30s' }),
+    /RUNTIME_DB_STATEMENT_TIMEOUT_MS must be an integer/,
+  );
+});
+
+test('uses the shared BOOKING_ENABLED gate instead of a hardcoded true', () => {
+  const envValue = (env) =>
+    buildBackgroundWorkerJob(env)
+      .template.template.containers[0].env.find(({ name }) => name === 'BOOKING_ENABLED').value;
+
+  assert.equal(envValue({ ...validEnv, BOOKING_ENABLED: 'false' }), 'false');
+  assert.equal(envValue({ ...validEnv, BOOKING_ENABLED: 'true' }), 'true');
+  // Unset keeps the historical production behaviour.
+  assert.equal(envValue(validEnv), 'true');
+  assert.throws(
+    () => buildBackgroundWorkerJob({ ...validEnv, BOOKING_ENABLED: 'flase' }),
+    /BOOKING_ENABLED must be exactly "true" or "false"/,
+  );
+});
+
 test('rejects drift-prone or unsafe deployment inputs', () => {
   assert.throws(
     () => buildBackgroundWorkerJob({ ...validEnv, VALKEY_MODE: 'pico' }),

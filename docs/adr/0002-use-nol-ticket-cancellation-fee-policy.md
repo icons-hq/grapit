@@ -32,11 +32,14 @@ Grabit applies a NOL Ticket-style cancellation policy per Ticket Item. Each Tick
 - Admins can use a separate Administrative Full Refund Override for cases such as company fault or show cancellation; this must be explicit rather than the default admin refund behavior.
 - Administrative Full Refund Override changes refund economics only; cancelled seats still follow the normal delayed reopen policy.
 - Admin refund preview and execution require the `refund.admin_refund` capability. Override flags do not bypass this capability check.
+- After the Cancellation Window closes (including on and after the show date) only the Administrative Full Refund Override can cancel; the fee schedule defines no show-day rule, so default admin cancellation and Entered Ticket Override alone stay blocked (2026-10 clarification).
 - Buyer cancellation and default admin cancellation do not apply to Ticket Items whose Venue Entry has already been processed.
 - Admins can use a separate Administrative Entered Ticket Cancellation Override for controlled test cleanup or exceptional operations cases; this must be explicit and never buyer-facing.
 - Administrative Entered Ticket Cancellation Override bypasses entered-ticket eligibility only. It does not imply Administrative Full Refund Override, and both overrides must be selected explicitly when both are needed.
 - The Ticket Service Fee is not an order-level fee.
 - Same-day booking cancellation before 24:00 KST is the only case currently defined to refund the Ticket Service Fee.
+- The booking day used by the same-day exception and the booking-date rules is the KST date of the payment approval (`payments.paid_at`); legacy payments without it fall back to the reservation creation time (2026-10 clarification).
+- A Ticket Item whose quote refunds nothing (for example a 0 KRW tier after the booking day) is cancelled locally without a provider cancellation; the captured payment keeps its provider status.
 - Buyer cancellation is not allowed on the show date; the Cancellation Window ends no later than 23:59 KST on the day before the show date.
 - Reservation `cancel_deadline` remains the stored API/UI contract, but new and corrected confirmed Reservations must store the Cancellation Window end instead of a rolling `showtime - 24h` deadline.
 - A migration should correct existing `CONFIRMED` and still-in-payment `PENDING_PAYMENT` Reservation cancellation deadlines to the Cancellation Window end; historical `CANCELLED` and `FAILED` Reservations are not corrected by this policy migration.

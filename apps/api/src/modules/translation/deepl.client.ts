@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { TranslationTargetLocale } from './translation.service.js';
 
@@ -17,6 +17,21 @@ interface DeepLTranslateResponse {
   }>;
 }
 
+/** Admin draft generation must not hang on a stalled provider connection. */
+export const DEEPL_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Prefix of drafts that still contain the Korean source instead of a
+ * translation (for example when DEEPL_AUTH_KEY is not configured). Such text
+ * can be neither reviewed nor published as is.
+ */
+export const MANUAL_TRANSLATION_MARKER_PREFIX = '[manual-review:';
+export const DEEPL_UNAVAILABLE_MARKER = `${MANUAL_TRANSLATION_MARKER_PREFIX}deepl-unavailable]`;
+
+export function requiresManualTranslation(text: string): boolean {
+  return text.trimStart().startsWith(MANUAL_TRANSLATION_MARKER_PREFIX);
+}
+
 const DEEPL_TARGET_LOCALE: Record<TranslationTargetLocale, DeepLTargetLang> = {
   en: 'EN-US',
   th: 'TH',
@@ -32,7 +47,7 @@ export class DeepLClient {
   private readonly authKey: string;
   private readonly baseUrl = 'https://api-free.deepl.com';
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(@Inject(ConfigService) private readonly configService: ConfigService) {
     this.authKey = this.configService.get<string>('DEEPL_AUTH_KEY', '');
   }
 
@@ -45,7 +60,7 @@ export class DeepLClient {
     if (!this.authKey) {
       return {
         status: 'unavailable',
-        text: `[manual-review:deepl-unavailable] ${text}`,
+        text: `${DEEPL_UNAVAILABLE_MARKER} ${text}`,
         targetLang,
       };
     }
@@ -61,6 +76,7 @@ export class DeepLClient {
         source_lang: 'KO',
         target_lang: targetLang,
       }),
+      signal: AbortSignal.timeout(DEEPL_REQUEST_TIMEOUT_MS),
     });
 
     const responseText = await response.text();

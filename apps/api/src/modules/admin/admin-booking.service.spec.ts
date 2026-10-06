@@ -8,8 +8,15 @@ import {
   type Mock,
 } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import type { SQL } from 'drizzle-orm';
-import { AdminBookingService } from './admin-booking.service.js';
+import { ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ADMIN_BOOKING_AGGREGATE_CACHE_TTL_SECONDS,
+  ADMIN_BOOKING_QUERY_TIMEOUT_MS,
+  AdminBookingService,
+} from './admin-booking.service.js';
+import * as schema from '../../database/schema/index.js';
 import {
   bookingOperationAuditLogs,
   payments,
@@ -17,6 +24,7 @@ import {
   reservationSeats,
   seatInventories,
 } from '../../database/schema/index.js';
+import { ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES } from '../payment/async-done-compensation.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 
 function ticketItem(overrides: Record<string, unknown> = {}) {
@@ -52,12 +60,79 @@ function ticketItem(overrides: Record<string, unknown> = {}) {
 }
 
 function createMockDb() {
-  return {
+  const db = {
     select: vi.fn(() => createChainMock([])),
     execute: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
     transaction: vi.fn(),
+  };
+  // Bounded admin reads run inside a read-only transaction; by default the
+  // transaction hands its callback the same select mock.
+  db.transaction.mockImplementation(
+    async (callback: (tx: unknown) => Promise<unknown>) => callback(db),
+  );
+  return db;
+}
+
+type CapturedQuery = { text: string; params: unknown[] };
+
+/**
+ * Real drizzle query builder over a fake node-postgres client. It renders the
+ * exact SQL text the service sends, so FROM/JOIN mistakes that a chain mock
+ * hides become visible without a database.
+ */
+function createSqlCapturingDb(captured: CapturedQuery[]) {
+  const client = {
+    query: vi.fn(async (config: string | { text: string }, params: unknown[] = []) => {
+      captured.push({ text: typeof config === 'string' ? config : config.text, params });
+      return { rows: [], rowCount: 0, fields: [] };
+    }),
+  };
+  return drizzle({ client: client as never, schema });
+}
+
+/**
+ * Every table referenced as "table"."column" must be in a FROM/JOIN of the
+ * same statement (PostgreSQL: missing FROM-clause entry for table ...).
+ */
+function tablesReferencedWithoutFrom(sqlText: string): string[] {
+  const referenced = new Set(
+    [...sqlText.matchAll(/"([a-z_]+)"\."[a-z_]+"/g)].map((match) => match[1]!),
+  );
+  return [...referenced].filter(
+    (table) => !new RegExp(`(from|join)\\s+"${table}"`, 'i').test(sqlText),
+  );
+}
+
+const ADMIN_FUNNEL_STATUSES = [
+  'SOLD',
+  'PAYMENT_PENDING',
+  'PAYMENT_PROCESSING',
+  'PAYMENT_FAILED',
+  'CANCEL_PROCESSING',
+  'PARTIAL_CANCELLED',
+  'CANCELLED',
+] as const;
+
+function refundResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    reservationId: 'reservation-1',
+    reservationNumber: 'R-001',
+    paymentKey: 'payment-key-1',
+    refundableAmount: 50000,
+    canRequestRefund: false,
+    cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
+    refundTimeline: {
+      currentState: 'COMPLETED',
+      requestedAt: '2026-07-01T03:00:00.000Z',
+      customerServiceCtaVisible: false,
+    },
+    cancellationQuote: null,
+    providerRefund: { currency: 'KRW', amountMinor: 50000, amountDecimal: '50000' },
+    idempotent: false,
+    retryEnqueued: false,
+    ...overrides,
   };
 }
 
@@ -864,6 +939,68 @@ describe('AdminBookingService', () => {
       });
     });
 
+    it.each([
+      ...Object.values(ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES),
+      // u01 confirm/reconcile compensation of an approval it could not issue.
+      'CONFIRM_APPROVAL_COMPENSATED',
+    ])(
+      'buckets a compensation (%s) as a compensated cancel, not a buyer cancellation',
+      async (diagnosticCode) => {
+        mockDb.select
+          .mockReturnValueOnce(createChainMock([{
+            totalBookings: 1,
+            completedRevenue: 0,
+            soldCount: 0,
+            pendingPaymentCount: 0,
+            paymentProcessingCount: 0,
+            failedCount: 1,
+            cancelProcessingCount: 0,
+            cancelledCount: 0,
+            partialCancelledCount: 0,
+          }]))
+          .mockReturnValueOnce(createChainMock([{
+            reservation: {
+              id: 'reservation-compensated-1',
+              reservationNumber: 'R-COMPENSATED-001',
+              tossOrderId: 'GRP-TOSS-COMPENSATED-001',
+              status: 'FAILED',
+              totalAmount: 79000,
+              createdAt: new Date('2026-07-01T03:00:00.000Z'),
+            },
+            user: { name: '김보상', email: 'compensated@example.com', country: 'KR' },
+            showtime: { dateTime: new Date('2026-07-18T10:00:00.000Z') },
+            performance: { title: 'Girl Rules Fanmeeting' },
+            payment: {
+              id: 'payment-compensated-1',
+              status: 'CANCELED',
+              method: 'FOREIGN_EASY_PAY',
+              provider: 'ALIPAY_PLUS',
+              currency: 'KRW',
+            },
+            refund: { status: null },
+            diagnostic: {
+              diagnosticKind: 'payment_compensated_cancel',
+              diagnosticCode,
+              diagnosticMessage: '자동 취소',
+              diagnosticSource: 'async_done_compensation_recovery',
+              recordedAt: new Date('2026-07-01T03:05:00.000Z'),
+              providerCheckStatus: 'not_checked',
+              providerCheckedAt: null,
+              providerCheckMessage: null,
+            },
+          }]))
+          .mockReturnValueOnce(createChainMock([]))
+          .mockReturnValueOnce(createChainMock([]));
+
+        const result = await service.getBookings({});
+
+        expect(result.bookings[0]).toMatchObject({ paymentFailureBucket: 'compensated_cancel' });
+        const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(objectGraphContains(statsSelect.compensatedCancelCount, diagnosticCode)).toBe(true);
+        expect(objectGraphContains(statsSelect.abortedPaymentCount, diagnosticCode)).toBe(true);
+      },
+    );
+
     it('applies extended filters and returns the filtered total instead of an unfiltered count', async () => {
       const statsCalls: Array<{ method: string; args: unknown[] }> = [];
       const listCalls: Array<{ method: string; args: unknown[] }> = [];
@@ -1381,6 +1518,145 @@ describe('AdminBookingService', () => {
       );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'a completed PG cancel',
+        response: refundResponse(),
+        outcome: 'completed',
+        auditStatus: 'success',
+        message: '환불이 완료되었습니다',
+      },
+      {
+        name: 'a PG rejection that restored the buyer rights',
+        response: refundResponse({
+          canRequestRefund: true,
+          refundTimeline: { currentState: 'FAILED', requestedAt: '2026-07-01T03:00:00.000Z', customerServiceCtaVisible: false },
+        }),
+        outcome: 'rights_restored',
+        auditStatus: 'failed',
+        message: '결제사가 환불을 거절했습니다',
+      },
+      {
+        name: 'a refund recorded as failed',
+        response: refundResponse({
+          refundTimeline: { currentState: 'FAILED', requestedAt: '2026-07-01T03:00:00.000Z', customerServiceCtaVisible: true },
+        }),
+        outcome: 'failed',
+        auditStatus: 'failed',
+        message: '환불에 실패했습니다',
+      },
+      {
+        name: 'an already failed refund requested again',
+        response: refundResponse({
+          idempotent: true,
+          refundTimeline: { currentState: 'FAILED', requestedAt: '2026-07-01T03:00:00.000Z', customerServiceCtaVisible: true },
+        }),
+        outcome: 'failed',
+        auditStatus: 'failed',
+        message: '이미 실패로 기록된 환불입니다',
+      },
+      {
+        name: 'a transient PG failure waiting for automatic retry',
+        response: refundResponse({
+          retryEnqueued: true,
+          refundTimeline: { currentState: 'SENT_TO_PG', requestedAt: '2026-07-01T03:00:00.000Z', customerServiceCtaVisible: false },
+        }),
+        outcome: 'processing',
+        auditStatus: 'success',
+        message: '자동으로 다시 확인합니다',
+      },
+      {
+        name: 'a PG cancel still processing',
+        response: refundResponse({
+          refundTimeline: { currentState: 'PROCESSING_AT_PG', requestedAt: '2026-07-01T03:00:00.000Z', customerServiceCtaVisible: false },
+        }),
+        outcome: 'processing',
+        auditStatus: 'success',
+        message: '결제사에서 환불을 처리 중입니다',
+      },
+    ])('reports $name as $outcome instead of a completed refund', async ({
+      response,
+      outcome,
+      auditStatus,
+      message,
+    }) => {
+      mockRefundService.requestAdminRefund.mockResolvedValueOnce(response);
+
+      const result = await service.refundBooking('reservation-1', 'admin-1', '관리자 환불');
+
+      expect(result).toMatchObject({
+        outcome,
+        currentState: response.refundTimeline.currentState,
+        idempotent: response.idempotent,
+        retryEnqueued: response.retryEnqueued,
+        refundableAmount: 50000,
+      });
+      expect(result.message).toContain(message);
+      if (outcome !== 'completed') {
+        expect(result.message).not.toContain('완료되었습니다');
+      }
+      expect(mockAdminAuditService.write).toHaveBeenCalledTimes(1);
+      expect(mockAdminAuditService.write).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'refund.admin_refund',
+        status: auditStatus,
+        after: {
+          refund: expect.objectContaining({
+            outcome,
+            currentState: response.refundTimeline.currentState,
+          }),
+        },
+      }));
+    });
+
+    it('forwards the operator-confirmed preview amounts and records them in the audit', async () => {
+      await service.refundBooking('reservation-1', 'admin-1', '수수료 확인 후 환불', {
+        fullRefundOverride: false,
+        expectedRefundableAmount: 48000,
+        expectedProviderRefundAmountMinor: 3536,
+      });
+
+      expect(mockRefundService.requestAdminRefund).toHaveBeenCalledWith(
+        'reservation-1',
+        'admin-1',
+        '수수료 확인 후 환불',
+        {
+          fullRefundOverride: false,
+          expectedRefundableAmount: 48000,
+          expectedProviderRefundAmountMinor: 3536,
+        },
+      );
+      expect(mockAdminAuditService.write.mock.calls[0]![0].after.refund).toMatchObject({
+        overrideOptions: { fullRefundOverride: false },
+        expected: {
+          expectedRefundableAmount: 48000,
+          expectedProviderRefundAmountMinor: 3536,
+        },
+      });
+    });
+
+    it('rejects a stale preview amount with the RefundService conflict and audits the failure', async () => {
+      mockRefundService.requestAdminRefund.mockRejectedValueOnce(
+        new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.'),
+      );
+
+      await expect(service.refundBooking('reservation-1', 'admin-1', '자정 경계', {
+        expectedRefundableAmount: 79000,
+      })).rejects.toThrow('환불 금액이 변경되었습니다');
+      expect(mockAdminAuditService.write).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        after: { refund: { error: '환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.' } },
+      }));
+    });
+
+    it('still reports the real refund outcome when the audit write fails after the PG cancel', async () => {
+      mockAdminAuditService.write.mockRejectedValueOnce(new Error('audit db down'));
+
+      const result = await service.refundBooking('reservation-1', 'admin-1', '관리자 환불');
+
+      expect(result.outcome).toBe('completed');
+      expect(mockAdminAuditService.write).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2356,6 +2632,271 @@ describe('AdminBookingService', () => {
 
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockAdminAuditService.write).not.toHaveBeenCalled();
+    });
+
+    it.each(ADMIN_FUNNEL_STATUSES)(
+      'renders raw export SQL for funnel status %s with every referenced table in FROM/JOIN',
+      async (funnelStatus) => {
+        const captured: CapturedQuery[] = [];
+        const sqlService = new AdminBookingService(
+          createSqlCapturingDb(captured) as never,
+          mockBookingGateway as never,
+          mockRefundService as never,
+          mockAdminAuditService,
+        );
+
+        const result = await sqlService.exportReservations({
+          actorUserId: 'admin-1',
+          filters: { funnelStatus, exportType: 'raw_pii', reason: '실패·취소 고객 안내' },
+        });
+
+        expect(result.rowCount).toBe(0);
+        const exportQuery = captured.find((query) => query.text.includes('"reservation_number"'));
+        expect(exportQuery).toBeDefined();
+        // Regression: CANCELLED / PAYMENT_FAILED filters reference
+        // refunds.status through the cancel-processing CASE branch.
+        expect(exportQuery!.text).toContain('"refunds"."status"');
+        expect(tablesReferencedWithoutFrom(exportQuery!.text)).toEqual([]);
+      },
+    );
+  });
+
+  describe('list query bounds and aggregate cache', () => {
+    function createMockCache(initial: Record<string, unknown> = {}) {
+      const store = new Map<string, unknown>(Object.entries(initial));
+      return {
+        store,
+        get: vi.fn(async (key: string) => (store.has(key) ? store.get(key) : null)),
+        set: vi.fn(async (key: string, value: unknown) => {
+          store.set(key, JSON.parse(JSON.stringify(value)));
+        }),
+      };
+    }
+
+    function statsRow(totalBookings: number) {
+      return {
+        totalBookings,
+        completedRevenue: 0,
+        soldCount: 0,
+        pendingPaymentCount: 0,
+        paymentProcessingCount: 0,
+        failedCount: 0,
+        cancelProcessingCount: 0,
+        cancelledCount: 0,
+        partialCancelledCount: 0,
+      };
+    }
+
+    it.each(ADMIN_FUNNEL_STATUSES)(
+      'renders list, stats and tier SQL for funnel status %s with every referenced table in FROM/JOIN',
+      async (funnelStatus) => {
+        const captured: CapturedQuery[] = [];
+        const sqlService = new AdminBookingService(
+          createSqlCapturingDb(captured) as never,
+          mockBookingGateway as never,
+          mockRefundService as never,
+          mockAdminAuditService,
+        );
+
+        await sqlService.getBookings({
+          funnelStatus,
+          showtimeId: '11111111-1111-4111-8111-000000000302',
+          search: 'buyer',
+        });
+
+        const selects = captured.filter((query) => /^\s*select/i.test(query.text));
+        expect(selects.length).toBeGreaterThanOrEqual(3);
+        for (const query of selects) {
+          expect(tablesReferencedWithoutFrom(query.text)).toEqual([]);
+        }
+      },
+    );
+
+    it('runs list and aggregate reads in a read-only transaction with a statement timeout', async () => {
+      const captured: CapturedQuery[] = [];
+      const sqlService = new AdminBookingService(
+        createSqlCapturingDb(captured) as never,
+        mockBookingGateway as never,
+        mockRefundService as never,
+        mockAdminAuditService,
+      );
+
+      await sqlService.getBookings({});
+
+      const statements = captured.map((query) => query.text.trim().toLowerCase());
+      expect(statements[0]).toBe('begin read only');
+      expect(statements[1]).toBe(`set local statement_timeout = ${ADMIN_BOOKING_QUERY_TIMEOUT_MS}`);
+      expect(statements.slice(2).every((statement) => statement.startsWith('select') || statement === 'commit')).toBe(true);
+      expect(statements.at(-1)).toBe('commit');
+    });
+
+    it('turns a statement timeout into an actionable 503 instead of holding the primary', async () => {
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), {
+        code: '57014',
+      });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+
+      await expect(service.getBookings({})).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(service.getBookings({})).resolves.toBeDefined();
+    });
+
+    it('asks to narrow by filters the dashboard actually offers (it has no date filter)', async () => {
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      const error = await service.getBookings({}).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      const message = (error as ServiceUnavailableException).message;
+      expect(message).toContain('공연·회차나 예매·결제 상태를 선택해 범위를 좁혀주세요');
+      expect(message).not.toContain('기간');
+    });
+
+    it('logs the hashed scope, elapsed time and page of a timed-out read without the raw search text', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+
+      await expect(service.getBookings({ search: '01055551234', page: 3 }))
+        .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = String(warnSpy.mock.calls[0]?.[0]);
+      expect(message).toMatch(/aggregateKey=cache:admin:bookings:aggregates:v1:[0-9a-f]{64}\b/);
+      expect(message).toMatch(/after \d+ms/);
+      expect(message).toContain('page=3');
+      expect(message).toContain('aggregatesCached=false');
+      expect(message).not.toContain('01055551234');
+    });
+
+    it('logs which performance, showtime and filter dimensions timed out, never the search or seat query text', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      mockDb.select.mockReturnValueOnce({
+        from: () => { throw Object.assign(new Error('Failed query'), { cause: timeout }); },
+      } as never);
+      const performanceId = '11111111-1111-4111-8111-000000000301';
+      const showtimeId = '22222222-2222-4222-8222-000000000401';
+
+      await expect(service.getBookings({
+        performanceId,
+        showtimeId,
+        funnelStatus: 'SOLD',
+        paymentMethod: 'CARD',
+        seatTier: 'R석',
+        floorKey: '2F',
+        search: 'buyer@example.com',
+        seatQuery: 'A-17',
+        dateFrom: '2026-10-01',
+      })).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      const message = String(warnSpy.mock.calls[0]?.[0]);
+      expect(message).toContain(`performanceId=${performanceId}`);
+      expect(message).toContain(`showtimeId=${showtimeId}`);
+      expect(message).toContain('reservationStatus=all');
+      expect(message).toContain('funnelStatus=SOLD');
+      expect(message).toContain('paymentStatus=all');
+      expect(message).toContain('paymentMethod=CARD');
+      expect(message).toContain('seatTier="R석"');
+      expect(message).toContain('floorKey=2F');
+      expect(message).toContain('hasDateFrom=true');
+      expect(message).toContain('hasDateTo=false');
+      expect(message).toContain('hasSearch=true');
+      expect(message).toContain('hasSeatQuery=true');
+      expect(message).not.toContain('buyer@example.com');
+      expect(message).not.toContain('A-17');
+      expect(message).not.toContain('2026-10-01');
+    });
+
+    it('reuses cached stats and tier stats across pages of the same filter instead of re-aggregating', async () => {
+      const cache = createMockCache();
+      const cachedService = new AdminBookingService(
+        mockDb as never,
+        mockBookingGateway as never,
+        mockRefundService as never,
+        mockAdminAuditService,
+        cache as never,
+      );
+      const filters = { performanceId: '11111111-1111-4111-8111-000000000301', funnelStatus: 'SOLD' };
+
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([statsRow(41)]))
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([{
+          tierName: 'VIP',
+          price: 79000,
+          soldSeats: 3,
+          activeRevenue: 237000,
+          cancelProcessingSeats: 0,
+          cancelledSeats: 0,
+          enteredSeats: 0,
+        }]));
+      const first = await cachedService.getBookings({ ...filters, page: 1 });
+
+      expect(mockDb.select).toHaveBeenCalledTimes(3);
+      expect(cache.set).toHaveBeenCalledTimes(1);
+      const [cacheKey, , ttl] = cache.set.mock.calls[0]!;
+      expect(ttl).toBe(ADMIN_BOOKING_AGGREGATE_CACHE_TTL_SECONDS);
+      expect(cacheKey).toMatch(/^cache:admin:bookings:aggregates:v1:[0-9a-f]{64}$/);
+      expect(cacheKey).not.toContain('11111111');
+
+      mockDb.select.mockClear();
+      mockDb.select.mockReturnValueOnce(createChainMock([]));
+      const second = await cachedService.getBookings({ ...filters, page: 2 });
+
+      // Only the page query ran; stats and tier aggregates came from cache.
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
+      expect(second.total).toBe(41);
+      expect(second.stats).toEqual(first.stats);
+      expect(second.tierStats).toEqual(first.tierStats);
+      expect(cache.set).toHaveBeenCalledTimes(1);
+    });
+
+    it('keys aggregates by every filter so a different filter recomputes them', async () => {
+      const cache = createMockCache();
+      const cachedService = new AdminBookingService(
+        mockDb as never,
+        mockBookingGateway as never,
+        mockRefundService as never,
+        mockAdminAuditService,
+        cache as never,
+      );
+
+      mockDb.select.mockReturnValueOnce(createChainMock([statsRow(5)]));
+      await cachedService.getBookings({ funnelStatus: 'SOLD' });
+      mockDb.select.mockReturnValueOnce(createChainMock([statsRow(7)]));
+      const other = await cachedService.getBookings({ funnelStatus: 'CANCELLED' });
+      mockDb.select.mockReturnValueOnce(createChainMock([statsRow(9)]));
+      const searched = await cachedService.getBookings({ funnelStatus: 'SOLD', search: 'buyer' });
+
+      expect(other.total).toBe(7);
+      expect(searched.total).toBe(9);
+      expect(new Set(cache.set.mock.calls.map(([key]) => key)).size).toBe(3);
+    });
+
+    it('ignores a malformed cache entry and recomputes the aggregates', async () => {
+      const cache = createMockCache();
+      cache.get.mockResolvedValueOnce({ stats: null, tierStats: 'broken' });
+      const cachedService = new AdminBookingService(
+        mockDb as never,
+        mockBookingGateway as never,
+        mockRefundService as never,
+        mockAdminAuditService,
+        cache as never,
+      );
+      mockDb.select.mockReturnValueOnce(createChainMock([statsRow(3)]));
+
+      const result = await cachedService.getBookings({});
+
+      expect(result.total).toBe(3);
+      expect(cache.set).toHaveBeenCalledTimes(1);
     });
   });
 });

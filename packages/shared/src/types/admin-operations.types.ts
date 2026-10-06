@@ -1,6 +1,7 @@
 import {
   ADMIN_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
+  ADMIN_CAPABILITY_BUNDLES,
   type AdminCapability,
   type AdminCapabilityBundle,
   type AdminAuditEvent,
@@ -65,8 +66,13 @@ export interface AdminCapabilityUser {
   id: string;
   email?: string;
   role?: string | null;
-  adminCapabilityBundle?: AdminCapabilityBundle | null;
-  adminCapabilities?: readonly AdminCapability[] | null;
+  /**
+   * Stored bundle. DB/JWT values are plain strings, so unknown values are
+   * tolerated here: they keep an explicit capability list, and otherwise grant
+   * nothing (never the legacy role=admin superuser fallback).
+   */
+  adminCapabilityBundle?: AdminCapabilityBundle | string | null;
+  adminCapabilities?: readonly AdminCapability[] | readonly string[] | null;
 }
 
 export interface AdminCapabilitySnapshot {
@@ -105,7 +111,13 @@ export function resolveAdminCapabilitySnapshot(
     };
   }
 
-  if (user.adminCapabilityBundle === 'admin') {
+  const bundle = parseAdminCapabilityBundle(user.adminCapabilityBundle);
+  const storedCapabilities = normalizeAdminCapabilities(user.adminCapabilities ?? []);
+
+  // The `admin` bundle is the superuser contract: stored capability lists are
+  // ignored. Narrowed admin permissions must use a non-admin bundle; the
+  // permission update schema rejects partial lists for this bundle.
+  if (bundle === 'admin') {
     return {
       bundle: 'admin',
       capabilities: ADMIN_CAPABILITIES,
@@ -113,22 +125,37 @@ export function resolveAdminCapabilitySnapshot(
     };
   }
 
-  if (user.adminCapabilityBundle) {
-    const explicitCapabilities = user.adminCapabilities?.length
-      ? normalizeAdminCapabilities(user.adminCapabilities)
-      : ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[user.adminCapabilityBundle];
+  if (bundle) {
+    const explicitCapabilities = storedCapabilities.length > 0
+      ? storedCapabilities
+      : ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[bundle];
 
     return {
-      bundle: user.adminCapabilityBundle,
+      bundle,
       capabilities: explicitCapabilities,
       superuser: false,
     };
   }
 
-  if (user.adminCapabilities?.length) {
+  if (storedCapabilities.length > 0) {
     return {
       bundle: null,
-      capabilities: normalizeAdminCapabilities(user.adminCapabilities),
+      capabilities: storedCapabilities,
+      superuser: false,
+    };
+  }
+
+  // A stored bundle this build does not know (a mistyped manual write, or a
+  // bundle from a newer release) fails closed. Only a missing bundle is the
+  // legacy role-based fallback; otherwise role=admin with an unknown bundle
+  // and no capability list would read as superuser (u12 review).
+  if (
+    typeof user.adminCapabilityBundle === 'string'
+    && user.adminCapabilityBundle.trim() !== ''
+  ) {
+    return {
+      bundle: null,
+      capabilities: [],
       superuser: false,
     };
   }
@@ -163,14 +190,23 @@ export function hasAdminCapability(
   return resolveAdminCapabilitySnapshot(user).capabilities.includes(capability);
 }
 
+/**
+ * Parses a stored/requested bundle value. Every known bundle (including
+ * `scanner`) is preserved; unknown values resolve to `null`.
+ */
+export function parseAdminCapabilityBundle(
+  bundle: unknown,
+): AdminCapabilityBundle | null {
+  return typeof bundle === 'string' &&
+    (ADMIN_CAPABILITY_BUNDLES as readonly string[]).includes(bundle)
+    ? (bundle as AdminCapabilityBundle)
+    : null;
+}
+
 function normalizeAdminCapabilities(
-  capabilities: readonly AdminCapability[],
+  capabilities: readonly string[],
 ): readonly AdminCapability[] {
-  const validCapabilities = new Set<AdminCapability>(ADMIN_CAPABILITIES);
-  return ADMIN_CAPABILITIES.filter(
-    (capability) =>
-      validCapabilities.has(capability) && capabilities.includes(capability),
-  );
+  return ADMIN_CAPABILITIES.filter((capability) => capabilities.includes(capability));
 }
 
 function isFixtureBundleRole(

@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  assertPhase26Marker,
+  assertPhase26OrderPrefix,
+  assertPhase26TestEventTitle,
+} from './test-event-identity.mjs';
 
 const DEFAULT_EVIDENCE_PATH =
   '.planning/phases/26-m1-canary-cutover-gates/evidence/26-05-rehearsal.json';
@@ -37,6 +45,22 @@ const CLEANUP_CONFIRMATION_ENV = {
 };
 
 const FINAL_STATUSES = new Set(['PASS', 'FAIL', 'BLOCKED']);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+let sharedContracts = null;
+
+// Consent rows, document versions and the service fee come from the same
+// shared contract the checkout page uses, so the smoke never drifts from it.
+export function loadSharedContracts() {
+  if (!sharedContracts) {
+    try {
+      sharedContracts = createRequire(resolve(REPO_ROOT, 'apps/api/package.json'))('@grabit/shared');
+    } catch {
+      throw new Error('Could not load @grabit/shared; run `pnpm --filter @grabit/shared build` first.');
+    }
+  }
+  return sharedContracts;
+}
 
 function usage() {
   return `Usage:
@@ -50,15 +74,15 @@ Required environment for live rehearsal:
   PHASE26_TEST_PERFORMANCE_ID            Dedicated test-event performance UUID
   PHASE26_TEST_SHOWTIME_ID               Dedicated test-event showtime UUID
   PHASE26_TEST_SEAT_ID                   Dedicated test seat ID or floor-aware seatKey
-  PHASE26_TEST_ORDER_PREFIX              Must start with PHASE26_ or PHASE26-
-  PHASE26_TEST_MARKER                    Explicit test marker present on the test performance
+  PHASE26_TEST_ORDER_PREFIX              Must start with PHASE26_ or PHASE26- (letters, digits, _ or - only)
+  PHASE26_TEST_MARKER                    Dedicated token matching ^PHASE26[_-][A-Za-z0-9_-]{6,}$; the test performance title must start with it
   PHASE26_REHEARSAL_ALLOW_MUTATION       Must equal ${REQUIRED_MUTATION_APPROVAL}
 
 Optional environment:
   PHASE26_REHEARSAL_EVIDENCE             Evidence JSON path
   PHASE26_DATABASE_URL or DATABASE_URL    Database URL used through PGDATABASE for psql dry-run
   PHASE26_TEST_PAYMENT_KEY               Toss test paymentKey for confirm/refund branch
-  PHASE26_TEST_AMOUNT                    Override fixture amount in KRW
+  PHASE26_TEST_AMOUNT                    Override fixture seat price in KRW (the service fee is added to the prepare/confirm amount; prefer PHASE26_TEST_TIER_PRICE)
   PHASE26_TEST_TIER_NAME                 Override fixture tier name
   PHASE26_TEST_TIER_PRICE                Override fixture tier price in KRW
   PHASE26_TEST_TIER_COLOR                Override fixture tier color
@@ -294,7 +318,18 @@ function validateUuid(value, label) {
   }
 }
 
-function loadConfig() {
+// PHASE26_TEST_AMOUNT replaces the seat price; checkoutAmount() adds the
+// per-ticket service fee on top. An operator who enters the order total gets a
+// prepare that the server rejects as an amount mismatch, so say how it is read.
+export function amountOverrideWarning(amountOverride) {
+  return (
+    `Warning: PHASE26_TEST_AMOUNT=${amountOverride} is read as the seat price, not the order total. ` +
+    `prepare and confirm send ${amountOverride} + the service fee (TICKET_SERVICE_FEE_KRW). ` +
+    'Prefer PHASE26_TEST_TIER_PRICE.'
+  );
+}
+
+export function loadConfig() {
   const missing = missingRequiredEnv();
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
@@ -314,16 +349,16 @@ function loadConfig() {
   validateUuid(performanceId, 'PHASE26_TEST_PERFORMANCE_ID');
   validateUuid(showtimeId, 'PHASE26_TEST_SHOWTIME_ID');
 
-  if (!/^PHASE26[_-]/.test(orderPrefix)) {
-    throw new Error('PHASE26_TEST_ORDER_PREFIX must start with PHASE26_ or PHASE26-');
-  }
-
-  if (testMarker.length < 8 || !/PHASE26|TEST/i.test(testMarker)) {
-    throw new Error('PHASE26_TEST_MARKER must be explicit and include PHASE26 or TEST');
-  }
+  assertPhase26OrderPrefix(orderPrefix);
+  assertPhase26Marker(testMarker);
 
   if (!databaseUrl()) {
     throw new Error('PHASE26_DATABASE_URL or DATABASE_URL is required before rehearsal mutations');
+  }
+
+  const amountOverride = optionalInt(process.env.PHASE26_TEST_AMOUNT, 'PHASE26_TEST_AMOUNT');
+  if (amountOverride !== null) {
+    console.error(amountOverrideWarning(amountOverride));
   }
 
   return {
@@ -335,7 +370,7 @@ function loadConfig() {
     testMarker,
     authHeaderFile: process.env.GRABIT_SMOKE_AUTH_HEADER_FILE,
     paymentKey: process.env.PHASE26_TEST_PAYMENT_KEY || '',
-    amountOverride: optionalInt(process.env.PHASE26_TEST_AMOUNT, 'PHASE26_TEST_AMOUNT'),
+    amountOverride,
     tierNameOverride: process.env.PHASE26_TEST_TIER_NAME || '',
     tierPriceOverride: optionalInt(process.env.PHASE26_TEST_TIER_PRICE, 'PHASE26_TEST_TIER_PRICE'),
     tierColorOverride: process.env.PHASE26_TEST_TIER_COLOR || '',
@@ -503,15 +538,12 @@ function assertFixtureSafe(performance, config) {
   const title = String(performance?.title || performance?.name || '');
   const description = String(performance?.description || '');
   const salesInfo = String(performance?.salesInfo || performance?.sales_info || '');
-  const searchable = `${title}\n${description}\n${salesInfo}`;
 
-  if (/Girl Rules|GIRL RULES|걸룰|걸룰스/i.test(searchable)) {
+  if (/Girl Rules|걸룰/i.test(`${description}\n${salesInfo}`)) {
     throw new Error('Dedicated test-event fixture check failed: real Girl Rules content is in scope');
   }
-
-  if (!searchable.includes(config.testMarker)) {
-    throw new Error('Dedicated test-event fixture check failed: PHASE26_TEST_MARKER was not found on the performance metadata');
-  }
+  // Same positive identification as the cleanup SQL: the title starts with the marker.
+  assertPhase26TestEventTitle(title, config.testMarker);
 
   const showtimes = [
     ...(Array.isArray(performance?.showtimes) ? performance.showtimes : []),
@@ -526,7 +558,7 @@ function assertFixtureSafe(performance, config) {
   }
 }
 
-function resolveSeatFixture(performance, config) {
+export function resolveSeatFixture(performance, config) {
   const requested = config.seatId;
   const floorAware = requested.includes(':');
   const [requestedFloor, requestedSeat] = floorAware
@@ -594,14 +626,35 @@ function toInt(value, fallback) {
   return Number.isInteger(parsed) ? parsed : fallback;
 }
 
-function makeConsentItems() {
-  return ['terms', 'privacy', 'pipa_required'].map((key) => ({
+// The rows the booking checkout records (terms, privacy), each at its current
+// document version, in Korean. pipa_required belongs to signup, not booking.
+export function makeConsentItems(shared = loadSharedContracts()) {
+  return shared.BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
     key,
-    version: 'phase26-rehearsal',
-    language: 'ko',
+    version: shared.CONSENT_DOCUMENT_VERSIONS[key],
+    language: shared.resolveConsentDocumentLanguage('ko'),
     accepted: true,
     sourceFlow: 'booking',
   }));
+}
+
+// prepare and Toss confirm both carry the order total: seat price plus the
+// per-ticket service fee, the same amount the server computes.
+export function checkoutAmount(seat, shared = loadSharedContracts()) {
+  return seat.price + shared.TICKET_SERVICE_FEE_KRW;
+}
+
+export function buildPrepareRequest({ orderId, config, seat, now = new Date() }, shared = loadSharedContracts()) {
+  return {
+    orderId,
+    showtimeId: config.showtimeId,
+    seats: [seat],
+    amount: checkoutAmount(seat, shared),
+    consentItems: makeConsentItems(shared),
+    paymentDeadlineAt: new Date(now.getTime() + 7 * 60 * 1000).toISOString(),
+    bookingPolicy: bookingPolicy(),
+    paymentMethod: paymentMethod(),
+  };
 }
 
 function bookingPolicy() {
@@ -707,6 +760,8 @@ function cleanupExecutionVariables(config) {
 
 async function runRehearsal(args) {
   const config = loadConfig();
+  // Fail before any request when the shared contract is not built.
+  loadSharedContracts();
   const authHeaders = await loadAuthHeaders(config.authHeaderFile);
   const context = new RehearsalContext(config, authHeaders);
   const evidence = baseEvidence(commandShape(args));
@@ -782,16 +837,7 @@ async function runRehearsal(args) {
       'reservation-prepare',
       'POST',
       '/reservations/prepare',
-      {
-        orderId,
-        showtimeId: config.showtimeId,
-        seats: [seat],
-        amount: seat.price,
-        consentItems: makeConsentItems(),
-        paymentDeadlineAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
-        bookingPolicy: bookingPolicy(),
-        paymentMethod: paymentMethod(),
-      },
+      buildPrepareRequest({ orderId, config, seat }),
     );
     addHttpCheck(evidence, prepareResult);
     const preparedReservationId = extractReservationId(prepareResult.json);
@@ -825,7 +871,7 @@ async function runRehearsal(args) {
         {
           paymentKey: config.paymentKey,
           orderId,
-          amount: seat.price,
+          amount: checkoutAmount(seat),
         },
       );
       addHttpCheck(evidence, confirmResult);
@@ -946,7 +992,17 @@ async function main() {
   console.log(`${evidence.status} phase26 rehearsal smoke. evidence=${evidencePath()}`);
 }
 
-main().catch((error) => {
-  console.error(redactText(error?.message || String(error)));
-  process.exitCode = 1;
-});
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
+  main().catch((error) => {
+    console.error(redactText(error?.message || String(error)));
+    process.exitCode = 1;
+  });
+}

@@ -256,7 +256,8 @@ export default function AdminPerformancesPage() {
                         </AlertDialogContent>
                       </AlertDialog>
                     )}
-                    <AlertDialog>
+                    {/* Published performances are archived, never deleted (the API refuses it too). */}
+                    {perf.publishState !== 'published' && <AlertDialog>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -279,7 +280,7 @@ export default function AdminPerformancesPage() {
                         <AlertDialogHeader>
                           <AlertDialogTitle>공연을 삭제하시겠습니까?</AlertDialogTitle>
                           <AlertDialogDescription>
-                            이 공연의 모든 정보(회차, 캐스팅, 좌석맵)가 함께 삭제됩니다. 예매·결제·입장 이력이 있으면 삭제되지 않습니다. 운영 중인 공연은 판매종료 처리를 사용하세요.
+                            공개 전 공연의 모든 정보(회차, 좌석·가격, 캐스팅, 좌석맵, 특전 설정)가 함께 삭제되며 되돌릴 수 없습니다. 삭제한 관리자와 시각은 감사 기록에 남습니다. 예매·결제·입장 이력이 있거나 공개된 공연은 삭제되지 않으니 판매종료 처리를 사용하세요.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -295,7 +296,7 @@ export default function AdminPerformancesPage() {
                           </AlertDialogAction>
                         </AlertDialogFooter>
                       </AlertDialogContent>
-                    </AlertDialog>
+                    </AlertDialog>}
                   </div>
                 </TableCell>
               </TableRow>

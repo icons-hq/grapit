@@ -10,9 +10,18 @@ const koMessages = JSON.parse(
         position: string;
         eta: string;
         remainingSeats: string;
+        soon: string;
+        etaRange: string;
+        etaWithin: string;
+        opensIn: string;
       };
+      notFound: { title: string };
+      openTimeUnknownInfo: string;
+      backAction: string;
       status: {
+        notOpen: { title: string };
         waiting: { title: string };
+        closed: { title: string };
         retry: { title: string };
         challenge: { title: string };
         blocked: { title: string };
@@ -24,9 +33,13 @@ const koMessages = JSON.parse(
 const waitingSnapshot = {
   queueSessionId: 'queue-session-waiting',
   state: 'WAITING',
-  position: 12,
+  // Second admission cycle for 24 seats: at most 2 x 800s at the current
+  // remaining seats. A slot has no minimum hold, so the lower bound is 0.
+  position: 30,
   waitingCount: 48,
-  etaSeconds: 165,
+  etaSeconds: 1_600,
+  etaMinSeconds: 0,
+  etaUnavailable: false,
   remainingSeats: 24,
   autoEnter: false,
   admittedAt: null,
@@ -106,7 +119,7 @@ test.describe('booking queue route', () => {
     );
     await expect(etaMetric).toContainText(koMessages.booking.queue.metrics.eta);
     await expect(etaMetric).toContainText(
-      formatQueueEta(waitingSnapshot.etaSeconds),
+      formatQueueEta(waitingSnapshot.etaMinSeconds, waitingSnapshot.etaSeconds),
     );
     await expect(remainingSeatsMetric).toContainText(
       koMessages.booking.queue.metrics.remainingSeats,
@@ -114,6 +127,141 @@ test.describe('booking queue route', () => {
     await expect(remainingSeatsMetric).toContainText(
       waitingSnapshot.remainingSeats.toString(),
     );
+  });
+
+  test('queue entry before the booking opens shows a countdown and enters automatically at the open time', async ({
+    page,
+  }) => {
+    let enterCalls = 0;
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        enterCalls += 1;
+        if (enterCalls === 1) {
+          const serverNow = Date.now();
+          await fulfillJson(route, 403, {
+            statusCode: 403,
+            message: '예매는 추후 오픈 예정입니다',
+            errorCode: 'BOOKING_NOT_OPEN',
+            bookingStartsAt: new Date(serverNow + 3_000).toISOString(),
+            serverNow: new Date(serverNow).toISOString(),
+            timestamp: new Date(serverNow).toISOString(),
+          });
+          return;
+        }
+
+        await fulfillJson(route, 200, waitingSnapshot);
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.notOpen.title,
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId('queue-opens-in')).toContainText(
+      koMessages.booking.queue.metrics.opensIn,
+    );
+    await expect(
+      page.getByRole('heading', { name: koMessages.booking.queue.status.retry.title }),
+    ).toHaveCount(0);
+
+    // Booking open (3s) + up to 3s jitter: the hook re-enters without a click.
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.waiting.title,
+      }),
+    ).toBeVisible({ timeout: 15_000 });
+    expect(enterCalls).toBe(2);
+  });
+
+  test('queue entry with an unannounced open time explains the periodic check', async ({
+    page,
+  }) => {
+    let detailReads = 0;
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        const serverNow = new Date().toISOString();
+        await fulfillJson(route, 403, {
+          statusCode: 403,
+          message: '예매는 추후 오픈 예정입니다',
+          errorCode: 'BOOKING_NOT_OPEN',
+          bookingStartsAt: null,
+          serverNow,
+          timestamp: serverNow,
+        });
+      },
+    );
+    await page.route(
+      `**/api/v1/performances/${queuePerformanceId}`,
+      async (route: Route) => {
+        detailReads += 1;
+        await fulfillJson(route, 200, {
+          id: queuePerformanceId,
+          bookingPolicy: { bookingStartsAt: null },
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.notOpen.title,
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId('queue-open-time-unknown')).toContainText(
+      koMessages.booking.queue.openTimeUnknownInfo.replace('{seconds}', '15'),
+    );
+    // The 403 body already says the open time is not scheduled.
+    expect(detailReads).toBe(0);
+    // In-app browsers may have no back button: the surface offers one.
+    await expect(
+      page.getByRole('button', { name: koMessages.booking.queue.backAction }),
+    ).toBeVisible();
+  });
+
+  test('queue entry for a performance without sellable showtimes shows the closed surface', async ({
+    page,
+  }) => {
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        await fulfillJson(route, 403, {
+          statusCode: 403,
+          message: '이미 시작된 회차는 예매할 수 없습니다.',
+          errorCode: 'NO_BOOKABLE_SHOWTIME',
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.closed.title,
+      }),
+    ).toBeVisible();
+  });
+
+  test('queue entry for a missing performance says it was not found', async ({ page }) => {
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        await fulfillJson(route, 404, {
+          statusCode: 404,
+          message: '공연을 찾을 수 없습니다',
+          errorCode: 'PERFORMANCE_NOT_FOUND',
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+    await expect(
+      page.getByRole('heading', { name: koMessages.booking.queue.notFound.title }),
+    ).toBeVisible();
   });
 
   for (const failureCase of failureCases) {
@@ -138,19 +286,21 @@ test.describe('booking queue route', () => {
   }
 });
 
-function formatQueueEta(etaSeconds: number): string {
+function formatQueueEta(etaMinSeconds: number, etaSeconds: number): string {
   if (etaSeconds <= 0) {
-    return '곧 입장';
+    return koMessages.booking.queue.metrics.soon;
   }
 
-  const minutes = Math.floor(etaSeconds / 60);
-  const seconds = etaSeconds % 60;
-
-  if (minutes <= 0) {
-    return `${seconds}s`;
+  // The server sends the admission-cycle range: lower and upper bound.
+  const lower = Math.floor(etaMinSeconds / 60);
+  const upper = Math.max(1, Math.ceil(etaSeconds / 60));
+  if (lower <= 0) {
+    return koMessages.booking.queue.metrics.etaWithin.replace('{minutes}', String(upper));
   }
 
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+  return koMessages.booking.queue.metrics.etaRange
+    .replace('{min}', String(lower))
+    .replace('{max}', String(upper));
 }
 
 async function mockAuthenticatedSession(page: Page) {

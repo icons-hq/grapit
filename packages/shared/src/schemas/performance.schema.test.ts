@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PERFORMANCE_QUERY_MAX_PAGE,
+  PERFORMANCE_QUERY_SUB_MAX_LENGTH,
+  SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+  createBannerSchema,
   createPerformanceSchema,
+  performanceBookingPolicySchema,
   performanceQuerySchema,
   searchQuerySchema,
+  seatMapConfigSchema,
   updatePerformanceSchema,
 } from './performance.schema';
+import { resolvePerformanceSaleOpening } from './performance-preparation.schema';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '../checkout-payment-method';
 
 describe('performance query schema', () => {
   it('parses ended query strings without JavaScript truthiness coercion', () => {
@@ -13,6 +21,23 @@ describe('performance query schema', () => {
     expect(performanceQuerySchema.parse({}).ended).toBe(false);
     expect(performanceQuerySchema.parse({ ended: '' }).ended).toBe(false);
     expect(() => performanceQuerySchema.parse({ ended: 'yes' })).toThrow();
+  });
+
+  it('bounds the unthrottled catalog inputs that reach the list cache key', () => {
+    expect(performanceQuerySchema.parse({ sub: '팬미팅' }).sub).toBe('팬미팅');
+    expect(performanceQuerySchema.parse({ sub: '' }).sub).toBeUndefined();
+    expect(performanceQuerySchema.parse({ sub: 'x'.repeat(PERFORMANCE_QUERY_SUB_MAX_LENGTH) }).sub)
+      .toHaveLength(PERFORMANCE_QUERY_SUB_MAX_LENGTH);
+    expect(() => performanceQuerySchema.parse({
+      sub: 'x'.repeat(PERFORMANCE_QUERY_SUB_MAX_LENGTH + 1),
+    })).toThrow();
+    expect(() => performanceQuerySchema.parse({ sub: 'x'.repeat(8_000) })).toThrow();
+
+    expect(performanceQuerySchema.parse({ page: String(PERFORMANCE_QUERY_MAX_PAGE) }).page)
+      .toBe(PERFORMANCE_QUERY_MAX_PAGE);
+    expect(() => performanceQuerySchema.parse({ page: String(PERFORMANCE_QUERY_MAX_PAGE + 1) }))
+      .toThrow();
+    expect(() => performanceQuerySchema.parse({ page: '987654321' })).toThrow();
   });
 });
 
@@ -220,5 +245,126 @@ describe('performance floor and booking policy schema', () => {
     expect(parsed.detailImages?.[0]?.imageUrl).toBe(
       'https://cdn.example.com/detail/location.jpg',
     );
+  });
+});
+
+describe('performance price and sale-time input guards', () => {
+  const basePayload = {
+    title: '2026 걸룰스 팬미팅',
+    genre: 'artist_celebrity',
+    venueName: '동해문화예술관 대극장',
+    startDate: '2026-07-18T14:00:00.000Z',
+    endDate: '2026-07-18T16:00:00.000Z',
+    ageRating: '전체 관람가',
+    priceTiers: [{ tierName: 'VIP', price: 88000, sortOrder: 0 }],
+  } as const;
+  const policy = {
+    maxTicketsPerUser: 1,
+    allowedPaymentMethods: ['CARD'],
+    changePolicyEnabled: false,
+    paymentWindowMinutes: 7,
+    seatHoldMinutes: 10,
+    cancelledSeatHoldMinMinutes: 1,
+    cancelledSeatHoldMaxMinutes: 10,
+    manualOpenEnabled: true,
+  } as const;
+
+  it('trims tier names on both the price tier and seat assignment sides', () => {
+    const parsed = createPerformanceSchema.parse({
+      ...basePayload,
+      priceTiers: [{ tierName: ' VIP ', price: 88000, sortOrder: 0 }],
+      seatMaps: [{
+        floorKey: '1F', floorLabel: '1층', sortOrder: 0, svgUrl: 'https://cdn.example.com/1f.svg', totalSeats: 1,
+        seatConfig: { tiers: [{ tierName: 'VIP ', color: '#FFD700', seatIds: ['A-1'] }] },
+      }],
+    });
+
+    expect(parsed.priceTiers[0]?.tierName).toBe('VIP');
+    expect(parsed.seatMaps[0]?.seatConfig?.tiers[0]?.tierName).toBe('VIP');
+    expect(seatMapConfigSchema.parse({ tiers: [{ tierName: '  R', color: '#000', seatIds: [] }] }).tiers[0]?.tierName).toBe('R');
+    expect(createPerformanceSchema.safeParse({
+      ...basePayload, priceTiers: [{ tierName: '   ', price: 88000, sortOrder: 0 }],
+    }).success).toBe(false);
+  });
+
+  it('rejects a zero-priced tier that would sell a paid seat for the service fee only', () => {
+    const result = createPerformanceSchema.safeParse({
+      ...basePayload,
+      priceTiers: [{ tierName: 'VIP', price: 88000, sortOrder: 0 }, { tierName: 'R', price: 0, sortOrder: 1 }],
+    });
+
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('가격은 0보다 커야 합니다');
+  });
+
+  it.each([
+    '0002-10-01T11:00:00.000Z',
+    '0202-10-01T11:00:00.000Z',
+    '2101-01-01T00:00:00.000Z',
+  ])('rejects an implausible KST sale start year %s', (bookingStartsAt) => {
+    const result = performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain('bookingStartsAt');
+  });
+
+  it('stores exactly the payment methods checkout can submit and the admin form offers (audit #70)', () => {
+    expect(performanceBookingPolicySchema.parse({
+      ...policy, allowedPaymentMethods: [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS],
+    }).allowedPaymentMethods).toEqual(['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY']);
+
+    for (const hidden of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE']) {
+      const policyResult = performanceBookingPolicySchema.safeParse({ ...policy, allowedPaymentMethods: ['CARD', hidden] });
+      expect(policyResult.success, hidden).toBe(false);
+      expect(policyResult.error?.issues.map((issue) => issue.path.join('.'))).toEqual(['allowedPaymentMethods.1']);
+      // Every write path parses through this schema: create, partial update, seat-map save and draft apply.
+      const bookingPolicy = { ...policy, allowedPaymentMethods: [hidden] };
+      expect(createPerformanceSchema.safeParse({ ...basePayload, bookingPolicy }).success, hidden).toBe(false);
+      expect(updatePerformanceSchema.safeParse({ bookingPolicy }).success, hidden).toBe(false);
+    }
+  });
+
+  it('accepts a sale start at the KST year boundary and an omitted start', () => {
+    // 2000-01-01 00:00 KST is 1999-12-31 15:00 UTC.
+    expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T15:00:00.000Z' }).success).toBe(true);
+    expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T14:59:59.000Z' }).success).toBe(false);
+    expect(performanceBookingPolicySchema.parse({ ...policy }).bookingStartsAt).toBeNull();
+  });
+});
+
+describe('banner schema', () => {
+  const banner = { imageUrl: 'https://r2.example.com/banners/open.jpg' };
+
+  it('rejects a scheduled banner without a start time because it would never be shown (audit #51)', () => {
+    for (const startsAt of [undefined, null]) {
+      const result = createBannerSchema.safeParse({ ...banner, status: 'scheduled', startsAt });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues).toEqual([
+        expect.objectContaining({ path: ['startsAt'], message: SCHEDULED_BANNER_REQUIRES_START_MESSAGE }),
+      ]);
+    }
+    expect(createBannerSchema.safeParse({ ...banner, status: 'scheduled', startsAt: '2026-10-08T11:00:00.000Z' }).success)
+      .toBe(true);
+    // Other statuses keep an optional start.
+    expect(createBannerSchema.safeParse({ ...banner, status: 'active' }).success).toBe(true);
+    expect(createBannerSchema.safeParse({ ...banner, status: 'draft', startsAt: null }).success).toBe(true);
+  });
+});
+
+describe('resolvePerformanceSaleOpening', () => {
+  const now = new Date('2026-10-01T00:00:00.000Z');
+
+  it('mirrors the booking gate for each sale status and start time combination', () => {
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: null }, now))
+      .toEqual({ mode: 'manual', at: null, startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'selling', bookingStartsAt: null }, now))
+      .toEqual({ mode: 'immediate', at: null, startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'closing_soon', bookingStartsAt: undefined }, now).mode).toBe('immediate');
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: '2026-10-08T11:00:00.000Z' }, now))
+      .toEqual({ mode: 'scheduled', at: '2026-10-08T11:00:00.000Z', startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'selling', bookingStartsAt: new Date('2026-10-08T11:00:00.000Z') }, now).mode).toBe('scheduled');
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: '2025-10-01T11:00:00.000Z' }, now))
+      .toEqual({ mode: 'immediate', at: '2025-10-01T11:00:00.000Z', startElapsed: true });
+    expect(resolvePerformanceSaleOpening({ status: 'ended', bookingStartsAt: null }, now).mode).toBe('ended');
   });
 });

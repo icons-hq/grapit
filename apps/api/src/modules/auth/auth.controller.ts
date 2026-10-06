@@ -13,13 +13,15 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
-import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
+import { ThrottleEmailBody } from '../traffic/throttle-identity.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
 import { registerBodySchema, type RegisterBody } from './dto/register.dto.js';
 import {
@@ -42,29 +44,37 @@ import {
   getSocialCallbackStateFromRequest,
 } from './social-callback-url.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
+import {
+  SOCIAL_REGISTRATION_BINDING_COOKIE,
+  createSocialRegistrationBinding,
+  socialRegistrationBindingCookieOptions,
+} from './social-oauth-state.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
+import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN']).default('ko');
+// Login emails are compared case-insensitively; normalize before validation.
+const authEmailSchema = z.string().trim().toLowerCase().email();
 const emailAvailabilityQuerySchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
 });
 const emailVerificationRequestSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   locale: launchLocaleSchema.optional(),
   frontendOrigin: z.string().url().max(200).optional(),
 });
 const accountEmailVerificationRequestSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   locale: launchLocaleSchema.optional(),
 });
 const accountEmailVerificationVerifySchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
 });
 const emailVerificationVerifySchema = z.union([
   z.object({
-    email: z.string().email(),
+    email: authEmailSchema,
     code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
   }),
   z.object({
@@ -83,7 +93,7 @@ export class AuthController {
 
   @Public()
   @Get('email-availability')
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Throttle({ default: ROUTE_THROTTLES.authEmailAvailability })
   async checkEmailAvailability(
     @Query(new ZodValidationPipe(emailAvailabilityQuerySchema))
     query: z.infer<typeof emailAvailabilityQuerySchema>,
@@ -103,6 +113,8 @@ export class AuthController {
       emailVerificationRequired: result.emailVerificationRequired,
       email: result.email,
       verificationExpiresAt: result.verificationExpiresAt,
+      // The account is committed even when Resend fails; the web offers a resend.
+      ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       user: result.user,
     };
   }
@@ -110,6 +122,8 @@ export class AuthController {
   @Public()
   @UseGuards(AuthGuard('local'))
   @HttpCode(HttpStatus.OK)
+  // Per client IP; the `login-account` traffic policy also caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.authLogin })
   @Post('login')
   async login(
     @Req() req: Request,
@@ -127,6 +141,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  // Per client IP when a refresh cookie is present; cookie-less calls skip throttling.
+  @Throttle({ default: ROUTE_THROTTLES.authRefresh })
   @Post('refresh')
   async refresh(
     @Req() req: Request,
@@ -164,8 +180,11 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
-  // 3 req / 15 min / IP (REVIEWS.md HIGH-04; v6 object signature, ttl = 900_000ms = 15min, NOT 900s)
+  // Per client IP; the `password-reset-email` traffic policy caps each address
+  // at 3 req / 15 min across IPs (REVIEWS.md HIGH-04), counting only bodies
+  // this route accepts.
+  @Throttle({ default: ROUTE_THROTTLES.authPasswordResetRequest })
+  @ThrottleEmailBody(resetPasswordRequestBodySchema)
   @Post('password-reset/request')
   async requestReset(
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
@@ -179,8 +198,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
-  // 3 req / 15 min / IP (REVIEWS.md HIGH-04; v6 object signature)
+  // 3 req / 15 min / IP (REVIEWS.md HIGH-04)
+  @Throttle({ default: ROUTE_THROTTLES.authPasswordResetConfirm })
   @Post('password-reset/confirm')
   async confirmReset(
     @Body(new ZodValidationPipe(resetPasswordBodySchema))
@@ -192,9 +211,12 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  // Per client IP; `email-verification-send` caps each address across IPs and
+  // across request/resend, counting only bodies this route accepts. (Hotfix
+  // 260517's skip was for the Cloudflare-edge IP collapse, fixed since by
+  // trusted client IP resolution.)
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
+  @ThrottleEmailBody(emailVerificationRequestSchema)
   @Post('email-verification/request')
   async requestEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -214,9 +236,9 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  // Per client IP; `email-verification-send` caps each address across IPs.
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
+  @ThrottleEmailBody(emailVerificationRequestSchema)
   @Post('email-verification/resend')
   async resendEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -236,9 +258,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @SkipThrottle()
-  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
-  @Throttle({ default: { limit: 10, ttl: 900000 } })
+  // Per client IP; `email-verification-verify` caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationVerify })
   @Post('email-verification/verify')
   async verifyEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationVerifySchema))
@@ -252,6 +273,10 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  // Per signed-in user; `account-email-send` caps each user + address and
+  // `account-email-address` each address across accounts.
+  @Throttle({ default: ROUTE_THROTTLES.accountEmailVerificationSend })
+  @ThrottleEmailBody(accountEmailVerificationRequestSchema)
   @Post('email-verification/account-email/request')
   async requestAccountEmailVerification(
     @CurrentUser() user: RequestUser,
@@ -271,6 +296,8 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  // Per signed-in user; `email-verification-verify` caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.accountEmailVerificationVerify })
   @Post('email-verification/account-email/verify')
   async verifyAccountEmailVerification(
     @CurrentUser() user: RequestUser,
@@ -347,17 +374,23 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { registrationToken, ...registerData } = dto;
+    const registrationBinding = (req.cookies as Record<string, unknown> | undefined)?.[
+      SOCIAL_REGISTRATION_BINDING_COOKIE
+    ];
     const result = await this.authService.completeSocialRegistration(
       registrationToken,
       registerData,
       this.resolveConsentMeta(req),
+      { registrationBinding: typeof registrationBinding === 'string' ? registrationBinding : undefined },
     );
+    this.clearSocialRegistrationBindingCookie(res);
 
     if ('emailVerificationRequired' in result) {
       return {
         emailVerificationRequired: result.emailVerificationRequired,
         email: result.email,
         verificationExpiresAt: result.verificationExpiresAt,
+        ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
         user: result.user,
       };
     }
@@ -374,7 +407,7 @@ export class AuthController {
   // -- Private helpers --
 
   private async handleSocialCallback(req: Request, res: Response): Promise<void> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+    const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
     const callbackState = getSocialCallbackStateFromRequest(req, 'state');
     const returnToParam: Record<string, string> = callbackState.returnTo
       ? { returnTo: callbackState.returnTo }
@@ -391,7 +424,8 @@ export class AuthController {
 
     try {
       this.logger.log(`Social callback: provider=${profile.provider}, providerId=${profile.providerId}`);
-      const result = await this.authService.findOrCreateSocialUser(profile);
+      const registrationBinding = createSocialRegistrationBinding();
+      const result = await this.authService.findOrCreateSocialUser(profile, { registrationBinding });
 
       if (result.status === 'authenticated') {
         this.logger.log(`Social login authenticated: provider=${profile.provider}, providerId=${profile.providerId}`);
@@ -406,6 +440,11 @@ export class AuthController {
         );
       } else if (result.status === 'needs_registration') {
         this.logger.log(`Social login needs registration: provider=${profile.provider}`);
+        res.cookie(
+          SOCIAL_REGISTRATION_BINDING_COOKIE,
+          registrationBinding,
+          socialRegistrationBindingCookieOptions(),
+        );
         res.redirect(
           buildSocialCallbackUrl(frontendUrl, callbackState.locale, {
             registrationToken: result.registrationToken,
@@ -433,6 +472,12 @@ export class AuthController {
         }),
       );
     }
+  }
+
+  private clearSocialRegistrationBindingCookie(res: Response): void {
+    const { maxAge: _maxAge, ...clearOptions } = socialRegistrationBindingCookieOptions();
+    void _maxAge;
+    res.clearCookie(SOCIAL_REGISTRATION_BINDING_COOKIE, clearOptions);
   }
 
   private setRefreshTokenCookie(res: Response, token: string): void {

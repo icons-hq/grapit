@@ -1,10 +1,61 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { z } from 'zod';
+
+/**
+ * Upper bounds for Toss calls so a stalled provider cannot hold a confirm
+ * request (and its confirm lease and seat locks) until the platform timeout.
+ * A timed-out call has an unknown provider outcome; callers must reconcile it.
+ */
+export const TOSS_CONFIRM_TIMEOUT_MS = 30_000;
+export const TOSS_CANCEL_TIMEOUT_MS = 60_000;
+export const TOSS_QUERY_TIMEOUT_MS = 15_000;
+
+/**
+ * Confirm failures whose provider outcome is unknown: the approval may or may
+ * not have happened, so the payment must be looked up before deciding.
+ */
+export const TOSS_CONFIRM_OUTCOME_UNKNOWN_CODES = new Set([
+  'PROVIDER_TIMEOUT',
+  'NETWORK_ERROR',
+  'INVALID_PROVIDER_RESPONSE',
+  'ALREADY_PROCESSED_PAYMENT',
+  'IDEMPOTENT_REQUEST_PROCESSING',
+]);
+
+const tossPaymentResponseSchema = z.object({
+  paymentKey: z.string().min(1),
+  orderId: z.string().min(1),
+  status: z.string().min(1),
+  totalAmount: z.number().finite(),
+  currency: z.string().optional(),
+  method: z.string().nullable().optional(),
+  // The Payment API answers an object; a string (webhook-style payload) is
+  // normalized to the same shape. An unexpected shape never fails the parse:
+  // the payment method policy then treats the easy pay provider as unknown.
+  easyPay: z.preprocess(
+    (value) => typeof value === 'string' ? { provider: value } : value,
+    z.object({ provider: z.string().nullable().optional() }).passthrough().nullable().optional(),
+  ).catch(undefined),
+  approvedAt: z.string().nullable().optional(),
+}).passthrough();
+
+/**
+ * Returns the payment when the body has the minimal Toss payment shape
+ * (paymentKey, orderId, status, totalAmount), otherwise null. A malformed
+ * body proves nothing about the payment.
+ */
+export function parseTossPaymentResponse(data: unknown): TossPaymentResponse | null {
+  const parsed = tossPaymentResponseSchema.safeParse(data);
+  return parsed.success ? parsed.data as TossPaymentResponse : null;
+}
 
 export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;
   method?: string | null;
+  /** `Payment.easyPay`; `provider` is the 간편결제사 code (e.g. `토스페이`, `TOSSPAY`). */
+  easyPay?: { provider?: string | null } | null;
   isPartialCancelable?: boolean;
   totalAmount: number;
   currency?: string;
@@ -51,6 +102,32 @@ export interface TossSettlementRow {
 
 const TOSS_SETTLEMENT_PAGE_SIZE = 5_000;
 
+export const TOSS_TRANSACTION_PAGE_SIZE = 5_000;
+/** Toss documents transaction lookup as taking up to 60 seconds. */
+export const TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS = 65_000;
+
+export type TossSecretKeyScope = NonNullable<TossPaymentRequestOptions['secretKeyScope']>;
+
+export interface TossTransactionQueryOptions extends TossPaymentRequestOptions {
+  startDate: string;
+  endDate: string;
+  startingAfter?: string;
+  limit?: number;
+  /** A caller with its own time budget may shorten it; defaults to the documented maximum. */
+  timeoutMs?: number;
+}
+
+export interface TossTransactionRow {
+  transactionKey: string;
+  paymentKey?: string;
+  orderId?: string;
+  status?: string;
+  transactionAt?: string;
+  method?: string | null;
+  currency?: string;
+  amount?: number;
+}
+
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
   cancelAmount?: number;
   currency?: string;
@@ -59,12 +136,32 @@ export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
 
 export class TossPaymentError extends Error {
   public readonly code: string;
+  /** HTTP status returned by Toss; undefined when no response was received. */
+  public readonly httpStatus?: number;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, httpStatus?: number) {
     super(message);
     this.name = 'TossPaymentError';
     this.code = code;
+    if (httpStatus !== undefined) {
+      this.httpStatus = httpStatus;
+    }
   }
+}
+
+/**
+ * True when a confirm call failed without proving that Toss did not approve
+ * the payment (no response, timeout, malformed body, 5xx, or a duplicate
+ * confirm). False only for provider rejections that prove non-approval.
+ */
+export function isTossConfirmOutcomeUnknown(error: unknown): boolean {
+  if (!(error instanceof TossPaymentError)) {
+    return true;
+  }
+  if (TOSS_CONFIRM_OUTCOME_UNKNOWN_CODES.has(error.code)) {
+    return true;
+  }
+  return typeof error.httpStatus === 'number' && error.httpStatus >= 500;
 }
 
 @Injectable()
@@ -152,8 +249,12 @@ export class TossPaymentsClient {
     return headers;
   }
 
-  private toPaymentError(data: unknown, fallbackMessage: string): TossPaymentError {
-    const errorBody = data as Record<string, unknown>;
+  private toPaymentError(
+    data: unknown,
+    fallbackMessage: string,
+    httpStatus?: number,
+  ): TossPaymentError {
+    const errorBody = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
     return new TossPaymentError(
       typeof errorBody.code === 'string' ? errorBody.code : 'UNKNOWN_ERROR',
       this.redactSensitiveMessage(
@@ -161,7 +262,13 @@ export class TossPaymentsClient {
           ? errorBody.message
           : fallbackMessage,
       ),
+      typeof httpStatus === 'number' ? httpStatus : undefined,
     );
+  }
+
+  private isTimeoutError(error: unknown): boolean {
+    const name = (error as { name?: unknown } | null)?.name;
+    return name === 'TimeoutError' || name === 'AbortError';
   }
 
   private redactSensitiveMessage(message: string): string {
@@ -202,27 +309,58 @@ export class TossPaymentsClient {
     idempotencyKey?: string;
     secretKeyScope?: TossPaymentRequestOptions['secretKeyScope'];
   }): Promise<TossPaymentResponse> {
-    const response = await fetch(`${this.baseUrl}/payments/confirm`, {
-      method: 'POST',
-      headers: this.buildHeaders({
-        idempotencyKey: params.idempotencyKey,
-        secretKeyScope: params.secretKeyScope,
-      }),
-      body: JSON.stringify({
-        paymentKey: params.paymentKey,
-        orderId: params.orderId,
-        amount: params.amount,
-      }),
+    // Built before the request so key configuration errors stay definitive
+    // (nothing was sent to Toss).
+    const headers = this.buildHeaders({
+      idempotencyKey: params.idempotencyKey,
+      secretKeyScope: params.secretKeyScope,
     });
 
-    const data: unknown = await response.json();
-
-    if (!response.ok) {
-      throw this.toPaymentError(data, '결제 승인에 실패했습니다');
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/payments/confirm`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(TOSS_CONFIRM_TIMEOUT_MS),
+        headers,
+        body: JSON.stringify({
+          paymentKey: params.paymentKey,
+          orderId: params.orderId,
+          amount: params.amount,
+        }),
+      });
+    } catch (error) {
+      throw this.isTimeoutError(error)
+        ? new TossPaymentError('PROVIDER_TIMEOUT', '결제 승인 응답 시간이 초과되었습니다')
+        : new TossPaymentError('NETWORK_ERROR', '결제 승인 요청 중 통신 오류가 발생했습니다');
     }
 
-    // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
-    return data as TossPaymentResponse;
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw this.isTimeoutError(error)
+        ? new TossPaymentError('PROVIDER_TIMEOUT', '결제 승인 응답 시간이 초과되었습니다', response.status)
+        : new TossPaymentError(
+            'INVALID_PROVIDER_RESPONSE',
+            '결제 승인 응답을 확인할 수 없습니다',
+            response.status,
+          );
+    }
+
+    if (!response.ok) {
+      throw this.toPaymentError(data, '결제 승인에 실패했습니다', response.status);
+    }
+
+    const parsed = tossPaymentResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new TossPaymentError(
+        'INVALID_PROVIDER_RESPONSE',
+        '결제 승인 응답 형식을 확인할 수 없습니다',
+        response.status,
+      );
+    }
+
+    return parsed.data as TossPaymentResponse;
   }
 
   async cancelPayment(
@@ -253,6 +391,9 @@ export class TossPaymentsClient {
       `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}/cancel`,
       {
         method: 'POST',
+        // A timeout leaves the cancel outcome unknown; callers retry with the
+        // same idempotency key or reconcile through queryPayment.
+        signal: AbortSignal.timeout(TOSS_CANCEL_TIMEOUT_MS),
         headers: this.buildHeaders(options),
         body: JSON.stringify(body),
       },
@@ -261,7 +402,7 @@ export class TossPaymentsClient {
     const data: unknown = await response.json();
 
     if (!response.ok) {
-      throw this.toPaymentError(data, '결제 취소에 실패했습니다');
+      throw this.toPaymentError(data, '결제 취소에 실패했습니다', response.status);
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
@@ -276,6 +417,7 @@ export class TossPaymentsClient {
       `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}`,
       {
         method: 'GET',
+        signal: AbortSignal.timeout(TOSS_QUERY_TIMEOUT_MS),
         headers: {
           Authorization: this.getAuthHeader(options.secretKeyScope),
         },
@@ -285,11 +427,73 @@ export class TossPaymentsClient {
     const data: unknown = await response.json();
 
     if (!response.ok) {
-      throw this.toPaymentError(data, '결제 상태 조회에 실패했습니다');
+      throw this.toPaymentError(data, '결제 상태 조회에 실패했습니다', response.status);
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
     return data as TossPaymentResponse;
+  }
+
+  /**
+   * One scope per distinct configured secret key, i.e. per Toss MID this server can
+   * approve payments with. Proving that an order has no transaction needs all of them,
+   * because the MID a checkout used depends on the widget variant and confirm scope.
+   * A missing (or, for overseas card, non-widget) key cannot approve anything.
+   */
+  getTransactionLookupScopes(): TossSecretKeyScope[] {
+    const scopes: TossSecretKeyScope[] = [];
+    const seenKeys = new Set<string>();
+    const add = (scope: TossSecretKeyScope, key: string) => {
+      const normalized = key.trim();
+      if (!normalized || seenKeys.has(normalized)) {
+        return;
+      }
+      seenKeys.add(normalized);
+      scopes.push(scope);
+    };
+
+    add('default', this.secretKey);
+    if (this.isWidgetSecretKey(this.overseasCardSecretKey)) {
+      add('overseas-card', this.overseasCardSecretKey);
+    }
+    add('foreign-easy-pay', this.foreignEasyPaySecretKey);
+    return scopes;
+  }
+
+  /**
+   * Transaction lookup (GET /v1/transactions) is in the widget secret key scope, unlike
+   * order-ID lookup. Dates are KST `yyyy-MM-dd'T'HH:mm:ss`. Returns one page.
+   */
+  async queryTransactions(
+    options: TossTransactionQueryOptions,
+  ): Promise<TossTransactionRow[]> {
+    const params = new URLSearchParams({
+      startDate: options.startDate,
+      endDate: options.endDate,
+      limit: String(options.limit ?? TOSS_TRANSACTION_PAGE_SIZE),
+    });
+    if (options.startingAfter) {
+      params.set('startingAfter', options.startingAfter);
+    }
+
+    const response = await fetch(`${this.baseUrl}/transactions?${params.toString()}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(options.timeoutMs ?? TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS),
+      headers: {
+        Authorization: this.getAuthHeader(options.secretKeyScope),
+      },
+    });
+
+    const data: unknown = await response.json();
+
+    if (!response.ok) {
+      throw this.toPaymentError(data, '거래 내역 조회에 실패했습니다');
+    }
+    if (!Array.isArray(data)) {
+      throw new TossPaymentError('INVALID_TRANSACTION_RESPONSE', '거래 응답 형식을 확인할 수 없습니다');
+    }
+
+    return data as TossTransactionRow[];
   }
 
   async querySettlements(

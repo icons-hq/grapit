@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { BookingService } from '../booking/booking.service.js';
+import { AbandonedPaymentHandoffService } from '../payment/abandoned-payment-handoff.service.js';
 import { isBackgroundProcessingEnabled } from './pgboss.provider.js';
 
 export const PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS = 60_000;
@@ -61,6 +62,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     _bookingService: BookingService,
     @Optional() private readonly configService?: ConfigService,
+    @Optional() private readonly abandonedHandoffs?: AbandonedPaymentHandoffService,
   ) {}
 
   onModuleInit(): void {
@@ -165,6 +167,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     const expiredReservations = result.rows.map((row) =>
       mapExpiredPendingReservationRow(row as Record<string, unknown>)
     );
+    const abandonedHandoffs = await this.sweepAbandonedPaymentHandoffs(now);
     const unlockedSeats = 0;
 
     // Redis TTL owns lock expiration. A delayed sweep cannot distinguish this
@@ -178,8 +181,33 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     }
 
     return {
-      expiredReservations: expiredReservations.length,
+      expiredReservations: expiredReservations.length + abandonedHandoffs,
       unlockedSeats,
     };
+  }
+
+  /**
+   * A handoff that never reached the provider has no Payment and gets no webhook.
+   * Only provider transaction evidence (never the local deadline alone) may fail it.
+   * Review errors never fail the regular expiration sweep.
+   */
+  private async sweepAbandonedPaymentHandoffs(now: Date): Promise<number> {
+    if (
+      !this.abandonedHandoffs
+      || this.configService?.get<string>('PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED') === 'false'
+    ) {
+      return 0;
+    }
+
+    try {
+      const result = await this.abandonedHandoffs.sweepAbandonedPaymentHandoffs(now);
+      return result.failedReservations;
+    } catch (error) {
+      this.logger.error(
+        'Abandoned payment handoff sweep failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return 0;
+    }
   }
 }

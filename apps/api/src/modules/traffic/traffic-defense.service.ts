@@ -1,10 +1,21 @@
 import { createHash } from 'node:crypto';
 import type { ExecutionContext } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
-import type { ThrottlerOptions } from '@nestjs/throttler';
+import { Reflector } from '@nestjs/core';
+import type { ThrottlerModuleOptions, ThrottlerOptions } from '@nestjs/throttler';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { Request } from 'express';
-import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { resolveRoutePath } from './route-path.js';
+import {
+  hashThrottleIdentity,
+  resolveThrottleEmail,
+  resolveThrottleIpKey,
+  resolveThrottleUserId,
+  resolveValidatedThrottleEmail,
+  THROTTLE_EMAIL_BODY_METADATA,
+  type ThrottleEmailBodySchema,
+  type ThrottleEmailSource,
+} from './throttle-identity.js';
 
 export const TRAFFIC_RATE_LIMITED = 'TRAFFIC_RATE_LIMITED';
 export const SECURITY_CHALLENGE_REQUIRED = 'SECURITY_CHALLENGE_REQUIRED';
@@ -15,7 +26,17 @@ const TRAFFIC_POLICY_NAMES = [
   'lock-seat',
   'prepare-reservation',
   'confirm-payment',
+  'async-payment-return',
   'signup',
+  'login-account',
+  'password-reset-email',
+  'email-verification-send',
+  'email-verification-verify',
+  // Keep after account-email-send: throttlers with the same ttl run in this
+  // order, and a request that account-email-send rejects must not reach and
+  // spend the cross-account address bucket.
+  'account-email-send',
+  'account-email-address',
 ] as const;
 
 export type TrafficPolicyName = (typeof TRAFFIC_POLICY_NAMES)[number];
@@ -29,18 +50,58 @@ type RequestLike = Request & {
   cookies?: Record<string, string | undefined>;
   body?: Record<string, unknown>;
   query?: Record<string, unknown>;
+  /** Set by the Express router to the route that dispatched the request. */
+  route?: { path?: unknown };
 };
 
+/**
+ * Policies match against the route template that dispatched the request
+ * (`/api/v1/auth/login`, `/api/v1/queue/performances/:performanceId/enter`),
+ * lower-cased, without a trailing slash. Patterns must be lower-case.
+ */
 type PolicyRouteMatcher = {
   method: string;
   patterns: RegExp[];
 };
 
+/**
+ * Who a policy bucket belongs to.
+ * - `principal`: the JWT-verified user, otherwise the trusted client IP.
+ * - `email`: the normalized request email across every IP (and account). Only
+ *   for routes whose side effect lands on that address (mail sends), so one
+ *   address cannot be flooded from many IPs or accounts. The route's default
+ *   bucket still caps how many addresses one IP or user can target. Since
+ *   anyone can spend this budget, the route must declare its body schema with
+ *   `@ThrottleEmailBody` (bodies it rejects are not counted) and should mail
+ *   every address whose owner can use the flow: then whoever spends an
+ *   owner's budget also hands the owner fresh codes or links and shows them
+ *   what is going on.
+ * - `email-ip`: the normalized request email from one client IP. Used where a
+ *   cross-IP cap would let anyone lock a victim out (login, code verify).
+ * - `user-email`: the normalized request email per JWT-verified user (per
+ *   client IP when anonymous). One account's share of an address.
+ * Identity policies skip requests that carry no usable email, or that the
+ * route's declared body schema rejects; the route's default bucket still
+ * applies to them.
+ */
+export type PolicyIdentity = 'principal' | 'email' | 'email-ip' | 'user-email';
+
 type TrafficPolicyDefinition = {
   ttl: number;
   limit: number;
   matchers: PolicyRouteMatcher[];
+  identity?: PolicyIdentity;
+  /**
+   * Where the matched routes read the email (identities other than `principal`).
+   * Must be the same source the handler or strategy uses. Defaults to `body`.
+   */
+  emailSource?: ThrottleEmailSource;
+  /** One bucket for every matched route instead of one bucket per route. */
+  shareBucketAcrossRoutes?: boolean;
 };
+
+const MINUTE_MS = 60_000;
+const FIFTEEN_MINUTES_MS = 15 * MINUTE_MS;
 
 export type TrafficDecision =
   | { action: 'allow'; policy: TrafficPolicyName }
@@ -109,9 +170,22 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       },
     ],
   },
-  signup: {
+  // The pending return page reconciles once per mount; each call may query Toss.
+  'async-payment-return': {
     ttl: 60_000,
-    limit: 5,
+    limit: 6,
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/payments\/async-return$/],
+      },
+    ],
+  },
+  signup: {
+    // Per client IP. Registration also requires a verified phone, so the IP
+    // cap only needs to stop bursts while leaving room for a shared NAT.
+    ttl: 60_000,
+    limit: 20,
     matchers: [
       {
         method: 'POST',
@@ -119,71 +193,193 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       },
     ],
   },
+  'login-account': {
+    // Every attempt counts, successful ones included, so the window leaves
+    // room for a shared scanner account signing in on a gate fleet and for CI
+    // logins. Sustained guessing stays at 2/min per account and IP.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 30,
+    identity: 'email-ip',
+    // passport-local reads `email` from the body, then from the query string.
+    emailSource: 'body-or-query',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/login$/],
+      },
+    ],
+  },
+  'password-reset-email': {
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 3,
+    identity: 'email',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/password-reset\/request$/],
+      },
+    ],
+  },
+  'email-verification-send': {
+    // Anonymous request/resend mail every address that has an account and
+    // send nothing otherwise (signup itself mails the first code).
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 5,
+    identity: 'email',
+    shareBucketAcrossRoutes: true,
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/(request|resend)$/],
+      },
+    ],
+  },
+  'email-verification-verify': {
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 10,
+    identity: 'email-ip',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/(verify|account-email\/verify)$/],
+      },
+    ],
+  },
+  'account-email-send': {
+    // Signed-in account email codes, one account's share of an address.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 5,
+    identity: 'user-email',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/account-email\/request$/],
+      },
+    ],
+  },
+  'account-email-address': {
+    // Signed-in account email codes to one address across every account, so
+    // more accounts do not multiply account-email-send into a mail flood. Kept
+    // apart from the anonymous request/resend bucket: the handler answers 409
+    // without mail for an address another account owns, and that owner still
+    // has request/resend for their own address.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 10,
+    identity: 'email',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/account-email\/request$/],
+      },
+    ],
+  },
 };
+
+const DEFAULT_THROTTLER = {
+  name: 'default',
+  // @nestjs/throttler v6 uses ms units: 60_000ms = 1 minute global default.
+  ttl: 60_000,
+  limit: 60,
+} as const;
+
+const REFRESH_ROUTE_PATTERN = /\/auth\/refresh$/;
+
+const reflector = new Reflector();
 
 @Injectable()
 export class TrafficDefenseService {
+  /** ThrottlerModule options shared by AppModule and the HTTP throttle specs. */
+  getThrottlerModuleConfig(): Pick<
+    Extract<ThrottlerModuleOptions, { throttlers: ThrottlerOptions[] }>,
+    'throttlers' | 'errorMessage'
+  > {
+    return {
+      throttlers: [this.getDefaultThrottlerOptions(), ...this.getThrottlerOptions()],
+      errorMessage: TRAFFIC_RATE_LIMITED,
+    };
+  }
+
+  getDefaultThrottlerOptions(): ThrottlerOptions {
+    return {
+      ...DEFAULT_THROTTLER,
+      skipIf: (context) => this.shouldSkipDefaultThrottle(context),
+      getTracker: (req) => this.resolveDefaultTracker(req as RequestLike),
+    };
+  }
+
   getThrottlerOptions(): ThrottlerOptions[] {
-    return TRAFFIC_POLICY_NAMES.map((name) => ({
-      name,
-      ttl: TRAFFIC_POLICIES[name].ttl,
-      limit: TRAFFIC_POLICIES[name].limit,
-      skipIf: (context) => !this.matchesPolicy(name, context),
-      getTracker: (req) => this.resolveTracker(name, req as RequestLike),
-    }));
+    return TRAFFIC_POLICY_NAMES.map((name) => {
+      const definition = TRAFFIC_POLICIES[name];
+      return {
+        name,
+        ttl: definition.ttl,
+        limit: definition.limit,
+        skipIf: (context) => !this.appliesToRequest(name, context),
+        getTracker: (req, context) => this.resolveTracker(name, req as RequestLike, context),
+        ...(definition.shareBucketAcrossRoutes
+          ? {
+              generateKey: (_context: ExecutionContext, tracker: string, throttlerName: string) =>
+                createHash('sha256').update(`${throttlerName}-${tracker}`).digest('hex'),
+            }
+          : {}),
+      };
+    });
   }
 
-  resolveTracker(policy: TrafficPolicyName, req: RequestLike): string {
-    const userId = this.resolveUserId(req);
-    const sessionCookie = this.resolveSessionCookie(req);
-    const admissionToken = this.resolveAdmissionToken(req);
-    const ip = resolveTrustedRequestIp(req);
-
-    if (policy === 'queue-entry') {
-      if (userId) {
-        return `${policy}:user:${userId}`;
-      }
-
-      if (sessionCookie) {
-        return `${policy}:session-ip:${this.hashIdentity(sessionCookie)}:${ip}`;
-      }
-
-      if (admissionToken) {
-        return `${policy}:admission:${this.hashIdentity(admissionToken)}`;
-      }
-
-      return `${policy}:ip:${ip}`;
-    }
-
-    if (userId) {
-      return `${policy}:user:${userId}`;
-    }
-
-    if (sessionCookie) {
-      return `${policy}:session:${this.hashIdentity(sessionCookie)}`;
-    }
-
-    if (admissionToken) {
-      return `${policy}:admission:${this.hashIdentity(admissionToken)}`;
-    }
-
-    return `${policy}:ip:${ip}`;
+  /** Who a named policy's buckets belong to (see `PolicyIdentity`). */
+  getPolicyIdentity(policy: TrafficPolicyName): PolicyIdentity {
+    return TRAFFIC_POLICIES[policy].identity ?? 'principal';
   }
 
+  /**
+   * Bucket identity for a named policy. Never derived from cookies or
+   * admission tokens: the client can mint those at will, so they would hand
+   * out a fresh bucket per request. `context` is the throttled route; email
+   * policies read its `@ThrottleEmailBody` schema from it.
+   */
+  resolveTracker(
+    policy: TrafficPolicyName,
+    req: RequestLike,
+    context?: ExecutionContext,
+  ): string {
+    const identity = this.getPolicyIdentity(policy);
+    const ipKey = resolveThrottleIpKey(req);
+
+    if (identity === 'principal') {
+      const userId = resolveThrottleUserId(req);
+      return userId ? `${policy}:user:${userId}` : `${policy}:ip:${ipKey}`;
+    }
+
+    const email = this.resolvePolicyEmail(policy, req, context);
+    if (!email) {
+      return `${policy}:ip:${ipKey}`;
+    }
+
+    const emailKey = hashThrottleIdentity(email);
+    if (identity === 'email') {
+      return `${policy}:email:${emailKey}`;
+    }
+    if (identity === 'user-email') {
+      const userId = resolveThrottleUserId(req);
+      return userId
+        ? `${policy}:user:${userId}:email:${emailKey}`
+        : `${policy}:email-ip:${emailKey}:${ipKey}`;
+    }
+    return `${policy}:email-ip:${emailKey}:${ipKey}`;
+  }
+
+  /**
+   * The verified user for authenticated routes, otherwise the trusted client
+   * IP. Client-supplied cookies are ignored: a fresh random cookie per request
+   * would otherwise bypass every anonymous limit (login, signup, reset).
+   */
   resolveDefaultTracker(req: RequestLike): string {
-    const userId = this.resolveUserId(req);
-    const sessionCookie = this.resolveSessionCookie(req);
-    const ip = resolveTrustedRequestIp(req);
-
+    const userId = resolveThrottleUserId(req);
     if (userId) {
       return `default:user:${userId}`;
     }
 
-    if (sessionCookie) {
-      return `default:session:${this.hashIdentity(sessionCookie)}`;
-    }
-
-    return `default:ip:${ip}`;
+    return `default:ip:${resolveThrottleIpKey(req)}`;
   }
 
   shouldSkipDefaultThrottle(context: ExecutionContext): boolean {
@@ -192,7 +388,20 @@ export class TrafficDefenseService {
     }
 
     const request = context.switchToHttp().getRequest<RequestLike>();
-    return (request.method ?? 'GET').toUpperCase() === 'OPTIONS';
+    const method = this.resolveRouteMethod(request);
+    if (method === 'OPTIONS') {
+      return true;
+    }
+
+    // AuthInitializer calls POST /auth/refresh on every page load. Without a
+    // refresh cookie the handler returns 204 without touching storage, so
+    // counting it would only make anonymous visitors behind one NAT block
+    // each other.
+    return (
+      method === 'POST' &&
+      REFRESH_ROUTE_PATTERN.test(resolveRoutePath(request)) &&
+      !request.cookies?.[AUTH_COOKIE_NAME]
+    );
   }
 
   rateLimited(policy: TrafficPolicyName): TrafficDecision {
@@ -243,14 +452,61 @@ export class TrafficDefenseService {
     return { action: 'allow', policy };
   }
 
+  private appliesToRequest(policy: TrafficPolicyName, context: ExecutionContext): boolean {
+    if (!this.matchesPolicy(policy, context)) {
+      return false;
+    }
+
+    if (this.getPolicyIdentity(policy) === 'principal') {
+      return true;
+    }
+
+    return (
+      this.resolvePolicyEmail(policy, context.switchToHttp().getRequest<RequestLike>(), context) !==
+      null
+    );
+  }
+
+  /**
+   * The normalized email an identity policy keys on, or `null` to skip it.
+   * With a `@ThrottleEmailBody` schema on the route, only a body the route
+   * will accept counts, keyed by its parsed email. Otherwise the raw email
+   * from the policy's `emailSource` (login reads it like passport-local).
+   */
+  private resolvePolicyEmail(
+    policy: TrafficPolicyName,
+    req: RequestLike,
+    context: ExecutionContext | undefined,
+  ): string | null {
+    const schema = this.resolveEmailBodySchema(context);
+    if (schema) {
+      return resolveValidatedThrottleEmail(req, schema);
+    }
+
+    return resolveThrottleEmail(req, TRAFFIC_POLICIES[policy].emailSource);
+  }
+
+  private resolveEmailBodySchema(
+    context: ExecutionContext | undefined,
+  ): ThrottleEmailBodySchema | undefined {
+    if (typeof context?.getHandler !== 'function') {
+      return undefined;
+    }
+
+    return reflector.get<ThrottleEmailBodySchema | undefined>(
+      THROTTLE_EMAIL_BODY_METADATA,
+      context.getHandler(),
+    );
+  }
+
   private matchesPolicy(policy: TrafficPolicyName, context: ExecutionContext): boolean {
     if (context.getType<'http' | 'ws' | 'rpc'>() !== 'http') {
       return false;
     }
 
     const request = context.switchToHttp().getRequest<RequestLike>();
-    const path = this.normalizePath(request.originalUrl ?? request.url ?? '');
-    const method = (request.method ?? 'GET').toUpperCase();
+    const path = resolveRoutePath(request);
+    const method = this.resolveRouteMethod(request);
 
     return TRAFFIC_POLICIES[policy].matchers.some((matcher) => {
       if (matcher.method !== method) {
@@ -261,68 +517,9 @@ export class TrafficDefenseService {
     });
   }
 
-  private resolveUserId(req: RequestLike): string | null {
-    const userId = req.user?.id ?? req.user?.userId;
-    return typeof userId === 'string' && userId.length > 0 ? userId : null;
-  }
-
-  private resolveSessionCookie(req: RequestLike): string | null {
-    const cookies = req.cookies ?? {};
-    const queueSessionCookie = cookies['queueSessionId'];
-    const authCookie = cookies[AUTH_COOKIE_NAME];
-    const genericSessionCookie = cookies['session'];
-    const value = queueSessionCookie ?? authCookie ?? genericSessionCookie;
-
-    return typeof value === 'string' && value.length > 0 ? value : null;
-  }
-
-  private resolveAdmissionToken(req: RequestLike): string | null {
-    const headerValue = req.headers['x-queue-admission-token'];
-    const headerToken = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-    const bodyQueueAdmission =
-      this.readNestedString(req.body, 'queueAdmission', 'admissionToken') ??
-      this.readFlatString(req.body, 'admissionToken');
-    const queryQueueAdmission =
-      this.readFlatString(req.query, 'admissionToken') ??
-      this.readFlatString(req.query, 'queueAdmissionToken');
-
-    const value = headerToken ?? bodyQueueAdmission ?? queryQueueAdmission;
-
-    return typeof value === 'string' && value.length > 0 ? value : null;
-  }
-
-  private readNestedString(
-    payload: Record<string, unknown> | undefined,
-    parentKey: string,
-    childKey: string,
-  ): string | null {
-    const candidate = payload?.[parentKey];
-    if (!candidate || typeof candidate !== 'object') {
-      return null;
-    }
-
-    const value = (candidate as Record<string, unknown>)[childKey];
-    return typeof value === 'string' && value.length > 0 ? value : null;
-  }
-
-  private readFlatString(
-    payload: Record<string, unknown> | undefined,
-    key: string,
-  ): string | null {
-    const value = payload?.[key];
-    return typeof value === 'string' && value.length > 0 ? value : null;
-  }
-
-  private hashIdentity(value: string): string {
-    return createHash('sha256').update(value).digest('hex').slice(0, 16);
-  }
-
-  private normalizePath(path: string): string {
-    const withoutQuery = path.split('?')[0] ?? path;
-    if (!withoutQuery) {
-      return '/';
-    }
-
-    return withoutQuery.replace(/\/+$/, '') || '/';
+  /** Express serves HEAD with the GET handler, so it is the same route. */
+  private resolveRouteMethod(request: RequestLike): string {
+    const method = (request.method ?? 'GET').toUpperCase();
+    return method === 'HEAD' ? 'GET' : method;
   }
 }

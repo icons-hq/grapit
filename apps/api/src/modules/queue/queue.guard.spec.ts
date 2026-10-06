@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ExecutionContext } from '@nestjs/common';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdmissionGuard } from './guards/admission.guard.js';
 
@@ -104,9 +104,21 @@ describe('AdmissionGuard', () => {
     });
   });
 
+  it.each(['not-a-uuid', "1' OR '1'='1", '550e8400-e29b-41d4-a716'])(
+    'rejects a malformed showtimeId with 400 before it reaches the uuid column query (%s)',
+    async (showtimeId) => {
+      const context = createExecutionContext({
+        body: { showtimeId },
+      });
+
+      await expect(guard.canActivate(context)).rejects.toThrow(BadRequestException);
+      expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+    },
+  );
+
   it('allows admin booking tests without queue cookies and attaches bypass admission context', async () => {
     const context = createExecutionContext({
-      user: { id: 'admin-1', role: 'admin' },
+      user: { id: 'admin-1', role: 'admin', adminCapabilityBundle: 'admin', adminCapabilities: [] },
       cookies: {},
     });
 
@@ -124,6 +136,42 @@ describe('AdmissionGuard', () => {
       refreshFamilyId: 'admin-bypass-admin-1',
       deviceSlotKey: 'admin-bypass-admin-1',
     });
+  });
+
+  it('keeps the legacy full admin (no bundle, no explicit capabilities) on the bypass', async () => {
+    const context = createExecutionContext({
+      user: { id: 'admin-1', role: 'admin', adminCapabilityBundle: null, adminCapabilities: [] },
+      cookies: {},
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['scanner bundle', { adminCapabilityBundle: 'scanner', adminCapabilities: [] }],
+    ['finance bundle', { adminCapabilityBundle: 'finance', adminCapabilities: [] }],
+    ['explicit capabilities only', { adminCapabilityBundle: null, adminCapabilities: ['field.scan.verify'] }],
+    ['claims not forwarded', {}],
+  ])('makes a restricted admin (%s) pass queue admission like a Buyer (audit #25)', async (_label, claims) => {
+    const context = createExecutionContext({
+      user: { id: 'scanner-1', role: 'admin', ...claims },
+      cookies: {},
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it('validates a restricted admin with queue cookies through normal admission', async () => {
+    const context = createExecutionContext({
+      user: { id: 'user-1', role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] },
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).toHaveBeenCalled();
+    const request = context.switchToHttp().getRequest() as { queueAdmission?: Record<string, string> };
+    expect(request.queueAdmission?.queueSessionId).toBe('queue-session-1');
   });
 
   it('validates confirm-payment requests through orderId binding', async () => {
@@ -147,6 +195,169 @@ describe('AdmissionGuard', () => {
     });
   });
 
+  it('lets payment confirm rely on the order binding after the admission cookie expired', async () => {
+    const context = createExecutionContext({
+      cookies: {
+        refreshToken: 'refresh-cookie',
+      },
+      body: {
+        orderId: 'ORDER-1',
+      },
+      originalUrl: '/api/v1/payments/confirm',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith({
+      orderId: 'ORDER-1',
+      userId: 'user-1',
+      identity: {
+        userId: 'user-1',
+        refreshTokenFamilyId: 'family-1',
+        deviceSlotId: 'family-1',
+      },
+      admissionToken: undefined,
+    });
+    const request = context.switchToHttp().getRequest() as {
+      queueAdmission?: Record<string, string>;
+    };
+    expect(request.queueAdmission).toMatchObject({
+      queueSessionId: 'queue-session-1',
+      admissionToken: 'order-bound',
+    });
+  });
+
+  it('still requires the browser session for payment confirm', async () => {
+    const context = createExecutionContext({
+      cookies: {},
+      body: {
+        orderId: 'ORDER-1',
+      },
+      originalUrl: '/api/v1/payments/confirm',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
+  it('validates the provider handoff through the order binding like payment confirm', async () => {
+    const context = createExecutionContext({
+      // The queue window and its cookie may have ended: a Prepared Checkout is
+      // resumed without a new prepare.
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/payments/branch',
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith({
+      orderId: 'ORDER-1',
+      userId: 'user-1',
+      identity: {
+        userId: 'user-1',
+        refreshTokenFamilyId: 'family-1',
+        deviceSlotId: 'family-1',
+      },
+      admissionToken: undefined,
+    });
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+    const request = context.switchToHttp().getRequest() as {
+      queueAdmission?: Record<string, string>;
+    };
+    expect(request.queueAdmission).toMatchObject({ admissionToken: 'order-bound' });
+  });
+
+  it('refuses a provider handoff whose order is bound to another browser', async () => {
+    queueService.assertAdmissionForOrder.mockRejectedValueOnce(
+      new ForbiddenException('대기열 입장 인증이 필요합니다'),
+    );
+    const context = createExecutionContext({
+      cookies: { refreshToken: 'other-browser-refresh' },
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/Payments/Branch/',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+  });
+
+  it('still requires the browser session and the order id for the provider handoff', async () => {
+    const withoutSession = createExecutionContext({
+      cookies: {},
+      body: { orderId: 'ORDER-1' },
+      originalUrl: '/api/v1/payments/branch',
+    });
+    await expect(guard.canActivate(withoutSession)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+
+    const withoutOrder = createExecutionContext({
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: {},
+      originalUrl: '/api/v1/payments/branch',
+    });
+    await expect(guard.canActivate(withoutOrder)).rejects.toThrow('대기열 입장 정보가 필요합니다');
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps requiring the admission cookie for seat lock and prepare', async () => {
+    for (const originalUrl of ['/api/v1/booking/seats/lock', '/api/v1/reservations/prepare']) {
+      const context = createExecutionContext({
+        cookies: {
+          refreshToken: 'refresh-cookie',
+        },
+        originalUrl,
+      });
+
+      await expect(guard.canActivate(context)).rejects.toThrow('대기열 입장 인증이 필요합니다');
+    }
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/api/v1/Payments/Confirm',
+    '/api/v1/PAYMENTS/confirm/',
+    '/api/v1/payments/confirm/?locale=en',
+  ])('treats every routed spelling of payment confirm as the order-bound path (%s)', async (originalUrl) => {
+    const context = createExecutionContext({
+      // the admission cookie expired; only the order binding can authorise
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: { orderId: 'ORDER-1', showtimeId: '550e8400-e29b-41d4-a716-446655440000' },
+      originalUrl,
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'ORDER-1', admissionToken: undefined }),
+    );
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ originalUrl: '/api/v1/Reservations/Prepare' }],
+    [{ originalUrl: '/api/v1/reservations/prepare/' }],
+    [{ originalUrl: '/api/v1/RESERVATIONS/PREPARE?x=1' }],
+    // Express sets the dispatched route template; it wins over the raw URL
+    [{ originalUrl: '/api/v1/Reservations/Prepare', route: { path: '/api/v1/reservations/prepare' } }],
+  ])('validates every routed spelling of reservation prepare as prepare-reservation (%o)', async (request) => {
+    const context = createExecutionContext(request);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'prepare-reservation' }),
+    );
+  });
+
+  it('keeps seat lock as lock-seat and does not take paths that only contain the suffix', async () => {
+    for (const originalUrl of [
+      '/api/v1/Booking/Seats/Lock/',
+      '/api/v1/reservations/prepare-preview',
+    ]) {
+      const context = createExecutionContext({ originalUrl });
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    }
+
+    expect(queueService.assertAdmissionForShowtime.mock.calls.map(([params]) => params.action))
+      .toEqual(['lock-seat', 'lock-seat']);
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
   it('locks the guard source and controller wiring to cookie-only admission enforcement', async () => {
     const guardSource = await readFile(
       resolve(__dirname, 'guards/admission.guard.ts'),
@@ -160,6 +371,10 @@ describe('AdmissionGuard', () => {
       resolve(__dirname, '../reservation/reservation.controller.ts'),
       'utf-8',
     );
+    const paymentControllerSource = await readFile(
+      resolve(__dirname, '../payment/payment.controller.ts'),
+      'utf-8',
+    );
 
     expect(guardSource).toContain('grabit_queue_admission');
     expect(guardSource).toContain('userId');
@@ -168,5 +383,6 @@ describe('AdmissionGuard', () => {
     expect(guardSource).toContain('queueSessionId');
     expect(bookingControllerSource).toContain('AdmissionGuard');
     expect(reservationControllerSource).toContain('AdmissionGuard');
+    expect(paymentControllerSource).toMatch(/@UseGuards\(AdmissionGuard\)\s+@Post\('branch'\)/);
   });
 });

@@ -18,7 +18,13 @@ import { Loader2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
-import { COUNTRY_OPTIONS, TICKET_SERVICE_FEE_KRW, isForeignCheckout, isSameCheckoutPaymentMethod } from '@grabit/shared';
+import {
+  COUNTRY_OPTIONS,
+  TICKET_SERVICE_FEE_KRW,
+  isCheckoutConfigurablePaymentMethod,
+  isForeignCheckout,
+  isSameCheckoutPaymentMethod,
+} from '@grabit/shared';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import type {
   FloorAwareSeatSelection,
@@ -31,32 +37,70 @@ import type {
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-09-21';
 const USPAY_VARIANT_KEY = 'uspay';
 const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
-const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>(['ALIPAY_PLUS', 'PAYPAL']);
 const PLACEHOLDER_PHONE_NUMBERS = new Set(['01000000000']);
-const OVERSEAS_CARD_CODES = new Set([
-  'VISA',
-  'MASTER',
-  'JCB',
-  'UNIONPAY',
-  'AMEX',
-  'DISCOVER',
-  'DINERS',
+
+/**
+ * What a Toss widget selection code means for checkout (audit #70). The widget reports
+ * either the English ENUM code or its Korean label, so both are listed. Any code that is
+ * not listed (PAYCO, Samsung Pay, L.PAY, SSG Pay, Apple Pay, gift certificates, card
+ * issuer or bank shortcuts, a bare "간편결제" without a provider, new codes) is unsupported:
+ * checkout refuses it in the browser instead of guessing a category.
+ */
+type WidgetMethodCategory =
+  | { kind: 'CARD' }
+  | { kind: 'OVERSEAS_CARD' }
+  | { kind: 'TRANSFER' }
+  | { kind: 'VIRTUAL_ACCOUNT' }
+  | { kind: 'MOBILE_PHONE' }
+  | { kind: 'SIMPLE_PAY'; provider: 'TOSS_PAY' | 'NAVER_PAY' | 'KAKAOPAY' }
+  | { kind: 'FOREIGN_EASY_PAY'; provider: 'ALIPAY_PLUS' | 'TRUEMONEY' | 'PAYPAL' };
+
+/**
+ * Card issuer shortcut codes of the SDK type (SHINHAN, HYUNDAI, KOOKMIN, BC, IBK_BC, ...)
+ * are deliberately left out. Most of them are also Toss bank institution codes (SHINHAN,
+ * WOORI, KOOKMIN, HANA, NONGHYEOP, CITI, ...), so a code alone cannot tell a card from an
+ * account transfer. The server compares the approved method with the method fixed on the
+ * checkout (findApprovedMethodPolicyMismatch -> checkout_method_mismatch), so guessing CARD
+ * for a transfer would charge the buyer and then cancel it in compensation. Refusing before
+ * the handoff is safer. Operating premise: the DEFAULT variant keeps card issuer and bank
+ * shortcuts off in the Toss console (open-audit runbook 1.3).
+ */
+const WIDGET_METHOD_CATEGORY_BY_CODE = new Map<string, WidgetMethodCategory>([
+  ['CARD', { kind: 'CARD' }],
+  ['카드', { kind: 'CARD' }],
+  // International card brands are only shown by the overseas (uspay) payment UI.
+  ...['VISA', 'MASTER', 'JCB', 'UNIONPAY', 'AMEX', 'DISCOVER', 'DINERS']
+    .map((code): [string, WidgetMethodCategory] => [code, { kind: 'OVERSEAS_CARD' }]),
+  ['TRANSFER', { kind: 'TRANSFER' }],
+  ['계좌이체', { kind: 'TRANSFER' }],
+  ['VIRTUAL_ACCOUNT', { kind: 'VIRTUAL_ACCOUNT' }],
+  ['가상계좌', { kind: 'VIRTUAL_ACCOUNT' }],
+  ['MOBILE_PHONE', { kind: 'MOBILE_PHONE' }],
+  ['휴대폰', { kind: 'MOBILE_PHONE' }],
+  ['TOSSPAY', { kind: 'SIMPLE_PAY', provider: 'TOSS_PAY' }],
+  ['토스페이', { kind: 'SIMPLE_PAY', provider: 'TOSS_PAY' }],
+  ['NAVERPAY', { kind: 'SIMPLE_PAY', provider: 'NAVER_PAY' }],
+  ['네이버페이', { kind: 'SIMPLE_PAY', provider: 'NAVER_PAY' }],
+  ['KAKAOPAY', { kind: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
+  ['카카오페이', { kind: 'SIMPLE_PAY', provider: 'KAKAOPAY' }],
+  ['ALIPAY', { kind: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+  ['ALIPAY_PLUS', { kind: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' }],
+  ['TRUEMONEY', { kind: 'FOREIGN_EASY_PAY', provider: 'TRUEMONEY' }],
+  ['PAYPAL', { kind: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
+  ['페이팔', { kind: 'FOREIGN_EASY_PAY', provider: 'PAYPAL' }],
 ]);
 
-const SIMPLE_PAY_PROVIDER_BY_CODE = {
-  TOSSPAY: 'TOSS_PAY',
-  NAVERPAY: 'NAVER_PAY',
-  KAKAOPAY: 'KAKAOPAY',
-} as const satisfies Record<string, PaymentProvider>;
-
-const FOREIGN_PROVIDER_BY_CODE = {
-  ALIPAY: 'ALIPAY_PLUS',
-  ALIPAY_PLUS: 'ALIPAY_PLUS',
-  TRUEMONEY: 'TRUEMONEY',
-  PAYPAL: 'PAYPAL',
-  페이팔: 'PAYPAL',
-} as const satisfies Record<string, PaymentProvider>;
+/**
+ * Placeholder method of an unsupported selection. No supported selection produces a
+ * provider-less SIMPLE_PAY, so it never compares equal to a payable selection, and the
+ * selection is refused before prepare and before Provider Handoff anyway.
+ */
+const UNSUPPORTED_SELECTION_PAYMENT_METHOD: PaymentMethod = {
+  method: 'SIMPLE_PAY',
+  provider: 'CARD',
+  currency: 'KRW',
+};
 
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;
@@ -84,6 +128,13 @@ interface TossPaymentWidgetProps {
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
   onPaymentDeadlineChange?: (paymentDeadlineAt: string) => void;
+  /**
+   * The widget could not load (missing client key, SDK or render failure): the message
+   * it shows in place of the payment methods and terms, or null once a load starts again
+   * or succeeds. Checkout uses it for the pay button instead of asking for terms the
+   * buyer cannot see.
+   */
+  onLoadError?: (message: string | null) => void;
 }
 
 export interface TossPaymentWidgetRef {
@@ -95,6 +146,26 @@ export interface PaymentMethodSelection {
   paymentMethod: PaymentMethod;
   requiresOverseasDisclaimer: boolean;
   requestFlow: 'widget';
+  /**
+   * The widget method has no checkout category (see WIDGET_METHOD_CATEGORY_BY_CODE).
+   * Checkout never sends it to the server; `paymentMethod` is only a placeholder.
+   */
+  unsupported?: true;
+}
+
+/**
+ * Whether checkout may send this widget selection to the server: a supported category that
+ * checkout can complete. Virtual account and phone payments are classified exactly and
+ * refused here under every performance policy (audit #70).
+ */
+export function isPayableWidgetSelection(selection: PaymentMethodSelection): boolean {
+  return selection.unsupported !== true
+    && isCheckoutConfigurablePaymentMethod(selection.paymentMethod);
+}
+
+function isSameWidgetSelection(a: PaymentMethodSelection, b: PaymentMethodSelection): boolean {
+  return (a.unsupported === true) === (b.unsupported === true)
+    && isSameCheckoutPaymentMethod(a.paymentMethod, b.paymentMethod);
 }
 
 export interface TossPaymentBranchResponse {
@@ -233,8 +304,9 @@ export function resolvePaymentWidgetRenderAmount({
   };
 }
 
+/** English codes are matched case-insensitively; Korean labels have no case. */
 function normalizePaymentMethodCode(code: string): string {
-  return code === '페이팔' ? code : code.toUpperCase();
+  return code.trim().toUpperCase();
 }
 
 function usesProviderChargeQuote(provider: PaymentProvider): boolean {
@@ -273,102 +345,49 @@ export function resolvePaymentMethodSelection(
   variantKey = 'DEFAULT',
 ): PaymentMethodSelection {
   const normalizedCode = normalizePaymentMethodCode(code);
-
-  if (
-    isForeignPaymentWidgetVariant(variantKey)
-    && (normalizedCode === 'ALIPAY' || normalizedCode === 'ALIPAY_PLUS')
-  ) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'ALIPAY_PLUS',
-        currency: 'USD',
-        pendingUrlRequired: true,
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (normalizedCode === 'CARD' && isForeignPaymentWidgetVariant(variantKey)) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'CARD',
-        provider: 'CARD',
-        currency: 'USD',
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (FOREIGN_WALLET_CODES.has(normalizedCode)) {
-    const provider = FOREIGN_PROVIDER_BY_CODE[normalizedCode as keyof typeof FOREIGN_PROVIDER_BY_CODE];
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'FOREIGN_EASY_PAY',
-        provider,
-        currency: 'USD',
-        ...(provider === 'PAYPAL' ? {} : { pendingUrlRequired: true }),
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (
-    (normalizedCode === 'OVERSEAS_CARD' && isForeignPaymentWidgetVariant(variantKey))
-    || OVERSEAS_CARD_CODES.has(normalizedCode)
-  ) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: true,
-      paymentMethod: {
-        method: 'CARD',
-        provider: 'CARD',
-        currency: 'USD',
-        overseasPaymentConsent: createOverseasConsent(),
-      },
-    };
-  }
-
-  if (normalizedCode === 'TRANSFER') {
-    return {
-      code, requestFlow: 'widget', requiresOverseasDisclaimer: false,
-      paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
-    };
-  }
-
-  if (code in SIMPLE_PAY_PROVIDER_BY_CODE) {
-    return {
-      code,
-      requestFlow: 'widget',
-      requiresOverseasDisclaimer: false,
-      paymentMethod: {
-        method: 'SIMPLE_PAY',
-        provider: SIMPLE_PAY_PROVIDER_BY_CODE[code as keyof typeof SIMPLE_PAY_PROVIDER_BY_CODE],
-        currency: 'KRW',
-      },
-    };
-  }
-
-  return {
+  const isOverseasWidget = isForeignPaymentWidgetVariant(variantKey);
+  const category = normalizedCode === 'OVERSEAS_CARD' && isOverseasWidget
+    ? { kind: 'OVERSEAS_CARD' as const }
+    : WIDGET_METHOD_CATEGORY_BY_CODE.get(normalizedCode);
+  const domestic = (paymentMethod: PaymentMethod): PaymentMethodSelection => ({
     code,
     requestFlow: 'widget',
     requiresOverseasDisclaimer: false,
-    paymentMethod: {
-      method: 'CARD',
-      provider: 'CARD',
-      currency: 'KRW',
-    },
-  };
+    paymentMethod,
+  });
+  const overseas = (paymentMethod: PaymentMethod): PaymentMethodSelection => ({
+    code,
+    requestFlow: 'widget',
+    requiresOverseasDisclaimer: true,
+    paymentMethod: { ...paymentMethod, overseasPaymentConsent: createOverseasConsent() },
+  });
+
+  switch (category?.kind) {
+    case 'CARD':
+      // The overseas payment UI charges every card in USD under the overseas card contract.
+      return isOverseasWidget
+        ? overseas({ method: 'CARD', provider: 'CARD', currency: 'USD' })
+        : domestic({ method: 'CARD', provider: 'CARD', currency: 'KRW' });
+    case 'OVERSEAS_CARD':
+      return overseas({ method: 'CARD', provider: 'CARD', currency: 'USD' });
+    case 'TRANSFER':
+      return domestic({ method: 'TRANSFER', provider: 'CARD', currency: 'KRW' });
+    case 'VIRTUAL_ACCOUNT':
+      return domestic({ method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' });
+    case 'MOBILE_PHONE':
+      return domestic({ method: 'MOBILE_PHONE', provider: 'CARD', currency: 'KRW' });
+    case 'SIMPLE_PAY':
+      return domestic({ method: 'SIMPLE_PAY', provider: category.provider, currency: 'KRW' });
+    case 'FOREIGN_EASY_PAY':
+      return overseas({
+        method: 'FOREIGN_EASY_PAY',
+        provider: category.provider,
+        currency: 'USD',
+        ...(category.provider === 'PAYPAL' ? {} : { pendingUrlRequired: true }),
+      });
+    default:
+      return { ...domestic(UNSUPPORTED_SELECTION_PAYMENT_METHOD), unsupported: true };
+  }
 }
 
 export function resolvePaymentRequestAmount({
@@ -415,6 +434,27 @@ function appendPaymentDeadlineReturnParam(
   const url = new URL(returnUrl);
   url.searchParams.set('paymentDeadlineAt', paymentDeadlineAt);
   return url.toString();
+}
+
+/** The HTTP status of an API error, or null when no response arrived. */
+function getHttpStatus(error: unknown): number | null {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  return typeof statusCode === 'number' ? statusCode : null;
+}
+
+/**
+ * Best effort: the server accepts only a fresh, merchant-confirmed handoff with no
+ * payment, a free confirm lease and no confirm attempt. Any refusal leaves the order
+ * in status review.
+ */
+async function releaseTossPaymentHandoff(orderId: string): Promise<void> {
+  try {
+    await apiClient.post('/api/v1/payments/branch/release', { orderId }, {
+      showErrorToast: false,
+    });
+  } catch {
+    // Recovery lookup decides what the buyer sees next.
+  }
 }
 
 function resolveInitialPaymentMethodSelection(_variantKey: string): PaymentMethodSelection {
@@ -569,11 +609,13 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       onPaymentMethodChange,
       onWidgetAgreementChange,
       onPaymentDeadlineChange,
+      onLoadError,
     },
     ref,
   ) {
     const locale = resolveVisibleCopyLocale(useLocale());
     const widgetCopy = getVisibleCopy(locale).bookingExtra.widget;
+    const confirmCopy = getVisibleCopy(locale).bookingExtra.confirm;
     const checkoutCopy = getCheckoutCopy(locale);
     const paymentWidgetVariantKeys = resolvePaymentWidgetVariantKeys();
     const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
@@ -583,7 +625,19 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     );
     const [widgetState, setWidgetState] = useState<PaymentWidgetState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setErrorState] = useState<string | null>(null);
+    // Read through a ref so a new callback identity never restarts the widget load.
+    const onLoadErrorRef = useRef(onLoadError);
+    useEffect(() => {
+      onLoadErrorRef.current = onLoadError;
+    }, [onLoadError]);
+    /** The shown load error and the one reported to checkout always change together. */
+    const setError = useCallback((message: string | null) => {
+      setErrorState(message);
+      onLoadErrorRef.current?.(message);
+    }, []);
+    // An unmounted widget shows no error any more.
+    useEffect(() => () => onLoadErrorRef.current?.(null), []);
     const paymentWidgetClientKey = resolvePaymentWidgetClientKey(paymentWidgetVariantKey);
     const widgets = widgetState?.variantKey === paymentWidgetVariantKey
       ? widgetState.widgets
@@ -593,6 +647,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     );
     const paymentWidgetInstanceRef = useRef<PaymentMethodWidget | null>(null);
     const agreementWidgetInstanceRef = useRef<AgreementWidget | null>(null);
+    /** Last reported required-terms state; null until the agreement widget reports. */
+    const agreementAgreedRef = useRef<boolean | null>(null);
     const widgetDestroyPromiseRef = useRef<Promise<void> | null>(null);
     const shouldRenderPaymentWidgets = true;
 
@@ -613,6 +669,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [onPaymentMethodChange, paymentWidgetVariantKey]);
 
     const updateWidgetAgreement = useCallback((status: WidgetAgreementStatus) => {
+      agreementAgreedRef.current = status.agreedRequiredTerms;
       onWidgetAgreementChange?.(status.agreedRequiredTerms);
     }, [onWidgetAgreementChange]);
 
@@ -639,6 +696,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [destroyWidgetInstance]);
 
     const changePaymentWidgetVariant = useCallback((variantKey: string) => {
+      agreementAgreedRef.current = null;
       setWidgetState(null);
       setPaymentWidgetVariantKey(variantKey);
       const normalized = resolveInitialPaymentMethodSelection(variantKey);
@@ -656,12 +714,39 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         );
         const completeUrl = `${origin}${localizedBookingPath}/complete`;
         const confirmUrl = `${origin}${localizedBookingPath}/confirm`;
-        const selection = selectedPaymentMethodRef.current;
         if (!widgets) {
           throw new Error(widgetCopy.widgetNotReady);
         }
         if (isLoading) {
           throw new Error(widgetCopy.widgetLoading);
+        }
+        const paymentMethodWidget = paymentWidgetInstanceRef.current;
+        if (!paymentMethodWidget) {
+          throw new Error(widgetCopy.widgetNotReady);
+        }
+
+        // Every check the browser can make runs before the server records Provider
+        // Handoff. A missed or late iframe selection event must not reach the server.
+        const liveSelection = resolvePaymentMethodSelection(
+          (await paymentMethodWidget.getSelectedPaymentMethod()).code,
+          paymentWidgetVariantKey,
+        );
+        const liveSelectionChanged = !isSameWidgetSelection(
+          liveSelection,
+          selectedPaymentMethodRef.current,
+        );
+        if (liveSelectionChanged || !isPayableWidgetSelection(liveSelection)) {
+          selectedPaymentMethodRef.current = liveSelection;
+          onPaymentMethodChange?.(liveSelection);
+          // A virtual account, phone bill or unsupported widget method never reaches
+          // the server, whatever the selection event said earlier (audit #70).
+          throw new Error(isPayableWidgetSelection(liveSelection)
+            ? checkoutCopy.methodChanged
+            : checkoutCopy.methodNotAllowed);
+        }
+        const selection = selectedPaymentMethodRef.current;
+        if (agreementAgreedRef.current === false) {
+          throw new Error(confirmCopy.agreePaymentTerms);
         }
 
         if (prepareResult && (prepareResult.orderId !== orderId
@@ -698,67 +783,88 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         failUrl.searchParams.set('error', 'true');
         failUrl.searchParams.set('resumeOrderId', orderId);
         const branchPaymentMethod = prepareResult?.paymentMethod ?? selection.paymentMethod;
-        const branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
-          orderId,
-          paymentMethod: branchPaymentMethod,
-          successUrl: completeUrl,
-          failUrl: failUrl.toString(),
-          pendingUrl,
-        }, {
-          showErrorToast: false,
-        });
-        if (branch.paymentDeadlineAt) {
-          onPaymentDeadlineChange?.(branch.paymentDeadlineAt);
-        }
-        const branchForRequest = branch.paymentDeadlineAt
-          ? {
-              ...branch,
-              failUrl: appendPaymentDeadlineReturnParam(
-                branch.failUrl,
-                branch.paymentDeadlineAt,
-              ),
-            }
-          : branch;
-
-        if (
-          requiresProviderChargeQuote
-          && (branchForRequest.checkoutEnabled !== true || !branchForRequest.providerChargeQuote)
-        ) {
-          throw new Error(resolveProviderChargeDisabledMessage(
-            selection.paymentMethod.provider,
-            branchForRequest.disabledReason,
-            locale,
-          ));
+        let branch: TossPaymentBranchResponse;
+        try {
+          branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
+            orderId,
+            paymentMethod: branchPaymentMethod,
+            successUrl: completeUrl,
+            failUrl: failUrl.toString(),
+            pendingUrl,
+          }, {
+            showErrorToast: false,
+          });
+        } catch (error) {
+          // A lost response or a gateway/server error (502/503/504 under open load) may
+          // hide a committed handoff; the server re-checks every release condition. A 4xx
+          // rejection committed nothing and may describe another tab's handoff.
+          const statusCode = getHttpStatus(error);
+          if (statusCode === null || statusCode >= 500) {
+            await releaseTossPaymentHandoff(orderId);
+          }
+          throw error;
         }
 
-        if (branchForRequest.providerChargeQuote) {
-          await widgets.setAmount(resolvePaymentRequestAmount({
+        // From here the server holds Provider Handoff. If this document fails before the
+        // provider checkout opens (for example NEED_CARD_PAYMENT_DETAIL), no provider
+        // payment or webhook will ever exist, so hand the order back before reporting.
+        try {
+          if (branch.paymentDeadlineAt) {
+            onPaymentDeadlineChange?.(branch.paymentDeadlineAt);
+          }
+          const branchForRequest = branch.paymentDeadlineAt
+            ? {
+                ...branch,
+                failUrl: appendPaymentDeadlineReturnParam(
+                  branch.failUrl,
+                  branch.paymentDeadlineAt,
+                ),
+              }
+            : branch;
+
+          if (
+            requiresProviderChargeQuote
+            && (branchForRequest.checkoutEnabled !== true || !branchForRequest.providerChargeQuote)
+          ) {
+            throw new Error(resolveProviderChargeDisabledMessage(
+              selection.paymentMethod.provider,
+              branchForRequest.disabledReason,
+              locale,
+            ));
+          }
+
+          if (branchForRequest.providerChargeQuote) {
+            await widgets.setAmount(resolvePaymentRequestAmount({
+              amount,
+              currency: branchForRequest.currency,
+              providerChargeQuote: branchForRequest.providerChargeQuote,
+            }));
+          }
+
+          const requestPayload = buildWidgetPaymentRequest({
+            branch: branchForRequest,
             amount,
-            currency: branchForRequest.currency,
-            providerChargeQuote: branchForRequest.providerChargeQuote,
-          }));
-        }
+            customerEmail,
+            customerName,
+            customerMobilePhone,
+            customerCountry,
+            orderName,
+            locale,
+            selectedSeats,
+          });
 
-        const requestPayload = buildWidgetPaymentRequest({
-          branch: branchForRequest,
-          amount,
-          customerEmail,
-          customerName,
-          customerMobilePhone,
-          customerCountry,
-          orderName,
-          locale,
-          selectedSeats,
-        });
-
-        // The buyer can change an iframe selection while the branch request is in flight.
-        // Never send its amount/return contract to a different provider selection.
-        if (!isSameCheckoutPaymentMethod(selection.paymentMethod, selectedPaymentMethodRef.current.paymentMethod)) {
-          throw new Error(checkoutCopy.methodChanged);
+          // The buyer can change an iframe selection while the branch request is in flight.
+          // Never send its amount/return contract to a different provider selection.
+          if (!isSameWidgetSelection(selection, selectedPaymentMethodRef.current)) {
+            throw new Error(checkoutCopy.methodChanged);
+          }
+          await widgets.requestPayment(
+            requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
+          );
+        } catch (error) {
+          await releaseTossPaymentHandoff(orderId);
+          throw error;
         }
-        await widgets.requestPayment(
-          requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
-        );
       },
     }), [
       widgets,
@@ -774,7 +880,10 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       isLoading,
       selectedSeats,
       onPaymentDeadlineChange,
+      onPaymentMethodChange,
+      paymentWidgetVariantKey,
       widgetCopy,
+      confirmCopy,
       checkoutCopy,
     ]);
 
@@ -786,6 +895,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           await destroyRenderedWidgets();
           setIsLoading(true);
           setError(null);
+          agreementAgreedRef.current = null;
           onWidgetAgreementChange?.(false);
 
           if (!paymentWidgetClientKey) {
@@ -823,6 +933,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       paymentWidgetVariantKey,
       shouldRenderPaymentWidgets,
       destroyRenderedWidgets,
+      setError,
       widgetCopy,
     ]);
 
@@ -915,6 +1026,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       shouldRenderPaymentWidgets,
       destroyRenderedWidgets,
       destroyWidgetInstance,
+      setError,
       widgetCopy,
     ]);
 

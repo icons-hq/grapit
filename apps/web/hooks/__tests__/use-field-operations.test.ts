@@ -1,10 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { createElement, type ReactNode } from 'react';
+import { renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { describe, expect, it, vi } from 'vitest';
 import type { FieldCheckInVerifyResponse } from '@grabit/shared';
 import {
   canRedeemBenefitsForVerification,
   normalizeBenefitRedemptionResponse,
   normalizeVerifyResponse,
+  useFieldCheckInVerify,
 } from '@/hooks/use-field-operations';
+
+const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
+
+vi.mock('@/lib/api-client', () => ({ apiClient: { post: postMock, get: vi.fn() } }));
 
 const benefitRunId = '00000000-0000-4000-8000-000000000701';
 const benefitEntitlementId = '00000000-0000-4000-8000-000000000801';
@@ -146,5 +154,28 @@ describe('field operations normalizers', () => {
       outcomeLabel: '이미 사용된 혜택입니다',
       redeemedAt: '2026-07-04T08:30:00.000Z',
     });
+  });
+});
+
+describe('useFieldCheckInVerify scan attempt cache (D4)', () => {
+  it('reuses the result within one scan attempt and checks a new scan of the same QR again', async () => {
+    postMock.mockReset().mockResolvedValue({ outcome: 'already_used', processable: false, ticket: null, verifiedAt: '2026-07-04T08:00:00.000Z' });
+    // Same stale time as the app's QueryClient.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } });
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children);
+    const scan = { token: 'qr-token', showtimeId: '00000000-0000-4000-8000-000000000301', deviceAttemptId: 'attempt-1' };
+
+    const first = renderHook(() => useFieldCheckInVerify(scan), { wrapper });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    first.unmount();
+    const sameScan = renderHook(() => useFieldCheckInVerify(scan), { wrapper });
+    await waitFor(() => expect(sameScan.result.current.isSuccess).toBe(true));
+    expect(postMock).toHaveBeenCalledTimes(1);
+
+    // A re-scan carries a new attempt id; the server must see it (a rescan of a
+    // used seat is a duplicate attempt) instead of the cached answer.
+    renderHook(() => useFieldCheckInVerify({ ...scan, deviceAttemptId: 'attempt-2' }), { wrapper });
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+    expect(postMock.mock.calls[1]?.[1]).toMatchObject({ token: 'qr-token', deviceAttemptId: 'attempt-2' });
   });
 });

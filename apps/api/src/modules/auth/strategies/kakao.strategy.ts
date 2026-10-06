@@ -10,6 +10,8 @@ interface KakaoProfile {
   _json: {
     kakao_account?: {
       email?: string;
+      is_email_valid?: boolean;
+      is_email_verified?: boolean;
     };
     properties?: {
       nickname?: string;
@@ -28,7 +30,8 @@ export class KakaoStrategy extends PassportStrategy(Strategy, 'kakao') {
   }
 
   extractProfile(profile: KakaoProfile): SocialProfile {
-    const email = profile._json?.kakao_account?.email;
+    const account = profile._json?.kakao_account;
+    const email = account?.email;
     const name =
       profile.displayName || profile._json?.properties?.nickname || '';
 
@@ -36,6 +39,8 @@ export class KakaoStrategy extends PassportStrategy(Strategy, 'kakao') {
       provider: 'kakao',
       providerId: String(profile.id),
       email,
+      // Kakao marks an email trustworthy only when it is both verified and still valid.
+      emailVerified: Boolean(email) && account?.is_email_verified === true && account?.is_email_valid !== false,
       name,
     };
   }

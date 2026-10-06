@@ -20,6 +20,7 @@ import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy, type AuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { isPhoneVerificationTokenUsedError } from '@/components/auth/phone-verification-errors';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
@@ -52,6 +53,8 @@ function CallbackContent() {
   const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step3Draft, setStep3Draft] = useState<Partial<RegisterStep3Input>>();
+  // Remounts step 3 (and its phone verification) with the entered values.
+  const [step3ResetKey, setStep3ResetKey] = useState(0);
   const [errorInfo, setErrorInfo] = useState<{ code: string; provider?: string } | null>(null);
   const [emailVerificationEmail, setEmailVerificationEmail] = useState<string | null>(null);
 
@@ -107,9 +110,13 @@ function CallbackContent() {
 
     if (user) {
       hasRedirectedRef.current = true;
+      // A social login does not verify the account email unless the provider vouched
+      // for that exact address; finish verification first, like a password login.
       router.push(
-        resolveSafeReturnToFromSearch(searchParams.toString()) ??
-          getLocalizedPathname('/', authCopy.locale),
+        user.isEmailVerified === false
+          ? buildAuthRoute('/auth/verify-email', authCopy.locale, { email: user.email, returnTo })
+          : resolveSafeReturnToFromSearch(searchParams.toString()) ??
+              getLocalizedPathname('/', authCopy.locale),
       );
       return;
     }
@@ -119,7 +126,7 @@ function CallbackContent() {
       toast.error(authCopy.socialErrors.oauthFailed);
       router.push(loginPath);
     }
-  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed, loginPath]);
+  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed, loginPath, returnTo]);
 
   function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
@@ -163,10 +170,18 @@ function CallbackContent() {
       setAuth(res.accessToken, res.user);
       toast.success(authCopy.form.signupComplete);
       router.push(
-        resolveSafeReturnToFromSearch(searchParams.toString()) ??
-          getLocalizedPathname('/', authCopy.locale),
+        res.user.isEmailVerified === false
+          ? buildAuthRoute('/auth/verify-email', authCopy.locale, { email: res.user.email, returnTo })
+          : resolveSafeReturnToFromSearch(searchParams.toString()) ??
+              getLocalizedPathname('/', authCopy.locale),
       );
     } catch (error) {
+      if (isPhoneVerificationTokenUsedError(error)) {
+        // The token already backed another write: keep the entered values,
+        // drop the token and ask for phone verification again.
+        setStep3Draft({ ...data, phoneVerificationToken: '' });
+        setStep3ResetKey((key) => key + 1);
+      }
       const message =
         error instanceof Error
           ? error.message
@@ -246,6 +261,7 @@ function CallbackContent() {
             )}
             {currentStep === 3 && (
               <SignupStep3
+                key={step3ResetKey}
                 onComplete={handleStep3Complete}
                 defaultValues={step3Draft}
                 onBack={(draft) => { setStep3Draft(draft); setCurrentStep(2); }}

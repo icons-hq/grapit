@@ -1,13 +1,36 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import {
+  getBookingAvailabilityCheckingCopy,
+  getBookingAvailabilityUnavailableCopy,
   getBookingEndedCopy,
   getBookingVerificationRequiredCopy,
 } from '@/lib/runtime-flags';
-import type { PerformanceStatus } from '@grabit/shared';
+import { parseServerDeadline } from '@/lib/booking/queue-access';
+import {
+  resolveAdminCapabilitySnapshot,
+  type PerformanceStatus,
+  type UserProfile,
+} from '@grabit/shared';
+
+/**
+ * Same verdict as the API's Admin Booking Bypass (`canUseAdminBookingBypass`):
+ * only a full admin (superuser) skips the queue, the Sitewide Booking Gate and
+ * the sale start. Restricted bundles (scanner, finance, ...) also carry
+ * role='admin' but book like Buyers. Fails closed without capability claims.
+ */
+function canUseAdminBookingBypass(user: UserProfile | null | undefined): boolean {
+  if (!user || user.role !== 'admin') {
+    return false;
+  }
+  if (user.adminCapabilityBundle === undefined || !Array.isArray(user.adminCapabilities)) {
+    return false;
+  }
+  return resolveAdminCapabilitySnapshot(user).superuser;
+}
 
 export function useBookingAvailability(options: {
   performanceStatus?: PerformanceStatus | null;
@@ -15,19 +38,19 @@ export function useBookingAvailability(options: {
 } = {}) {
   const runtimeFlags = useRuntimeFlags();
   const user = useAuthStore((state) => state.user);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = canUseAdminBookingBypass(user);
   const isEndedPerformance = options.performanceStatus === 'ended';
-  const bookingStartsAtMs = options.bookingStartsAt
-    ? Date.parse(options.bookingStartsAt)
-    : null;
-  const hasValidBookingStart =
-    typeof bookingStartsAtMs === 'number' && Number.isFinite(bookingStartsAtMs);
+  const bookingStartsAtMs = parseServerDeadline(options.bookingStartsAt);
+  const hasValidBookingStart = bookingStartsAtMs !== null;
+  // Evaluated against the server-corrected clock on every render: a detail
+  // response that lands after the opening instant, a tab waking from sleep or a
+  // slow device clock can no longer pin the CTA to "opens later".
+  const bookingStartReached = useServerTimeReached(bookingStartsAtMs);
   const isBeforeScheduledBookingStart =
-    hasValidBookingStart && bookingStartsAtMs > nowMs;
+    hasValidBookingStart && !bookingStartReached;
   const isUpcomingPerformance =
     options.performanceStatus === 'upcoming' &&
-    (!hasValidBookingStart || bookingStartsAtMs > nowMs);
+    (!hasValidBookingStart || !bookingStartReached);
   const bookingEndedMessage = getBookingEndedCopy(runtimeFlags.locale);
   const verificationRequired =
     Boolean(user) &&
@@ -37,18 +60,15 @@ export function useBookingAvailability(options: {
     ((runtimeFlags.bookingEnabled && !isUpcomingPerformance && !isBeforeScheduledBookingStart) || isAdmin);
 
   const bookingAvailable = bookingOpen && !verificationRequired;
-
-  useEffect(() => {
-    if (!hasValidBookingStart || bookingStartsAtMs <= Date.now()) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setNowMs(Date.now());
-    }, Math.min(bookingStartsAtMs - Date.now(), 2_147_483_647));
-
-    return () => window.clearTimeout(timeout);
-  }, [bookingStartsAtMs, hasValidBookingStart]);
+  const isScheduledClosed = isUpcomingPerformance || isBeforeScheduledBookingStart;
+  // An unknown flag keeps booking closed, but says so instead of "opens later".
+  // useRuntimeFlags reports isResolved=false only until a flag value loads.
+  const runtimeFlagsUnknown = runtimeFlags.isResolved === false;
+  const runtimeFlagsDisabledMessage = !runtimeFlagsUnknown || isScheduledClosed
+    ? runtimeFlags.bookingDisabledMessage
+    : runtimeFlags.isError
+      ? getBookingAvailabilityUnavailableCopy(runtimeFlags.locale)
+      : getBookingAvailabilityCheckingCopy(runtimeFlags.locale);
 
   return {
     ...runtimeFlags,
@@ -56,16 +76,21 @@ export function useBookingAvailability(options: {
       ? getBookingVerificationRequiredCopy(runtimeFlags.locale)
       : isEndedPerformance
         ? bookingEndedMessage
-        : runtimeFlags.bookingDisabledMessage,
+        : runtimeFlagsDisabledMessage,
     bookingEndedMessage,
     isAdmin,
     bookingAvailable,
     bookingOpen,
+    /**
+     * The server-clock verdict bookingOpen was evaluated with. Status displays
+     * (badge, schedule) must derive from it so they flip with the booking CTA.
+     */
+    isBeforeScheduledBookingStart,
     verificationRequiredForBooking: verificationRequired,
     isAdminBookingBypassActive:
       !verificationRequired &&
       !isEndedPerformance &&
-      (!runtimeFlags.bookingEnabled || isUpcomingPerformance || isBeforeScheduledBookingStart) &&
+      (!runtimeFlags.bookingEnabled || isScheduledClosed) &&
       isAdmin,
   };
 }

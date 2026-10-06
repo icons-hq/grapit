@@ -135,7 +135,8 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await enableBooking(page);
     await mockAuthenticatedSession(page, { role: 'user' });
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    // The client sends ?locale=…, which a glob without a trailing ** does not match.
+    await page.route('**/api/v1/payments/confirm**', async (route: Route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -171,9 +172,9 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
 
     await expect(page).toHaveURL(/\/auth\?returnTo=/);
-    expect(decodeURIComponent(new URL(page.url()).searchParams.get('returnTo') ?? '')).toBe(
-      `/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`,
-    );
+    // The raw QR credential must not travel into the login URL or browser history.
+    expect(decodeURIComponent(new URL(page.url()).searchParams.get('returnTo') ?? '')).toBe('/field/check-in');
+    expect(decodeURIComponent(page.url())).not.toContain(rawQrToken);
     await expectNoRawSecrets(page);
   });
 

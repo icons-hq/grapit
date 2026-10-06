@@ -2,15 +2,21 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
-  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, desc, eq, gte, inArray, lte, ne, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
-import { DeepLClient, type DeepLTranslationResult } from './deepl.client.js';
+import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
+import {
+  DeepLClient,
+  requiresManualTranslation,
+  type DeepLTranslationResult,
+} from './deepl.client.js';
 
 export const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN'] as const;
 
@@ -82,6 +88,12 @@ interface TranslationProvider {
   ): Promise<DeepLTranslationResult>;
 }
 
+/** Translation sources whose published drafts are overlaid on the public catalog. */
+const CATALOG_TRANSLATION_ENTITY_TYPE = 'performance';
+
+const MANUAL_TRANSLATION_REQUIRED_MESSAGE =
+  '자동 번역을 사용할 수 없어 원문이 그대로 담긴 초안입니다. [manual-review:…] 표시를 지우고 번역문을 직접 입력해주세요.';
+
 const LEGAL_BLOCKED_CONTENT_TYPES = new Set<string>([
   'legal',
   'notice',
@@ -99,11 +111,17 @@ function currentSourceHash(sourceId: string, hash: string): SQL {
 
 @Injectable()
 export class TranslationService {
+  private readonly logger = new Logger(TranslationService.name);
+
   constructor(
     @Inject(DRIZZLE)
     private readonly db: DrizzleDB | MemoryTranslationStore,
-    @Optional()
-    private readonly deepLClient?: TranslationProvider,
+    // Explicit class tokens: an interface-typed parameter has no runtime DI
+    // token, so Nest silently injected nothing and drafts copied the source.
+    @Inject(DeepLClient)
+    private readonly deepLClient: TranslationProvider,
+    @Inject(CatalogFreshnessService)
+    private readonly catalogFreshness: Pick<CatalogFreshnessService, 'invalidatePerformance'>,
   ) {}
 
   async createSource(input: CreateTranslationSourceInput): Promise<TranslationSourceResult> {
@@ -140,11 +158,17 @@ export class TranslationService {
   async generateDrafts(sourceId: string): Promise<TranslationDraftResult[]> {
     const source = await this.findSource(sourceId);
     this.assertTranslatableContentType(source.entityType);
+    // Translate every locale before inserting, so a provider failure for one
+    // locale does not leave a partial draft set behind.
+    const translations = await Promise.all(
+      TRANSLATION_TARGET_LOCALES.map(async (locale) => ({
+        locale,
+        translatedText: await this.generateDraftText(source.sourceText, locale),
+      })),
+    );
     const drafts = await Promise.all(
-      TRANSLATION_TARGET_LOCALES.map(async (locale) => {
-        const translatedText = await this.generateDraftText(source.sourceText, locale);
-        return this.createDraft(source, locale, translatedText);
-      }),
+      translations.map(({ locale, translatedText }) =>
+        this.createDraft(source, locale, translatedText)),
     );
 
     return drafts.map((draft) => this.mapDraft(draft, source));
@@ -213,6 +237,10 @@ export class TranslationService {
     if (draft.status === 'published') {
       throw new BadRequestException('이미 게시된 번역은 검수 상태로 되돌릴 수 없습니다');
     }
+    // An empty translatedText keeps the stored text, so check what will be stored.
+    if (requiresManualTranslation(translatedText || draft.translatedText)) {
+      throw new BadRequestException(MANUAL_TRANSLATION_REQUIRED_MESSAGE);
+    }
 
     if (isMemoryStore(this.db)) {
       draft.status = 'review';
@@ -246,6 +274,11 @@ export class TranslationService {
     if (draft.status !== 'review' || draft.sourceContentHash !== source.contentHash) {
       throw new BadRequestException('검수 완료된 번역만 게시할 수 있습니다');
     }
+    // Covers drafts reviewed before this check existed. The update below
+    // re-checks translatedText, so the text cannot change in between.
+    if (requiresManualTranslation(draft.translatedText)) {
+      throw new BadRequestException(MANUAL_TRANSLATION_REQUIRED_MESSAGE);
+    }
 
     if (isMemoryStore(this.db)) {
       this.db.drafts.forEach((candidate) => {
@@ -262,6 +295,7 @@ export class TranslationService {
       draft.status = 'published';
       draft.publishedAt = new Date();
       draft.updatedAt = new Date();
+      await this.refreshCatalogTranslations(source);
       return this.mapDraft(draft, source);
     }
 
@@ -289,6 +323,7 @@ export class TranslationService {
       return rows;
     });
 
+    await this.refreshCatalogTranslations(source);
     return this.mapDraft(published!, source);
   }
 
@@ -306,6 +341,7 @@ export class TranslationService {
         draft.sourceContentHash = nextHash;
         draft.updatedAt = new Date();
       });
+      await this.refreshCatalogTranslations(source);
       return staleDrafts.map((draft) => this.mapDraft(draft, source));
     }
 
@@ -325,6 +361,7 @@ export class TranslationService {
       .where(and(eq(translationDrafts.sourceId, sourceId)))
       .returning();
 
+    await this.refreshCatalogTranslations(source);
     return staleDrafts.map((draft) => this.mapDraft(draft, source));
   }
 
@@ -332,11 +369,41 @@ export class TranslationService {
     sourceText: string,
     locale: TranslationTargetLocale,
   ): Promise<string> {
-    if (this.deepLClient) {
+    try {
       const result = await this.deepLClient.translateText(sourceText, locale);
       return result.text;
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error instanceof Error ? error.message : String(error),
+          locale,
+        },
+        'automatic translation provider request failed',
+      );
+      throw new ServiceUnavailableException(
+        '자동 번역 요청에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      );
     }
-    return sourceText;
+  }
+
+  /**
+   * Published performance translations are overlaid on cached public catalog
+   * responses, so a publish or source edit must invalidate them. Runs after
+   * the DB change; a cache failure must not fail the committed operation.
+   */
+  private async refreshCatalogTranslations(source: Pick<SourceRow, 'entityType' | 'entityId'>): Promise<void> {
+    if (source.entityType !== CATALOG_TRANSLATION_ENTITY_TYPE) return;
+    try {
+      await this.catalogFreshness.invalidatePerformance(source.entityId);
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error instanceof Error ? error.message : String(error),
+          entityId: source.entityId,
+        },
+        'catalog cache invalidation after translation change failed',
+      );
+    }
   }
 
   assertTranslatableContentType(contentType: string): void {

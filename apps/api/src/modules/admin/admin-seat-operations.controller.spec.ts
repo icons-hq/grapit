@@ -2,6 +2,7 @@ import { type ExecutionContext, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import type { AdminCapability } from '@grabit/shared';
+import { Agent } from 'node:http';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -12,6 +13,7 @@ import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 
 describe('AdminSeatOperationsController', () => {
   let app: INestApplication;
+  let agent: Agent;
   let capabilities: AdminCapability[] | undefined;
   let service: {
     listHistory: Mock;
@@ -53,6 +55,11 @@ describe('AdminSeatOperationsController', () => {
 
     app = moduleRef.createNestApplication();
     await app.init();
+    // One listening server and one keep-alive socket for the file. Without it supertest
+    // listens on and closes a new ephemeral port per request, which intermittently
+    // fails with "socket hang up" when a pooled socket of a closed server is reused.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   beforeEach(() => {
@@ -62,6 +69,7 @@ describe('AdminSeatOperationsController', () => {
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
@@ -69,13 +77,13 @@ describe('AdminSeatOperationsController', () => {
     'allows history with only %s without allowing other mutations', async (capability) => {
       capabilities = [capability];
       service.listHistory.mockResolvedValue({ rows: [] });
-      const res = await request(app.getHttpServer()).get('/admin/seat-operations/history')
+      const res = await request(app.getHttpServer()).get('/admin/seat-operations/history').agent(agent)
         .query({ showtimeId: '00000000-0000-4000-8000-000000000001' });
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ rows: [] });
       for (const operation of ['disable', 'reactivate'] as const) {
         if (capability === `seat.${operation}`) continue;
-        const denied = await request(app.getHttpServer()).post(`/admin/seat-operations/${operation}`)
+        const denied = await request(app.getHttpServer()).post(`/admin/seat-operations/${operation}`).agent(agent)
           .send({ showtimeId: '00000000-0000-4000-8000-000000000001', seatKey: '1F:A-10', reason: 'test', confirmed: true });
         expect(denied.status).toBe(403);
       }
@@ -85,7 +93,7 @@ describe('AdminSeatOperationsController', () => {
 
   it('denies history without a seat capability', async () => {
     capabilities = ['reservations.read'];
-    const res = await request(app.getHttpServer()).get('/admin/seat-operations/history')
+    const res = await request(app.getHttpServer()).get('/admin/seat-operations/history').agent(agent)
       .query({ showtimeId: '00000000-0000-4000-8000-000000000001' });
     expect(res.status).toBe(403);
     expect(service.listHistory).not.toHaveBeenCalled();
@@ -95,7 +103,7 @@ describe('AdminSeatOperationsController', () => {
     service.listHistory.mockResolvedValue({ rows: [] });
 
     const res = await request(app.getHttpServer())
-      .get('/admin/seat-operations/history')
+      .get('/admin/seat-operations/history').agent(agent)
       .query({ showtimeId: 'showtime-1', seatKey: '1F:A-10' });
 
     expect(res.status).toBe(400);
@@ -114,7 +122,7 @@ describe('AdminSeatOperationsController', () => {
       service.performOperation.mockResolvedValue({});
 
       const res = await request(app.getHttpServer())
-        .post(path)
+        .post(path).agent(agent)
         .send({
           showtimeId: 'showtime-1',
           seatKey: '1F:A-10',

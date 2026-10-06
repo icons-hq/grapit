@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
+  ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE,
   isTossCancelCompleted,
   toRefundTimeline,
   RefundService,
@@ -583,6 +584,264 @@ describe('RefundService', () => {
     expect(result.cancellationQuote?.items).toHaveLength(2);
   });
 
+  it('shows the admin the provider refund amount that the refund request will compare against', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const queryPayment = vi.fn().mockResolvedValue({
+      totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+    });
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+    expect(result.providerRefund).toMatchObject({ currency: 'KRW', amountMinor: 140000 });
+    expect(result.blockedReason).toBeNull();
+    expect(result.canRequestRefund).toBe(true);
+    expect(queryPayment).toHaveBeenCalledWith('pay-key-1', expect.any(Object));
+  });
+
+  it('blocks the admin refund preview until the PG payment can be queried (fail closed, audit #80)', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')) } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    // Without a PG answer the ledger cannot be compared with the PG balance, so the operator must
+    // re-check the preview instead of revoking rights on an unverified payment.
+    expect(result.canRequestRefund).toBe(false);
+    expect(result.providerCheckUnavailable).toBe(true);
+    expect(result.blockedReason).toBe(ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE);
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+  });
+
+  it('refuses a new admin refund with 503 before revoking any right when the PG payment cannot be queried (audit #80)', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+      queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    // insertRequestedRefund is the transaction that revokes QR credentials and benefits.
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+    const request = service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불', {
+      expectedRefundableAmount: 140000,
+    });
+
+    await expect(request).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(request).rejects.toThrow(ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE);
+    expect(tossPaymentsClient.queryPayment).toHaveBeenCalledTimes(1);
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  describe('admin recovery request after another tab restored the rights', () => {
+    /** Thenable query chain: every builder call returns itself and awaiting it yields `rows`. */
+    function queryChain(rows: unknown[]): unknown {
+      const handler: ProxyHandler<object> = {
+        get(_target, prop) {
+          if (prop === 'then') {
+            return (resolve: (value: unknown[]) => void) => resolve(rows);
+          }
+          return () => new Proxy({}, handler);
+        },
+      };
+      return new Proxy({}, handler);
+    }
+
+    // The failed attempt the operator's recovery screen showed. It was quoted
+    // before the D-2 fee tier, so its stored quote has no cancellation fee.
+    const storedQuote = {
+      originalPaymentAmount: 204000,
+      ticketSubtotal: 200000,
+      ticketServiceFeeTotal: 4000,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 4000,
+      refundableAmount: 204000,
+      policyCodes: ['BEFORE_SHOW_DAY_7'],
+      items: [
+        { ticketItemId: 'ticket-item-1', ticketPrice: 100000, serviceFee: 2000, cancellationFee: 0,
+          serviceFeeRefund: 2000, refundableAmount: 102000, policyCode: 'BEFORE_SHOW_DAY_7' },
+        { ticketItemId: 'ticket-item-2', ticketPrice: 100000, serviceFee: 2000, cancellationFee: 0,
+          serviceFeeRefund: 2000, refundableAmount: 102000, policyCode: 'BEFORE_SHOW_DAY_7' },
+      ],
+    };
+
+    function setup() {
+      vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+      const context = createSeatLevelContext();
+      // Another tab's recovery already gave the rights back (aborted / past the
+      // idempotency window), so this request is a new refund quoted now (D-2: 140,000).
+      const restoredRefund = createRefund({
+        status: 'failed',
+        resultCode: 'ABORTED',
+        failedAt: new Date('2026-07-15T15:00:00.000Z'),
+        providerMetadata: {
+          cancellationQuote: storedQuote,
+          providerRefund: { currency: 'KRW', amountMinor: 204000, amountDecimal: '204000',
+            originalAmountMinor: 204000, balanceBeforeMinor: 204000 },
+          rightsRestoredAt: '2026-07-15T15:01:00.000Z',
+        },
+      });
+      const requestedRefund = createRefund({ status: 'requested', providerMetadata: {} });
+      const tx = {
+        execute: vi.fn().mockResolvedValue({ rows: [] }),
+        select: vi.fn(),
+        insert: vi.fn(() => queryChain([requestedRefund])),
+        update: vi.fn(() => queryChain([requestedRefund])),
+      };
+      tx.select
+        .mockReturnValueOnce(queryChain([restoredRefund])) // refunds FOR UPDATE
+        .mockReturnValueOnce(queryChain([context.reservation])) // reservations
+        .mockReturnValueOnce(queryChain(context.ticketItems)) // ticket items FOR UPDATE
+        .mockReturnValueOnce(queryChain([])) // benefit entitlements
+        .mockReturnValueOnce(queryChain([])); // credential states
+      const db = { transaction: vi.fn(async (fn: (inner: typeof tx) => unknown) => fn(tx)) };
+      const tossPaymentsClient = {
+        queryPayment: vi.fn().mockResolvedValue({
+          totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+        }),
+        cancelPayment: vi.fn(),
+      };
+      const service = new RefundService(
+        db as never,
+        tossPaymentsClient as never,
+        { finalizeFullPaymentCancellation: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn() } as never,
+      );
+      vi.spyOn(service as never, 'loadReservationContextByReservationId').mockResolvedValue(context as never);
+      vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(restoredRefund as never);
+      return { service, tx, tossPaymentsClient };
+    }
+
+    it('stops with 409 before revoking any right or calling the PG when the re-quote differs from the stored quote on screen', async () => {
+      const { service, tx, tossPaymentsClient } = setup();
+      const recoverSpy = vi.spyOn(service as never, 'recoverExistingRefundForAdmin');
+      const attemptSpy = vi.spyOn(service as never, 'runProviderCancelAttempt');
+
+      // The recovery confirm sends the stored quote it showed, never overrides.
+      const request = service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불 재조정', {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+        expectedRefundableAmount: storedQuote.refundableAmount,
+        expectedProviderRefundAmountMinor: 204000,
+      });
+
+      await expect(request).rejects.toBeInstanceOf(ConflictException);
+      await expect(request).rejects.toThrow('환불 금액이 변경되었습니다');
+      expect(recoverSpy).not.toHaveBeenCalled();
+      expect(tx.insert).not.toHaveBeenCalled();
+      expect(tx.update).not.toHaveBeenCalled();
+      expect(attemptSpy).not.toHaveBeenCalled();
+      expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    it('starts the new refund when the re-quote equals the amounts on screen', async () => {
+      const { service, tx } = setup();
+      const attemptSpy = vi.spyOn(service as never, 'runProviderCancelAttempt')
+        .mockResolvedValue({ refundableAmount: 140000 } as never);
+
+      await service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불 재조정', {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+        expectedRefundableAmount: 140000,
+        expectedProviderRefundAmountMinor: 140000,
+      });
+
+      expect(tx.update).toHaveBeenCalled();
+      expect(attemptSpy).toHaveBeenCalledTimes(1);
+      expect(attemptSpy.mock.calls[0]?.[2]).toMatchObject({ refundableAmount: 140000 });
+    });
+  });
+
+  it('keeps the buyer request path tolerant of a failed PG pre-check (the frozen preflight re-checks it)', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+      queryPayment: vi.fn().mockRejectedValue(new Error('fetch failed')),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, send: vi.fn() } as never,
+    );
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(createSeatLevelContext() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    const insertSpy = vi.spyOn(service as never, 'insertRequestedRefund')
+      .mockResolvedValue(createRefund({ status: 'completed' }) as never);
+
+    await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      name: 'the PG balance differs from the booking ledger',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 100000, isPartialCancelable: true }),
+      reason: '결제사 환불 잔액이 예매 기록과 다릅니다',
+    },
+    {
+      name: 'the payment method cannot be partially cancelled',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: false }),
+      reason: '자동 부분취소를 지원하지 않습니다',
+    },
+    {
+      name: 'no PG cancel command can be built for a foreign payment',
+      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true }),
+      reason: '자동 환불 금액을 만들 수 없습니다',
+      foreignWithoutChargeData: true,
+    },
+  ])('blocks the admin refund preview when $name', async ({ queryPayment, reason, foreignWithoutChargeData }) => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn(), queryPayment: queryPayment() } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    if (foreignWithoutChargeData) {
+      // PayPal charge without provider-currency charge data: the PG cancel
+      // amount cannot be derived, which requestAdminRefund would reject too.
+      context.payment = { ...context.payment, provider: 'PAYPAL', currency: 'USD' };
+    }
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    expect(result.canRequestRefund).toBe(false);
+    expect(result.blockedReason).toContain(reason);
+    expect(result.cancellationQuote?.refundableAmount).toBe(140000);
+  });
+
   it('backfills missing ticket items before user refund requests', async () => {
     const service = new RefundService(
       {} as never,
@@ -901,6 +1160,10 @@ describe('RefundService', () => {
     vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
 
     const tossPaymentsClient = {
+      // Admin refunds verify the PG balance before revoking rights (fail closed).
+      queryPayment: vi.fn().mockResolvedValue({
+        totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+      }),
       cancelPayment: vi.fn().mockResolvedValue({
         paymentKey: 'pay-key-1',
         totalAmount: 204000,
@@ -1122,10 +1385,68 @@ describe('RefundService', () => {
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
     expect(pgBoss.send).toHaveBeenCalled();
-    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, null);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, null, { awaitingProvider: false });
     expect(failedSpy).not.toHaveBeenCalled();
     expect(result.retryEnqueued).toBe(false);
     expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
+  });
+
+  it('polls a matching asynchronous cancel the PG accepted without raising the customer-service CTA', async () => {
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({ totalAmount: 132000, balanceAmount: 132000, isPartialCancelable: true }),
+      // The POST answer carries this exact cancel (same reason and amount) still IN_PROGRESS at the PG.
+      cancelPayment: vi.fn().mockResolvedValue({
+        status: 'DONE',
+        totalAmount: 132000,
+        cancels: [{
+          cancelAmount: 132000,
+          cancelReason: '단순 변심',
+          canceledAt: '2026-07-01T05:00:01.000Z',
+          cancelStatus: 'IN_PROGRESS',
+        }],
+      }),
+    };
+    const pgBoss = { isAvailable: true, send: vi.fn().mockResolvedValue('job-refund-retry-async') };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
+    const context = createContext();
+    // Past the attention threshold: without the awaiting-provider flag this poll would raise the CTA.
+    const processingRefund = createRefund({
+      status: 'processing_at_pg',
+      requestedAt: new Date('2026-07-01T05:00:00.000Z'),
+      processingAtPgAt: new Date('2026-07-01T05:00:01.000Z'),
+      resultCode: 'DONE',
+      retryCount: 4,
+    });
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'insertRequestedRefund').mockResolvedValue(createRefund() as never);
+    vi.spyOn(service as never, 'markRefundProcessing').mockResolvedValue(processingRefund as never);
+    const recordScheduleSpy = vi.spyOn(service as never, 'recordRefundCancelRetrySchedule');
+    const updateSpy = vi.spyOn(service as never, 'updateRefund').mockImplementation((async (
+      _refundId: string,
+      values: Record<string, unknown>,
+    ) => createRefund({ ...processingRefund, ...values })) as never);
+
+    const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledTimes(1);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, 'job-refund-retry-async', { awaitingProvider: true });
+    expect(updateSpy).toHaveBeenCalledWith(
+      'refund-1',
+      expect.objectContaining({
+        customerServiceCtaVisible: false,
+        providerMetadata: expect.objectContaining({ manualReviewRequired: false }),
+      }),
+      undefined,
+    );
+    expect(result.retryEnqueued).toBe(true);
+    expect(result.refundTimeline?.customerServiceCtaVisible).toBe(false);
   });
 
   it('uses policy-built Alipay full-cancel options and finalizes through the shared finalizer', async () => {

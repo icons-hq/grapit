@@ -3,6 +3,14 @@ import type { PaymentFailureDiagnostic } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { reservationPaymentFailureDiagnostics } from '../../database/schema/index.js';
 
+/**
+ * Recorded when payment confirm (or its reconcile job) got a Toss approval it
+ * could not issue (sales cutoff, lost hold, outcome resolved after the
+ * admission window) and refunded it in full. Admin booking views count it as a
+ * compensated cancel, like the async DONE compensation codes.
+ */
+export const CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE = 'CONFIRM_APPROVAL_COMPENSATED';
+
 interface RecordReservationPaymentFailureDiagnosticInput {
   reservationId: string;
   paymentId?: string | null;

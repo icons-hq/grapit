@@ -126,7 +126,22 @@
     "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review.",
     "loading": "Loading the latest help content.",
     "loadError": "We could not load the latest help content. Try again or contact us by email below.",
-    "legalLinks": "Terms and privacy information"
+    "legalLinks": "Terms and privacy information",
+    "noticePostedAt": "Posted {date}",
+    "noticeOriginalLanguage": "Shown in {language} while the translation is being prepared.",
+    "noticeLanguages": {
+      "ko": "Korean",
+      "en": "English"
+    },
+    "noticeCategories": {
+      "general": "General",
+      "urgent": "Urgent",
+      "maintenance": "Maintenance",
+      "payment": "Payment",
+      "refund": "Refund",
+      "signup": "Sign-up",
+      "event": "Event"
+    }
   },
   "booking": {
     "disabled": "Ticket booking will open later",
@@ -137,6 +152,12 @@
           "title": "You are waiting in the booking queue",
           "description": "We are loading your position, ETA, and remaining seats.",
           "helper": "Queue details refresh automatically in a moment."
+        },
+        "notOpen": {
+          "badge": "Not open yet",
+          "title": "Booking has not opened yet. You will join the queue automatically when it opens",
+          "description": "Keep this page open and we will try to enter the queue at the opening time.",
+          "helper": "No need to refresh or click repeatedly. The countdown follows the server clock."
         },
         "waiting": {
           "badge": "Waiting",
@@ -155,6 +176,12 @@
           "title": "Your entry window expired. Please rejoin the queue.",
           "description": "Rejoin the queue to receive a fresh admission window.",
           "helper": "After rejoining, you can still see position, ETA, and remaining seats."
+        },
+        "closed": {
+          "badge": "Unavailable",
+          "title": "There are no showtimes available to book",
+          "description": "Sales have ended or every showtime has already started.",
+          "helper": "Check the event page for other dates or the latest sales status."
         },
         "authRequired": {
           "badge": "Login required",
@@ -181,18 +208,39 @@
           "helper": "If the block continues, wait a while and contact support."
         }
       },
+      "notFound": {
+        "badge": "Unavailable",
+        "title": "We could not find this event",
+        "description": "The link may be wrong, or the event is no longer public.",
+        "helper": "Find the event again from the home page."
+      },
       "metrics": {
         "position": "Current position",
         "eta": "Estimated wait",
         "remainingSeats": "Remaining seats",
         "ready": "Ready to enter",
-        "soon": "Soon"
+        "soon": "Soon",
+        "etaCalculating": "Calculating",
+        "etaWithin": "Up to about {minutes} min",
+        "etaUnavailable": "Not available",
+        "etaOverLimit": "May take over {hours} h",
+        "etaAbout": "About {minutes} min",
+        "etaRange": "About {min}–{max} min",
+        "opensIn": "Opens in",
+        "opening": "Entering now",
+        "openTimeUnknown": "Checking opening time"
       },
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
+      "accessEndingSoon": "Your booking access ends in 2 minutes. If you have chosen seats, continue to payment. After that you will need a new place in the queue.",
       "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
+      "etaInfo": "The estimated wait is the longest wait at the current number of remaining seats. It can grow as seats sell, because fewer buyers are let in at a time. You will move on automatically when your turn comes, so keep this page open.",
+      "openTimeUnknownInfo": "The booking open time has not been announced yet. This page checks about every {seconds} seconds and joins the queue automatically once booking opens.",
+      "soldOutRisk": "More people are ahead of you than there are seats left, so tickets may sell out before your turn.",
       "retryAction": "Try again",
-      "enterNowAction": "Enter now"
+      "enterNowAction": "Enter now",
+      "backAction": "Back to event",
+      "backHomeAction": "Go to home"
     },
     "paymentDeadline": {
       "badge": "Payment deadline",
@@ -300,12 +348,16 @@
       "selectSeat": "Select seat",
       "deselectSeat": "Remove seat",
       "totalSeatCount": "Total seats: {count}",
-      "selectionConflict": "Check seat availability and the per-person ticket limit, then try again."
+      "selectionConflict": "Check seat availability and the per-person ticket limit, then try again.",
+      "showtimeClosed": "This showtime has already started and can no longer be booked.",
+      "selectionResynced": "Some seats changed hold status, so your selection was updated. Please check your selected seats.",
+      "selectionVerifyFailed": "We couldn't confirm the hold on your selected seats. Please try again in a moment."
     }
   },
   "locale": {
     "suggestion": "View this page in English?",
-    "dismiss": "Later"
+    "dismiss": "Later",
+    "localTime": "Local time"
   },
   "legal": {
     "fallbackLabel": "Reviewing the English legal notice"
@@ -483,7 +535,8 @@
       "verificationLogin": "Your email is verified. Log in to continue your booking.",
       "continue": "Continue",
       "showPassword": "Show password",
-      "hidePassword": "Hide password"
+      "hidePassword": "Hide password",
+      "sessionRestorePending": "The connection is unstable, so we are checking your sign-in again. You will be taken back automatically in a moment."
     },
     "validation": {
       "email": "Enter a valid email address",
@@ -557,6 +610,8 @@
       "confirmFailedBody": "Check your booking history or try payment again.",
       "confirmUnknownBody": "We could not confirm the payment yet. Try checking again shortly or check your booking history.",
       "retryStatus": "Check status again",
+      "retryConfirm": "Send payment confirmation again",
+      "confirmRetryBody": "Your payment was authenticated, but we could not finish confirming it yet. Please request confirmation again in a moment. You will only be charged once.",
       "statusCheckFailed": "Could not check payment status.",
       "deadlineExpired": "The payment window expired at {deadline}.",
       "pendingDeadline": "This order will wait for payment status until {deadline}."
@@ -756,6 +811,7 @@
         "Other"
       ],
       "title": "Refund and seat reopening notice",
+      "deadlineTitle": "Cancellation deadline",
       "description": "Cancel individual seats from their ticket cards, or cancel the whole booking. Review the refund and remaining tickets before confirming.",
       "reasonLabel": "Cancellation reason",
       "reasonPlaceholder": "Select a cancellation reason",

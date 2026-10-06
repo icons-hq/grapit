@@ -33,7 +33,7 @@ flowchart LR
   Job --> Valkey
 ```
 
-The Job boots only the modules needed for pg-boss, payment/refund retry, QR email, cancelled-seat release, and pending-payment expiration. It runs one immediate expiration sweep, processes queued jobs for 30 seconds, and closes pg-boss, Nest, Redis, and PostgreSQL clients. At a five-minute schedule this is roughly 262,800 vCPU-seconds per month before startup variance, close to the Cloud Run Jobs free allocation.
+The Job boots only the modules needed for pg-boss, payment/refund retry, payment confirm reconcile, QR email, cancelled-seat release, and pending-payment expiration. It runs one immediate expiration sweep, processes queued jobs for 30 seconds, and closes pg-boss, Nest, Redis, and PostgreSQL clients. A failed sweep is logged and still keeps the 30-second queue window open; the execution then exits non-zero. An execution whose pg-boss could not start or register workers also exits non-zero, so either case raises the failed-execution alert. At a five-minute schedule this is roughly 262,800 vCPU-seconds per month before startup variance, close to the Cloud Run Jobs free allocation.
 
 ## Non-negotiable gates before mutation
 
@@ -152,13 +152,23 @@ gcloud memorystore instances create grabit-valkey-managed-demo \
 
 Some gcloud help output omits `custom-pico` even though the regional API accepts it. Submit the create request and verify the resulting instance reports `CUSTOM_PICO`; do not silently substitute `shared-core-nano` or `standard-small`.
 
+This demo instance keeps the Memorystore default `maxmemory-policy=volatile-lru` and has no maintenance window. Both are acceptable only while no sale is scheduled: a node restart or maintenance event wipes seat locks, confirmation leases and queue positions. `scripts/provision-valkey.sh` (single `shared-core-nano`, zero replicas) is legacy/demo only and refuses to run without `--legacy-demo`.
+
 After the new endpoint is active:
 
 1. confirm zero active seat-lock and admission-queue keys on the original instance;
 2. add a new `redis-url` secret version without printing the URL;
 3. set GitHub Actions repository variable `VALKEY_MODE=standalone`;
-4. deploy and verify API health reports the standalone managed Valkey connection;
-5. keep the original `grabit-valkey` unchanged for at least 24 hours.
+4. deploy and verify API health reports the standalone managed Valkey connection, then run the Valkey smoke against the new instance by name (the script has no default instance and checks that the Cloud Run-bound `redis-url` secret version points to a writable endpoint of that instance):
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=grabit-valkey-managed-demo GRABIT_VALKEY_EXPECTED_MODE=standalone \
+   GRABIT_VALKEY_MIN_REPLICAS=0 GRABIT_SALES_OPEN_AT=none \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check health
+   ```
+
+   The managed-demo posture deliberately overrides the replica minimum. The smoke still requires `maxmemory-policy=noeviction` unless `GRABIT_VALKEY_MAXMEMORY_POLICY` is set; a failure there is a real eviction risk for seat-lock and queue keys, not a smoke bug;
+5. keep the original `grapit-valkey` unchanged for at least 24 hours.
 
 ## Phase 3 — Cloud Run services and bounded worker
 
@@ -171,11 +181,13 @@ Set these GitHub Actions repository variables immediately before the managed-dem
 - `BACKGROUND_PROCESSING_ENABLED=false`;
 - `VALKEY_MODE=standalone` after the Valkey secret cutover.
 
-Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, continuous background processing, cluster Valkey). In managed-demo mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
+`BOOKING_ENABLED` is a separate repository variable shared by API, Web and the bounded worker; when it is unset the workflow deploys `true`, which preserves the current production behaviour. See [Sitewide booking kill switch](#sitewide-booking-kill-switch).
+
+Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, continuous background processing, cluster Valkey). In managed-demo mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The one exception is the in-process view-count flush timer (every 10 seconds, in every API instance). While throttled it can fire late, when the next request arrives. Each flush is a single PostgreSQL message that commits before replying, so a throttled instance never holds a `performances` row lock idle in transaction. Unflushed views of an instance that is scaled in without a graceful shutdown are lost; they only affect popularity ordering. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
 
 API deploy uses `--set-cloudsql-instances`, not `--add-cloudsql-instances`, so the Secret-selected connection is the only mounted Cloud SQL instance after a cutover or rollback. Change `CLOUD_SQL_CONNECTION_NAME` before deployment and verify the resulting revision annotation contains exactly the intended instance.
 
-The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI.
+The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI, together with the deploy guards and Valkey posture check under `scripts/managed-demo/*.test.mjs`.
 
 Safe rollout order is two-stage: first deploy with warm defaults to create/smoke the Job, then run the Scheduler script, set the managed-demo variables, and manually dispatch the deploy workflow again. Do not set `API_MIN_INSTANCES=0` before the Scheduler job exists.
 
@@ -239,9 +251,118 @@ Required canary checks:
 - a deliberate origin redirect confirming no `run.app` hostname leaks;
 - Worker rollback using the recorded previous version ID.
 
+Client IP trust (edge secret):
+
+The API trusts a forwarded client IP only from a request carrying the shared
+edge secret, once `EDGE_PROXY_SHARED_SECRET` is set on the API. The Worker
+sends that secret in `x-grabit-edge-secret` and sends the visitor's
+`cf-connecting-ip` in `x-grabit-client-ip`. It also drops any visitor-supplied
+copies of both headers. Throttling, consent and audit IPs depend on this.
+
+Throttle bucket keys in Valkey are hashed, so check client IP resolution from
+the outside. `GET /api/v1/auth/email-availability` allows 10 requests per
+minute per client IP and reports what is left in `X-RateLimit-Remaining`
+(covered by `throttle-http.spec.ts`):
+
+```bash
+# Prints the per-IP budget left for the client IP the API resolved for you.
+probe() {
+  curl -sS -o /dev/null -D - "$@" \
+    "${API_BASE:-https://api.heygrabit.com}/api/v1/auth/email-availability?email=ip-probe@example.com" \
+    | tr -d '\r' | awk -F': ' 'tolower($1) == "x-ratelimit-remaining" { print $2 }'
+}
+```
+
+Two-network check: within one minute, run `probe` twice on network A (for
+example the office line) and once on network B (for example a phone
+hotspot). A must print falling values such as `9` and `8`, and B must start
+again near the top (`9`). If B continues A's count, or a probe prints far less
+than `9` while nobody else on your network uses the site, the API resolves
+visitors to shared Cloudflare edge IPs.
+
+Roll it out in this order, so no step ever leaves the API without a usable
+client IP:
+
+0. Before the API code that drops the `True-Client-IP` and `X-Forwarded-For`
+   fallbacks reaches `main` (a push to `main` deploys the API), confirm that
+   origin requests carry `cf-connecting-ip`. Cloudflare documents that it sets
+   this header to the visitor IP on Worker subrequests to non-Cloudflare
+   origins, and that a Worker cannot change it. This Worker has not been
+   measured yet. From one network, within one minute, against the API still
+   serving the old code:
+
+   ```bash
+   probe -H 'True-Client-IP: 192.0.2.10' -H 'X-Forwarded-For: 192.0.2.10'
+   probe -H 'True-Client-IP: 192.0.2.11' -H 'X-Forwarded-For: 192.0.2.11'
+   ```
+
+   The old code reads `cf-connecting-ip` first and the forged headers only
+   when it is missing. Falling values (`9`, then `8`) mean the header arrives:
+   continue with step 1. Equal values mean it does not. Then stop, and do
+   step 2 together with the API code instead, so the API never runs without
+   the secret (Worker secret first, then the API binding in the same deploy
+   as the code).
+1. Deploy the API and Worker code. With the secret unset on both, the API
+   keeps the Cloudflare-peer `cf-connecting-ip` fallback. As soon as the new
+   API revision serves traffic, run the two-network check, and repeat the two
+   forged-header probes from step 0: their values must now keep falling, since
+   the new code ignores both headers. If the two-network check fails, route
+   traffic back to the previous revision at once, then take the step 0 "equal
+   values" path:
+
+   ```bash
+   gcloud run services update-traffic grabit-api \
+     --project=grapit-491806 \
+     --region=asia-northeast3 \
+     --to-revisions=PREVIOUS_REVISION=100
+   ```
+
+   While traffic is pinned, a new deploy does not receive it. After the fix
+   ships, return traffic with `--to-latest` and repeat the check.
+2. Generate one random value of at least 32 bytes. Store it as Worker secret
+   `EDGE_PROXY_SHARED_SECRET` (`wrangler secret put EDGE_PROXY_SHARED_SECRET
+   --env production`). Store the same value in Secret Manager, then bind it
+   to the API service as `EDGE_PROXY_SHARED_SECRET`.
+3. Deploy the API with the binding and run the two-network check. Then probe
+   the `run.app` origin directly, twice, with different forged
+   `x-grabit-client-ip` values (`API_BASE=<run.app URL> probe -H
+   'x-grabit-client-ip: 192.0.2.20'`, then `192.0.2.21`). Without the secret
+   the API must ignore them, so the values keep falling.
+
+While the API binding is set, a request without a matching secret is
+identified by its peer IP. Traffic from a Worker version that does not send the
+secret, or from the GCP load-balancer fallback, therefore collapses into a few
+Cloudflare edge IPs. Anonymous auth and every other per-IP limit then return
+429 for everyone, which is the 2026-05-17 shared-IP incident again. Every
+rollback below starts by removing the API binding unless the target still
+sends the current secret.
+
+To roll back the edge secret itself, remove the API binding and deploy the API
+first, then delete the Worker secret.
+
+Rotate the secret without downtime. The API accepts a comma-separated list;
+the Worker always holds exactly one value:
+
+1. Generate the new value. Add a Secret Manager version containing
+   `OLD,NEW` and deploy the API. Both values are now accepted.
+2. Set the Worker secret to `NEW` only (`wrangler secret put
+   EDGE_PROXY_SHARED_SECRET --env production`). That publishes a new Worker
+   version immediately.
+3. Repeat the two-network check from step 3 above.
+4. Add a Secret Manager version containing `NEW` only and deploy the API.
+
 Only after at least 24 hours of clean canary evidence may the forwarding rule, HTTPS proxy, URL map, backend services, NEGs, and unused address be deleted. Capture each resource as YAML before deletion. Deletion order and exact resource names are in the baseline ledger.
 
 Worker rollback:
+
+Before either rollback below, check the API binding. If the API has
+`EDGE_PROXY_SHARED_SECRET` bound, and the rollback target does not send a
+secret the API accepts, remove the binding and deploy the API first. Such a
+target is a Worker version from before the edge-secret code, a version
+deployed with a different secret, or route removal to the load balancer. Run
+the rollback only after that API revision serves traffic. Otherwise the
+rollback collapses every client into Cloudflare edge IPs (see Client IP trust
+above).
 
 If a previously verified production Worker version exists, use a version rollback:
 
@@ -275,24 +396,222 @@ Use this path during the retention window:
 3. add a new `redis-url` version containing the same value as preserved version `1`, and set `VALKEY_MODE=cluster`;
 4. set `BACKGROUND_PROCESSING_ENABLED=true`, then deploy the preserved image SHA or route Cloud Run traffic to `grabit-api-00242-2vn` and `grabit-web-00191-zw8`;
 5. disable `grabit-background-worker-every-5m` only after an API instance is kept warm and its continuous workers are verified;
-6. rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
+6. if the serving API revision has `EDGE_PROXY_SHARED_SECRET` bound, remove the binding and deploy the API first (the load balancer path sends no edge secret); then rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
 7. run the full smoke checklist and reconcile any writes made after the cutover. Database rollback is not a blind pointer flip if both databases accepted writes; choose a source of truth and reconcile first.
 
 ## Restore for an actual ticket opening
 
 Begin this process at least 14 days before sales open. The old baseline is a restoration reference, not proof that it is sale-ready.
 
-1. Set `BOOKING_ENABLED=false` while capacity changes and verification are in progress.
+1. Close the sitewide gate with the [kill-switch procedure](#sitewide-booking-kill-switch): set repository variable `BOOKING_ENABLED=false` first, then update the live API/Web/worker. Keep it closed while capacity changes and verification are in progress. Every deploy reads the same variable, so merges during preparation cannot reopen it.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
-3. Create a new Cluster Mode Enabled Valkey instance sized from load evidence, with replicas where availability requires them. Set `VALKEY_MODE=cluster`.
-4. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings).
-5. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
-6. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.
-7. Pass load/concurrency, DB backup restore, signup/login, SMS/email, payment/webhook/refund, queue/seat-lock, QR/check-in/offline sync, admin write, logs/alerts, and rollback rehearsals.
-8. Enable `BOOKING_ENABLED=true` only after the evidence gates pass.
+3. Verify the PostgreSQL connection budget before load tests: `API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)` for the API, plus `DB_POOL_MAX + worker pg-boss cap` for the worker, plus `DB_CONNECTION_RESERVE`, must not exceed `max_connections` minus reserved connections. The pg-boss cap is the `PGBOSS_POOL_MAX` repository variable when it is set (the Deploy workflow then passes it to the API service and the worker Job as `RUNTIME_PGBOSS_POOL_MAX`); when it is unset, each process keeps its code default, `3` with background processing (the worker Job, a warm API) and `1` for a producer-only API. The deploy preflight counts the same caps. Size `DB_POOL_MAX` from a single-showtime confirm load test that records pool wait and showtime-lock wait. Then set `DB_CONNECTION_BUDGET_ENFORCE=true` so the deploy workflow's database preflight fails instead of only warning when the posture can exhaust connections. The formula counts one revision. During a deploy rollout, old and new revision instances overlap until the old ones drain, so either size `DB_CONNECTION_RESERVE` for that overlap or deploy only outside peak traffic.
+   - Pass the [PostgreSQL connection budget](#postgresql-connection-budget) gate on the target instance: record `max_connections`, choose `DB_POOL_MAX` and `PGBOSS_POOL_MAX` within the budget, and decide `DB_STATEMENT_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`. Set them as repository variables of the same name; the Deploy workflow passes a set value to the API and worker (see [Optional runtime settings](#optional-runtime-settings)). Confirm them on the deployed revision and in `pg_stat_activity` before step 10.
+4. Create a new Cluster Mode Enabled Valkey instance sized from load evidence. These requirements are mandatory:
+   - `--replica-count` of at least `1` with multi-zone distribution, so a node failure or maintenance fails over instead of wiping state;
+   - an explicit weekly window (`--maintenance-policy-weekly-window=day=DAY,startTime=hours=HOUR`, UTC) that does not fall on the opening day or venue-entry days;
+   - `maxmemory-policy=noeviction` (`--engine-configs=maxmemory-policy=noeviction`) with memory headroom from the load test. Seat locks, confirmation leases and queue keys carry TTLs, so `volatile-*` policies evict them first;
+   - persistence is optional because Valkey state is transient by design.
+
+   Set `VALKEY_MODE=cluster`, then record the posture as Gate 5 evidence:
+
+   ```bash
+   gcloud memorystore instances describe INSTANCE \
+     --project=grapit-491806 --location=asia-northeast3 --format=json > valkey.json
+   node scripts/managed-demo/verify-valkey-sale-posture.mjs valkey.json \
+     --protect=OPEN_START_ISO/OPEN_END_ISO \
+     --protect=ENTRY_START_ISO/ENTRY_END_ISO
+   ```
+
+   The check fails for zero replicas, single-zone placement, `shared-core-nano`, an evicting policy, a missing weekly window, or a weekly or already scheduled maintenance occurrence within six hours of a protected window. If `maintenanceSchedule` collides, move it with `gcloud memorystore instances reschedule-maintenance INSTANCE --location=asia-northeast3 --reschedule-type=SPECIFIC_TIME --schedule-time=UTC_ISO` and re-run the check. Rescheduling is possible up to 14 days from the original schedule, but not within one hour of its start. Memorystore sends maintenance notices at least one week ahead only to subscribed contacts, so subscribe the on-call address before the opening week.
+
+   After setting `VALKEY_MODE=cluster` and deploying, run the Valkey smoke with the new instance named explicitly. It also checks that the Cloud Run-bound `redis-url` secret version points to a writable endpoint of that instance. Its defaults are the opening posture: at least one replica, `noeviction`, and no maintenance window or scheduled maintenance from one hour before `GRABIT_SALES_OPEN_AT` until `GRABIT_SALES_PROTECTED_HOURS` (default 6) after it:
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=<new-instance-id> GRABIT_VALKEY_EXPECTED_MODE=cluster \
+   GRABIT_SALES_OPEN_AT=<opening ISO-8601 with offset, e.g. 2026-11-01T20:00:00+09:00> \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check all
+   ```
+
+   Do not reuse the retained `grapit-valkey` or `grabit-valkey-managed-demo` names in the smoke after a cutover; the smoke fails when `redis-url` does not point at the named instance.
+5. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings). Confirm `API_MAX_INSTANCES`/`API_MIN_INSTANCES` are not the managed-demo `4`/`0`.
+6. Size API capacity for WebSockets, not only HTTP. Every waiting buyer holds one `/queue` Socket.IO connection, and an admitted buyer can also hold a `/booking` connection. Each one occupies a Cloud Run concurrency slot next to lock, prepare and confirm requests. Require `API_MAX_INSTANCES × API_CONCURRENCY ≥ 1.5 × (expected waiting + 2 × expected admitted + peak in-flight HTTP)`, adjusting `API_MAX_INSTANCES` or `API_CONCURRENCY`. The workflow pins the API request timeout to `3600s`, so sockets are not cut at the 300s default.
+7. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
+8. Prewarm is optional. If used, keep `grabit-prewarm-scale-up` and `grabit-prewarm-step-down` paused until the opening day. Schedule scale-up at least 15 minutes before the sale, and step-down only after the queue drains and traffic falls. Prewarm changes the service-level minimum, so it creates no new revision. Requests above the live API maximum are rejected. HTTP 200 means the service read back settled (not reconciling, Ready) with the requested minimum. `202` with `state: pending` means Cloud Run accepted the update but it had not settled within `PREWARM_OPERATION_WAIT_MS` (default 45 seconds); read the service-level minimum back from the Cloud Run Admin API v2 as in [prewarm live verification](#prewarm-live-verification), because `gcloud run services describe` prints the v1 resource without `scaling.minInstanceCount`. The API confirms completion through `run.services.get`, which the runtime service account already holds on `grabit-api`. It never polls the operation, which would need a project-level `run.operations.get`. If prewarm is not used, keep both jobs paused. See [prewarm live verification](#prewarm-live-verification) before relying on it.
+9. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.
+10. Pass load/concurrency (including the concurrent WebSocket count from step 6), DB backup restore, signup/login, SMS/email, payment/webhook/refund, queue/seat-lock, QR/check-in/offline sync, admin write, logs/alerts, and rollback rehearsals.
+11. Set `MIGRATION_FREEZE=true` from the day before the opening until venue entry ends. Hotfixes without schema changes still deploy; any pending migration fails the deploy before it touches the database.
+12. Record the go/no-go decision. `/admin/cutover` shows `finalEnableAllowed:true` only for a Gate Ledger that names this opening (`opening.id`, `label`, `performanceIds`, `opensAt`) and was generated within `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` (default 30). The packaged phase26 ledger is a historical record and is reported as stale and unscoped. To use the screen for a new opening, store a regenerated ledger as a Secret Manager secret. Mount it on a path the image does not contain and that is not a symlink. `/var/run` is a symlink to `/run` in the Alpine base image, so do not use it. First verify on a tagged revision that takes no traffic:
+
+   ```bash
+   gcloud run services update grabit-api --project=grapit-491806 --region=asia-northeast3 \
+     --update-secrets=/secrets/grabit-cutover/ledger.json=SECRET:latest \
+     --update-env-vars=CUTOVER_GATE_LEDGER_PATH=/secrets/grabit-cutover/ledger.json \
+     --no-traffic --tag=ledger-check
+   ```
+
+   Call `GET /api/v1/admin/cutover` on the `ledger-check` tag URL with an admin session. Confirm it returns this opening's `opening.id` and `freshness.state: fresh`, not `runtime_artifact_unreadable`. Then move traffic with `gcloud run services update-traffic grabit-api --to-latest`, remove the tag, and set repository variable `CUTOVER_GATE_LEDGER_PATH=/secrets/grabit-cutover/ledger.json` so the next deploy keeps it. Deploys merge secrets, so the mount persists. Without a fresh ledger, record the per-performance publication, sale-status and sale-time checks and the owner approval outside the ledger as the explicit waiver that Gate 1 requires.
+13. Reopen `BOOKING_ENABLED=true` only after the evidence gates pass, using the kill-switch procedure in reverse or a manual Deploy dispatch with `allow_booking_reopen=true`.
+
+## Sitewide booking kill switch
+
+`BOOKING_ENABLED` is one sitewide gate. Per-performance opening is still controlled by publication, sale status and sale time. When it is false, the API rejects non-admin seat lock, prepare, provider handoff (`POST /payments/branch`, including a resumed Prepared Checkout) and confirm with 403 `예매는 추후 오픈 예정입니다`, and Web `/api/runtime-flags` reports `bookingEnabled:false`. API, Web and the worker get the same repository variable at deploy time.
+
+Close (emergency or preparation):
+
+```bash
+gh variable set BOOKING_ENABLED --body false
+gcloud run services update grabit-api --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+gcloud run services update grabit-web --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+gcloud run jobs update grabit-background-worker --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+```
+
+Update the API first. It stops new seat locks and Toss confirm calls, so no new payment is approved through the confirm path; payments Toss has already approved still complete through the webhook and reconcile paths. Then update Web so the CTA and badges match. Verify that `https://heygrabit.com/api/runtime-flags` returns `bookingEnabled:false`, a non-admin seat lock or prepare returns 403, and API health returns 200.
+
+If a Deploy run is in progress when you close (`gh run list --workflow=deploy.yml --status=in_progress`), wait for it to finish, then repeat the three checks above. If the flag reads `true` again, run the three close commands again. To stop a reopen run (`allow_booking_reopen=true`) altogether, cancel it with `gh run cancel <run-id>`; it keeps a close made during the run (below), but its remaining jobs still deploy until cancelled.
+
+Reopen only after the gates pass. Set the variable to `true` **before** any gcloud reopen, then run the same three updates with `BOOKING_ENABLED=true` (or dispatch the Deploy workflow with `allow_booking_reopen=true`), and verify the runtime flag and a buyer smoke. A gcloud-only reopen that leaves the variable at `false` closes sales again on the next push to `main`.
+
+What the Deploy workflow guarantees:
+
+- At the start of a run, the migrate job reads the live API and Web values and each service's latest revision (`status.latestCreatedRevisionName`) and hands them to the deploy jobs. It fails the whole deploy before touching the database if it would switch a live `false` (or unreadable) service to `true`, unless the run is a manual dispatch with `allow_booking_reopen=true`. An approved reopen is shown as a warning annotation and in the step summary.
+- `deploy-api` and `deploy-web` read their own service again right before `deploy-cloudrun`. That is several minutes later, after image builds and the worker smoke. In a normal run, a service closed in the meantime is deployed with `false` and stays closed, and the run shows a warning. If the live value cannot be read at that point, the job fails without deploying that service.
+- In a run with `allow_booking_reopen=true`, the same re-read is compared with the start-of-run snapshot. A closed service that was open at the start, or whose latest revision changed during the run (a `gcloud run services update` that changes the service, such as the close above on an open service, creates a revision), was closed during the run: the job deploys `false` and shows a warning, and a new reopen dispatch is needed. Only a service that was already closed at the start and is unchanged is reopened, with a warning and step summary. If the snapshot or a revision cannot be read, the approved run reopens with a warning that a close during the run could not be ruled out; check the flag after the run. The same applies when the live value cannot be read right before deploy, but only for a service that was closed at the start (or whose start-of-run value is unknown). A service that was open at the start and cannot be read right before deploy fails its deploy job without deploying, because the approval covers only services that were closed when the run started; re-run the deploy once the service can be read. Service-level prewarm creates no revision, but a `PREWARM_SCALING_SCOPE=template` prewarm does, so a reopen run that overlaps one keeps the service closed.
+- A close made during a run is therefore preserved in both kinds of run. The remaining window is the few seconds between that re-read and the Cloud Run update, which is why the post-run check above exists.
+- Closing through the variable never needs approval. When a deploy switches a live `true` service to `false`, the run shows a warning annotation and step summary, so an unintended close is visible.
+- The background worker receives the variable as is. It serves no buyer request, so its value does not open or close sales.
+
+## Deploy safety settings
+
+The Deploy workflow validates these repository variables before any job changes the database or Cloud Run:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOOKING_ENABLED` | `true` | Sitewide gate for API, Web and worker. Must be exactly `true` or `false`. |
+| `MIGRATION_LOCK_TIMEOUT` | `5s` | `lock_timeout` for every migration-job session, applied through `PGOPTIONS`. |
+| `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
+| `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
+| `API_CONCURRENCY` | `250` | API Cloud Run concurrency. |
+| `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `5`, `false` | Connection budget inputs. The budget counts each process's real pg-boss pool cap: the `PGBOSS_POOL_MAX` runtime variable when it is set (see [Optional runtime settings](#optional-runtime-settings)), otherwise `3` for the worker Job and an API with background processing, and `1` for a producer-only API (`BACKGROUND_PROCESSING_ENABLED=false`). With the variable unset, the preflight also reads the live API service: a `PGBOSS_POOL_MAX` an earlier deploy left there is counted (the larger of it and the code default) with a removal warning. `true` makes an over-budget posture fail the deploy. |
+| `CUTOVER_GATE_LEDGER_PATH`, `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` | packaged phase26 ledger, `30` | Runtime-replaceable Gate Ledger and its freshness limit. |
+| `PREWARM_SCALING_SCOPE` | `service` | `service` patches the service-level minimum. `template` is the revision-template fallback; see [prewarm live verification](#prewarm-live-verification). |
+| `PGBOSS_START_MAX_ATTEMPTS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`, `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | unset (code defaults) | Runtime settings passed to the API and worker only when set. See [Optional runtime settings](#optional-runtime-settings). |
+| `SMS_ALLOWED_COUNTRIES`, `SMS_GLOBAL_SEND_LIMIT_PER_MINUTE`, `SMS_GLOBAL_SEND_LIMIT_PER_HOUR`, `SMS_LOCAL_RATE_LIMITS_ENABLED` | unset (all countries, `300`, `3000`, on) | SMS abuse limits, passed to the API only when set. |
+
+Drizzle applies all pending migrations in one transaction. If a migration cannot get its lock within `MIGRATION_LOCK_TIMEOUT`, it fails and rolls back instead of queueing every reservation and payment query behind it, and the API and Web deploy jobs do not run. Re-run the deploy in a quiet period. The database preflight reads the session settings back and refuses to migrate if `PGOPTIONS` was not applied. Build large indexes with `CREATE INDEX CONCURRENTLY` through a separate approved runbook, because the single migration transaction cannot run it.
+
+Both timeouts apply per statement, not per transaction. Once an earlier statement holds a hot-table lock, every later statement in the batch can run up to `MIGRATION_STATEMENT_TIMEOUT` while that lock stays held. Cloud SQL runs PostgreSQL 16, which has no `transaction_timeout` (added in 17). Ship hot-table DDL in its own deploy, without long backfills in the same batch. The preflight warns when more than one migration is pending.
+
+The API service is deployed with `--timeout=3600` and two HTTP probes on separate routes:
+
+- Startup probe on `/api/v1/health` (period 1s, timeout 1s, 180 failures). It pings Valkey, so a new revision takes traffic only once Valkey answers, the same gate bootstrap already applies (Valkey ping and Socket.IO subscriber readiness before the port opens). If Valkey is unreachable during a deploy, the new revision never becomes ready and traffic stays on the previous one.
+- Liveness probe on `/api/v1/health/live` (period 10s, timeout 5s, 6 failures). It does no dependency I/O and fails only while the shared Valkey client or the Socket.IO subscriber sits in the ioredis terminal `end` state. A Valkey outage or failover (clients `connecting`/`reconnecting`) and a Cloud SQL outage keep it up, so they never restart instances. The clients reconnect indefinitely and an unexpected `end` is reconnected after about one second (audit #7), so only a client that has stopped recovering fails six samples in a row, and its instance is replaced after about one minute.
+
+Keep both routes free of database checks, and keep Valkey I/O out of `/api/v1/health/live`. `PREWARM_MAX_MIN_INSTANCES` follows `API_MAX_INSTANCES`.
+
+Probe trade-off: Cloud Run stops a container that fails liveness with SIGKILL, without graceful shutdown, so the liveness route watches only a state that a restart fixes. During a Valkey outage the instances keep running: seat locks, the queue and throttling fail until Valkey returns, requests issued in the outage fail within seconds (offline-queue flush), and the clients reconnect on their own. Restarting them would only drop queue and seat sockets and in-flight confirm requests. New instances (scale-out or a deploy) cannot start while Valkey is down, because bootstrap and the startup probe need it, so a Valkey failover should still finish quickly; the replica requirement in step 4 covers that. Lengthen the liveness `failureThreshold` only for a reason other than Valkey availability, because a wedged instance keeps receiving traffic for the extra time.
+
+### Prewarm live verification
+
+The service-level PATCH is the documented Cloud Run API ([minimum instances](https://cloud.google.com/run/docs/configuring/min-instances)). Phase 24-21 (2026-05) switched to `template.scaling.minInstanceCount`. The only live failure recorded then was a missing self `roles/iam.serviceAccountUser` binding, and that binding is now in place. The service-level form has not been exercised against production since. Before an opening that relies on prewarm, verify it once in a quiet period:
+
+1. Resume both Scheduler jobs only for the test. Run scale-up with a small value no higher than the API maximum, wait for HTTP 200, then run step-down.
+2. In Cloud Audit Logs, the `google.cloud.run.v2.Services.UpdateService` entries must show `scaling.minInstanceCount`, not `template.scaling`. `gcloud run revisions list --service=grabit-api` must show no new revision.
+3. Read the service-level minimum back from the Cloud Run Admin API v2; it must equal the stepped-down value. `gcloud run services describe` prints the v1 resource, where `scaling.minInstanceCount` does not exist, so a `--format='value(scaling.minInstanceCount)'` readback prints nothing and proves nothing:
+
+   ```bash
+   curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+     "https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/asia-northeast3/services/grabit-api" \
+     | jq '.scaling.minInstanceCount // 0'
+   ```
+
+If Cloud Run rejects the service-level update (Scheduler sees `503 PREWARM_SCALE_UPDATE_FAILED:400`), set repository variable `PREWARM_SCALING_SCOPE=template` and redeploy. The template form rolls a new revision on every call, so step down only after traffic falls. Cloud Run applies the highest minimum, so clear the level you leave: when moving to `template`, run `gcloud run services update grabit-api --min=0` to clear the service-level minimum; when moving back to `service`, the redeploy resets the template minimum to `API_MIN_INSTANCES`. Pause both jobs again after the test.
 
 Official references: [Cloud Run minimum instances and scale to zero](https://cloud.google.com/run/docs/configuring/min-instances), [Cloud Run Jobs v2 patch](https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs/patch), [Cloud Run WebSockets](https://cloud.google.com/run/docs/triggering/websockets), [Cloud SQL instance settings](https://cloud.google.com/sql/docs/postgres/instance-settings), [Memorystore for Valkey node specifications](https://cloud.google.com/memorystore/docs/valkey/instance-node-specification), [Cloudflare Worker Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), and [Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+
+### Optional runtime settings
+
+`deploy-guards.mjs runtime-env` passes these repository variables to Cloud Run only when they are set; a blank or missing variable keeps the code default of each process. `validate-config` rejects an invalid value before migrations run.
+
+| Variable | API | Worker | Code default when unset |
+| --- | --- | --- | --- |
+| `PGBOSS_POOL_MAX` | yes | yes | `3` with background processing, `1` for a producer-only API. The connection budget counts the set value for both processes. Unset, it counts the code default for the worker Job, and for the API the larger of the code default and any value still on the API service (see below). |
+| `PGBOSS_START_MAX_ATTEMPTS` | yes | yes | `3` |
+| `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` | yes | yes | no limit |
+| `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | yes | yes | on; `false` stops the abandoned handoff review |
+| `SMS_ALLOWED_COUNTRIES`, `SMS_GLOBAL_SEND_LIMIT_PER_MINUTE`, `SMS_GLOBAL_SEND_LIMIT_PER_HOUR`, `SMS_LOCAL_RATE_LIMITS_ENABLED` | yes | no | all countries, `300`, `3000`, on |
+
+`DB_APPLICATION_NAME` is not passed: the API (`grabit-api`) and the worker (`grabit-background-worker`) set different defaults so `pg_stat_activity` can tell them apart.
+
+`ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS` (default `60000`, `0` disables the sweep), `PREWARM_OPERATION_WAIT_MS` (default `45000`), `DEEPL_AUTH_KEY` and `EDGE_PROXY_SHARED_SECRET` are not passed by the workflow at all. Set them on the API service by hand when needed; deploys keep service env vars and secret bindings they do not set.
+
+The worker Job is rebuilt from scratch on every deploy, so removing a variable removes the setting there. The API service merges environment variables, so a removed variable keeps its last value on the service. Remove it explicitly after the deploy:
+
+```bash
+gcloud run services update grabit-api --project="$GCP_PROJECT_ID" --region=asia-northeast3 \
+  --remove-env-vars=DB_STATEMENT_TIMEOUT_MS
+```
+
+For `PGBOSS_POOL_MAX` the Deploy workflow's database preflight catches this case: it reads the API description the booking guard saved (`db-preflight --api-service-json`), and with the variable unset it counts the API pg-boss cap as the larger of the leftover value and the code default and shows a warning with the same `--remove-env-vars=PGBOSS_POOL_MAX` command. If the API service cannot be read, it counts the code default and adds a notice. The worker cap stays the variable or the code default `3`.
+
+### PostgreSQL connection budget
+
+Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow default `4`, managed-demo `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API; a set repository variable of the same name becomes the runtime pool of the API and the worker Job). The Deploy workflow's database preflight counts each process's cap the same way. With the variable unset it also counts a `PGBOSS_POOL_MAX` an earlier deploy left on the API service (the larger of that value and the code default, with a warning to remove it). A leftover `3` on the managed demo makes the preflight require `4 × (2 + 3) + (2 + 3) + 5 = 30` of 22 and report over budget until the value is removed. Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, `BACKGROUND_PROCESSING_ENABLED`, or the Cloud SQL tier, verify:
+
+```text
+API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)
++ worker Job (DB_POOL_MAX + worker pg-boss cap), unless the Job is paused
++ rollout overlap (old and new revisions both running during a deploy)
++ migration, Cloud SQL Auth Proxy, and operator sessions
+< max_connections − superuser_reserved_connections
+```
+
+- Workflow defaults at ticket opening: `40 × (4 + 3) = 280` for the API. Read the real limits with `SHOW max_connections;` and `SHOW superuser_reserved_connections;` on the target instance; do not assume a tier default.
+- Do not deploy during a sale window. If a deploy cannot be avoided, budget a second API term for the overlapping revision.
+- Managed demo (`db-f1-micro`): `4 × (2 + 1) + (2 + 3) = 17` before rollout overlap and operator sessions. With the default reserve `5` the preflight requires 22, which fits `max_connections` 25 minus 3 superuser-reserved connections exactly: no over-budget warning, but no headroom either. This holds only while `grabit-api` has no `PGBOSS_POOL_MAX` (`gcloud run services describe grabit-api --format=yaml | grep -A1 PGBOSS_POOL_MAX` prints nothing). Keep manual sessions short and avoid parallel deploys.
+- During the load test, record pool usage per process and pool. Expected `application_name` values are `grabit-api`, `grabit-api-pgboss`, `grabit-background-worker`, and `grabit-background-worker-pgboss` (a value embedded in `DATABASE_URL` overrides them):
+
+  ```sql
+  SELECT application_name, state, count(*)
+  FROM pg_stat_activity
+  WHERE datname = current_database()
+  GROUP BY 1, 2
+  ORDER BY 3 DESC;
+  ```
+
+- Treat any `timeout exceeded when trying to connect` log line during the confirm-concentrated load test as a failed capacity gate: raise `DB_POOL_MAX` within the budget above or lower API concurrency, then repeat the test.
+- `DB_STATEMENT_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` are unset by default, so production has no statement or idle-in-transaction limit until the repository variables of the same name are set (see [Optional runtime settings](#optional-runtime-settings)). Set them only from load evidence:
+  - `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` must exceed the longest external call made inside a transaction. The legacy reservation cancel awaits a Toss cancel inside its transaction, bounded by the 60-second Toss cancel client timeout (`TOSS_CANCEL_TIMEOUT_MS`; confirm 30 s, payment query 15 s, settlement and transaction ledger reads 65 s). Start at `120000` and lower it only with evidence. A session killed by this limit after Toss accepted the cancel leaves a PG/DB mismatch; reconcile it with [Ticket cancellation reconciliation](ticket-cancellation-reconciliation.md).
+  - `DB_STATEMENT_TIMEOUT_MS` also applies to admin reports and CSV exports. Measure the slowest export on production-sized data first and set the limit above it. Leave it unset if that measurement is unavailable.
+  - Admin benefit mutations set their own transaction-local `statement_timeout` of 30 seconds (`admin-benefits.service.ts`), which replaces the session value inside those transactions. A `DB_STATEMENT_TIMEOUT_MS` below `30000` therefore does not shorten them; keep the session limit at or above 30 seconds, or change both together.
+- Production API and worker processes retry pg-boss startup `PGBOSS_START_MAX_ATTEMPTS` times (default `3`, 1s then 2s backoff) and then exit non-zero, so Cloud Run replaces the instance instead of serving without background jobs. A revision that keeps failing startup after a capacity change usually means exhausted connection slots or an unreachable database; check this budget first. A pg-boss version upgrade is the other case: the first new instance migrates the `pgboss` schema, and previous-revision instances that start after that (scale-out or restarts during the rollout) can fail pg-boss startup against the newer schema and, with this fail-fast rule, exit in a loop until the rollout finishes. Ship a pg-boss upgrade in its own deploy outside sale windows and let the old revision drain first.
+- On SIGTERM (scale-in, prewarm step-down, revision replacement) the API gives in-flight recovery sweeps at most 1 second, then stops pg-boss gracefully for up to 7 seconds and fails unfinished jobs back to pg-boss (`retry`, or `failed` once the retry limit is used), so they are retried immediately instead of after the 15-minute expiration. The pg-boss pool closes only after the HTTP server, so requests still in flight at SIGTERM can enqueue their refund retry or cancelled-seat release. A sweep row cut off by the 1-second drain is picked up again after its lease by the next sweep.
+- Migration `0038_booking_lookup_indexes` adds `reservation_seats(reservation_id)` and `payments(toss_order_id)` indexes with plain `CREATE INDEX` inside the Drizzle migration transaction, which blocks writes to those tables while each index builds. Apply it through the normal deploy migration outside a sale window and confirm with `EXPLAIN` that `SELECT * FROM reservation_seats WHERE reservation_id = $1` uses `idx_reservation_seats_reservation_id`.
+- Ask Cloud SQL for a maintenance deny period covering the sale and venue-entry windows. Connections dropped by maintenance, failover, or `pg_terminate_backend` no longer crash API or worker processes: idle clients are logged and replaced, and a client checked out by a query or transaction is logged and discarded when released. That query or transaction still fails, so a confirm in flight at that moment takes its existing failure path.
 
 ### Relaunch incident regression requirement
 
 Before the next actual ticket opening, complete the [40-item relaunch handoff](show-relaunch-reliability.md). Pending reservation sweeps now rely on each Redis lock's TTL and never unlock a user's current selection. The worker's `unlockedSeats=0` is expected; inspect expired reservation counts, actual lock TTL and queue admission delay separately. Migration 0033 and the reviewed missing-benefit repair have separate preflight and approval boundaries.
+
+The same sweep also reviews card/transfer/easy-pay/overseas-card/PayPal handoffs that never reached Toss (deadline + 45 minutes, no Payment row). It reads the Toss transaction ledger (`GET /v1/transactions`, 65-second timeout, one read per overlapping time window, at most 20 orders and a 65-second budget per sweep) with every distinct configured MID key, and fails only orders absent from all of them, recording `PAYMENT_HANDOFF_ABANDONED` with `provider_check_status=no_provider_transaction`. An order with a lookup error or page-cap overflow is looked at again after 30 minutes. A `CRITICAL: provider transaction exists for an unrecorded payment handoff` log means Toss has a transaction for an order without a local Payment. First check whether a payment confirm reconcile job already owns the order: an approval whose confirm outcome was unknown is compensated automatically by `payment-confirm-reconcile` (singleton key `<orderId>:<paymentKey>`, retried for about 8 hours), for example `SELECT state, start_after, retry_count FROM pgboss.job WHERE name = 'payment-confirm-reconcile' AND singleton_key LIKE '<orderId>:%';`. While that job is `created`, `retry` or `active`, do not cancel by hand. Otherwise reconcile it with the Toss console before releasing seats or refunding, as in the [cancellation reconciliation runbook](ticket-cancellation-reconciliation.md). It repeats once a day per order until reconciled. Review state lives in Valkey under `{payment-handoff-review}:*`; deleting it only makes the next sweeps look again. Set repository variable `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` and redeploy to stop the review without a code change; the Deploy workflow passes it to the API service and the worker Job ([Optional runtime settings](#optional-runtime-settings)). Setting it on the Job by hand does not last, because every deploy rebuilds the Job spec.
+
+First rollout of the review (audit #9). Existing orphan `PENDING_PAYMENT` rows become `FAILED` as soon as the review proves Toss has no transaction for them, so stage it:
+
+1. Before the first deploy that contains the review, set `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false`.
+2. Count what the review would look at (read-only):
+
+   ```sql
+   SELECT count(*) AS candidates, min(payment_deadline_at), max(payment_deadline_at)
+   FROM reservations r
+   WHERE r.status = 'PENDING_PAYMENT'
+     AND r.checkout_started_at IS NOT NULL
+     AND r.toss_order_id IS NOT NULL
+     AND r.checkout_payment_method IS NOT NULL
+     AND r.payment_deadline_at < now() - interval '45 minutes'
+     AND NOT (coalesce(r.checkout_payment_method->>'method', '') = 'FOREIGN_EASY_PAY'
+              AND coalesce(r.checkout_payment_method->>'provider', '') IN ('ALIPAY_PLUS', 'TRUEMONEY'))
+     AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.reservation_id = r.id);
+   ```
+
+3. Confirm that every configured Toss secret key may call `GET /v1/transactions`. Without that permission every lookup fails and orders are only deferred (30 minutes), never failed.
+4. Get operator approval for the count, then remove the variable (or set `true`) and redeploy. Watch the `Failed abandoned payment handoffs` log and any `CRITICAL: provider transaction exists` line; at most 20 orders are reviewed per sweep.

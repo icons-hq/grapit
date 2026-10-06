@@ -1,14 +1,21 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
 import {
   and,
   getTableName,
   inArray,
   isNull,
   sql,
+  type SQL,
   type SQLWrapper,
 } from 'drizzle-orm';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import {
+  LATE_DONE_REVIVE_WINDOW_HOURS,
+  alipayFamilyReservationSql,
+  lateDoneRevivableFailedReservationSql,
+} from '../../database/late-done-revivable-reservation.js';
 import {
   accountMergeBatches,
   accountMergeRowChanges,
@@ -26,6 +33,8 @@ import {
   classifyDuplicateGroup,
   hashAccountMergeDryRun,
   hashJson,
+  NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS,
+  type ManualReviewReason,
   type MergeCandidateUser,
   type MergeClassification,
   type ReservationCounts,
@@ -82,6 +91,61 @@ export interface AccountMergeApplyResult {
   mergedGroups: number;
   mergedSourceUsers: number;
   rowChanges: AccountMergeReportRowChange[];
+  ticketLimitWarnings: AccountMergeTicketLimitWarning[];
+}
+
+/**
+ * A merge target that now holds more active tickets for one performance than
+ * the per-buyer limit allows. The merge keeps every purchase; this tells the
+ * operator which buyer now sits above the limit after combining accounts.
+ */
+export interface AccountMergeTicketLimitWarning {
+  groupKey: string;
+  targetUserId: string;
+  performanceId: string;
+  activeTicketCount: number;
+  maxTicketsPerUser: number;
+}
+
+/**
+ * Live sales signals checked before apply. Merging changes Reservation
+ * ownership and signs the source accounts out, so it must not run while
+ * buyers are mid-checkout or around a ticket opening. Steady on-sale
+ * performances do not count by themselves; live traffic shows up as active
+ * checkouts.
+ */
+export interface AccountMergeSalesActivity {
+  /** Checkouts inside their payment window, plus Alipay-family payments that failed within the last hour (a late DONE can still revive them). */
+  activeCheckoutReservations: number;
+  /** Upcoming published showtimes whose booking opened within `recentOpeningHours` or opens within `lookaheadHours`. */
+  openingShowtimes: number;
+  recentOpeningHours: number;
+  lookaheadHours: number;
+}
+
+export const ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS = 24;
+export const ACCOUNT_MERGE_SALES_RECENT_OPENING_HOURS = 2;
+const ACCOUNT_MERGE_LIVE_CHECKOUT_WINDOW_HOURS = 1;
+
+/**
+ * How long after its last change a PENDING_PAYMENT checkout or a failed
+ * Alipay-family payment still counts as able to settle. Older rows of those
+ * kinds are stale and move with the merge like any other non-confirmed row.
+ * The failed Alipay-family part is the shared late DONE revive window
+ * (database/late-done-revivable-reservation.ts), also used by member
+ * withdrawal; this name stays as its alias.
+ */
+export const ACCOUNT_MERGE_PAYMENT_SETTLE_WINDOW_HOURS = LATE_DONE_REVIVE_WINDOW_HOURS;
+
+/** Server-side identity of the connected database, printed by every CLI mode. */
+export interface AccountMergeDatabaseIdentity {
+  database: string;
+  serverAddress: string | null;
+  serverPort: number | null;
+  /** pg_control_system().system_identifier; null when the role cannot read it. */
+  systemIdentifier: string | null;
+  /** The value `--expected-server` must match. */
+  fingerprint: string;
 }
 
 export interface AccountMergeReportRowChange {
@@ -125,7 +189,7 @@ type CandidateRow = {
   accountStatus: string;
   totalReservations: number;
   confirmedReservations: number;
-  pendingPaymentReservations: number;
+  paymentInFlightReservations: number;
 };
 
 type MergeGroup = {
@@ -188,7 +252,7 @@ export class AccountMergeService {
           users.account_status as "accountStatus",
           coalesce(reservation_counts.total, 0)::int as "totalReservations",
           coalesce(reservation_counts.confirmed, 0)::int as "confirmedReservations",
-          coalesce(reservation_counts.pending_payment, 0)::int as "pendingPaymentReservations"
+          coalesce(reservation_counts.payment_in_flight, 0)::int as "paymentInFlightReservations"
         from duplicate_identities identity
         join users
           on regexp_replace(users.phone, '[^0-9]', '', 'g') = identity.normalized_phone
@@ -198,10 +262,10 @@ export class AccountMergeService {
         left join lateral (
           select
             count(*)::int as total,
-            count(*) filter (where status = 'CONFIRMED')::int as confirmed,
-            count(*) filter (where status = 'PENDING_PAYMENT')::int as pending_payment
-          from reservations
-          where reservations.user_id = users.id
+            count(*) filter (where r.status = 'CONFIRMED')::int as confirmed,
+            count(*) filter (where ${paymentInFlightReservationSql()})::int as payment_in_flight
+          from reservations r
+          where r.user_id = users.id
         ) reservation_counts on true
         order by "groupKey", users.id
       `),
@@ -225,7 +289,7 @@ export class AccountMergeService {
         reservationCounts[row.id] = {
           total: row.totalReservations,
           confirmed: row.confirmedReservations,
-          pendingPayment: row.pendingPaymentReservations,
+          paymentInFlight: row.paymentInFlightReservations,
         };
         return {
           id: row.id,
@@ -308,10 +372,13 @@ export class AccountMergeService {
       const batchId = String(batch.id);
       const rowChanges: AccountMergeReportRowChange[] = [];
 
+      const ticketLimitWarnings: AccountMergeTicketLimitWarning[] = [];
+
       for (const group of groups) {
         rowChanges.push(
           ...(await this.applyGroup(tx, batchId, group, now, options.operatorUserId)),
         );
+        ticketLimitWarnings.push(...(await this.findTicketLimitWarnings(tx, group)));
       }
 
       return {
@@ -319,8 +386,116 @@ export class AccountMergeService {
         mergedGroups: groups.length,
         mergedSourceUsers,
         rowChanges,
+        ticketLimitWarnings,
       };
     });
+  }
+
+  /**
+   * Fails before any write when an allowlist entry can never pass
+   * transaction revalidation, so the operator fixes the allowlist instead of
+   * losing every safe group in the same batch to a rollback.
+   */
+  validateManualAllowlist(
+    dryRun: AccountMergeDryRunResult,
+    manualAllowlist: ManualMergeAllowlistEntry[],
+  ): void {
+    buildManualApplyGroups(dryRun.manualReviewGroups, manualAllowlist);
+  }
+
+  async salesActivity(): Promise<AccountMergeSalesActivity> {
+    const [row] = normalizeRows<{
+      activeCheckoutReservations: number;
+      openingShowtimes: number;
+    }>(
+      await this.db.execute(sql`
+        select
+          (
+            select count(*)::int
+            from reservations r
+            where (
+                r.status = 'PENDING_PAYMENT'
+                and (
+                  r.payment_deadline_at > now()
+                  or (
+                    r.payment_deadline_at is null
+                    and r.updated_at > now() - make_interval(hours => ${ACCOUNT_MERGE_LIVE_CHECKOUT_WINDOW_HOURS})
+                  )
+                )
+              )
+              or (
+                r.status = 'FAILED'
+                and r.updated_at > now() - make_interval(hours => ${ACCOUNT_MERGE_LIVE_CHECKOUT_WINDOW_HOURS})
+                and ${alipayFamilyReservationSql('r')}
+              )
+          ) as "activeCheckoutReservations",
+          (
+            select count(*)::int
+            from showtimes s
+            join performances perf on perf.id = s.performance_id
+            join booking_policies bp on bp.performance_id = s.performance_id
+            where perf.publish_state = 'published'
+              and perf.status <> 'ended'
+              and s.date_time > now()
+              and bp.booking_starts_at > now() - make_interval(hours => ${ACCOUNT_MERGE_SALES_RECENT_OPENING_HOURS})
+              and bp.booking_starts_at <= now() + make_interval(hours => ${ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS})
+          ) as "openingShowtimes"
+      `),
+    );
+    return {
+      activeCheckoutReservations: Number(row?.activeCheckoutReservations ?? 0),
+      openingShowtimes: Number(row?.openingShowtimes ?? 0),
+      recentOpeningHours: ACCOUNT_MERGE_SALES_RECENT_OPENING_HOURS,
+      lookaheadHours: ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS,
+    };
+  }
+
+  /**
+   * Identifies the database server behind DATABASE_URL from the server side.
+   * A local cloud-sql-proxy always looks like 127.0.0.1:<port> to the client,
+   * whichever instance it forwards to; the cluster system identifier does not.
+   */
+  async databaseIdentity(): Promise<AccountMergeDatabaseIdentity> {
+    const [row] = normalizeRows<{
+      database: string;
+      serverAddress: string | null;
+      serverPort: number | string | null;
+    }>(
+      await this.db.execute(sql`
+        select
+          current_database() as "database",
+          host(inet_server_addr()) as "serverAddress",
+          inet_server_port() as "serverPort"
+      `),
+    );
+    let systemIdentifier: string | null = null;
+    try {
+      const [control] = normalizeRows<{ systemIdentifier: string | null }>(
+        await this.db.execute(sql`
+          select system_identifier::text as "systemIdentifier"
+          from pg_control_system()
+        `),
+      );
+      systemIdentifier = control?.systemIdentifier ? String(control.systemIdentifier) : null;
+    } catch {
+      // Managed databases may revoke pg_control_system(); fall back to the
+      // server address below.
+      systemIdentifier = null;
+    }
+
+    const database = String(row?.database ?? '');
+    const serverAddress = row?.serverAddress ? String(row.serverAddress) : null;
+    const serverPort =
+      row?.serverPort === null || row?.serverPort === undefined ? null : Number(row.serverPort);
+    return {
+      database,
+      serverAddress,
+      serverPort,
+      systemIdentifier,
+      fingerprint: systemIdentifier
+        ? `sysid:${systemIdentifier}/${database}`
+        : `addr:${serverAddress ?? 'local-socket'}:${serverPort ?? '-'}/${database}`,
+    };
   }
 
   async verify(
@@ -491,6 +666,13 @@ export class AccountMergeService {
     if (userIds.length !== group.sourceUserIds.length + 1) {
       throw new Error('ACCOUNT_MERGE_INVALID_GROUP:source_target_overlap');
     }
+    // The error names the group by its target account (present in the
+    // dry-run report) rather than the groupKey, which carries phone, birth
+    // date and name.
+    const revalidationFailed = (reason: string) =>
+      new Error(
+        `ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:${reason}:target=${group.targetUserId}`,
+      );
 
     const rows = normalizeRows<{
       id: string;
@@ -512,7 +694,7 @@ export class AccountMergeService {
       for update
     `));
     if (rows.length !== userIds.length) {
-      throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:missing_user');
+      throw revalidationFailed('missing_user');
     }
 
     await tx.execute(sql`
@@ -525,33 +707,33 @@ export class AccountMergeService {
       userId: string;
       totalReservations: number;
       confirmedReservations: number;
-      pendingPaymentReservations: number;
+      paymentInFlightReservations: number;
     }>(await tx.execute(sql`
       select
-        user_id as "userId",
+        r.user_id as "userId",
         count(*)::int as "totalReservations",
-        count(*) filter (where status = 'CONFIRMED')::int as "confirmedReservations",
-        count(*) filter (where status = 'PENDING_PAYMENT')::int as "pendingPaymentReservations"
-      from reservations
-      where user_id in (${uuidSqlList(userIds)})
-      group by user_id
+        count(*) filter (where r.status = 'CONFIRMED')::int as "confirmedReservations",
+        count(*) filter (where ${paymentInFlightReservationSql()})::int as "paymentInFlightReservations"
+      from reservations r
+      where r.user_id in (${uuidSqlList(userIds)})
+      group by r.user_id
     `));
     const reservationCounts: Record<string, ReservationCounts> = {};
     for (const row of reservationRows) {
       reservationCounts[row.userId] = {
         total: Number(row.totalReservations),
         confirmed: Number(row.confirmedReservations),
-        pendingPayment: Number(row.pendingPaymentReservations),
+        paymentInFlight: Number(row.paymentInFlightReservations ?? 0),
       };
     }
 
     const usersInGroup: MergeCandidateUser[] = [];
     for (const row of rows) {
       if (row.accountStatus !== 'active' || !row.isPhoneVerified) {
-        throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:inactive_or_unverified');
+        throw revalidationFailed('inactive_or_unverified');
       }
       if (buildMergeGroupKey(row) !== group.groupKey) {
-        throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:identity_changed');
+        throw revalidationFailed('identity_changed');
       }
       usersInGroup.push({
         id: row.id,
@@ -562,6 +744,19 @@ export class AccountMergeService {
         accountStatus: row.accountStatus,
       });
       reservationCounts[row.id] ??= { total: 0, confirmed: 0 };
+    }
+
+    // Audit #104 race guard. Dry-run already keeps groups with a payment in
+    // flight out of the batch (manual review reason `payment_in_flight`), with
+    // the same SQL definition, so this only fires when a checkout started
+    // between dry-run and apply. The users rows are locked FOR UPDATE above,
+    // which also blocks new reservation inserts for these buyers (FK
+    // key-share lock) until this transaction ends, so the locked reservation
+    // rows are the complete picture.
+    if (
+      userIds.some((userId) => (reservationCounts[userId]?.paymentInFlight ?? 0) > 0)
+    ) {
+      throw revalidationFailed('payment_in_flight');
     }
 
     const classification = classifyDuplicateGroup({
@@ -576,16 +771,17 @@ export class AccountMergeService {
         classification.targetUserId !== group.targetUserId ||
         !sameStringSet(classification.sourceUserIds, group.sourceUserIds)
       ) {
-        throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:classification_changed');
+        throw revalidationFailed('classification_changed');
       }
       return;
     }
 
     if (
       classification.kind !== 'manual_review' ||
+      NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS.has(classification.reason) ||
       !sameStringSet(classification.userIds, [group.targetUserId, ...group.sourceUserIds])
     ) {
-      throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:manual_review_changed');
+      throw revalidationFailed('manual_review_changed');
     }
   }
 
@@ -658,6 +854,50 @@ export class AccountMergeService {
         afterSnapshot,
       }),
     );
+  }
+
+  private async findTicketLimitWarnings(
+    tx: AccountMergeTx,
+    group: MergeGroup,
+  ): Promise<AccountMergeTicketLimitWarning[]> {
+    // Same active-ticket definition as database/ticket-limit.ts, counted for
+    // the target account alone. This is a report for the operator: the purchase
+    // limit is enforced per verified phone number (ticket-limit.ts sums every
+    // account that verified the same number), so merging accounts that share
+    // that number does not change what the buyer may still buy.
+    const rows = normalizeRows<{
+      performanceId: string;
+      activeTicketCount: number;
+      maxTicketsPerUser: number;
+    }>(await tx.execute(sql`
+      select
+        ticket_showtimes.performance_id::text as "performanceId",
+        count(*)::int as "activeTicketCount",
+        coalesce(
+          bp.max_tickets_per_user,
+          ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
+        )::int as "maxTicketsPerUser"
+      from ticket_items ti
+      inner join reservations r on r.id = ti.reservation_id
+      inner join showtimes ticket_showtimes on ticket_showtimes.id = ti.showtime_id
+      left join booking_policies bp on bp.performance_id = ticket_showtimes.performance_id
+      where r.user_id = ${group.targetUserId}::uuid
+        and r.status = 'CONFIRMED'
+        and ti.status in ('active', 'cancellation_pending')
+      group by ticket_showtimes.performance_id, bp.max_tickets_per_user
+      having count(*) > coalesce(
+        bp.max_tickets_per_user,
+        ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
+      )
+      order by 1
+    `));
+    return rows.map((row) => ({
+      groupKey: group.groupKey,
+      targetUserId: group.targetUserId,
+      performanceId: String(row.performanceId),
+      activeTicketCount: Number(row.activeTicketCount),
+      maxTicketsPerUser: Number(row.maxTicketsPerUser),
+    }));
   }
 
   private async userIdsFromQuery(query: SQLWrapper): Promise<string[]> {
@@ -776,6 +1016,11 @@ function normalizeRows<T>(result: unknown): T[] {
   return [];
 }
 
+const ALLOWLIST_REJECTION_ERRORS: Partial<Record<ManualReviewReason, string>> = {
+  identity_evidence_incomplete: 'ACCOUNT_MERGE_ALLOWLIST_IDENTITY_EVIDENCE_INCOMPLETE',
+  payment_in_flight: 'ACCOUNT_MERGE_ALLOWLIST_PAYMENT_IN_FLIGHT',
+};
+
 function buildManualApplyGroups(
   manualReviewGroups: Array<Extract<MergeClassification, { kind: 'manual_review' }>>,
   manualAllowlist: ManualMergeAllowlistEntry[],
@@ -788,6 +1033,15 @@ function buildManualApplyGroups(
     const reviewGroup = manualReviewByKey.get(entry.groupKey);
     if (!reviewGroup) {
       throw new Error('ACCOUNT_MERGE_ALLOWLIST_GROUP_NOT_FOUND');
+    }
+    // Audit #104/#105: these groups always fail transaction revalidation
+    // (unverified phone evidence / a payment that can still settle), which
+    // would roll back every safe group in the batch. Reject them before any
+    // write.
+    if (NON_ALLOWLISTABLE_MANUAL_REVIEW_REASONS.has(reviewGroup.reason)) {
+      throw new Error(
+        `${ALLOWLIST_REJECTION_ERRORS[reviewGroup.reason] ?? 'ACCOUNT_MERGE_ALLOWLIST_NOT_MERGEABLE'}:target=${entry.targetUserId}`,
+      );
     }
 
     const sourceUserIds = uniqueSorted(entry.sourceUserIds);
@@ -853,8 +1107,43 @@ function normalizeCandidateRow(row: CandidateRow): CandidateRow {
     accountStatus: String(row.accountStatus),
     totalReservations: Number(row.totalReservations),
     confirmedReservations: Number(row.confirmedReservations),
-    pendingPaymentReservations: Number(row.pendingPaymentReservations ?? 0),
+    paymentInFlightReservations: Number(row.paymentInFlightReservations ?? 0),
   };
+}
+
+/**
+ * A reservation whose payment can still change state after a merge (audit
+ * #104). `r` aliases reservations. Shared by dry-run classification and the
+ * in-transaction revalidation so both see the same groups.
+ *  - PENDING_PAYMENT inside its payment window, or changed within the settle
+ *    window. This covers legacy rows without a deadline and checkouts whose
+ *    provider outcome is unknown, which the expiration sweeper never expires.
+ *  - PENDING_PAYMENT whose provider payment is progressing or already DONE,
+ *    at any age: that buyer was or will be charged, so the reservation must
+ *    be settled before its owner changes.
+ *  - FAILED Alipay-family payments changed within the settle window: a late
+ *    DONE webhook can still revive them to CONFIRMED (the shared
+ *    lateDoneRevivableFailedReservationSql, also a withdrawal blocker).
+ * Older PENDING_PAYMENT/FAILED rows are stale and move like any other
+ * non-confirmed reservation.
+ */
+function paymentInFlightReservationSql(): SQL {
+  return sql`(
+    (
+      r.status = 'PENDING_PAYMENT'
+      and (
+        r.payment_deadline_at > now()
+        or r.updated_at > now() - make_interval(hours => ${ACCOUNT_MERGE_PAYMENT_SETTLE_WINDOW_HOURS})
+        or exists (
+          select 1
+          from payments pay
+          where pay.reservation_id = r.id
+            and pay.status in ('READY', 'IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED')
+        )
+      )
+    )
+    or ${lateDoneRevivableFailedReservationSql('r')}
+  )`;
 }
 
 function recoverySnapshot(tableName: string, row: Row): Record<string, unknown> {

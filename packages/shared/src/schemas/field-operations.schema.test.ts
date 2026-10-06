@@ -4,6 +4,7 @@ import {
   FIELD_CHECK_IN_OUTCOMES,
   FIELD_OFFLINE_SYNC_STATES,
   fieldCheckInConsumeRequestSchema,
+  fieldCheckInConsumeResponseSchema,
   fieldCheckInVerifyResponseSchema,
   fieldCheckInVerifyRequestSchema,
   fieldMonitorLogFilterSchema,
@@ -73,6 +74,24 @@ describe('field operations contract', () => {
     }
   });
 
+  it('accepts an optional bounded scan attempt id on verify so rejected scans are recorded once per attempt', () => {
+    expect(
+      fieldCheckInVerifyRequestSchema.parse({
+        token: 'opaque-ticket-token',
+        showtimeId: VALID_SHOWTIME_ID,
+        deviceAttemptId: ' device-attempt-1 ',
+      }).deviceAttemptId,
+    ).toBe('device-attempt-1');
+    expect(fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token' })).not.toHaveProperty('deviceAttemptId');
+    // The server stores it namespaced in a 120-character column.
+    expect(() =>
+      fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token', deviceAttemptId: 'a'.repeat(101) }),
+    ).toThrow();
+    expect(() =>
+      fieldCheckInVerifyRequestSchema.parse({ token: 'opaque-ticket-token', deviceAttemptId: '   ' }),
+    ).toThrow();
+  });
+
   it('requires explicit manual consume fields and confirmed true after scanner review', () => {
     const parsed = fieldCheckInConsumeRequestSchema.parse({
       token: 'opaque-ticket-token',
@@ -136,6 +155,48 @@ describe('field operations contract', () => {
     expect(parsed.ticket?.benefitEntitlements[0]?.benefitIdentity).toBe(
       'benefit_6_to_1',
     );
+  });
+
+  it('carries a machine-readable pending cancellation flag and server result label on verify and consume', () => {
+    const ticket = {
+      reservationNumber: 'GRP-24001',
+      performanceTitle: 'Girl Rules Fanmeet',
+      showtimeId: VALID_SHOWTIME_ID,
+      showtimeLabel: '2026-07-04 18:00',
+      seatLabels: ['VIP A-1'],
+      ticketStatus: 'REVOKED' as const,
+      redactedTokenRef: 'tok_abc...xyz',
+      cancellationPending: true,
+    };
+
+    const verified = fieldCheckInVerifyResponseSchema.parse({
+      outcome: 'refunded_cancelled',
+      processable: false,
+      ticket,
+      resultLabel: '취소 처리 중 · 입장 불가',
+      rejectionReason: '취소 처리 중인 티켓입니다. 환불이 확정되지 않았으니 입장시키지 말고 현장 책임자에게 확인해주세요',
+      verifiedAt: VALID_ISO,
+    });
+    const consumed = fieldCheckInConsumeResponseSchema.parse({
+      outcome: 'refunded_cancelled',
+      ticket,
+      scanEventId: 'scan-1',
+      consumedAt: null,
+      resultLabel: '취소 처리 중 · 입장 불가',
+      rejectionReason: '취소 처리 중인 티켓입니다. 환불이 확정되지 않았으니 입장시키지 말고 현장 책임자에게 확인해주세요',
+    });
+
+    expect(verified.ticket?.cancellationPending).toBe(true);
+    expect(verified.resultLabel).toBe('취소 처리 중 · 입장 불가');
+    expect(consumed.ticket?.cancellationPending).toBe(true);
+    expect(consumed.resultLabel).toBe('취소 처리 중 · 입장 불가');
+    expect(() => fieldCheckInVerifyResponseSchema.parse({
+      outcome: 'refunded_cancelled',
+      processable: false,
+      ticket,
+      resultLabel: '',
+      verifiedAt: VALID_ISO,
+    })).toThrow();
   });
 
   it('includes configuration-source included benefits with nullable run ids in field context', () => {

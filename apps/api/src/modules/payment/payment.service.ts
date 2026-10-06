@@ -1,18 +1,24 @@
-import { isSameCheckoutPaymentMethod } from '@grabit/shared';
+import {
+  CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
+  isSameCheckoutPaymentMethod,
+  normalizeSeatIdentity,
+} from '@grabit/shared';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import { randomUUID } from 'node:crypto';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Inject,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { TicketItemCancellationCommand } from '../../database/schema/ticket-items.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
@@ -28,7 +34,18 @@ import {
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
-import { BookingService, PAYMENT_CONFIRM_LOCK_TTL, buildMaxTicketsPerUserExceededMessage } from '../booking/booking.service.js';
+import {
+  SHOWTIME_STARTED_MESSAGE,
+  isShowtimeSalesClosed,
+} from '../booking/showtime-sales-cutoff.js';
+import {
+  BookingService,
+  LOCK_EXPIRED_MESSAGE,
+  LOCK_OTHER_OWNER_MESSAGE,
+  PAYMENT_CONFIRM_LOCK_TTL,
+  RECOVERY_SEAT_LOCK_TTL,
+  buildMaxTicketsPerUserExceededMessage,
+} from '../booking/booking.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import type {
   PaymentInfo,
@@ -41,12 +58,16 @@ import type {
 import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
-import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
+import {
+  PaymentCancellationFinalizerService,
+  type FullPaymentCancellationContext,
+} from '../cancellation/payment-cancellation-finalizer.service.js';
 import {
   buildFullPaymentCancelRequest,
   buildFullReservationPaymentCancelRequest,
   readStoredPaymentCancelRequest,
   type PaymentCancelPaymentSnapshot,
+  type PaymentCancelRequest,
 } from './payment-cancel-policy.js';
 import {
   buildCompletedCancelExpectation,
@@ -55,9 +76,53 @@ import {
   type TossPaymentCancelRecord,
 } from './toss-cancel-matcher.js';
 import {
+  ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES,
+  ASYNC_DONE_COMPENSATION_IN_PROGRESS_ATTENTION_MS,
+  ASYNC_DONE_COMPENSATION_MAX_ATTEMPTS,
+  ASYNC_DONE_COMPENSATION_METADATA_KEY,
+  ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY,
+  ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_COUNT,
+  ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS,
+  ASYNC_DONE_COMPENSATION_REASONS,
+  DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY,
+  CONFIRM_COMPENSATION_CLAIM_METADATA_KEY,
+  REJECTED_DONE_ASYNC_STATUSES,
+  buildCompensationRecord,
+  buildDuplicateCancelRequestSeed,
+  inferCompensationKindFromReason,
+  isCompensationDue,
+  isConfirmCompensationClaimOwned,
+  isOpenCompensationState,
+  isSettledOrCompensatedPaymentState,
+  readAsyncDoneCompensation,
+  readDuplicatePaymentCompensations,
+  synthesizeLegacyCompensationRecord,
+  toCompensationCancelSnapshot,
+  type AsyncDoneCompensationKind,
+  type AsyncDoneCompensationRecord,
+  type CompensationCancelOutcome,
+  type CompensationPaymentRow,
+} from './async-done-compensation.js';
+import {
+  CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
   paymentTerminalFailureDiagnostic,
   recordReservationPaymentFailureDiagnostic,
 } from './payment-failure-diagnostic.js';
+import {
+  PAYMENT_HANDOFF_RELEASE_WINDOW_MS,
+  PAYMENT_HANDOFF_UNKNOWN_MESSAGE,
+  PAYMENT_PROCESSING_TOTAL_CAP_MS,
+  isAsyncApprovalForeignEasyPayProvider,
+  isMerchantConfirmedCheckoutMethod,
+} from './payment-handoff-policy.js';
+import {
+  categorizeTossMethodLabel,
+  findApprovedMethodPolicyMismatch,
+  isEnforcedCheckoutPaymentMethod,
+  normalizeTossApprovedMethod,
+  readTossEasyPayProvider,
+  resolveEnforcedAllowedPaymentMethods,
+} from './payment-method-policy.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -68,19 +133,44 @@ type ProviderChargeQuote = {
   quotedAt: string;
 };
 
-const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
+export type { AsyncDoneCompensationRecord } from './async-done-compensation.js';
 
-const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
-  'ALIPAY_PLUS',
-  'TRUEMONEY',
-]);
+export interface AsyncDoneCompensationRecoveryResult {
+  checked: number;
+  cancelled: number;
+  retried: number;
+  waiting: number;
+  attention: number;
+  skipped: number;
+}
+
+type CompensationStepAction = 'cancelled' | 'retried' | 'waiting' | 'attention';
+
+/** Shares the order-lease keyspace; real order ids never take this value. */
+const ASYNC_DONE_COMPENSATION_SWEEP_LEASE_KEY = 'async-done-compensation-sweep';
+/** Orders processed per sweep; rows that provably need nothing now are skipped. */
+const ASYNC_DONE_COMPENSATION_SWEEP_LIMIT = 100;
+/**
+ * Candidate rows read per sweep, as a multiple of the limit. Candidates are
+ * paged by creation order, so not-yet-due rows never hide a due one behind
+ * the first page.
+ */
+const ASYNC_DONE_COMPENSATION_SWEEP_SCAN_FACTOR = 20;
+/**
+ * TrueMoney has no provider charge quote contract yet, so it can never be
+ * issued safely. Branch creation rejects it and a captured DONE is refunded.
+ */
+const UNSUPPORTED_TOSS_CHECKOUT_PROVIDERS = new Set<PaymentProvider>(['TRUEMONEY']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
   'PAYPAL',
 ]);
 const PAYMENT_PROCESSING_GRACE_MS = 8 * 60 * 1000;
-const PAYMENT_PROCESSING_TOTAL_CAP_MS = 15 * 60 * 1000;
+/** Pending return for an order that is not an asynchronously approved foreign wallet. */
+const ASYNC_RETURN_NOT_ASYNC_CHECKOUT_MESSAGE =
+  '비동기 결제수단으로 진행한 주문이 아닙니다. 예매 내역에서 상태를 확인해주세요.';
 
 export type TossPaymentAsyncStatus = 'sync' | 'pending_webhook';
 
@@ -109,10 +199,25 @@ export interface TossPaymentBranch {
   paymentDeadlineAt?: string;
 }
 
+export interface TossPaymentHandoffReleaseRequest {
+  orderId: string;
+  userId: string;
+}
+
+export interface TossPaymentHandoffRelease {
+  orderId: string;
+  released: true;
+  paymentDeadlineAt?: string;
+}
+
 export interface TossPaymentAsyncReturnRequest {
   orderId: string;
   paymentKey: string;
   amount?: number;
+  /**
+   * Sent by the browser and ignored: the wallet comes from the provider lookup
+   * and the order's frozen checkout method.
+   */
   provider?: Extract<PaymentProvider, 'ALIPAY_PLUS' | 'TRUEMONEY'>;
   userId: string;
 }
@@ -125,6 +230,16 @@ export interface TossWebhookRequestBody {
   eventId: string;
   eventType: TossWebhookEventType;
   createdAt?: string;
+  /**
+   * The payment method as the provider lookup (`GET /v1/payments/{paymentKey}`)
+   * reported it. Set by the webhook controller and the pending return; the
+   * payment method policy of a DONE decides on it, never on callback or client
+   * values. Without it (direct service callers) `data.method`/`data.easyPay` are used.
+   */
+  providerVerified?: {
+    method: string | null;
+    easyPayProvider: string | null;
+  };
   data: {
     paymentKey?: string;
     orderId?: string;
@@ -153,6 +268,9 @@ export interface AsyncPaymentProgressSnapshot {
   reservationId: string;
   reservationStatus: ReservationStatus;
   paymentStatus: PaymentStatus | null;
+  paymentAsyncStatus?: string | null;
+  /** The stored payment's key; a DONE for another key may be a duplicate charge. */
+  paymentKey?: string | null;
 }
 
 type WebhookReservationSnapshot = {
@@ -161,6 +279,9 @@ type WebhookReservationSnapshot = {
   showtimeId: string;
   status: ReservationStatus;
   totalAmount: number;
+  checkoutPaymentMethod?: PaymentMethod | null;
+  /** The performance's stored `booking_policies.allowed_payment_methods`. */
+  allowedPaymentMethods?: unknown;
   providerChargeCurrency?: string | null;
   providerChargeAmountMinor?: number | null;
   providerChargeRate?: string | null;
@@ -237,6 +358,8 @@ type PaymentStatusPartialCancelTicketItemCancellation = {
 
 @Injectable()
 export class PaymentService {
+  private readonly logger = new Logger(PaymentService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     @Optional() private readonly bookingGateway?: BookingGateway,
@@ -250,6 +373,7 @@ export class PaymentService {
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
     const { orderId, paymentMethod, successUrl, failUrl, pendingUrl, userId } = input;
+    this.assertSupportedTossCheckoutProvider(paymentMethod);
 
     if (this.usesProviderChargeQuoteForPaymentMethod(paymentMethod)) {
       if (this.requiresAsyncWebhookBranch(paymentMethod) && !pendingUrl) {
@@ -385,6 +509,8 @@ export class PaymentService {
         createdAt: reservations.createdAt,
         checkoutPaymentMethod: reservations.checkoutPaymentMethod,
         checkoutStartedAt: reservations.checkoutStartedAt,
+        showtimeStartsAt: this.showtimeStartsAtColumn(),
+        allowedPaymentMethods: this.performanceAllowedPaymentMethodsColumn(),
       })
       .from(reservations)
       .where(
@@ -418,6 +544,26 @@ export class PaymentService {
       throw new ConflictException('예매에 저장된 결제수단과 일치하지 않습니다. 기존 예매를 다시 확인해주세요.');
     }
 
+    // C1: a started showtime is not handed off to the provider (confirm would
+    // reject it before approval anyway, after the buyer authenticated).
+    if (isShowtimeSalesClosed(reservation.showtimeStartsAt, now)) {
+      throw new ForbiddenException(SHOWTIME_STARTED_MESSAGE);
+    }
+
+    // The performance policy decides again at handoff, so a method removed
+    // from the policy after prepare (or a stored method outside the enforced
+    // set) never reaches the provider.
+    if (paymentMethod) {
+      const enforced = resolveEnforcedAllowedPaymentMethods(reservation.allowedPaymentMethods);
+      if (
+        !isEnforcedCheckoutPaymentMethod(paymentMethod, enforced)
+        || !reservation.checkoutPaymentMethod
+        || !isEnforcedCheckoutPaymentMethod(reservation.checkoutPaymentMethod, enforced)
+      ) {
+        throw new ConflictException(CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE);
+      }
+    }
+
     if (!this.isValidDate(reservation.paymentDeadlineAt)) {
       return undefined;
     }
@@ -434,9 +580,16 @@ export class PaymentService {
       reservation.createdAt.getTime() + PAYMENT_PROCESSING_TOTAL_CAP_MS,
     );
     const graceAt = new Date(now.getTime() + PAYMENT_PROCESSING_GRACE_MS);
-    const effectiveDeadlineAt = new Date(Math.max(
-      reservation.paymentDeadlineAt.getTime(),
-      Math.min(graceAt.getTime(), capAt.getTime()),
+    // The showtime start bounds the deadline and the seat lock extension: no
+    // payment can be confirmed for a started showtime.
+    const showtimeStartsAtMs = this.toDate(reservation.showtimeStartsAt)?.getTime()
+      ?? Number.POSITIVE_INFINITY;
+    const effectiveDeadlineAt = new Date(Math.min(
+      showtimeStartsAtMs,
+      Math.max(
+        reservation.paymentDeadlineAt.getTime(),
+        Math.min(graceAt.getTime(), capAt.getTime()),
+      ),
     ));
     const ttlSeconds = Math.max(
       1,
@@ -521,8 +674,156 @@ export class PaymentService {
     return effectiveDeadlineAt.toISOString();
   }
 
+  /**
+   * Reopens a Prepared Checkout whose provider SDK rejected `requestPayment`: before
+   * opening checkout (card issuer not selected, a selection race, invalid parameters) or
+   * after the buyer closed the checkout it opened. Without this the order keeps
+   * `checkout_started_at`, and when no provider payment exists no webhook ever resolves
+   * it, so retry, abandonment and expiry stay blocked. Reusing the order is safe because
+   * its deadline cap stays below Toss' READY expiry (PAYMENT_PROCESSING_TOTAL_CAP_MS),
+   * and a confirm of an earlier tab is checked against the current Checkout Payment
+   * Method.
+   *
+   * Only merchant-confirmed methods qualify, only inside the short release window,
+   * only while no Payment exists, only while holding the same confirm lease that
+   * payment confirm and async progress use, and only when no confirm was ever
+   * attempted for the order. The lease ends with each confirm, so a confirm that
+   * finished without a Payment row (provider timeout, recording failure) is visible
+   * only through its attempt marker; such an order stays in status review.
+   */
+  async releaseTossPaymentHandoff(
+    input: TossPaymentHandoffReleaseRequest,
+    now: Date = new Date(),
+  ): Promise<TossPaymentHandoffRelease> {
+    const { orderId, userId } = input;
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        status: reservations.status,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        checkoutStartedAt: reservations.checkoutStartedAt,
+      })
+      .from(reservations)
+      .where(and(
+        eq(reservations.tossOrderId, orderId),
+        eq(reservations.userId, userId),
+      ));
+
+    if (!reservation?.id) {
+      throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
+    }
+    if (reservation.status !== 'PENDING_PAYMENT') {
+      throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    const toRelease = (paymentDeadlineAt: Date | null | undefined): TossPaymentHandoffRelease => ({
+      orderId,
+      released: true,
+      ...(this.isValidDate(paymentDeadlineAt)
+        ? { paymentDeadlineAt: paymentDeadlineAt.toISOString() }
+        : {}),
+    });
+
+    if (!reservation.checkoutStartedAt) {
+      return toRelease(reservation.paymentDeadlineAt);
+    }
+
+    const handoffAgeMs = now.getTime() - reservation.checkoutStartedAt.getTime();
+    if (
+      !reservation.checkoutPaymentMethod
+      || !isMerchantConfirmedCheckoutMethod(reservation.checkoutPaymentMethod)
+      || !Number.isFinite(handoffAgeMs)
+      || handoffAgeMs > PAYMENT_HANDOFF_RELEASE_WINDOW_MS
+    ) {
+      throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+    }
+
+    if (!this.bookingService) {
+      throw new InternalServerErrorException('결제 확인 잠금 서비스가 설정되지 않았습니다');
+    }
+
+    const leaseToken = randomUUID();
+    let leaseAcquired: boolean;
+    try {
+      leaseAcquired = await this.bookingService.acquirePaymentConfirmLock(orderId, leaseToken);
+    } catch {
+      throw new ServiceUnavailableException('결제 상태를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
+    }
+    if (!leaseAcquired) {
+      throw new ConflictException('결제 확인이 이미 진행 중입니다.');
+    }
+
+    try {
+      let confirmAttempted: boolean;
+      try {
+        confirmAttempted = await this.bookingService.hasPaymentConfirmAttempt(orderId);
+      } catch {
+        throw new ServiceUnavailableException('결제 상태를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      }
+      if (confirmAttempted) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+
+      const [released] = await this.db
+        .update(reservations)
+        .set({ checkoutStartedAt: null, updatedAt: now })
+        .where(and(
+          eq(reservations.id, reservation.id),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          eq(reservations.checkoutStartedAt, reservation.checkoutStartedAt),
+          sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`,
+          sql`not exists (
+            select 1 from ${payments}
+            where ${payments.reservationId} = ${reservations.id}
+          )`,
+        ))
+        .returning({
+          id: reservations.id,
+          paymentDeadlineAt: reservations.paymentDeadlineAt,
+        });
+      if (!released) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+      return toRelease(released.paymentDeadlineAt);
+    } finally {
+      await this.bookingService
+        .releasePaymentConfirmLock(orderId, leaseToken)
+        .catch(() => undefined);
+    }
+  }
+
   private isValidDate(value: Date | null | undefined): value is Date {
     return value instanceof Date && !Number.isNaN(value.getTime());
+  }
+
+  private toDate(value: unknown): Date | null {
+    const date = value instanceof Date
+      ? value
+      : typeof value === 'string' ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date : null;
+  }
+
+  /** The reservation's showtime start, read in the same statement as the reservation. */
+  private showtimeStartsAtColumn() {
+    return sql<Date | null>`(
+      select ${showtimes.dateTime} from ${showtimes}
+      where ${showtimes.id} = ${reservations.showtimeId}
+    )`.mapWith(showtimes.dateTime);
+  }
+
+  /**
+   * The stored allowed payment methods of the reservation's performance (null
+   * without a policy row), read in the same statement as the reservation.
+   */
+  private performanceAllowedPaymentMethodsColumn() {
+    return sql<unknown>`(
+      select ${bookingPolicies.allowedPaymentMethods} from ${bookingPolicies}
+      where ${bookingPolicies.performanceId} = (
+        select ${showtimes.performanceId} from ${showtimes}
+        where ${showtimes.id} = ${reservations.showtimeId}
+      )
+    )`.mapWith(bookingPolicies.allowedPaymentMethods);
   }
 
   private async findStoredProviderChargeQuote(
@@ -688,6 +989,7 @@ export class PaymentService {
         id: reservations.id,
         userId: reservations.userId,
         status: reservations.status,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
       })
       .from(reservations)
       .where(eq(reservations.tossOrderId, input.orderId));
@@ -696,13 +998,34 @@ export class PaymentService {
       throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
     }
 
+    // Only an asynchronously approved foreign wallet order has a pending
+    // return. Every other order is confirmed through POST /payments/confirm,
+    // so its paymentKey is never looked up (or issued) from here.
+    const checkoutMethod = reservation.checkoutPaymentMethod;
+    if (
+      !checkoutMethod
+      || checkoutMethod.method !== 'FOREIGN_EASY_PAY'
+      || !isAsyncApprovalForeignEasyPayProvider(checkoutMethod.provider)
+    ) {
+      throw new ConflictException(ASYNC_RETURN_NOT_ASYNC_CHECKOUT_MESSAGE);
+    }
+
+    if (await this.isAsyncReturnAlreadySettled(reservation, input.paymentKey)) {
+      return;
+    }
+
     const queriedPayment = await this.tossClient.queryPayment(input.paymentKey, {
-      secretKeyScope: this.usesForeignEasyPaySecret(input.provider)
-        ? 'foreign-easy-pay'
-        : 'default',
+      secretKeyScope: 'foreign-easy-pay',
     });
     this.assertQueriedPaymentMatchesAsyncReturn(input, queriedPayment);
 
+    // The wallet comes from the provider lookup, else from the frozen
+    // checkout method; the browser's provider parameter is ignored.
+    const easyPayProvider = readTossEasyPayProvider(queriedPayment.easyPay);
+    const verifiedMethod = normalizeTossApprovedMethod(queriedPayment.method, queriedPayment.easyPay);
+    const walletProvider = verifiedMethod.category === 'FOREIGN_EASY_PAY' && verifiedMethod.provider
+      ? verifiedMethod.provider
+      : checkoutMethod.provider;
     const paymentStatus = this.normalizeTossPaymentStatus(queriedPayment.status);
     await this.upsertAsyncPaymentProgress(
       {
@@ -713,12 +1036,18 @@ export class PaymentService {
           queriedPayment.status,
         ].join(':'),
         eventType: 'PAYMENT_STATUS_CHANGED',
+        providerVerified: {
+          method: queriedPayment.method ?? null,
+          easyPayProvider: easyPayProvider ?? null,
+        },
         data: {
           paymentKey: queriedPayment.paymentKey,
           orderId: queriedPayment.orderId,
           status: queriedPayment.status,
           method: queriedPayment.method || 'FOREIGN_EASY_PAY',
-          provider: this.toWebhookProvider(input.provider),
+          provider: walletProvider === 'ALIPAY_PLUS' ? 'ALIPAY' : walletProvider,
+          ...(easyPayProvider ? { easyPay: easyPayProvider } : {}),
+          ...(queriedPayment.currency ? { currency: queriedPayment.currency } : {}),
           totalAmount: queriedPayment.totalAmount,
           approvedAt: queriedPayment.approvedAt ?? undefined,
         },
@@ -726,6 +1055,56 @@ export class PaymentService {
       paymentStatus,
       `client_return:${paymentStatus.toLowerCase()}`,
     );
+  }
+
+  /**
+   * A pending-return refresh for an order whose same payment is already issued
+   * or cancelled has nothing to reconcile: skip the provider query and the
+   * order lease so repeated returns cannot contend with webhook processing.
+   */
+  private async isAsyncReturnAlreadySettled(
+    reservation: { id: string; status: string },
+    paymentKey: string,
+  ): Promise<boolean> {
+    if (reservation.status !== 'CONFIRMED' && reservation.status !== 'CANCELLED') {
+      return false;
+    }
+
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        status: payments.status,
+      })
+      .from(payments)
+      .where(eq(payments.reservationId, reservation.id));
+
+    if (!payment || payment.paymentKey !== paymentKey) {
+      return false;
+    }
+
+    if (reservation.status === 'CANCELLED') {
+      return payment.status === 'CANCELED' || payment.status === 'PARTIAL_CANCELED';
+    }
+
+    if (payment.status === 'PARTIAL_CANCELED') {
+      // Seat-level cancellations belong to the cancellation finalizer.
+      return true;
+    }
+
+    if (payment.status !== 'DONE') {
+      return false;
+    }
+
+    // Issuance is idempotent and DB-only; it repairs a post-commit QR failure
+    // without another provider round trip.
+    if (this.qrTicketService) {
+      await this.qrTicketService.ensureIssuedTicketsForReservation({
+        reservationId: reservation.id,
+        paymentId: payment.id,
+      });
+    }
+    return true;
   }
 
   async findAsyncPaymentProgress(
@@ -746,7 +1125,9 @@ export class PaymentService {
 
     const [payment] = await this.db
       .select({
+        paymentKey: payments.paymentKey,
         paymentStatus: payments.status,
+        paymentAsyncStatus: payments.asyncStatus,
       })
       .from(payments)
       .where(
@@ -760,6 +1141,8 @@ export class PaymentService {
       reservationId: reservation.reservationId,
       reservationStatus: reservation.reservationStatus as ReservationStatus,
       paymentStatus: payment?.paymentStatus as PaymentStatus | undefined ?? null,
+      paymentAsyncStatus: payment?.paymentAsyncStatus ?? null,
+      paymentKey: payment?.paymentKey ?? null,
     };
   }
 
@@ -793,15 +1176,124 @@ export class PaymentService {
   async findPaymentCancelSnapshotByCancelRequestId(
     cancelRequestId: string,
   ): Promise<PaymentCancelPaymentSnapshot | null> {
-    const localId = this.parseGeneratedCancelRequestId(cancelRequestId);
-    if (!localId) {
+    const normalizedCancelRequestId = cancelRequestId.trim();
+    if (!normalizedCancelRequestId) {
       return null;
     }
 
-    return await this.findPaymentCancelSnapshotByRefundId(localId)
-      ?? await this.findPaymentCancelSnapshotByTicketItemId(localId)
-      ?? await this.findPaymentCancelSnapshotByPaymentId(localId)
-      ?? await this.findPaymentCancelSnapshotByReservationId(localId);
+    // `cancel_<row id>` resolves through primary keys. The id columns are uuid,
+    // so other suffixes are never cast into those lookups.
+    const localId = this.parseGeneratedCancelRequestId(normalizedCancelRequestId);
+    if (localId && UUID_PATTERN.test(localId)) {
+      const byLocalId = await this.findPaymentCancelSnapshotByRefundId(localId)
+        ?? await this.findPaymentCancelSnapshotByTicketItemId(localId)
+        ?? await this.findPaymentCancelSnapshotByPaymentId(localId)
+        ?? await this.findPaymentCancelSnapshotByReservationId(localId);
+      if (byLocalId) {
+        return byLocalId;
+      }
+    }
+
+    // Seat-level commands and retried refunds send `cancel_<random command or
+    // attempt id>`, and compensation retries add a suffix; none of them equal a
+    // local row id, so match the full value stored with the command.
+    return await this.findPaymentCancelSnapshotByStoredTicketItemCommand(normalizedCancelRequestId)
+      ?? await this.findPaymentCancelSnapshotByStoredRefundCommand(normalizedCancelRequestId)
+      ?? await this.findPaymentCancelSnapshotByCompensationRecord(normalizedCancelRequestId);
+  }
+
+  private async findPaymentCancelSnapshotByStoredTicketItemCommand(
+    cancelRequestId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(ticketItems)
+      .innerJoin(payments, eq(ticketItems.paymentId, payments.id))
+      .where(
+        sql`${ticketItems.cancellationCommand}->'options'->>'cancelRequestId' = ${cancelRequestId}`,
+      );
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByStoredRefundCommand(
+    cancelRequestId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const previousAttempt = JSON.stringify([
+      { cancelRequest: { options: { cancelRequestId } } },
+    ]);
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(refunds)
+      .innerJoin(payments, eq(refunds.paymentId, payments.id))
+      .where(or(
+        sql`${refunds.providerMetadata}->'cancelRequest'->'options'->>'cancelRequestId' = ${cancelRequestId}`,
+        sql`${refunds.providerMetadata}->'previousAttempts' @> ${previousAttempt}::jsonb`,
+      ));
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByCompensationRecord(
+    cancelRequestId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const ownRecord = JSON.stringify({
+      [ASYNC_DONE_COMPENSATION_METADATA_KEY]: { cancelRequestIds: [cancelRequestId] },
+    });
+    const duplicateRecord = JSON.stringify({
+      [DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY]: [{ cancelRequestIds: [cancelRequestId] }],
+    });
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(or(
+        sql`${payments.providerMetadata} @> ${ownRecord}::jsonb`,
+        sql`${payments.providerMetadata} @> ${duplicateRecord}::jsonb`,
+      ));
+
+    if (!payment) {
+      return null;
+    }
+
+    const duplicate = readDuplicatePaymentCompensations(payment.providerMetadata)
+      .find((record) => record.cancelRequestIds.includes(cancelRequestId));
+    if (duplicate && !readAsyncDoneCompensation(payment.providerMetadata)
+      ?.cancelRequestIds.includes(cancelRequestId)) {
+      // The duplicate charge has no payment row of its own; query it by its key.
+      return toCompensationCancelSnapshot(duplicate);
+    }
+
+    return payment;
   }
 
   private async findPaymentCancelSnapshotByRefundId(
@@ -908,15 +1400,31 @@ export class PaymentService {
       throw new ServiceUnavailableException('결제 확인 서비스를 사용할 수 없습니다.');
     }
     const orderId = this.requireWebhookOrderId(payload);
-    const token = randomUUID();
     // Same order lock as synchronous confirm, acquired before reading snapshots
     // or taking late-recovery seat locks. Contention asks the provider to retry.
-    if (!await this.bookingService.acquirePaymentConfirmLock(orderId, token)) {
+    const result = await this.withPaymentOrderLease(orderId, (assertLease) =>
+      this.upsertAsyncPaymentProgressLocked(payload, paymentStatus, asyncStatus, assertLease));
+    if (!result.acquired) {
       throw new ServiceUnavailableException('결제 확인이 이미 진행 중입니다.');
+    }
+    return result.value;
+  }
+
+  private async withPaymentOrderLease<T>(
+    orderId: string,
+    run: (assertLease: () => Promise<void>) => Promise<T>,
+  ): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    if (!this.bookingService) {
+      throw new ServiceUnavailableException('결제 확인 서비스를 사용할 수 없습니다.');
+    }
+    const bookingService = this.bookingService;
+    const token = randomUUID();
+    if (!await bookingService.acquirePaymentConfirmLock(orderId, token)) {
+      return { acquired: false };
     }
     let leaseHealthy = true;
     const assertLease = async () => {
-      if (!leaseHealthy || !await this.bookingService!.refreshPaymentConfirmLock(orderId, token)) {
+      if (!leaseHealthy || !await bookingService.refreshPaymentConfirmLock(orderId, token)) {
         throw new ServiceUnavailableException('결제 확인 잠금을 다시 확보해야 합니다.');
       }
     };
@@ -926,11 +1434,11 @@ export class PaymentService {
     timer.unref?.();
     try {
       await assertLease();
-      return await this.upsertAsyncPaymentProgressLocked(payload, paymentStatus, asyncStatus, assertLease);
+      return { acquired: true, value: await run(assertLease) };
     } finally {
       clearInterval(timer);
       // A failed cleanup must not undo the committed result; the owner lease expires.
-      await this.bookingService.releasePaymentConfirmLock(orderId, token).catch(() => {});
+      await bookingService.releasePaymentConfirmLock(orderId, token).catch(() => {});
     }
   }
 
@@ -953,6 +1461,8 @@ export class PaymentService {
         providerChargeAmountMinor: reservations.providerChargeAmountMinor,
         providerChargeRate: reservations.providerChargeRate,
         providerChargeQuotedAt: reservations.providerChargeQuotedAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        allowedPaymentMethods: this.performanceAllowedPaymentMethodsColumn(),
       })
       .from(reservations)
       .where(eq(reservations.tossOrderId, orderId));
@@ -996,6 +1506,23 @@ export class PaymentService {
       payment.reservationId === reservation.id
     );
 
+    if (
+      paymentStatus === 'DONE'
+      && existingPayment
+      && existingPayment.paymentKey !== paymentKey
+      && this.isSettledOrCompensatedPayment(existingPayment, reservation)
+    ) {
+      // A second provider-verified DONE for the same order can never be issued:
+      // the reservation already has its payment. Refund it instead of failing
+      // the webhook forever.
+      await assertLease?.();
+      return await this.compensateDuplicateDonePayment({
+        payload,
+        reservation,
+        existingPayment,
+      });
+    }
+
     if (paymentStatus === 'DONE' && (reservation.status === 'CANCELLED'
       || existingPayment?.status === 'CANCELED' || existingPayment?.status === 'PARTIAL_CANCELED')) {
       return 'STALE_PROGRESS_IGNORED';
@@ -1023,6 +1550,7 @@ export class PaymentService {
       ? reservation.totalAmount
       : payload.data.totalAmount ?? reservation.totalAmount;
     const currency = storesWebhookAmountAsKrw ? 'KRW' : payload.data.currency ?? 'KRW';
+    const ledgerCharge = this.toPaymentLedgerCharge(amount, currency, reservation);
 
     if (
       provider === 'PAYPAL'
@@ -1034,6 +1562,21 @@ export class PaymentService {
         reservation,
         payload,
       });
+      if (paymentStatus === 'DONE') {
+        // PayPal is issued by synchronous confirm, but the provider-verified
+        // charge must still be the quoted USD amount, never a same-number KRW charge.
+        const pendingSeats = await this.getReservationSeatSelections(reservation.id);
+        const expectedAmount = this.calculatePayableTotal(pendingSeats);
+        if (
+          reservation.totalAmount !== expectedAmount
+          || !this.providerReportedChargeMatches(payload, usesProviderChargeQuote, providerChargeQuote, expectedAmount)
+        ) {
+          this.logger.error(
+            `PayPal DONE webhook charge does not match the reservation quote. orderId=${orderId}, paymentKey=${paymentKey}, reservationId=${reservation.id}, reservationStatus=${reservation.status}, currency=${payload.data.currency ?? 'unknown'}, totalAmount=${payload.data.totalAmount ?? 'unknown'}`,
+          );
+          return 'PAYPAL_DONE_AMOUNT_MISMATCH';
+        }
+      }
       return;
     }
 
@@ -1046,11 +1589,26 @@ export class PaymentService {
 
       const pendingSeats = await this.getReservationSeatSelections(reservation.id);
       const expectedAmount = this.calculatePayableTotal(pendingSeats);
-      const providerChargeAmountMatches = usesProviderChargeQuote
-        ? providerChargeQuote !== undefined
-          && this.toProviderAmountMinor(payload.data.totalAmount) === providerChargeQuote.amountMinor
-        : payload.data.totalAmount === expectedAmount;
+      const unsupportedProvider = UNSUPPORTED_TOSS_CHECKOUT_PROVIDERS.has(provider);
+      const providerChargeAmountMatches = !unsupportedProvider
+        && this.providerReportedChargeMatches(payload, usesProviderChargeQuote, providerChargeQuote, expectedAmount);
       if (reservation.totalAmount !== expectedAmount || !providerChargeAmountMatches) {
+        if (this.canCompensateRejectedDone(reservation, existingPayment)) {
+          // The PG captured money we will not issue: refund it in full and keep
+          // the cancellation recoverable instead of only marking it ABORTED.
+          await assertLease?.();
+          return await this.compensateAsyncDoneFinalizationFailure({
+            failure: unsupportedProvider ? 'unsupported_provider' : 'amount_mismatch',
+            payload,
+            reservation,
+            existingPayment,
+            provider,
+            method,
+            amount,
+            asyncStatus,
+            providerChargeQuote,
+          });
+        }
         await this.storeRejectedWebhookPayment({
           payload,
           reservation,
@@ -1058,10 +1616,41 @@ export class PaymentService {
           provider,
           method,
           amount,
-          asyncStatus: 'payment_amount_mismatch',
+          asyncStatus: unsupportedProvider ? 'payment_provider_unsupported' : 'payment_amount_mismatch',
           providerChargeQuote,
         });
         throw new BadRequestException('결제 금액이 일치하지 않습니다');
+      }
+
+      if (reservation.status !== 'CONFIRMED' && reservation.status !== 'CANCELLED') {
+        // Same payment method policy as synchronous confirm, decided on the
+        // provider-verified method before anything is issued.
+        const methodPolicy = this.findAsyncDoneMethodPolicyMismatch(payload, reservation);
+        if (methodPolicy.mismatch) {
+          this.logger.error(
+            `CRITICAL: async DONE payment method is not allowed for the order; not issuing. mismatch=${methodPolicy.mismatch}, approvedCategory=${methodPolicy.approved.category}, approvedProvider=${methodPolicy.approved.provider ?? 'none'}, orderId=${orderId}, paymentKey=${paymentKey}, reservationId=${reservation.id}`,
+          );
+          if (!this.canCompensateRejectedDone(reservation, existingPayment)) {
+            return 'DONE_PAYMENT_METHOD_NOT_ALLOWED';
+          }
+          await assertLease?.();
+          return await this.compensateAsyncDoneFinalizationFailure({
+            failure: 'payment_method_not_allowed',
+            payload,
+            reservation,
+            existingPayment,
+            provider,
+            method,
+            amount,
+            asyncStatus,
+            providerChargeQuote,
+            // A deposited virtual account is refunded in full only to a refund
+            // account the buyer names, so it is never cancelled automatically.
+            manualRefundReason: methodPolicy.approved.category === 'VIRTUAL_ACCOUNT'
+              ? 'virtual account refund requires the buyer refund account; manual refund required'
+              : undefined,
+          });
+        }
       }
 
       return await this.finalizeAsyncDonePayment({
@@ -1110,9 +1699,9 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency,
+      currency: ledgerCharge.currency,
       asyncStatus: completesUnissuedCompensation ? 'compensation_cancelled' : asyncStatus,
-      amount,
+      amount: ledgerCharge.amount,
       status: paymentStatus,
       paidAt,
       cancelledAt,
@@ -1161,10 +1750,57 @@ export class PaymentService {
         reservationId: reservation.id,
         paymentId: storedPaymentId,
         tossOrderId: orderId,
-        ...paymentTerminalFailureDiagnostic(paymentStatus, paymentValues.cancelReason),
+        // A CANCELED that completes an unissued compensation is that
+        // compensation's outcome, counted in the compensated_cancel bucket.
+        ...(completesUnissuedCompensation && existingPayment
+          ? this.completedCompensationDiagnostic(existingPayment, paymentValues.cancelReason)
+          : paymentTerminalFailureDiagnostic(paymentStatus, paymentValues.cancelReason)),
         diagnosticSource: asyncStatus,
       });
     }
+  }
+
+  /**
+   * The diagnostic of a compensation completed by the provider CANCELED event:
+   * a payment confirm claim records CONFIRM_APPROVAL_COMPENSATED, an async
+   * DONE compensation its kind's code (legacy rows by their cancel reason).
+   */
+  private completedCompensationDiagnostic(
+    existingPayment: WebhookPaymentSnapshot,
+    cancelReason: string | null,
+  ): { diagnosticKind: string; diagnosticCode: string; diagnosticMessage: string } {
+    const record = readAsyncDoneCompensation(existingPayment.providerMetadata);
+    const reason = cancelReason ?? record?.reason ?? existingPayment.cancelReason ?? null;
+    const diagnosticCode = isConfirmCompensationClaimOwned(existingPayment.providerMetadata)
+      ? CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE
+      : ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES[record?.kind ?? inferCompensationKindFromReason(reason)];
+    return {
+      diagnosticKind: 'payment_compensated_cancel',
+      diagnosticCode,
+      diagnosticMessage: reason?.trim() || '결제사에서 보상 취소가 완료되었습니다.',
+    };
+  }
+
+  /**
+   * The DONE's provider-verified method against the order's frozen checkout
+   * method and the performance policy (payment-method-policy.ts).
+   */
+  private findAsyncDoneMethodPolicyMismatch(
+    payload: TossWebhookRequestBody,
+    reservation: WebhookReservationSnapshot,
+  ) {
+    const verified = payload.providerVerified;
+    const approved = verified
+      ? normalizeTossApprovedMethod(verified.method, verified.easyPayProvider)
+      : normalizeTossApprovedMethod(payload.data.method, payload.data.easyPay);
+    return {
+      approved,
+      mismatch: findApprovedMethodPolicyMismatch(
+        approved,
+        reservation.checkoutPaymentMethod ?? null,
+        resolveEnforcedAllowedPaymentMethods(reservation.allowedPaymentMethods),
+      ),
+    };
   }
 
   async finalizeConfirmedCancelWebhook(
@@ -1273,6 +1909,11 @@ export class PaymentService {
       .where(eq(reservationSeats.reservationId, reservation.id));
     const ticketItemCancellation =
       await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
+    if (ticketItemCancellation?.status === 'cancelled') {
+      // The seat-level command was already finalized (synchronously or by an
+      // earlier event); re-applying would rewrite its history and seat state.
+      return 'already_finalized';
+    }
     const fullReservationCancellationQuote = matchingRefund
       ? readCancellationQuoteFromMetadata(matchingRefund.providerMetadata)
       : null;
@@ -1309,41 +1950,144 @@ export class PaymentService {
         return 'no_local_match';
       }
     }
-    const seats = ticketItemCancellation
-      ? [{
-          seatId: ticketItemCancellation.seatId,
-          floorKey: ticketItemCancellation.floorKey,
-          seatKey: ticketItemCancellation.seatKey,
-        }]
-      : reservationSeatSelections;
+    const finalizerContext = {
+      reservation: {
+        id: reservation.id,
+        showtimeId: reservation.showtimeId,
+        reservationNumber: reservation.reservationNumber,
+      },
+      payment: {
+        id: payment.id,
+        paymentKey: payment.paymentKey,
+        providerMetadata: payment.providerMetadata,
+      },
+      bookingPolicy: bookingPolicy ?? null,
+    };
+
+    if (ticketItemCancellation || matchingRefund) {
+      const seats = ticketItemCancellation
+        ? [{
+            seatId: ticketItemCancellation.seatId,
+            floorKey: ticketItemCancellation.floorKey,
+            seatKey: ticketItemCancellation.seatKey,
+          }]
+        : fullReservationCancellationQuote
+          ? reservationSeatSelections
+          : await this.findUncancelledPaymentSeats(reservation.id, payment.id, reservationSeatSelections);
+
+      await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+        source: 'cancel_webhook',
+        ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
+        ...(ticketItemCancellation ? { ticketItemCancellation } : {}),
+        ...(fullReservationCancellationQuote
+          ? { fullReservationCancellationQuote }
+          : {}),
+        context: { ...finalizerContext, seats },
+        reason,
+        providerResponse: providerResponse as unknown as Record<string, unknown>,
+        actor: { kind: 'system' },
+      });
+
+      return 'finalized';
+    }
+
+    // No seat-level or refund intent matched this event: the provider has the
+    // whole payment cancelled (PAYMENT_STATUS_CHANGED, console cancel, or a last
+    // seat whose synchronous finalize did not finish). Finalize each prepared
+    // seat command with its own economics first, then only the seats that are
+    // still uncancelled; earlier seat cancellations keep their history.
+    const preparedCancellations = await this.findPaymentStatusPartialCancelTicketItemCancellations(
+      completedCancels,
+      payment.id,
+      payment.currency === 'KRW' && (payment.providerChargeCurrency ?? 'KRW') === 'KRW' && payment.provider !== 'PAYPAL',
+    ) ?? [];
+    for (const preparedCancellation of preparedCancellations) {
+      await this.finalizeTicketItemCancelWebhook({
+        ticketItemCancellation: preparedCancellation,
+        context: finalizerContext,
+        providerResponse,
+      });
+    }
+
+    const remainingSeats = await this.findUncancelledPaymentSeats(
+      reservation.id,
+      payment.id,
+      reservationSeatSelections,
+    );
+    if (preparedCancellations.length > 0 && remainingSeats.length === 0) {
+      return 'finalized';
+    }
 
     await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
       source: 'cancel_webhook',
-      ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
-      ...(ticketItemCancellation ? { ticketItemCancellation } : {}),
-      ...(fullReservationCancellationQuote
-        ? { fullReservationCancellationQuote }
-        : {}),
-      context: {
-        reservation: {
-          id: reservation.id,
-          showtimeId: reservation.showtimeId,
-          reservationNumber: reservation.reservationNumber,
-        },
-        payment: {
-          id: payment.id,
-          paymentKey: payment.paymentKey,
-          providerMetadata: payment.providerMetadata,
-        },
-        bookingPolicy: bookingPolicy ?? null,
-        seats,
-      },
+      context: { ...finalizerContext, seats: remainingSeats },
       reason,
       providerResponse: providerResponse as unknown as Record<string, unknown>,
       actor: { kind: 'system' },
     });
 
     return 'finalized';
+  }
+
+  /**
+   * Seats a quote-less full cancellation may still release. Seats whose Ticket
+   * Item is already cancelled were finalized by their own seat cancellation.
+   * Legacy reservations without Ticket Items keep the reservation seat list.
+   */
+  private async findUncancelledPaymentSeats(
+    reservationId: string,
+    paymentId: string,
+    legacyReservationSeats: Array<{ seatId: string }>,
+  ): Promise<Array<{ seatId: string; floorKey?: string | null; seatKey?: string | null }>> {
+    const items = await this.db
+      .select({
+        seatId: ticketItems.seatId,
+        floorKey: ticketItems.floorKey,
+        seatKey: ticketItems.seatKey,
+        status: ticketItems.status,
+      })
+      .from(ticketItems)
+      .where(and(
+        eq(ticketItems.reservationId, reservationId),
+        eq(ticketItems.paymentId, paymentId),
+      ));
+
+    if (items.length === 0) {
+      return legacyReservationSeats;
+    }
+
+    return items
+      .filter((item) => item.status === 'active' || item.status === 'cancellation_pending')
+      .map((item) => ({ seatId: item.seatId, floorKey: item.floorKey, seatKey: item.seatKey }));
+  }
+
+  private async finalizeTicketItemCancelWebhook(input: {
+    ticketItemCancellation: PaymentStatusPartialCancelTicketItemCancellation;
+    context: Omit<FullPaymentCancellationContext, 'seats'>;
+    providerResponse: TossPaymentResponse;
+  }): Promise<void> {
+    const { ticketItemCancellation, context, providerResponse } = input;
+    await this.paymentCancellationFinalizer!.finalizeFullPaymentCancellation({
+      source: 'cancel_webhook',
+      ticketItemCancellation: {
+        ticketItemId: ticketItemCancellation.ticketItemId,
+        cancellationFee: ticketItemCancellation.cancellationFee,
+        serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
+        refundableAmount: ticketItemCancellation.refundableAmount,
+        cancellationCommand: ticketItemCancellation.cancellationCommand,
+      },
+      context: {
+        ...context,
+        seats: [{
+          seatId: ticketItemCancellation.seatId,
+          floorKey: ticketItemCancellation.floorKey,
+          seatKey: ticketItemCancellation.seatKey,
+        }],
+      },
+      reason: ticketItemCancellation.cancelReason ?? 'provider cancellation',
+      providerResponse: providerResponse as unknown as Record<string, unknown>,
+      actor: { kind: 'system' },
+    });
   }
 
   async finalizePaymentStatusPartialCancelWebhook(
@@ -1525,18 +2269,8 @@ export class PaymentService {
     }
 
     for (const ticketItemCancellation of ticketItemCancellations) {
-      const cancelReason = ticketItemCancellation.cancelReason;
-      const finalizerTicketItemCancellation = {
-        ticketItemId: ticketItemCancellation.ticketItemId,
-        cancellationFee: ticketItemCancellation.cancellationFee,
-        serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
-        refundableAmount: ticketItemCancellation.refundableAmount,
-        cancellationCommand: ticketItemCancellation.cancellationCommand,
-      };
-
-      await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
-        source: 'cancel_webhook',
-        ticketItemCancellation: finalizerTicketItemCancellation,
+      await this.finalizeTicketItemCancelWebhook({
+        ticketItemCancellation,
         context: {
           reservation: {
             id: reservation.id,
@@ -1549,15 +2283,8 @@ export class PaymentService {
             providerMetadata: payment.providerMetadata,
           },
           bookingPolicy: bookingPolicy ?? null,
-          seats: [{
-            seatId: ticketItemCancellation.seatId,
-            floorKey: ticketItemCancellation.floorKey,
-            seatKey: ticketItemCancellation.seatKey,
-          }],
         },
-        reason: cancelReason ?? 'provider cancellation',
-        providerResponse: providerResponse as unknown as Record<string, unknown>,
-        actor: { kind: 'system' },
+        providerResponse,
       });
     }
 
@@ -1572,6 +2299,7 @@ export class PaymentService {
     seatId: string;
     floorKey: string;
     seatKey: string;
+    status?: string;
     cancellationFee: number;
     serviceFeeRefund: number;
     refundableAmount: number;
@@ -1581,19 +2309,21 @@ export class PaymentService {
       return null;
     }
 
-    const ticketItemId = this.parseGeneratedCancelRequestId(
-      payload.data.cancelRequestId ?? '',
-    );
+    const cancelRequestId = payload.data.cancelRequestId?.trim() ?? '';
+    const ticketItemId = this.parseGeneratedCancelRequestId(cancelRequestId);
     if (!ticketItemId) {
       return null;
     }
 
+    const storedCommandMatch =
+      sql`${ticketItems.cancellationCommand}->'options'->>'cancelRequestId' = ${cancelRequestId}`;
     const [ticketItem] = await this.db
       .select({
         ticketItemId: ticketItems.id,
         seatId: ticketItems.seatId,
         floorKey: ticketItems.floorKey,
         seatKey: ticketItems.seatKey,
+        status: ticketItems.status,
         cancellationFee: ticketItems.cancellationFee,
         serviceFeeRefund: ticketItems.serviceFeeRefund,
         refundableAmount: ticketItems.refundableAmount,
@@ -1602,8 +2332,9 @@ export class PaymentService {
       .from(ticketItems)
       .where(
         and(
-          or(eq(ticketItems.id, ticketItemId),
-            sql`${ticketItems.cancellationCommand}->'options'->>'cancelRequestId' = ${payload.data.cancelRequestId}`),
+          UUID_PATTERN.test(ticketItemId)
+            ? or(eq(ticketItems.id, ticketItemId), storedCommandMatch)
+            : storedCommandMatch,
           eq(ticketItems.paymentId, paymentId),
         ),
       );
@@ -2053,34 +2784,120 @@ export class PaymentService {
   }> {
     const { payload, reservation, existingPayment, pendingSeats } = input;
     const seatKeys = pendingSeats.map((seat) => seat.seatKey);
-    const ownerToken = `payment-recovery:${reservation.id}:${payload.eventId}`;
+    // Reservation-scoped so a crashed earlier attempt for the same order (any
+    // event id) cannot be mistaken for another buyer within its short TTL.
+    const ownerToken = `payment-recovery:${reservation.id}`;
+    const held = (recoverySeatKeys: string[]) => ({
+      acquired: true,
+      shouldRelease: recoverySeatKeys.length > 0,
+      showtimeId: reservation.showtimeId,
+      seatKeys: recoverySeatKeys,
+      ownerToken,
+    });
+    const lost = {
+      acquired: false,
+      shouldRelease: false,
+      showtimeId: reservation.showtimeId,
+      seatKeys: [],
+      ownerToken,
+    };
 
     if (
       !this.bookingService
-      || !this.canRecoverLateDoneReservation(reservation, existingPayment, payload)
+      || seatKeys.length === 0
+      || (
+        reservation.status !== 'PENDING_PAYMENT'
+        && !this.canRecoverLateDoneReservation(reservation, existingPayment, payload)
+      )
     ) {
-      return {
-        acquired: true,
-        shouldRelease: false,
-        showtimeId: reservation.showtimeId,
-        seatKeys,
-        ownerToken,
-      };
+      return held([]);
     }
 
-    const result = await this.bookingService.acquireRecoverySeatLocks(
+    // A PENDING_PAYMENT row outlives its Redis checkout locks (15-minute cap), so
+    // a late DONE must prove the seats are still this buyer's or free before it
+    // takes them from someone who legitimately re-locked them.
+    // A FAILED reservation's checkout is over: a live lock of the same buyer
+    // belongs to a newer checkout, so it only recovers seats nobody holds.
+    const ownsCheckoutLocks = reservation.status === 'PENDING_PAYMENT';
+    if (ownsCheckoutLocks) {
+      const ownLocks = await this.tryHoldBuyerSeatLocks(reservation, seatKeys);
+      if (ownLocks === 'held') {
+        return held([]);
+      }
+      if (ownLocks === 'unavailable') {
+        return lost;
+      }
+    }
+
+    const recovered = await this.bookingService.acquireRecoverySeatLocks(
       reservation.showtimeId,
       seatKeys,
       ownerToken,
     );
+    if (recovered.acquired) {
+      return held(seatKeys);
+    }
+    if (!ownsCheckoutLocks) {
+      return lost;
+    }
 
-    return {
-      acquired: result.acquired,
-      shouldRelease: result.acquired,
-      showtimeId: reservation.showtimeId,
-      seatKeys,
+    // Recovery fails when any seat has another owner. That owner may still be
+    // this buyer for a subset whose lock has not expired yet.
+    const ownedSeatKeys = new Set(
+      (await this.bookingService.getMyLocks(reservation.userId, reservation.showtimeId)).seatIds
+        .map((seatId) => normalizeSeatIdentity({ seatId }).seatKey),
+    );
+    const buyerSeatKeys = seatKeys.filter((seatKey) => ownedSeatKeys.has(seatKey));
+    if (buyerSeatKeys.length === 0) {
+      return lost;
+    }
+
+    const partialOwnLocks = await this.tryHoldBuyerSeatLocks(reservation, buyerSeatKeys);
+    if (partialOwnLocks === 'unavailable') {
+      return lost;
+    }
+    if (partialOwnLocks === 'lost') {
+      throw new ServiceUnavailableException('좌석 잠금 상태를 다시 확인해야 합니다.');
+    }
+
+    const freeSeatKeys = seatKeys.filter((seatKey) => !ownedSeatKeys.has(seatKey));
+    const partialRecovery = await this.bookingService.acquireRecoverySeatLocks(
+      reservation.showtimeId,
+      freeSeatKeys,
       ownerToken,
-    };
+    );
+    return partialRecovery.acquired ? held(freeSeatKeys) : lost;
+  }
+
+  /**
+   * Extends the buyer's own checkout locks through the commit window.
+   * `lost` means at least one lock expired or has another owner;
+   * `unavailable` means the seat is already sold, held for a refund or disabled.
+   */
+  private async tryHoldBuyerSeatLocks(
+    reservation: WebhookReservationSnapshot,
+    seatKeys: string[],
+  ): Promise<'held' | 'lost' | 'unavailable'> {
+    try {
+      await this.bookingService!.extendOwnedSeatLocks(
+        reservation.userId,
+        reservation.showtimeId,
+        seatKeys,
+        RECOVERY_SEAT_LOCK_TTL,
+      );
+      return 'held';
+    } catch (error) {
+      if (
+        error instanceof ConflictException
+        && (error.message === LOCK_EXPIRED_MESSAGE || error.message === LOCK_OTHER_OWNER_MESSAGE)
+      ) {
+        return 'lost';
+      }
+      if (error instanceof ConflictException) {
+        return 'unavailable';
+      }
+      throw error;
+    }
   }
 
   private async releaseLateRecoverySeatLocks(lock: {
@@ -2150,6 +2967,73 @@ export class PaymentService {
     }
   }
 
+  /**
+   * The reservation's payment row already represents an accepted, cancelled or
+   * compensated charge, so another paymentKey for the same order is a duplicate.
+   */
+  private isSettledOrCompensatedPayment(
+    existingPayment: WebhookPaymentSnapshot,
+    reservation: WebhookReservationSnapshot,
+  ): boolean {
+    return isSettledOrCompensatedPaymentState({
+      reservationStatus: reservation.status,
+      paymentStatus: existingPayment.status,
+      paymentAsyncStatus: existingPayment.asyncStatus,
+    });
+  }
+
+  /** A rejected DONE is refunded unless the reservation already accepted a payment. */
+  private canCompensateRejectedDone(
+    reservation: WebhookReservationSnapshot,
+    existingPayment: WebhookPaymentSnapshot | undefined,
+  ): boolean {
+    return !!this.tossClient
+      && reservation.status !== 'CONFIRMED'
+      && reservation.status !== 'CANCELLED'
+      && !(
+        existingPayment
+        && ['DONE', 'PARTIAL_CANCELED', 'CANCELED'].includes(existingPayment.status)
+      );
+  }
+
+  /**
+   * Compares the provider-verified charge, including its currency, with what
+   * the reservation expects. A quoted USD charge must be reported in USD;
+   * otherwise a same-number KRW charge would satisfy the USD minor amount.
+   */
+  private providerReportedChargeMatches(
+    payload: TossWebhookRequestBody,
+    usesProviderChargeQuote: boolean,
+    providerChargeQuote: ProviderChargeQuote | undefined,
+    expectedAmount: number,
+  ): boolean {
+    const currency = this.normalizeProviderCurrency(payload.data.currency);
+    if (usesProviderChargeQuote) {
+      return providerChargeQuote !== undefined
+        && currency === 'USD'
+        && this.toProviderAmountMinor(payload.data.totalAmount) === providerChargeQuote.amountMinor;
+    }
+
+    return (currency === undefined || currency === 'KRW')
+      && payload.data.totalAmount === expectedAmount;
+  }
+
+  /** Toss reports overseas multi-currency USD as `MUSD` on webhook payloads. */
+  private normalizeProviderCurrency(currency: string | undefined): string | undefined {
+    const normalized = currency?.trim().toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    return normalized === 'MUSD' ? 'USD' : normalized;
+  }
+
+  private assertSupportedTossCheckoutProvider(paymentMethod: PaymentMethod): void {
+    if (UNSUPPORTED_TOSS_CHECKOUT_PROVIDERS.has(paymentMethod.provider)) {
+      throw new BadRequestException('현재 지원하지 않는 결제수단입니다. 다른 결제수단을 선택해주세요.');
+    }
+  }
+
   private canRecoverLateDoneReservation(
     reservation: WebhookReservationSnapshot,
     existingPayment: WebhookPaymentSnapshot | undefined,
@@ -2211,7 +3095,7 @@ export class PaymentService {
       || easyPay === 'ALIPAY'
       || easyPay === '알리페이'
       || (
-        payload.data.method === 'FOREIGN_EASY_PAY'
+        this.isForeignEasyPayMethod(payload.data.method)
         && (existingProvider === 'ALIPAY' || existingProvider === 'ALIPAY_PLUS')
       );
   }
@@ -2336,6 +3220,13 @@ export class PaymentService {
     }
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
+    const ledgerCharge = this.toPaymentLedgerCharge(
+      amount,
+      this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+        ? 'KRW'
+        : payload.data.currency ?? 'KRW',
+      reservation,
+    );
 
     const paymentValues = {
       reservationId: reservation.id,
@@ -2343,11 +3234,9 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
-        ? 'KRW'
-        : payload.data.currency ?? 'KRW',
+      currency: ledgerCharge.currency,
       asyncStatus,
-      amount,
+      amount: ledgerCharge.amount,
       status: 'ABORTED' as const,
       paidAt: null,
       cancelledAt: null,
@@ -2367,7 +3256,7 @@ export class PaymentService {
   }
 
   private async compensateAsyncDoneFinalizationFailure(input: {
-    failure?: 'seat_conflict' | 'ticket_limit';
+    failure?: Exclude<AsyncDoneCompensationKind, 'duplicate_payment_key'>;
     payload: TossWebhookRequestBody;
     reservation: WebhookReservationSnapshot;
     existingPayment?: WebhookPaymentSnapshot;
@@ -2376,7 +3265,14 @@ export class PaymentService {
     amount: number;
     asyncStatus: string;
     providerChargeQuote?: ProviderChargeQuote;
-  }): Promise<'DONE_COMPENSATED_SEAT_CONFLICT' | 'DONE_COMPENSATED_TICKET_LIMIT' | 'DONE_CANCEL_PENDING'> {
+    /**
+     * Set when the charge must not be cancelled automatically (a deposited
+     * virtual account needs the buyer's refund account): no cancel is sent, the
+     * row stays DONE/cancel_pending (unissuable) and the compensation is
+     * recorded as `attention` with a diagnostic and an error log at once.
+     */
+    manualRefundReason?: string;
+  }): Promise<string> {
     const {
       payload,
       reservation,
@@ -2387,42 +3283,58 @@ export class PaymentService {
       asyncStatus,
       providerChargeQuote,
     } = input;
-
-    const reason = input.failure === 'ticket_limit'
-      ? '예매 매수 제한 초과로 인한 자동 취소'
-      : ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON;
+    const failure = input.failure ?? 'seat_conflict';
+    const reason = ASYNC_DONE_COMPENSATION_REASONS[failure];
     if (!this.tossClient) {
       throw new ConflictException('판매 불가능한 좌석입니다');
     }
 
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
+    // The record keeps the provider-reported charge; the row keeps the KRW ledger.
+    const currency = this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+      ? 'KRW'
+      : payload.data.currency ?? 'KRW';
+    const ledgerCharge = this.toPaymentLedgerCharge(amount, currency, reservation);
+    const scopeMetadata = this.resolveWebhookPaymentScopeMetadata(payload, provider);
+    const paymentSnapshot: PaymentCancelPaymentSnapshot = {
+      id: existingPayment?.id,
+      paymentKey,
+      method,
+      provider,
+      currency,
+      amount,
+      providerChargeCurrency: providerChargeQuote?.currency,
+      providerChargeAmountMinor: providerChargeQuote?.amountMinor,
+      ...(scopeMetadata ? { providerMetadata: scopeMetadata } : {}),
+    };
     const cancelCommand = buildFullPaymentCancelRequest({
-      payment: {
-        id: existingPayment?.id,
-        paymentKey,
-        method,
-        provider,
-        currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
-          ? 'KRW'
-          : payload.data.currency ?? 'KRW',
-        amount,
-        providerChargeCurrency: providerChargeQuote?.currency,
-        providerChargeAmountMinor: providerChargeQuote?.amountMinor,
-      },
+      payment: paymentSnapshot,
       reason,
-      idempotencyKey: this.buildWebhookCancelIdempotencyKey(
-        payload,
-        input.failure === 'ticket_limit' ? 'ticket-limit-cancel' : 'seat-failure-cancel',
-      ),
+      idempotencyKey: this.buildCompensationIdempotencyKey(failure, payload),
       cancelRequestIdSeed: reservation.id,
     });
-    const cancelResponse = await this.tossClient.cancelPayment(
-      cancelCommand.paymentKey,
-      cancelCommand.reason,
-      cancelCommand.options,
-    );
-    const terminalCancelCompleted = this.isProviderFullCancelCompleted(cancelResponse);
+    const manualRefundReason = input.manualRefundReason;
+    const outcome: CompensationCancelOutcome = manualRefundReason
+      ? { state: 'error', error: manualRefundReason }
+      : await this.sendCompensationCancel(cancelCommand);
+    const now = new Date();
+    const builtRecord = buildCompensationRecord({
+      kind: failure,
+      paymentKey,
+      reason,
+      payment: paymentSnapshot,
+      cancelCommand,
+      outcome,
+      now,
+    });
+    const record: AsyncDoneCompensationRecord = manualRefundReason
+      ? { ...builtRecord, state: 'attention', attempts: 0, cancelRequestIds: [], lastError: manualRefundReason }
+      : builtRecord;
+    const terminalCancelCompleted = outcome.state === 'cancelled';
+    const rejectedCharge = failure === 'amount_mismatch'
+      || failure === 'unsupported_provider'
+      || failure === 'payment_method_not_allowed';
 
     const paymentValues = {
       reservationId: reservation.id,
@@ -2430,17 +3342,23 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
-        ? 'KRW'
-        : payload.data.currency ?? 'KRW',
-      asyncStatus: terminalCancelCompleted ? asyncStatus : 'cancel_pending',
-      amount,
+      currency: ledgerCharge.currency,
+      asyncStatus: terminalCancelCompleted
+        ? rejectedCharge ? 'compensation_cancelled' : asyncStatus
+        : 'cancel_pending',
+      amount: ledgerCharge.amount,
       status: terminalCancelCompleted ? 'CANCELED' as const : 'DONE' as const,
-      paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : new Date(),
-      cancelledAt: terminalCancelCompleted ? new Date() : null,
+      paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : now,
+      cancelledAt: terminalCancelCompleted ? now : null,
       cancelReason: reason,
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
-      ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
+      providerMetadata: {
+        ...this.toProviderMetadataRecord(existingPayment?.providerMetadata),
+        ...(this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload).providerMetadata ?? {}),
+        ...(scopeMetadata ?? {}),
+        [ASYNC_DONE_COMPENSATION_METADATA_KEY]: record,
+        [ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY]: isOpenCompensationState(record.state),
+      },
     };
 
     let storedPaymentId = existingPayment?.id ?? null;
@@ -2463,7 +3381,7 @@ export class PaymentService {
         .update(reservations)
         .set({
           status: 'FAILED',
-          updatedAt: new Date(),
+          updatedAt: now,
         })
         .where(eq(reservations.id, reservation.id));
 
@@ -2472,15 +3390,888 @@ export class PaymentService {
         paymentId: storedPaymentId,
         tossOrderId: orderId,
         diagnosticKind: 'payment_compensated_cancel',
-        diagnosticCode: input.failure === 'ticket_limit' ? 'ASYNC_DONE_TICKET_LIMIT_CANCELLED' : 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
+        diagnosticCode: ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES[failure],
         diagnosticMessage: reason,
         diagnosticSource: asyncStatus,
       });
     }
 
-    return terminalCancelCompleted
-      ? input.failure === 'ticket_limit' ? 'DONE_COMPENSATED_TICKET_LIMIT' : 'DONE_COMPENSATED_SEAT_CONFLICT'
-      : 'DONE_CANCEL_PENDING';
+    if (manualRefundReason) {
+      if (reservation.status !== 'CONFIRMED' && reservation.status !== 'CANCELLED') {
+        await recordReservationPaymentFailureDiagnostic(this.db, {
+          reservationId: reservation.id,
+          paymentId: storedPaymentId,
+          tossOrderId: orderId,
+          diagnosticKind: 'payment_compensation_attention',
+          diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION',
+          diagnosticMessage: '자동 보상 취소를 할 수 없는 결제입니다. 결제사에서 수동으로 환불해야 합니다.',
+          diagnosticSource: asyncStatus,
+        });
+      }
+      this.logger.error(
+        `Async DONE compensation needs operator reconciliation. orderId=${orderId}, kind=${failure}, paymentKey=${paymentKey}, attempts=0, lastError=${manualRefundReason}`,
+      );
+      return 'DONE_PAYMENT_METHOD_NOT_ALLOWED_ATTENTION';
+    }
+
+    if (outcome.state === 'error') {
+      this.logger.error(
+        `Async DONE compensation cancel request failed; recovery sweep will retry. orderId=${orderId}, paymentKey=${paymentKey}, kind=${failure}, error=${outcome.error}`,
+      );
+    }
+
+    if (!terminalCancelCompleted) {
+      return 'DONE_CANCEL_PENDING';
+    }
+
+    switch (failure) {
+      case 'ticket_limit':
+        return 'DONE_COMPENSATED_TICKET_LIMIT';
+      case 'amount_mismatch':
+        return 'DONE_COMPENSATED_AMOUNT_MISMATCH';
+      case 'unsupported_provider':
+        return 'DONE_COMPENSATED_UNSUPPORTED_PROVIDER';
+      case 'payment_method_not_allowed':
+        return 'DONE_COMPENSATED_PAYMENT_METHOD_NOT_ALLOWED';
+      default:
+        return 'DONE_COMPENSATED_SEAT_CONFLICT';
+    }
+  }
+
+  /**
+   * Refunds a second provider-verified DONE for an order whose reservation
+   * already has a settled or compensated payment row. The duplicate charge has
+   * no row of its own, so its cancellation is tracked on the existing row.
+   */
+  private async compensateDuplicateDonePayment(input: {
+    payload: TossWebhookRequestBody;
+    reservation: WebhookReservationSnapshot;
+    existingPayment: WebhookPaymentSnapshot;
+  }): Promise<'DONE_DUPLICATE_PAYMENT_COMPENSATED' | 'DONE_DUPLICATE_PAYMENT_CANCEL_PENDING'> {
+    const { payload, reservation, existingPayment } = input;
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+    const records = readDuplicatePaymentCompensations(existingPayment.providerMetadata);
+    const previous = records.find((record) => record.paymentKey === paymentKey);
+
+    this.logger.error(
+      `Duplicate DONE payment for an already settled order. orderId=${orderId}, reservationId=${reservation.id}, reservationStatus=${reservation.status}, settledPaymentKey=${existingPayment.paymentKey}, duplicatePaymentKey=${paymentKey}, compensationState=${previous?.state ?? 'new'}`,
+    );
+
+    if (previous && previous.state !== 'error') {
+      return previous.state === 'cancelled'
+        ? 'DONE_DUPLICATE_PAYMENT_COMPENSATED'
+        : 'DONE_DUPLICATE_PAYMENT_CANCEL_PENDING';
+    }
+
+    if (!this.tossClient) {
+      throw new ServiceUnavailableException('중복 결제 취소를 처리할 수 없습니다.');
+    }
+
+    const provider = this.resolveWebhookProvider(payload, existingPayment);
+    const method = this.resolveWebhookMethod(payload, provider);
+    const scopeMetadata = this.resolveWebhookPaymentScopeMetadata(payload, provider);
+    const reason = ASYNC_DONE_COMPENSATION_REASONS.duplicate_payment_key;
+    const paymentSnapshot: PaymentCancelPaymentSnapshot = {
+      paymentKey,
+      method,
+      provider,
+      currency: payload.data.currency ?? 'KRW',
+      amount: payload.data.totalAmount ?? existingPayment.amount,
+      ...(scopeMetadata ? { providerMetadata: scopeMetadata } : {}),
+    };
+    // A previous request with an unknown outcome is resent with the same
+    // idempotency key so the PG can return its original result.
+    const cancelCommand = previous?.cancelRequest ?? buildFullPaymentCancelRequest({
+      payment: paymentSnapshot,
+      reason,
+      idempotencyKey: `async-done-duplicate-cancel:${orderId}:${paymentKey}`,
+      cancelRequestIdSeed: buildDuplicateCancelRequestSeed(paymentKey),
+    });
+    const outcome = await this.sendCompensationCancel(cancelCommand);
+    const record = buildCompensationRecord({
+      kind: 'duplicate_payment_key',
+      paymentKey,
+      reason,
+      payment: paymentSnapshot,
+      cancelCommand,
+      outcome,
+      now: new Date(),
+      previous,
+    });
+    const nextRecords = [
+      ...records.filter((candidate) => candidate.paymentKey !== paymentKey),
+      record,
+    ];
+    await this.db
+      .update(payments)
+      .set({
+        providerMetadata: this.mergeProviderMetadataSql({
+          [DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY]: nextRecords,
+          ...(isOpenCompensationState(record.state)
+            ? { [ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY]: true }
+            : {}),
+        }),
+      })
+      .where(eq(payments.id, existingPayment.id));
+
+    if (outcome.state === 'error') {
+      this.logger.error(
+        `Duplicate DONE compensation cancel request failed; recovery sweep will retry. orderId=${orderId}, duplicatePaymentKey=${paymentKey}, error=${outcome.error}`,
+      );
+    }
+
+    return outcome.state === 'cancelled'
+      ? 'DONE_DUPLICATE_PAYMENT_COMPENSATED'
+      : 'DONE_DUPLICATE_PAYMENT_CANCEL_PENDING';
+  }
+
+  /**
+   * CANCEL_STATUS_CHANGED ABORTED for a compensation cancel: the captured
+   * money is still at the PG. Keep the payment unissuable (`cancel_pending`),
+   * make the abort visible, and let the recovery sweep re-request the cancel.
+   */
+  async recordCompensationCancelAborted(
+    payload: TossWebhookRequestBody,
+  ): Promise<'own' | 'duplicate' | null> {
+    const { orderId, paymentKey, cancelRequestId } = payload.data;
+    if (
+      payload.eventType !== 'CANCEL_STATUS_CHANGED'
+      || payload.data.cancelStatus !== 'ABORTED'
+      || !orderId
+      || !paymentKey
+      || !cancelRequestId
+    ) {
+      return null;
+    }
+
+    // Same order lease as DONE processing and the recovery sweep, so a stale
+    // record snapshot never overwrites a newer retry.
+    const leased = await this.withPaymentOrderLease(orderId, () =>
+      this.recordCompensationCancelAbortedLocked(orderId, paymentKey, cancelRequestId));
+    if (!leased.acquired) {
+      throw new ServiceUnavailableException('결제 확인이 이미 진행 중입니다.');
+    }
+    return leased.value;
+  }
+
+  private async recordCompensationCancelAbortedLocked(
+    orderId: string,
+    paymentKey: string,
+    cancelRequestId: string,
+  ): Promise<'own' | 'duplicate' | null> {
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        status: reservations.status,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, orderId));
+    if (!reservation) {
+      return null;
+    }
+
+    const [payment] = await this.db
+      .select(this.compensationPaymentColumns())
+      .from(payments)
+      .where(eq(payments.reservationId, reservation.id));
+    if (!payment) {
+      return null;
+    }
+
+    const now = new Date();
+    if (
+      payment.paymentKey === paymentKey
+      && payment.status === 'DONE'
+      && payment.asyncStatus === 'cancel_pending'
+    ) {
+      // A row payment confirm claimed belongs to its reconcile job, which
+      // re-cancels an aborted cancel itself; it is never adopted here.
+      if (isConfirmCompensationClaimOwned(payment.providerMetadata)) {
+        this.logger.warn(
+          `Compensation cancel ABORTED for a payment confirm claim; left to its reconcile job. owner=payment_confirm_reconcile, orderId=${orderId}, paymentKey=${paymentKey}, cancelRequestId=${cancelRequestId}`,
+        );
+        return null;
+      }
+      const record = readAsyncDoneCompensation(payment.providerMetadata)
+        ?? synthesizeLegacyCompensationRecord(payment, reservation.id);
+      // Only the latest request decides the state; an older attempt's late
+      // result must not reopen a retry that is already in flight.
+      if (record.cancelRequest.options.cancelRequestId !== cancelRequestId) {
+        return null;
+      }
+
+      const aborted: AsyncDoneCompensationRecord = {
+        ...record,
+        state: 'aborted',
+        lastCheckedAt: now.toISOString(),
+      };
+      await this.db
+        .update(payments)
+        .set({
+          providerMetadata: this.mergeProviderMetadataSql({
+            [ASYNC_DONE_COMPENSATION_METADATA_KEY]: aborted,
+            [ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY]: true,
+          }),
+        })
+        .where(and(
+          eq(payments.id, payment.id),
+          eq(payments.status, 'DONE'),
+          eq(payments.asyncStatus, 'cancel_pending'),
+        ));
+      if (reservation.status !== 'CONFIRMED' && reservation.status !== 'CANCELLED') {
+        await recordReservationPaymentFailureDiagnostic(this.db, {
+          reservationId: reservation.id,
+          paymentId: payment.id,
+          tossOrderId: orderId,
+          diagnosticKind: 'payment_compensation_cancel_aborted',
+          diagnosticCode: 'ASYNC_DONE_COMPENSATION_CANCEL_ABORTED',
+          diagnosticMessage: '결제사에서 보상 취소가 중단되어 자동 재시도 대기 중입니다.',
+          diagnosticSource: 'cancel_status_changed:aborted',
+        });
+      }
+      this.logger.error(
+        `Async DONE compensation cancel ABORTED by the provider; recovery sweep will retry. orderId=${orderId}, paymentKey=${paymentKey}, cancelRequestId=${cancelRequestId}, attempts=${record.attempts}`,
+      );
+      return 'own';
+    }
+
+    const duplicates = readDuplicatePaymentCompensations(payment.providerMetadata);
+    const duplicate = duplicates.find((record) =>
+      record.paymentKey === paymentKey && record.cancelRequest.options.cancelRequestId === cancelRequestId);
+    if (!duplicate || duplicate.state === 'cancelled') {
+      return null;
+    }
+
+    await this.db
+      .update(payments)
+      .set({
+        providerMetadata: this.mergeProviderMetadataSql({
+          [DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY]: duplicates.map((record) =>
+            record === duplicate
+              ? { ...record, state: 'aborted', lastCheckedAt: now.toISOString() }
+              : record),
+          [ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY]: true,
+        }),
+      })
+      .where(eq(payments.id, payment.id));
+    this.logger.error(
+      `Duplicate DONE compensation cancel ABORTED by the provider; recovery sweep will retry. orderId=${orderId}, duplicatePaymentKey=${paymentKey}, cancelRequestId=${cancelRequestId}`,
+    );
+    return 'duplicate';
+  }
+
+  /**
+   * Periodic recovery for compensation cancels that did not reach a final PG
+   * result: IN_PROGRESS without a terminal webhook, provider ABORTED, or a
+   * request whose outcome was unknown. Re-cancels are bounded; exhausted
+   * records are surfaced as attention for operator reconciliation.
+   */
+  async recoverAsyncDoneCompensations(
+    now: Date = new Date(),
+    limit = ASYNC_DONE_COMPENSATION_SWEEP_LIMIT,
+    options: { shouldStop?: () => boolean } = {},
+  ): Promise<AsyncDoneCompensationRecoveryResult> {
+    const result: AsyncDoneCompensationRecoveryResult = {
+      checked: 0,
+      cancelled: 0,
+      retried: 0,
+      waiting: 0,
+      attention: 0,
+      skipped: 0,
+    };
+    if (!this.tossClient || !this.bookingService) {
+      return result;
+    }
+
+    // One API/worker instance sweeps at a time; per-order work also takes the
+    // same order lease as confirm and webhook processing.
+    const sweep = await this.withPaymentOrderLease(
+      ASYNC_DONE_COMPENSATION_SWEEP_LEASE_KEY,
+      async (assertSweepLease) => {
+        const candidatePredicate = or(
+          sql`${payments.providerMetadata}->>${ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY} = 'true'`,
+          // Compensations from before the record existed are adopted once.
+          // A claim made by payment confirm belongs to its reconcile job.
+          and(
+            eq(payments.status, 'DONE'),
+            eq(payments.asyncStatus, 'cancel_pending'),
+            sql`${payments.providerMetadata}->${ASYNC_DONE_COMPENSATION_METADATA_KEY} IS NULL`,
+            sql`coalesce(${payments.providerMetadata}->>${CONFIRM_COMPENSATION_CLAIM_METADATA_KEY}, 'false') <> 'true'`,
+            notInArray(reservations.status, ['CONFIRMED', 'CANCELLED']),
+          ),
+        );
+        // Candidates are read in creation order, page by page, and rows that
+        // provably need nothing now (an open compensation not yet due) are
+        // skipped without a lease. `limit` bounds the orders processed, so due
+        // rows behind many not-yet-due ones are still reached.
+        const scanLimit = limit * ASYNC_DONE_COMPENSATION_SWEEP_SCAN_FACTOR;
+        let scanned = 0;
+        let cursor: { createdAt: string; id: string } | null = null;
+        let stopped = false;
+        while (!stopped && result.checked < limit && scanned < scanLimit) {
+          const page: Array<{
+            id: string;
+            tossOrderId: string;
+            status?: string;
+            asyncStatus?: string | null;
+            providerMetadata?: unknown;
+            reservationStatus?: string;
+            cursorCreatedAt?: string | null;
+          }> = await this.db
+            .select({
+              id: payments.id,
+              tossOrderId: payments.tossOrderId,
+              status: payments.status,
+              asyncStatus: payments.asyncStatus,
+              providerMetadata: payments.providerMetadata,
+              reservationStatus: reservations.status,
+              cursorCreatedAt: sql<string>`${payments.createdAt}::text`,
+            })
+            .from(payments)
+            .innerJoin(reservations, eq(reservations.id, payments.reservationId))
+            .where(and(
+              candidatePredicate,
+              cursor
+                ? sql`(${payments.createdAt}, ${payments.id}) > (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`
+                : undefined,
+            ))
+            .orderBy(payments.createdAt, payments.id)
+            .limit(limit);
+          scanned += page.length;
+
+          for (const candidate of page) {
+            // Shutdown: finish the current order only (the caller bounds the wait).
+            if (options.shouldStop?.()) {
+              stopped = true;
+              break;
+            }
+            if (result.checked >= limit) {
+              break;
+            }
+            if (this.isCompensationSweepNoop(candidate, now)) {
+              continue;
+            }
+            result.checked += 1;
+            try {
+              await assertSweepLease();
+              const leased = await this.withPaymentOrderLease(candidate.tossOrderId, (assertLease) =>
+                this.recoverPaymentCompensations(candidate.id, now, assertLease));
+              if (!leased.acquired) {
+                result.skipped += 1;
+                continue;
+              }
+              result.cancelled += leased.value.cancelled;
+              result.retried += leased.value.retried;
+              result.waiting += leased.value.waiting;
+              result.attention += leased.value.attention;
+            } catch (error) {
+              result.skipped += 1;
+              this.logger.error(
+                `Async DONE compensation recovery failed for paymentId=${candidate.id}, orderId=${candidate.tossOrderId}`,
+                error instanceof Error ? error.stack : String(error),
+              );
+              if (error instanceof ServiceUnavailableException) {
+                stopped = true;
+                break;
+              }
+            }
+          }
+
+          const last = page.at(-1);
+          if (page.length < limit || !last?.cursorCreatedAt) {
+            break;
+          }
+          cursor = { createdAt: last.cursorCreatedAt, id: last.id };
+        }
+      },
+    );
+
+    return sweep.acquired ? result : { ...result, skipped: result.skipped + 1 };
+  }
+
+  private async recoverPaymentCompensations(
+    paymentId: string,
+    now: Date,
+    assertLease: () => Promise<void>,
+  ): Promise<{ cancelled: number; retried: number; waiting: number; attention: number }> {
+    const counts = { cancelled: 0, retried: 0, waiting: 0, attention: 0 };
+    const [payment] = await this.db
+      .select(this.compensationPaymentColumns())
+      .from(payments)
+      .where(eq(payments.id, paymentId));
+    if (!payment) {
+      return counts;
+    }
+    const [reservation] = await this.db
+      .select({ id: reservations.id, status: reservations.status })
+      .from(reservations)
+      .where(eq(reservations.id, payment.reservationId));
+    if (!reservation) {
+      return counts;
+    }
+
+    const tally = (action: CompensationStepAction) => {
+      if (action === 'cancelled') counts.cancelled += 1;
+      if (action === 'retried') counts.retried += 1;
+      if (action === 'waiting') counts.waiting += 1;
+      if (action === 'attention') counts.attention += 1;
+    };
+
+    let ownRecord = readAsyncDoneCompensation(payment.providerMetadata);
+    let paymentStatus = payment.status;
+    const newlyNeedsAttention: AsyncDoneCompensationRecord[] = [];
+    // A row payment confirm claimed is owned by its reconcile job: only the
+    // duplicate-charge records on it are advanced here.
+    const confirmClaimOwned = isConfirmCompensationClaimOwned(payment.providerMetadata);
+    const ownCompensationOpen = !confirmClaimOwned
+      && reservation.status !== 'CONFIRMED'
+      && reservation.status !== 'CANCELLED'
+      && (
+        (payment.status === 'DONE' && payment.asyncStatus === 'cancel_pending')
+        || (
+          payment.status === 'ABORTED'
+          && REJECTED_DONE_ASYNC_STATUSES.has(payment.asyncStatus)
+          && ownRecord !== null
+        )
+      );
+
+    if (ownCompensationOpen) {
+      const record = ownRecord ?? synthesizeLegacyCompensationRecord(payment, reservation.id);
+      if (isCompensationDue(record, now)) {
+        const step = await this.advanceCompensation(record, payment.tossOrderId, reservation.id, now, assertLease);
+        tally(step.action);
+        ownRecord = step.record;
+        await assertLease();
+        if (step.action === 'cancelled') {
+          if (await this.finalizeRecoveredOwnCompensation({
+            payment,
+            reservation,
+            record: step.record,
+            cancelledAt: step.cancelledAt ?? now,
+          })) {
+            paymentStatus = 'CANCELED';
+          }
+        } else {
+          // A re-sent cancel means the PG still holds a DONE charge.
+          const reopensRejectedCharge = payment.status === 'ABORTED' && step.action === 'retried';
+          await this.db
+            .update(payments)
+            .set({
+              ...(reopensRejectedCharge
+                ? { status: 'DONE' as const, asyncStatus: 'cancel_pending' }
+                : {}),
+              providerMetadata: this.mergeProviderMetadataSql({
+                [ASYNC_DONE_COMPENSATION_METADATA_KEY]: step.record,
+              }),
+            })
+            .where(and(eq(payments.id, payment.id), eq(payments.status, payment.status)));
+          if (reopensRejectedCharge) {
+            paymentStatus = 'DONE';
+          }
+          if (step.action === 'attention') {
+            newlyNeedsAttention.push(step.record);
+            await recordReservationPaymentFailureDiagnostic(this.db, {
+              reservationId: reservation.id,
+              paymentId: payment.id,
+              tossOrderId: payment.tossOrderId,
+              diagnosticKind: 'payment_compensation_attention',
+              diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION',
+              diagnosticMessage: '자동 보상 취소를 완료하지 못했습니다. 결제사 취소 상태를 수동으로 대조해야 합니다.',
+              diagnosticSource: 'async_done_compensation_recovery',
+            });
+          }
+        }
+      }
+    } else if (ownRecord && isOpenCompensationState(ownRecord.state)) {
+      // The row was settled elsewhere (terminal webhook, or an issued
+      // reservation that must not be cancelled automatically): close the record.
+      ownRecord = {
+        ...ownRecord,
+        state: payment.status === 'CANCELED' ? 'cancelled' : 'attention',
+        lastCheckedAt: now.toISOString(),
+      };
+      if (ownRecord.state === 'attention') {
+        newlyNeedsAttention.push(ownRecord);
+      }
+      await this.db
+        .update(payments)
+        .set({
+          providerMetadata: this.mergeProviderMetadataSql({
+            [ASYNC_DONE_COMPENSATION_METADATA_KEY]: ownRecord,
+          }),
+        })
+        .where(eq(payments.id, payment.id));
+    }
+
+    const duplicates: AsyncDoneCompensationRecord[] = [];
+    let duplicatesChanged = false;
+    for (const duplicate of readDuplicatePaymentCompensations(payment.providerMetadata)) {
+      if (!isCompensationDue(duplicate, now)) {
+        duplicates.push(duplicate);
+        continue;
+      }
+      const step = await this.advanceCompensation(duplicate, payment.tossOrderId, reservation.id, now, assertLease);
+      tally(step.action);
+      duplicates.push(step.record);
+      duplicatesChanged = true;
+      if (step.action === 'attention') {
+        newlyNeedsAttention.push(step.record);
+      }
+    }
+
+    const ownStillOpen = ownRecord !== null
+      ? isOpenCompensationState(ownRecord.state)
+        && (paymentStatus === 'DONE' || paymentStatus === 'ABORTED')
+      : !confirmClaimOwned && paymentStatus === 'DONE' && payment.asyncStatus === 'cancel_pending';
+    const stillOpen = ownStillOpen
+      || duplicates.some((record) => isOpenCompensationState(record.state));
+    const wasOpen =
+      this.toProviderMetadataRecord(payment.providerMetadata)[ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY] === true;
+
+    if (duplicatesChanged || stillOpen !== wasOpen) {
+      await assertLease();
+      await this.db
+        .update(payments)
+        .set({
+          providerMetadata: this.mergeProviderMetadataSql({
+            ...(duplicatesChanged ? { [DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY]: duplicates } : {}),
+            [ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY]: stillOpen,
+          }),
+        })
+        .where(eq(payments.id, payment.id));
+    }
+
+    for (const record of newlyNeedsAttention) {
+      this.logger.error(
+        `Async DONE compensation needs operator reconciliation. orderId=${payment.tossOrderId}, kind=${record.kind}, paymentKey=${record.paymentKey}, attempts=${record.attempts}, lastError=${record.lastError ?? 'none'}`,
+      );
+    }
+
+    return counts;
+  }
+
+  /**
+   * True only when {@link recoverPaymentCompensations} provably has nothing to
+   * do for this candidate now: no due duplicate-charge record, an own record
+   * that is closed or open but not yet due (or none to adopt), and an open
+   * flag that already matches. Incomplete rows are always processed.
+   */
+  private isCompensationSweepNoop(
+    candidate: {
+      status?: string;
+      asyncStatus?: string | null;
+      providerMetadata?: unknown;
+      reservationStatus?: string;
+    },
+    now: Date,
+  ): boolean {
+    if (candidate.status === undefined || candidate.reservationStatus === undefined) {
+      return false;
+    }
+    const metadata = this.toProviderMetadataRecord(candidate.providerMetadata);
+    const duplicates = readDuplicatePaymentCompensations(metadata);
+    if (duplicates.some((record) => isCompensationDue(record, now))) {
+      return false;
+    }
+
+    const ownRecord = readAsyncDoneCompensation(metadata);
+    const confirmClaimOwned = isConfirmCompensationClaimOwned(metadata);
+    const reservationOpen = candidate.reservationStatus !== 'CONFIRMED'
+      && candidate.reservationStatus !== 'CANCELLED';
+    const cancelPending = candidate.status === 'DONE' && candidate.asyncStatus === 'cancel_pending';
+    let ownStillOpen: boolean;
+    if (ownRecord) {
+      if (isOpenCompensationState(ownRecord.state)) {
+        const ownOpenRow = reservationOpen && (
+          cancelPending
+          || (candidate.status === 'ABORTED' && REJECTED_DONE_ASYNC_STATUSES.has(candidate.asyncStatus ?? ''))
+        );
+        if (!ownOpenRow || isCompensationDue(ownRecord, now)) {
+          return false;
+        }
+        ownStillOpen = true;
+      } else {
+        ownStillOpen = false;
+      }
+    } else {
+      if (!confirmClaimOwned && reservationOpen && cancelPending) {
+        // A legacy row is adopted with a synthesized record that is due at once.
+        return false;
+      }
+      ownStillOpen = !confirmClaimOwned && cancelPending;
+    }
+
+    const stillOpen = ownStillOpen || duplicates.some((record) => isOpenCompensationState(record.state));
+    return stillOpen === (metadata[ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY] === true);
+  }
+
+  /** When the first cancel of a compensation was requested, if it is known. */
+  private compensationRequestedAtMs(record: AsyncDoneCompensationRecord): number | null {
+    for (const value of [record.requestedAt, record.lastAttemptAt]) {
+      const parsed = Date.parse(value ?? '');
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  private async advanceCompensation(
+    record: AsyncDoneCompensationRecord,
+    orderId: string,
+    reservationId: string,
+    now: Date,
+    assertLease: () => Promise<void>,
+  ): Promise<{ action: CompensationStepAction; record: AsyncDoneCompensationRecord; cancelledAt?: Date }> {
+    const { queryFailures: previousQueryFailures, queryFailingSince, ...rest } = record;
+    const checked: AsyncDoneCompensationRecord = { ...rest, lastCheckedAt: now.toISOString() };
+    let queried: TossPaymentResponse;
+    try {
+      queried = await this.tossClient!.queryPayment(record.paymentKey, {
+        secretKeyScope: record.payment.secretKeyScope,
+      });
+    } catch (error) {
+      // A query that keeps failing (wrong secret scope or key, provider outage)
+      // would otherwise be re-polled forever with no operator signal.
+      const queryFailures = (previousQueryFailures ?? 0) + 1;
+      const failingSince = queryFailingSince ?? now.toISOString();
+      const failingForMs = now.getTime() - (Date.parse(failingSince) || now.getTime());
+      const lastError = this.describeError(error);
+      const failed: AsyncDoneCompensationRecord = {
+        ...checked,
+        lastError,
+        queryFailures,
+        queryFailingSince: failingSince,
+      };
+      if (
+        queryFailures >= ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_COUNT
+        && failingForMs >= ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS
+      ) {
+        return {
+          action: 'attention',
+          record: {
+            ...failed,
+            state: 'attention',
+            lastError: `provider query failing since ${failingSince}: ${lastError}`,
+          },
+        };
+      }
+      this.logger.warn(
+        `Async DONE compensation provider query failed; will retry. orderId=${orderId}, kind=${record.kind}, paymentKey=${record.paymentKey}, queryFailures=${queryFailures}, error=${lastError}`,
+      );
+      return { action: 'waiting', record: failed };
+    }
+
+    if (queried.paymentKey !== record.paymentKey || queried.orderId !== orderId) {
+      return {
+        action: 'attention',
+        record: { ...checked, state: 'attention', lastError: 'provider payment identity mismatch' },
+      };
+    }
+
+    if (this.isProviderFullCancelCompleted(queried)) {
+      const completed = getCompletedProviderCancels(queried).at(-1);
+      return {
+        action: 'cancelled',
+        record: { ...checked, state: 'cancelled' },
+        cancelledAt: completed?.canceledAt ? new Date(completed.canceledAt) : now,
+      };
+    }
+
+    if (queried.status !== 'DONE') {
+      // Full compensation never produces PARTIAL_CANCELED; anything else needs a human.
+      return {
+        action: 'attention',
+        record: { ...checked, state: 'attention', lastError: `unexpected provider status ${queried.status}` },
+      };
+    }
+
+    if (queried.cancels?.some((cancel) => cancel.cancelStatus === 'IN_PROGRESS')) {
+      // A provider that keeps a cancel IN_PROGRESS past the limit needs a human:
+      // the money is still held and no terminal webhook has arrived.
+      const requestedAtMs = this.compensationRequestedAtMs(record);
+      if (
+        requestedAtMs !== null
+        && now.getTime() - requestedAtMs >= ASYNC_DONE_COMPENSATION_IN_PROGRESS_ATTENTION_MS
+      ) {
+        return {
+          action: 'attention',
+          record: {
+            ...checked,
+            state: 'attention',
+            lastError: `provider cancel IN_PROGRESS since ${new Date(requestedAtMs).toISOString()}`,
+          },
+        };
+      }
+      return { action: 'waiting', record: { ...checked, state: 'pending' } };
+    }
+
+    // DONE without a live cancel: the earlier request was aborted, rejected or
+    // never reached the PG. A full cancel cannot refund twice, so a fresh
+    // idempotency key and cancelRequestId are safe.
+    if (record.attempts >= ASYNC_DONE_COMPENSATION_MAX_ATTEMPTS) {
+      return {
+        action: 'attention',
+        record: { ...checked, state: 'attention', lastError: checked.lastError ?? 'compensation retries exhausted' },
+      };
+    }
+
+    const attempt = record.attempts + 1;
+    const snapshot = toCompensationCancelSnapshot(record);
+    const baseIdempotencyKey = (record.cancelRequest.options.idempotencyKey
+      ?? `async-done-compensation:${record.paymentKey}`).replace(/:retry-\d+$/, '');
+    const cancelCommand = buildFullPaymentCancelRequest({
+      payment: snapshot,
+      reason: record.reason,
+      idempotencyKey: `${baseIdempotencyKey}:retry-${attempt}`,
+      cancelRequestIdSeed: record.kind === 'duplicate_payment_key'
+        ? `${buildDuplicateCancelRequestSeed(record.paymentKey)}-r${attempt}`
+        : `${reservationId}-r${attempt}`,
+    });
+    await assertLease();
+    const outcome = await this.sendCompensationCancel(cancelCommand);
+    const next = buildCompensationRecord({
+      kind: record.kind,
+      paymentKey: record.paymentKey,
+      reason: record.reason,
+      payment: snapshot,
+      cancelCommand,
+      outcome,
+      now,
+      previous: record,
+    });
+
+    return outcome.state === 'cancelled'
+      ? { action: 'cancelled', record: next, cancelledAt: now }
+      : { action: 'retried', record: next };
+  }
+
+  private async finalizeRecoveredOwnCompensation(input: {
+    payment: CompensationPaymentRow;
+    reservation: { id: string; status: string };
+    record: AsyncDoneCompensationRecord;
+    cancelledAt: Date;
+  }): Promise<boolean> {
+    const { payment, reservation, record, cancelledAt } = input;
+    const updated = await this.db
+      .update(payments)
+      .set({
+        status: 'CANCELED',
+        asyncStatus: 'compensation_cancelled',
+        cancelledAt,
+        cancelReason: record.reason,
+        providerMetadata: this.mergeProviderMetadataSql({
+          [ASYNC_DONE_COMPENSATION_METADATA_KEY]: record,
+        }),
+      })
+      .where(and(eq(payments.id, payment.id), eq(payments.status, payment.status)))
+      .returning({ id: payments.id });
+    if (updated.length === 0) {
+      return false;
+    }
+
+    if (reservation.status === 'PENDING_PAYMENT') {
+      await this.db
+        .update(reservations)
+        .set({ status: 'FAILED', updatedAt: new Date() })
+        .where(and(eq(reservations.id, reservation.id), eq(reservations.status, 'PENDING_PAYMENT')));
+    }
+
+    await recordReservationPaymentFailureDiagnostic(this.db, {
+      reservationId: reservation.id,
+      paymentId: payment.id,
+      tossOrderId: payment.tossOrderId,
+      diagnosticKind: 'payment_compensated_cancel',
+      diagnosticCode: ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES[record.kind],
+      diagnosticMessage: record.reason,
+      diagnosticSource: 'async_done_compensation_recovery',
+    });
+    return true;
+  }
+
+  private compensationPaymentColumns() {
+    return {
+      id: payments.id,
+      reservationId: payments.reservationId,
+      paymentKey: payments.paymentKey,
+      tossOrderId: payments.tossOrderId,
+      method: payments.method,
+      provider: payments.provider,
+      currency: payments.currency,
+      amount: payments.amount,
+      status: payments.status,
+      asyncStatus: payments.asyncStatus,
+      paidAt: payments.paidAt,
+      cancelReason: payments.cancelReason,
+      providerMetadata: payments.providerMetadata,
+      providerChargeCurrency: payments.providerChargeCurrency,
+      providerChargeAmountMinor: payments.providerChargeAmountMinor,
+    };
+  }
+
+  private async sendCompensationCancel(command: PaymentCancelRequest): Promise<CompensationCancelOutcome> {
+    try {
+      const response = await this.tossClient!.cancelPayment(
+        command.paymentKey,
+        command.reason,
+        command.options,
+      );
+      if (this.isProviderFullCancelCompleted(response)) {
+        return { state: 'cancelled' };
+      }
+      const matching = response.cancels?.filter((cancel) =>
+        !command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId);
+      return matching?.at(-1)?.cancelStatus === 'ABORTED'
+        ? { state: 'aborted' }
+        : { state: 'pending' };
+    } catch (error) {
+      // The outcome is unknown; keep the charge unissuable and let recovery query the PG.
+      return { state: 'error', error: this.describeError(error) };
+    }
+  }
+
+  private mergeProviderMetadataSql(patch: Record<string, unknown>) {
+    return sql`coalesce(${payments.providerMetadata}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
+  }
+
+  private buildCompensationIdempotencyKey(
+    failure: Exclude<AsyncDoneCompensationKind, 'duplicate_payment_key'>,
+    payload: TossWebhookRequestBody,
+  ): string {
+    switch (failure) {
+      case 'ticket_limit':
+        return this.buildWebhookCancelIdempotencyKey(payload, 'ticket-limit-cancel');
+      case 'seat_conflict':
+        return this.buildWebhookCancelIdempotencyKey(payload, 'seat-failure-cancel');
+      default: {
+        // Rejected charges are keyed by the charge itself so every replay of the
+        // same DONE (webhook, client return, retry) reuses one PG request.
+        const reasonCode = failure === 'amount_mismatch'
+          ? 'amount-mismatch'
+          : failure === 'payment_method_not_allowed'
+            ? 'payment-method'
+            : 'unsupported-provider';
+        return `async-done-${reasonCode}-cancel:${this.requireWebhookOrderId(payload)}:${this.requireWebhookPaymentKey(payload)}`;
+      }
+    }
+  }
+
+  private resolveWebhookPaymentScopeMetadata(
+    payload: TossWebhookRequestBody,
+    provider: PaymentProvider,
+  ): Record<string, unknown> | undefined {
+    // USD card charges live on the overseas-card MID; cancel them with that key.
+    if (provider !== 'CARD' || this.normalizeProviderCurrency(payload.data.currency) !== 'USD') {
+      return undefined;
+    }
+
+    return { requestedProvider: 'OVERSEAS_CARD', secretKeyScope: 'overseas-card' };
+  }
+
+  private describeError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.length > 300 ? `${message.slice(0, 297)}...` : message;
   }
 
   private isProviderFullCancelCompleted(response: TossPaymentResponse): boolean {
@@ -2544,14 +4335,8 @@ export class PaymentService {
   private requiresAsyncWebhookBranch(paymentMethod: PaymentMethod): boolean {
     return (
       paymentMethod.method === 'FOREIGN_EASY_PAY'
-      && ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(paymentMethod.provider)
+      && isAsyncApprovalForeignEasyPayProvider(paymentMethod.provider)
     );
-  }
-
-  private usesForeignEasyPaySecret(
-    provider: TossPaymentAsyncReturnRequest['provider'],
-  ): boolean {
-    return provider !== undefined && ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(provider);
   }
 
   private usesProviderChargeQuote(provider: PaymentProvider): boolean {
@@ -2606,16 +4391,6 @@ export class PaymentService {
     }
   }
 
-  private toWebhookProvider(
-    provider: TossPaymentAsyncReturnRequest['provider'],
-  ): TossWebhookProvider | undefined {
-    if (provider === 'ALIPAY_PLUS') {
-      return 'ALIPAY';
-    }
-
-    return provider;
-  }
-
   private storesWebhookAmountAsKrw(
     provider: PaymentProvider,
     providerChargeQuote?: ProviderChargeQuote,
@@ -2625,6 +4400,28 @@ export class PaymentService {
         provider === 'CARD'
         || this.usesProviderChargeQuote(provider)
       ));
+  }
+
+  /**
+   * payments.amount is the integer KRW ledger. A provider charge outside it
+   * (an unquoted USD charge such as TrueMoney's 75.5) would fail the integer
+   * column after the PG cancel was already sent, so the row keeps the
+   * reservation's KRW total and the provider charge stays in the webhook or
+   * compensation record.
+   */
+  private toPaymentLedgerCharge(
+    amount: number,
+    currency: string | undefined,
+    reservation: { totalAmount: number },
+  ): { amount: number; currency: string } {
+    if (
+      (this.normalizeProviderCurrency(currency) ?? 'KRW') === 'KRW'
+      && Number.isSafeInteger(amount)
+    ) {
+      return { amount, currency: currency ?? 'KRW' };
+    }
+
+    return { amount: reservation.totalAmount, currency: 'KRW' };
   }
 
   private getProviderChargeAvailability(
@@ -2705,19 +4502,29 @@ export class PaymentService {
     if (easyPay === 'PAYPAL' || easyPay === '페이팔') {
       return 'PAYPAL';
     }
+    if (easyPay === 'TRUEMONEY' || easyPay === '트루머니') {
+      return 'TRUEMONEY';
+    }
 
+    const foreignEasyPay = this.isForeignEasyPayMethod(payload.data.method);
     if (
-      payload.data.method === 'FOREIGN_EASY_PAY'
+      foreignEasyPay
       && this.isKnownForeignEasyPayProvider(existingPayment?.provider)
     ) {
       return existingPayment.provider;
     }
 
-    if (payload.data.method === 'FOREIGN_EASY_PAY') {
+    if (foreignEasyPay) {
       return 'ALIPAY_PLUS';
     }
 
     return 'CARD';
+  }
+
+  /** Live Toss payloads report the method in Korean (`해외간편결제`). */
+  private isForeignEasyPayMethod(method: string | undefined): boolean {
+    const normalized = method?.trim();
+    return normalized === 'FOREIGN_EASY_PAY' || normalized === '해외간편결제';
   }
 
   private isKnownForeignEasyPayProvider(
@@ -2732,20 +4539,18 @@ export class PaymentService {
     payload: TossWebhookRequestBody,
     provider: PaymentProvider,
   ): PaymentMethod['method'] {
-    if (payload.data.method === 'FOREIGN_EASY_PAY') {
+    if (this.isForeignEasyPayMethod(payload.data.method)) {
       return 'FOREIGN_EASY_PAY';
     }
 
-    if (ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(provider)) {
+    if (isAsyncApprovalForeignEasyPayProvider(provider)) {
       return 'FOREIGN_EASY_PAY';
     }
 
-    if (payload.data.method === 'TRANSFER') return 'TRANSFER';
-    if (payload.data.method === 'VIRTUAL_ACCOUNT') return 'VIRTUAL_ACCOUNT';
-    if (payload.data.method === 'MOBILE_PHONE') return 'MOBILE_PHONE';
-    if (payload.data.method === 'SIMPLE_PAY') return 'SIMPLE_PAY';
-
-    return 'CARD';
+    // Korean (default) and English Toss labels: 가상계좌 is stored as
+    // VIRTUAL_ACCOUNT, 휴대폰 as MOBILE_PHONE, 간편결제 as SIMPLE_PAY.
+    const category = categorizeTossMethodLabel(payload.data.method);
+    return category === 'UNSUPPORTED' ? 'CARD' : category;
   }
 
   private requireWebhookOrderId(payload: TossWebhookRequestBody): string {

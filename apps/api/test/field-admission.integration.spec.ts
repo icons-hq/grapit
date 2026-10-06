@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
@@ -9,12 +10,13 @@ import type { INestApplication } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
+import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/included-benefit-entitlements.js';
 import { RolesGuard } from '../src/common/guards/roles.guard.js';
@@ -42,9 +44,9 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
   let actorId: string;
 
   beforeAll(async () => {
-    container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({ POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'field_test' }).withExposedPorts(5432).start();
-    pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432), user: 'postgres', password: 'test', database: 'field_test', max: 8 });
+    const postgres = await startPostgresContainer({ database: 'field_test' });
+    container = postgres.container;
+    pool = new Pool({ host: postgres.host, port: postgres.port, user: 'postgres', password: 'test', database: 'field_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
@@ -306,7 +308,7 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
   });
 
   it('binds a rejected entry receipt to the requested showtime as well as the actual ticket', async () => {
-    const f = await fixture(); const input = { token: f.credentials[0]!.token, showtimeId: randomUUID(), deviceAttemptId: randomUUID(), confirmed: true };
+    const f = await fixture(); const input = { token: f.credentials[0]!.token, showtimeId: randomUUID() as string, deviceAttemptId: randomUUID(), confirmed: true };
     const send = (body: typeof input) => request(app.getHttpServer()).post('/field/check-in/consume').send(body);
     const first = await send(input); expect(first.body.outcome).toBe('wrong_showtime');
     const replay = await send(input); expect(replay.status).toBe(201);
@@ -317,7 +319,7 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
   it('binds a rejected benefit receipt to its requested showtime', async () => {
     const f = await fixture();
     const [entitlement] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
-    const input = { token: f.credentials[0]!.token, showtimeId: randomUUID(), benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
+    const input = { token: f.credentials[0]!.token, showtimeId: randomUUID() as string, benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
     const send = (body: typeof input) => request(app.getHttpServer()).post('/field/benefits/redeem').send(body);
     expect((await send(input)).body.outcome).toBe('wrong_showtime');
     expect((await send(input)).body.outcome).toBe('wrong_showtime');
@@ -361,6 +363,209 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
       expect(results.map((result) => result.status)).toEqual([201, 201]);
       expect(results.map((result) => result.body.outcome)).toEqual(['entered', 'redeemed']);
     } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+  });
+
+  function verify(token: string, showtimeId: string, deviceAttemptId?: string) {
+    return request(app.getHttpServer()).post('/field/check-in/verify')
+      .send({ token, showtimeId, ...(deviceAttemptId ? { deviceAttemptId } : {}) });
+  }
+  function monitorSummary(f: Awaited<ReturnType<typeof fixture>>) {
+    return new FieldMonitorService(db).getSummary({ eventId: f.event.id, showtimeId: f.show.id });
+  }
+  function monitorLogs(f: Awaited<ReturnType<typeof fixture>>) {
+    return request(app.getHttpServer()).get('/field/monitor/logs').query({ eventId: f.event.id, showtimeId: f.show.id });
+  }
+
+  it('requires entry permission as well as sync permission to confirm offline admissions (audit #111)', async () => {
+    const f = await fixture();
+    const attempt = { deviceAttemptId: randomUUID(), scannerUserId: actorId, showtimeId: f.show.id, attemptedAt: new Date().toISOString(),
+      token: f.credentials[0]!.token, redactedTokenRef: 'redacted-test-token', syncState: 'pending' };
+    const denied = await request(app.getHttpServer()).post('/field/check-in/offline-sync')
+      .set('x-test-capabilities', 'field.scan.verify,field.scan.sync').send({ attempts: [attempt] });
+    expect(denied.status).toBe(403);
+    expect((await states(f)).every((x) => x.admissionState === 'not_entered')).toBe(true);
+    const allowed = await request(app.getHttpServer()).post('/field/check-in/offline-sync')
+      .set('x-test-capabilities', 'field.scan.sync,field.scan.consume').send({ attempts: [attempt] });
+    expect(allowed.status).toBe(201);
+    expect(allowed.body.results[0]).toMatchObject({ syncState: 'synced', outcome: 'entered' });
+  });
+
+  it('records verify-stage rejections once per scan attempt and counts cancelled bookings at the gate (audit #113, #114)', async () => {
+    const f = await fixture();
+    await db.update(schema.reservations).set({ status: 'CANCELLED' }).where(eq(schema.reservations.id, f.order.id));
+    await db.update(schema.ticketItems).set({ status: 'cancelled' }).where(eq(schema.ticketItems.reservationId, f.order.id));
+    const attempt = randomUUID();
+    for (const response of [await verify(f.credentials[0]!.token, f.show.id, attempt), await verify(f.credentials[0]!.token, f.show.id, attempt)]) {
+      expect(response.status).toBe(201); expect(response.body.outcome).toBe('refunded_cancelled');
+    }
+    const rows = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.reservationId, f.order.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ result: 'refunded_cancelled', requestedShowtimeId: f.show.id, showtimeId: f.show.id,
+      deviceAttemptId: `verify:${attempt}`, source: 'online', syncState: 'not_required' });
+    expect(rows[0]!.metadata).toMatchObject({ stage: 'verify' });
+    expect(JSON.stringify(rows)).not.toContain(f.credentials[0]!.token);
+    const summary = await monitorSummary(f);
+    expect(summary.rejectedScanCount).toBe(1);
+    expect(summary.latestAbnormalAlerts).toContainEqual(expect.objectContaining({ type: 'refunded_cancelled_attempt', count: 1 }));
+    expect((await monitorLogs(f)).body).toContainEqual(expect.objectContaining({ outcome: 'refunded_cancelled', reservationNumber: f.order.reservationNumber }));
+  });
+
+  it('does not count the re-check right after entry as a duplicate but records a later scan of the used seat (audit #113)', async () => {
+    const f = await fixture(); const attempt = randomUUID();
+    expect((await verify(f.credentials[0]!.token, f.show.id, attempt)).body.processable).toBe(true);
+    expect((await consume(f, 0, attempt)).body.outcome).toBe('entered');
+    expect((await verify(f.credentials[0]!.token, f.show.id, attempt)).body.outcome).toBe('already_used');
+    expect((await monitorSummary(f)).duplicateScanCount).toBe(0);
+    const later = randomUUID();
+    expect((await verify(f.credentials[0]!.token, f.show.id, later)).body.outcome).toBe('already_used');
+    expect((await verify(f.credentials[0]!.token, f.show.id, later)).body.outcome).toBe('already_used');
+    expect(await monitorSummary(f)).toMatchObject({ enteredCount: 1, duplicateScanCount: 1 });
+    // A verify record is never replayed as an admission receipt.
+    expect((await consume(f, 0, `verify:${later}`)).status).toBe(409);
+  });
+
+  it('records an unverifiable QR at the gate showtime without inventing a ticket (audit #113)', async () => {
+    const f = await fixture(); const attempt = randomUUID();
+    expect((await verify('forged-qr-content', f.show.id, attempt)).body.outcome).toBe('tampered');
+    expect((await verify('forged-qr-content', f.show.id, attempt)).body.outcome).toBe('tampered');
+    const rows = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.deviceAttemptId, `verify:${attempt}`));
+    expect(rows).toEqual([expect.objectContaining({ result: 'tampered', ticketId: null, ticketItemId: null, reservationId: null,
+      showtimeId: null, requestedShowtimeId: f.show.id })]);
+    const summary = await monitorSummary(f);
+    expect(summary.rejectedScanCount).toBe(1);
+    expect(summary.latestAbnormalAlerts).toContainEqual(expect.objectContaining({ type: 'rejected_tampered_scan', count: 1 }));
+    const logs = await monitorLogs(f);
+    expect(logs.status).toBe(200);
+    expect(logs.body).toEqual([expect.objectContaining({ outcome: 'tampered', reservationNumber: null, seatLabel: null,
+      eventId: f.event.id, showtimeId: f.show.id })]);
+    expect(JSON.stringify(logs.body)).not.toContain('forged-qr-content');
+    // Only an unverifiable QR may lack ticket identity.
+    await expect(db.insert(schema.ticketScanEvents).values({ requestedShowtimeId: f.show.id, scannerUserId: actorId,
+      result: 'refunded_cancelled' })).rejects.toThrow();
+  });
+
+  it('attributes a wrong-showtime scan to the gate that saw it instead of the ticket showtime (audit #114)', async () => {
+    const gate = await fixture(); const other = await fixture();
+    const wrong = await request(app.getHttpServer()).post('/field/check-in/consume').send({ token: other.credentials[0]!.token,
+      showtimeId: gate.show.id, deviceAttemptId: randomUUID(), confirmed: true });
+    expect(wrong.body.outcome).toBe('wrong_showtime');
+    expect(await monitorSummary(gate)).toMatchObject({ rejectedScanCount: 1 });
+    expect((await monitorSummary(gate)).latestAbnormalAlerts).toContainEqual(expect.objectContaining({ type: 'rejected_tampered_scan', count: 1 }));
+    expect(await monitorSummary(other)).toMatchObject({ rejectedScanCount: 0, latestAbnormalAlerts: [] });
+    expect((await monitorLogs(gate)).body).toEqual([expect.objectContaining({ outcome: 'wrong_showtime',
+      reservationNumber: other.order.reservationNumber, showtimeId: gate.show.id, eventId: gate.event.id })]);
+    expect((await monitorLogs(other)).body).toEqual([]);
+  });
+
+  it('backfills the gate showtime of existing scan events from their metadata (audit #114)', async () => {
+    const gate = await fixture(); const other = await fixture();
+    const legacy = (metadata: Record<string, unknown> | null) => ({ ticketId: other.credentials[0]!.id, ticketItemId: other.items[0]!.id,
+      reservationId: other.order.id, showtimeId: other.show.id, scannerUserId: actorId, result: 'wrong_showtime' as const, metadata });
+    const [withMetadata, withoutMetadata, invalidMetadata] = await db.insert(schema.ticketScanEvents).values([
+      legacy({ requestedShowtimeId: gate.show.id }), legacy(null), legacy({ requestedShowtimeId: 'not-a-uuid' }),
+    ]).returning();
+    const migrationsDir = 'src/database/migrations';
+    const journal = JSON.parse(readFileSync(`${migrationsDir}/meta/_journal.json`, 'utf8')) as { entries: Array<{ tag: string }> };
+    const tag = journal.entries.find((entry) => entry.tag.endsWith('_field_scan_event_attribution'))!.tag;
+    const backfill = readFileSync(`${migrationsDir}/${tag}.sql`, 'utf8').split('--> statement-breakpoint')
+      .map((statement) => statement.trim()).find((statement) => statement.startsWith('UPDATE'))!;
+    await pool.query(backfill);
+    const rows = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.reservationId, other.order.id));
+    const byId = new Map(rows.map((row) => [row.id, row.requestedShowtimeId]));
+    expect(byId.get(withMetadata!.id)).toBe(gate.show.id);
+    expect(byId.get(withoutMetadata!.id)).toBe(other.show.id);
+    expect(byId.get(invalidMetadata!.id)).toBe(other.show.id);
+  });
+
+  it('filters monitor logs by outcome with the results the duplicate KPI counts (audit #113, #114)', async () => {
+    const f = await fixture();
+    expect((await consume(f)).body.outcome).toBe('entered');
+    // A later rescan of the used seat is recorded as already_used.
+    expect((await verify(f.credentials[0]!.token, f.show.id, randomUUID())).body.outcome).toBe('already_used');
+    expect((await verify('forged-qr-content', f.show.id, randomUUID())).body.outcome).toBe('tampered');
+    const logs = (outcome: string) => request(app.getHttpServer()).get('/field/monitor/logs')
+      .query({ eventId: f.event.id, showtimeId: f.show.id, outcome });
+
+    const duplicates = await logs('duplicate');
+    expect(duplicates.status).toBe(200);
+    expect(duplicates.body).toEqual([expect.objectContaining({ outcome: 'already_used', reservationNumber: f.order.reservationNumber })]);
+    expect((await monitorSummary(f)).duplicateScanCount).toBe(1);
+    expect((await logs('tampered')).body).toEqual([expect.objectContaining({ outcome: 'tampered', reservationNumber: null })]);
+    expect((await logs('entered')).body).toEqual([expect.objectContaining({ outcome: 'entered' })]);
+    expect((await logs('wrong_showtime')).body).toEqual([]);
+  });
+
+  it('serializes an unverifiable consume behind a valid consume of the same attempt instead of failing with 500 (audit #113)', async () => {
+    const f = await fixture(); const attempt = randomUUID(); const blocker = await pool.connect();
+    let forgedSettled = false;
+    try {
+      await blocker.query('BEGIN'); await blocker.query('SELECT id FROM reservations WHERE id=$1 FOR UPDATE', [f.order.id]);
+      // The valid consume holds the attempt lock and has found no receipt yet.
+      const valid = consume(f, 0, attempt).then((response) => response);
+      await waitForLock('INNER JOIN payments p');
+      const forged = request(app.getHttpServer()).post('/field/check-in/consume')
+        .send({ token: 'forged-qr-content', showtimeId: f.show.id, deviceAttemptId: attempt, confirmed: true })
+        .then((response) => { forgedSettled = true; return response; });
+      for (let i = 0; i < 150 && !forgedSettled; i += 1) {
+        const waiting = await pool.query("select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like '%pg_advisory_xact_lock%'");
+        if (waiting.rows[0].n > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await blocker.query('COMMIT');
+      const [validResponse, forgedResponse] = await Promise.all([valid, forged]);
+      expect([validResponse.status, forgedResponse.status]).toEqual([201, 201]);
+      expect(validResponse.body.outcome).toBe('entered');
+      expect(forgedResponse.body.outcome).toBe('tampered');
+      const receipts = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.deviceAttemptId, attempt));
+      expect(receipts).toEqual([expect.objectContaining({ result: 'success', ticketItemId: f.items[0]!.id })]);
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+  });
+
+  it('gives up a benefit redemption with a retryable 409 while a payment holds the showtime, then redeems the same request (D6)', async () => {
+    const f = await fixture(); const blocker = await pool.connect();
+    const [entitlement] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const input = { token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
+    try {
+      // Payment confirmation share-locks the showtime row while it issues tickets.
+      await blocker.query('BEGIN'); await blocker.query('SELECT id FROM showtimes WHERE id=$1 FOR SHARE', [f.show.id]);
+      const started = Date.now();
+      const blocked = await request(app.getHttpServer()).post('/field/benefits/redeem').send(input);
+      expect(Date.now() - started).toBeLessThan(6000);
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.message).toBe('같은 회차 결제 처리와 겹쳐 특전 지급을 확인하지 못했습니다. 실물을 지급하지 말고 같은 요청으로 다시 확인해주세요.');
+      const records = await db.select().from(schema.ticketBenefitRedemptionRecords)
+        .where(eq(schema.ticketBenefitRedemptionRecords.deviceAttemptId, input.deviceAttemptId));
+      expect(records).toHaveLength(0);
+      const [unchanged] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.id, entitlement!.id));
+      expect(unchanged!.state).toBe('active');
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+
+    const retried = await request(app.getHttpServer()).post('/field/benefits/redeem').send(input);
+    expect(retried.status).toBe(201);
+    expect(retried.body.outcome).toBe('redeemed');
+  });
+
+  it('lists today\'s showtimes first even when more than 200 later showtimes exist (audit #112)', async () => {
+    const [event] = await db.insert(schema.performances).values({ title: 'Long run', genre: 'artist_celebrity', ageRating: 'All ages',
+      status: 'selling', publishState: 'published', startDate: new Date('2026-01-01'), endDate: new Date('2098-12-31') }).returning();
+    try {
+      const now = Date.now();
+      const [past] = await db.insert(schema.showtimes).values({ performanceId: event!.id, dateTime: new Date(now - 3 * 86_400_000) }).returning();
+      const [today] = await db.insert(schema.showtimes).values({ performanceId: event!.id, dateTime: new Date(now + 3_600_000) }).returning();
+      const later = await db.insert(schema.showtimes).values(Array.from({ length: 205 }, (_, index) => ({
+        performanceId: event!.id, dateTime: new Date(Date.UTC(2098, 0, 1) + index * 86_400_000) }))).returning();
+      const response = await request(app.getHttpServer()).get('/field/check-in/showtimes');
+      expect(response.status).toBe(200);
+      const ids = (response.body as Array<{ id: string }>).map((showtime) => showtime.id);
+      expect(ids).toHaveLength(200);
+      expect(ids).toContain(today!.id);
+      expect(ids).not.toContain(past!.id);
+      expect(ids.indexOf(today!.id)).toBeLessThan(ids.indexOf(later[0]!.id));
+      const times = (response.body as Array<{ dateTime: string }>).map((showtime) => new Date(showtime.dateTime).getTime());
+      expect(times).toEqual([...times].sort((a, b) => a - b));
+    } finally {
+      await db.delete(schema.performances).where(eq(schema.performances.id, event!.id));
+    }
   });
 
 });

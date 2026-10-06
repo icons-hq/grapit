@@ -41,8 +41,23 @@ describe('KakaoStrategy', () => {
       provider: 'kakao',
       providerId: '12345678',
       email: 'kakao@test.com',
+      emailVerified: false,
       name: 'Kakao User',
     });
+  });
+
+  it('reports a Kakao email as verified only when Kakao marks it verified and valid', async () => {
+    const { KakaoStrategy } = await import('./kakao.strategy.js');
+    const strategy = new KakaoStrategy({ get: vi.fn().mockReturnValue('test-value') } as unknown as ConfigService);
+    const profileWith = (account: Record<string, unknown>) => ({
+      id: '12345678',
+      displayName: 'Kakao User',
+      _json: { kakao_account: { email: 'kakao@test.com', ...account } },
+    });
+
+    expect(strategy.extractProfile(profileWith({ is_email_verified: true, is_email_valid: true })).emailVerified).toBe(true);
+    expect(strategy.extractProfile(profileWith({ is_email_verified: true, is_email_valid: false })).emailVerified).toBe(false);
+    expect(strategy.extractProfile(profileWith({ is_email_verified: false, is_email_valid: true })).emailVerified).toBe(false);
   });
 
   it('should use default callbackURL containing /social/ segment when env var is not set', async () => {

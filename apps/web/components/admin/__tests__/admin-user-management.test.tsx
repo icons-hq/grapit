@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 
 import { AdminUserManagement } from '../admin-user-management';
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/use-auth-store';
 import type {
   AdminUserDetail,
   AdminUserListItem,
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
   apiPost: vi.fn(),
+  apiRaw: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -25,6 +27,7 @@ vi.mock('@/lib/api-client', () => ({
     get: mocks.apiGet,
     patch: mocks.apiPatch,
     post: mocks.apiPost,
+    raw: mocks.apiRaw,
   },
 }));
 
@@ -195,6 +198,63 @@ const secondPageDetailUser: AdminUserDetail = {
   ],
 };
 
+/** API-shaped list item + detail for one admin account (as the server sends it). */
+function mockApiAdminAccount(access: {
+  id: string;
+  name: string;
+  adminCapabilityBundle: string | null;
+  adminCapabilities: string[];
+  adminSuperuser?: boolean;
+  effectiveAdminCapabilities?: string[];
+}) {
+  const item = {
+    id: access.id,
+    maskedEmail: 'ad***@example.com',
+    name: access.name,
+    maskedPhone: '+82******5678',
+    role: 'admin',
+    country: 'KR',
+    preferredLocale: 'ko',
+    marketingConsent: false,
+    adminCapabilityBundle: access.adminCapabilityBundle,
+    adminCapabilities: access.adminCapabilities,
+    ...(access.adminSuperuser === undefined
+      ? {}
+      : {
+          adminSuperuser: access.adminSuperuser,
+          effectiveAdminCapabilities: access.effectiveAdminCapabilities ?? [],
+        }),
+    accountStatus: 'active',
+    withdrawnAt: null,
+    withdrawalReason: null,
+    withdrawalSource: null,
+    verificationState: { emailVerified: true, phoneVerified: true },
+    reservationSummary: {
+      total: 0,
+      statuses: { pendingPayment: 0, confirmed: 0, cancelled: 0, failed: 0 },
+      lastReservationAt: null,
+    },
+    lastActivityAt: null,
+    createdAt: '2026-06-29T00:00:00.000Z',
+  };
+  mocks.apiGet.mockImplementation((path: string) => {
+    if (path === '/api/v1/admin/users/stats') return Promise.resolve(userStats);
+    if (path.startsWith('/api/v1/admin/users?')) {
+      return Promise.resolve({ items: [item], total: 1, page: 1, limit: 25, totalPages: 1 });
+    }
+    if (path === `/api/v1/admin/users/${access.id}`) {
+      return Promise.resolve({
+        ...item,
+        account: { birthDate: '1990-01-01', gender: 'unspecified', updatedAt: null },
+        recentReservations: [],
+        supportThreads: { total: 0, open: 0, escalated: 0, recentThreads: [] },
+        recentAuditEvents: [],
+      });
+    }
+    return Promise.reject(new Error(`Unhandled GET ${path}`));
+  });
+}
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -269,21 +329,20 @@ describe('AdminUserManagement', () => {
   });
 
   beforeEach(() => {
+    useAuthStore.setState({ user: null });
     mocks.apiGet.mockReset();
     mocks.apiPatch.mockReset();
     mocks.apiPost.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('"id","email"\n"user-1","fan@example.com"', {
-          status: 200,
-          headers: {
-            'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
-          },
-        }),
-      ),
+    // The CSV download goes through the session-refreshing raw client.
+    mocks.apiRaw.mockReset().mockImplementation(async () =>
+      new Response('"id","email"\n"user-1","fan@example.com"', {
+        status: 200,
+        headers: {
+          'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
+        },
+      }),
     );
     mockSuccessfulApi();
   });
@@ -308,12 +367,11 @@ describe('AdminUserManagement', () => {
     await user.click(screen.getByRole('button', { name: 'CSV 다운로드 확정' }));
 
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/v1/admin/users/export'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ reason: '회원 운영 데이터 대조' }),
-        }),
+      expect(mocks.apiRaw).toHaveBeenCalledWith(
+        'POST',
+        '/api/v1/admin/users/export',
+        { reason: '회원 운영 데이터 대조' },
+        { showErrorToast: false },
       );
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith(
@@ -486,6 +544,63 @@ describe('AdminUserManagement', () => {
     expect(await screen.findAllByText('병합됨')).toHaveLength(3);
   });
 
+  it('shows a legacy role-only superuser as a full admin with its current effective access', async () => {
+    mockApiAdminAccount({
+      id: 'legacy-admin',
+      name: 'Legacy Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      adminSuperuser: true,
+      effectiveAdminCapabilities: ['reservations.read', 'security.manage'],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-access-badge')).toHaveTextContent('전체 관리자(legacy)');
+    expect(screen.getByTestId('admin-user-current-permissions')).toHaveTextContent(
+      '현재 실효 권한: 전체 관리자 (모든 권한, 권한 묶음 없는 legacy 관리자)',
+    );
+    // The edit summary still describes the unsaved selection separately.
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 권한 묶음을 선택하세요',
+    );
+  });
+
+  it('falls back to the legacy superuser rule when the API sends no resolved access', async () => {
+    mockApiAdminAccount({
+      id: 'legacy-admin',
+      name: 'Legacy Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-access-badge')).toHaveTextContent('전체 관리자(legacy)');
+  });
+
+  it('trusts the server when an unknown stored bundle resolves to no access (u12)', async () => {
+    // The API normalises an unknown bundle to null; re-resolving it here would
+    // read as the legacy superuser fallback.
+    mockApiAdminAccount({
+      id: 'unknown-bundle-admin',
+      name: 'Unknown Bundle Admin',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      adminSuperuser: false,
+      effectiveAdminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-user-access-badge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('admin-user-current-permissions')).toHaveTextContent('현재 실효 권한: 없음');
+    expect(screen.queryByText('전체 관리자(legacy)')).not.toBeInTheDocument();
+  });
+
   it('disables permission and withdrawal controls for merged accounts', async () => {
     mocks.apiGet.mockImplementation((path: string) => {
       if (path === '/api/v1/admin/users/stats') {
@@ -607,11 +722,12 @@ describe('AdminUserManagement', () => {
     renderWithClient(<AdminUserManagement />, queryClient);
 
     expect(await screen.findByText('박팬')).toBeInTheDocument();
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
 
-    const securityCapability = await screen.findByRole('checkbox', {
-      name: '보안 권한 관리',
-    });
-    await user.click(securityCapability);
+    // Narrowing requires a non-admin bundle; the admin bundle is superuser.
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
+    await user.click(screen.getByRole('checkbox', { name: '배너 관리' }));
 
     const submitButton = screen.getByRole('button', {
       name: '권한 변경 검토',
@@ -637,10 +753,20 @@ describe('AdminUserManagement', () => {
         '/api/v1/admin/users/user-fan-1/permissions',
         expect.objectContaining({
           role: 'admin',
-          adminCapabilityBundle: 'admin',
+          adminCapabilityBundle: 'operator',
+          adminCapabilities: [
+            'event.write',
+            'support.manage',
+            'support.escalate',
+            'reservations.read',
+            'seat.disable',
+            'seat.reactivate',
+            'seat.manual_open',
+          ],
           reason: '보안 담당자 교체로 권한을 회수합니다.',
           confirmed: true,
         }),
+        { showErrorToast: false },
       );
     });
     expect(
@@ -703,6 +829,7 @@ describe('AdminUserManagement', () => {
           ],
           confirmed: true,
         }),
+        { showErrorToast: false },
       );
     });
 
@@ -721,7 +848,8 @@ describe('AdminUserManagement', () => {
     renderWithClient(<AdminUserManagement />);
 
     expect(await screen.findByText('예매 내역')).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: '보안 권한 관리' }));
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
     await user.type(screen.getByLabelText('권한 변경 사유'), '권한 회수 테스트');
     await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
     await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
@@ -731,7 +859,259 @@ describe('AdminUserManagement', () => {
     expect(
       within(alert).getByText('권한 변경에 실패했습니다. 현재 상세 화면은 유지됩니다.'),
     ).toBeInTheDocument();
+    expect(within(alert).getByText('Forbidden')).toBeInTheDocument();
     expect(screen.getByText('걸룰스 팬미팅')).toBeInTheDocument();
+  });
+
+  it('reports a rejected permission change once as a toast plus the inline alert', async () => {
+    const user = userEvent.setup();
+    // The API client toasts on its own unless showErrorToast is false; the mock
+    // stands in for it, so the request options are asserted below.
+    mocks.apiPatch.mockRejectedValueOnce(Object.assign(
+      new Error('본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage'),
+      { statusCode: 403 },
+    ));
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '운영자' }));
+    await user.type(screen.getByLabelText('권한 변경 사유'), '위임 권한 확인');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage');
+    expect(mocks.apiPatch).toHaveBeenCalledWith(
+      '/api/v1/admin/users/user-fan-1/permissions',
+      expect.anything(),
+      { showErrorToast: false },
+    );
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      '본인이 보유하지 않은 권한은 부여하거나 변경할 수 없습니다: banner.manage',
+    );
+  });
+
+  describe('delegated security admin (audit #120)', () => {
+    beforeEach(() => {
+      useAuthStore.setState({
+        user: {
+          id: 'actor-delegated-1',
+          role: 'admin',
+          adminCapabilityBundle: null,
+          adminCapabilities: ['security.manage', 'event.write', 'banner.manage'],
+        } as never,
+      });
+    });
+
+    it('locks editing a full admin the actor cannot change', async () => {
+      renderWithClient(<AdminUserManagement />);
+
+      expect(await screen.findByTestId('admin-user-delegation-locked')).toHaveTextContent(
+        '내 권한 밖의 권한(전체 관리자 포함)을 가지고 있어 변경할 수 없습니다',
+      );
+      expect(screen.getByRole('combobox', { name: 'Role' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
+      expect(screen.getByLabelText('권한 변경 사유')).toBeDisabled();
+      expect(screen.getByRole('button', { name: '권한 변경 검토' })).toBeDisabled();
+    });
+
+    it('offers only what the actor holds when granting access to a general member', async () => {
+      const user = userEvent.setup();
+      renderWithClient(<AdminUserManagement />);
+      await user.type(await screen.findByLabelText('회원 검색어'), 'reset');
+      await user.click(screen.getByRole('button', { name: '검색' }));
+      expect(await screen.findByText('secondfan@example.com')).toBeInTheDocument();
+      expect(screen.queryByTestId('admin-user-delegation-locked')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('combobox', { name: 'Role' }));
+      await user.click(await screen.findByRole('option', { name: '관리자' }));
+      await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+      expect(await screen.findByRole('option', { name: '전체 관리자 (위임 불가)' }))
+        .toHaveAttribute('aria-disabled', 'true');
+      await user.click(screen.getByRole('option', { name: '운영자' }));
+
+      // The operator bundle's defaults are narrowed to the actor's own capabilities.
+      expect(screen.getByRole('checkbox', { name: '공연 편집' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '배너 관리' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '좌석 비활성화' })).not.toBeChecked();
+      expect(screen.getByRole('checkbox', { name: '좌석 비활성화' })).toBeDisabled();
+      expect(screen.getAllByText('내 권한 밖이라 위임할 수 없습니다').length).toBeGreaterThan(0);
+
+      await user.type(screen.getByLabelText('권한 변경 사유'), '배너 담당자 지정');
+      await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+      await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+      await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+      await waitFor(() => {
+        expect(mocks.apiPatch).toHaveBeenCalledWith(
+          '/api/v1/admin/users/user-fan-2/permissions',
+          expect.objectContaining({
+            role: 'admin',
+            adminCapabilityBundle: 'operator',
+            adminCapabilities: ['event.write', 'banner.manage'],
+          }),
+          { showErrorToast: false },
+        );
+      });
+    });
+  });
+
+  it('shows the admin bundle as effective superuser access and locks capability narrowing', async () => {
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    // The stored list omits refund/settlement, but the admin bundle grants them.
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 전체 관리자 (모든 권한)',
+    );
+    const capabilityFieldset = screen.getByText('세부 권한').closest('fieldset');
+    const checkboxes = within(capabilityFieldset as HTMLElement).getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(20);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toBeChecked();
+      expect(checkbox).toBeDisabled();
+    }
+    expect(screen.getByRole('checkbox', { name: '관리자 환불 처리' })).toBeChecked();
+    expect(
+      screen.getByText(/전체 관리자 묶음은 모든 권한을 가지므로 세부 권한을 줄일 수 없습니다/),
+    ).toBeInTheDocument();
+  });
+
+  it('sends the canonical empty capability list when granting the admin bundle', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') return Promise.resolve(userStats);
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({ items: [listUser], total: 1, page: 1, limit: 25, totalPages: 1 });
+      }
+      if (path === '/api/v1/admin/users/user-fan-1') {
+        return Promise.resolve({
+          ...detailUser,
+          adminCapabilityBundle: 'operator',
+          adminCapabilities: ['support.manage'],
+        });
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+    mocks.apiPatch.mockResolvedValueOnce(detailUser);
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('적용될 권한: 운영자 묶음 · 1개')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '전체 관리자' }));
+    await user.type(screen.getByLabelText('권한 변경 사유'), '보안 책임자 지정');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/permissions',
+        expect.objectContaining({
+          role: 'admin',
+          adminCapabilityBundle: 'admin',
+          adminCapabilities: [],
+        }),
+        { showErrorToast: false },
+      );
+    });
+  });
+
+  it('revokes admin access in one step when only the role is changed to a general member', async () => {
+    const user = userEvent.setup();
+    mocks.apiPatch.mockResolvedValueOnce({
+      ...detailUser,
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Role' }));
+    await user.click(await screen.findByRole('option', { name: '일반 회원' }));
+
+    expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
+    expect(screen.getByTestId('admin-user-effective-permissions')).toHaveTextContent(
+      '적용될 권한: 없음 (일반 회원)',
+    );
+
+    await user.type(screen.getByLabelText('권한 변경 사유'), '계정 탈취 의심으로 긴급 회수');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/permissions',
+        {
+          role: 'user',
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+          reason: '계정 탈취 의심으로 긴급 회수',
+          confirmed: true,
+        },
+        { showErrorToast: false },
+      );
+    });
+  });
+
+  it('blocks saving a non-admin bundle with every capability unchecked', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '스캐너' }));
+    for (const name of ['검표 확인', '입장 처리', '보류 스캔 동기화', '현장 특전 지급']) {
+      await user.click(screen.getByRole('checkbox', { name }));
+    }
+    await user.type(screen.getByLabelText('권한 변경 사유'), '권한 정리');
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+
+    expect(screen.getByTestId('admin-user-permission-validation')).toHaveTextContent(
+      '세부 권한을 1개 이상 선택하세요',
+    );
+    expect(screen.getByRole('button', { name: '권한 변경 검토' })).toBeDisabled();
+    expect(mocks.apiPatch).not.toHaveBeenCalled();
+  });
+
+  it('shows why an admin withdrawal was blocked by active reservations', async () => {
+    const user = userEvent.setup();
+    const blockedError = Object.assign(
+      new Error(
+        '진행 중인 예매가 있어 탈퇴 처리할 수 없습니다 (관람 예정 확정 예매 2건). 예매를 취소·환불하거나 결제가 정리된 뒤 다시 시도하세요',
+      ),
+      {
+        statusCode: 409,
+        data: {
+          blockers: [
+            { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: 2 },
+          ],
+        },
+      },
+    );
+    mocks.apiPost.mockRejectedValueOnce(blockedError);
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('계정 상태 관리')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('탈퇴 처리 사유'), '사용자 요청');
+    await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }));
+    await user.click(screen.getByRole('button', { name: '탈퇴 처리' }));
+    await user.click(await screen.findByRole('button', { name: '탈퇴 처리 확정' }));
+
+    expect(
+      await screen.findByText(/탈퇴 처리 실패: 진행 중인 예매가 있어 탈퇴 처리할 수 없습니다/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('탈퇴 차단: 관람 예정 확정 예매 2건')).toBeInTheDocument();
+    expect(mocks.toastError).toHaveBeenCalledWith('회원 탈퇴 처리에 실패했습니다.');
   });
 
   it('withdraws a user with reason and explicit confirmation', async () => {

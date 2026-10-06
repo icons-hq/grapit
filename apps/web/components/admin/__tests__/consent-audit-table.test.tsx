@@ -10,6 +10,7 @@ import {
 
 const rows: ConsentAuditRow[] = [
   {
+    id: '00000000-0000-4000-8000-000000000001',
     itemKey: 'cross_border_transfer',
     version: '2026-04-28',
     language: 'ko',
@@ -33,9 +34,13 @@ function renderTable(overrides?: {
   isError?: boolean;
   onSearch?: (filters: ConsentAuditFilters) => void;
   onRowOpen?: (row: ConsentAuditRow) => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  defaultWindowFrom?: string | null;
 }) {
   const onSearch = overrides?.onSearch ?? vi.fn();
   const onRowOpen = overrides?.onRowOpen ?? vi.fn();
+  const onLoadMore = vi.fn();
 
   render(
     <ConsentAuditTable
@@ -44,10 +49,14 @@ function renderTable(overrides?: {
       isError={overrides?.isError ?? false}
       onSearch={onSearch}
       onRowOpen={onRowOpen}
+      hasMore={overrides?.hasMore}
+      isLoadingMore={overrides?.isLoadingMore}
+      onLoadMore={onLoadMore}
+      defaultWindowFrom={overrides?.defaultWindowFrom}
     />,
   );
 
-  return { onSearch, onRowOpen };
+  return { onSearch, onRowOpen, onLoadMore };
 }
 
 describe('ConsentAuditTable', () => {
@@ -149,6 +158,35 @@ describe('ConsentAuditTable', () => {
 
     expect(screen.getByText('조회된 동의 감사 이력이 없습니다')).toBeInTheDocument();
     expect(screen.getByText('필터 조건을 조정해 다시 조회하세요')).toBeInTheDocument();
+  });
+
+  it('offers the next page only while the server reports more rows', async () => {
+    const user = userEvent.setup();
+    const { onLoadMore } = renderTable({ hasMore: true });
+
+    await user.click(screen.getByRole('button', { name: '더 보기' }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the next page button while it loads', () => {
+    renderTable({ hasMore: true, isLoadingMore: true });
+    expect(screen.getByRole('button', { name: '불러오는 중…' })).toBeDisabled();
+  });
+
+  it('hides the next page button on the last page', () => {
+    renderTable({ hasMore: false });
+    expect(screen.queryByRole('button', { name: '더 보기' })).not.toBeInTheDocument();
+  });
+
+  it('explains the default lookback window applied to an unbounded query', () => {
+    renderTable({ defaultWindowFrom: '2026-09-23T00:00:00.000Z' });
+
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('시작 시각을 지정하지 않아 2026-09-23 09:00:00부터 7일 범위의 기록만 조회했습니다.');
+    // With only an end time the window ends at that time, not now: the notice
+    // must not claim the period was unset or that it covers the latest days.
+    expect(notice).not.toHaveTextContent('기간을 지정하지 않아');
+    expect(notice).not.toHaveTextContent('최근');
   });
 
   it('shows accessible error state', () => {

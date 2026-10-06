@@ -304,6 +304,8 @@ export interface PerformanceCardData extends ReviewedTranslationMetadata {
   venueName: string | null;
   minPrice?: number | null;
   bookingStartsAt?: string | null;
+  /** Admin list only: public catalog cards are always published. */
+  publishState?: PerformancePublishLifecycle;
 }
 
 export interface PerformanceListResponse {

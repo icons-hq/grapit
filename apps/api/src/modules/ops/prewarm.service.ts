@@ -15,6 +15,14 @@ export const PREWARM_ALLOWED_SCHEDULER_EMAIL = 'PREWARM_ALLOWED_SCHEDULER_EMAIL'
 export const PREWARM_ALLOWED_AUDIENCE = 'PREWARM_ALLOWED_AUDIENCE';
 export const PREWARM_ALLOWED_SERVICE_NAME = 'PREWARM_ALLOWED_SERVICE_NAME';
 export const PREWARM_MAX_MIN_INSTANCES = 'PREWARM_MAX_MIN_INSTANCES';
+export const PREWARM_OPERATION_WAIT_MS = 'PREWARM_OPERATION_WAIT_MS';
+export const PREWARM_SCALING_SCOPE = 'PREWARM_SCALING_SCOPE';
+
+const CLOUD_RUN_V2_BASE_URL = 'https://run.googleapis.com/v2';
+// Stays well inside Cloud Scheduler's default HTTP attempt deadline (180s).
+const DEFAULT_OPERATION_WAIT_MS = 45_000;
+const OPERATION_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_SCALING_SCOPE: PrewarmScalingScope = 'service';
 
 const GOOGLE_OIDC_DISCOVERY_URL = 'https://accounts.google.com/.well-known/openid-configuration';
 const GOOGLE_METADATA_ACCESS_TOKEN_URL =
@@ -64,6 +72,68 @@ type CachedAccessToken = {
 
 type GoogleJwk = JsonWebKey & {
   kid?: string;
+};
+
+type CloudRunScaling = {
+  minInstanceCount?: number;
+  maxInstanceCount?: number;
+};
+
+type CloudRunCondition = {
+  type?: string;
+  state?: string;
+  reason?: string;
+};
+
+type CloudRunService = {
+  /** int64 fields are JSON strings in the Cloud Run Admin API v2. */
+  generation?: string | number;
+  observedGeneration?: string | number;
+  reconciling?: boolean;
+  terminalCondition?: CloudRunCondition;
+  scaling?: CloudRunScaling;
+  template?: {
+    scaling?: CloudRunScaling;
+  };
+};
+
+type CloudRunOperation = {
+  name?: string;
+  done?: boolean;
+  error?: { code?: number; message?: string };
+};
+
+/**
+ * `service` (default) patches the service-level minimum: no new revision.
+ * `template` is the Phase 24-21 revision-template contract, kept only as an
+ * operator switch in case the service-level update is refused live. It rolls
+ * a new revision on every call.
+ */
+export type PrewarmScalingScope = 'service' | 'template';
+
+type ScalingRolloutStatus =
+  | { kind: 'applied' }
+  | { kind: 'in_progress' }
+  | { kind: 'mismatch' }
+  | { kind: 'failed'; reason: string };
+
+export type PrewarmUpdateState = 'applied' | 'pending';
+
+export type PrewarmUpdateResult = {
+  audience: string;
+  operation: 'scale-up' | 'step-down';
+  schedulerEmail: string;
+  serviceName: string;
+  minInstances: number;
+  maxInstances: number | null;
+  /**
+   * `applied`: the service read back settled (not reconciling, Ready) with the
+   * requested minimum. `pending`: Cloud Run accepted the update but the
+   * readback did not settle within PREWARM_OPERATION_WAIT_MS.
+   */
+  state: PrewarmUpdateState;
+  operationName: string | null;
+  scalingScope: PrewarmScalingScope;
 };
 
 @Injectable()
@@ -129,12 +199,25 @@ export class PrewarmService {
     }
   }
 
+  /**
+   * Prewarm changes the service-level `scaling.minInstanceCount`, not the
+   * revision template. A service-level minimum takes effect without a new
+   * revision, so scale-up/step-down never roll traffic (and Socket.IO
+   * connections) to a fresh revision. Cloud Run applies the highest active
+   * minimum, so stepping the service level down keeps the deploy-time
+   * revision minimum (API_MIN_INSTANCES) warm.
+   *
+   * Completion is confirmed by reading the service back (`run.services.get`,
+   * which the runtime service account holds on this service), not by polling
+   * the long-running operation: `run.operations.get` is a project-level
+   * permission the runtime identity does not have.
+   */
   private async updateMinInstances(
     serviceName: string,
     minInstances: number,
     operation: 'scale-up' | 'step-down',
     claims: PrewarmTokenClaims,
-  ) {
+  ): Promise<PrewarmUpdateResult> {
     if (!SERVICE_NAME_PATTERN.test(serviceName)) {
       throw new BadRequestException('PREWARM_INVALID_SERVICE_NAME');
     }
@@ -153,27 +236,45 @@ export class PrewarmService {
       throw new BadRequestException('PREWARM_INVALID_MIN_INSTANCES');
     }
 
+    const scalingScope = this.getScalingScope();
+    const waitMs = this.getOperationWaitMs();
     const projectId = this.getRequiredEnv(PREWARM_PROJECT_ID);
     const region = this.getRequiredEnv(PREWARM_REGION);
     const accessToken = await this.getGoogleAccessToken();
-    const endpoint =
-      `https://run.googleapis.com/v2/projects/${encodeURIComponent(projectId)}` +
-      `/locations/${encodeURIComponent(region)}/services/${encodeURIComponent(serviceName)}` +
-      '?update_mask=template.scaling.minInstanceCount';
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    };
+    const serviceUrl =
+      `${CLOUD_RUN_V2_BASE_URL}/projects/${encodeURIComponent(projectId)}` +
+      `/locations/${encodeURIComponent(region)}/services/${encodeURIComponent(serviceName)}`;
 
-    const response = await fetch(endpoint, {
+    const serviceResponse = await fetch(serviceUrl, { headers });
+    if (!serviceResponse.ok) {
+      throw new ServiceUnavailableException(
+        `PREWARM_SERVICE_READ_FAILED:${serviceResponse.status}`,
+      );
+    }
+    const service = (await serviceResponse.json()) as CloudRunService;
+    const maxInstances = effectiveMaxInstances(service);
+    if (maxInstances !== null && minInstances > maxInstances) {
+      throw new BadRequestException('PREWARM_MIN_EXCEEDS_MAX_INSTANCES');
+    }
+
+    const patch =
+      scalingScope === 'service'
+        ? {
+            mask: 'scaling.minInstanceCount',
+            body: { scaling: { minInstanceCount: minInstances } },
+          }
+        : {
+            mask: 'template.scaling.minInstanceCount',
+            body: { template: { scaling: { minInstanceCount: minInstances } } },
+          };
+    const response = await fetch(`${serviceUrl}?update_mask=${patch.mask}`, {
       method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        template: {
-          scaling: {
-            minInstanceCount: minInstances,
-          },
-        },
-      }),
+      headers,
+      body: JSON.stringify(patch.body),
     });
 
     if (!response.ok) {
@@ -182,7 +283,22 @@ export class PrewarmService {
       );
     }
 
-    const payload = (await response.json()) as { name?: string };
+    const updateOperation = (await response
+      .json()
+      .catch(() => ({}))) as CloudRunOperation;
+    if (updateOperation.done && updateOperation.error) {
+      throw new ServiceUnavailableException(
+        `PREWARM_SCALE_OPERATION_FAILED:${updateOperation.error.code ?? 'unknown'}`,
+      );
+    }
+
+    const state = await this.waitForScalingRollout(
+      serviceUrl,
+      headers,
+      minInstances,
+      scalingScope,
+      waitMs,
+    );
 
     return {
       audience: claims.aud,
@@ -190,8 +306,100 @@ export class PrewarmService {
       schedulerEmail: claims.email,
       serviceName,
       minInstances,
-      operationName: payload.name ?? null,
+      maxInstances,
+      state,
+      operationName: updateOperation.name ?? null,
+      scalingScope,
     };
+  }
+
+  /**
+   * Reads the service until it settles with the requested minimum. A read
+   * failure after an accepted PATCH never becomes a failure response, because
+   * the update may already be applied; the caller gets `pending` instead.
+   */
+  private async waitForScalingRollout(
+    serviceUrl: string,
+    headers: Record<string, string>,
+    minInstances: number,
+    scalingScope: PrewarmScalingScope,
+    waitMs: number,
+  ): Promise<PrewarmUpdateState> {
+    const deadline = Date.now() + waitMs;
+    const maxReads = 1 + Math.ceil(waitMs / OPERATION_POLL_INTERVAL_MS);
+    let settledMismatch = false;
+
+    for (let read = 1; read <= maxReads; read += 1) {
+      const current = await this.readServiceForRollout(serviceUrl, headers);
+      if (current) {
+        const status = evaluateScalingRollout(current, minInstances, scalingScope);
+        if (status.kind === 'applied') {
+          return 'applied';
+        }
+        if (status.kind === 'failed') {
+          throw new ServiceUnavailableException(
+            `PREWARM_SCALE_ROLLOUT_FAILED:${status.reason}`,
+          );
+        }
+        settledMismatch = status.kind === 'mismatch';
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (read === maxReads || remainingMs <= 0) {
+        break;
+      }
+      await this.delay(Math.min(OPERATION_POLL_INTERVAL_MS, remainingMs));
+    }
+
+    if (settledMismatch) {
+      throw new ServiceUnavailableException('PREWARM_SCALE_READBACK_MISMATCH');
+    }
+    return 'pending';
+  }
+
+  private async readServiceForRollout(
+    serviceUrl: string,
+    headers: Record<string, string>,
+  ): Promise<CloudRunService | null> {
+    try {
+      const response = await fetch(serviceUrl, { headers });
+      if (!response.ok) {
+        return null;
+      }
+      return (await response.json()) as CloudRunService;
+    } catch {
+      return null;
+    }
+  }
+
+  protected delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getScalingScope(): PrewarmScalingScope {
+    const value = this.configService.get<string>(PREWARM_SCALING_SCOPE)?.trim();
+    if (!value) {
+      return DEFAULT_SCALING_SCOPE;
+    }
+    if (value !== 'service' && value !== 'template') {
+      throw new ServiceUnavailableException(
+        `${PREWARM_SCALING_SCOPE} must be "service" or "template"`,
+      );
+    }
+    return value;
+  }
+
+  private getOperationWaitMs(): number {
+    const value = this.configService.get<string>(PREWARM_OPERATION_WAIT_MS)?.trim();
+    if (!value) {
+      return DEFAULT_OPERATION_WAIT_MS;
+    }
+    if (!/^\d+$/.test(value)) {
+      throw new ServiceUnavailableException(
+        `${PREWARM_OPERATION_WAIT_MS} must be a non-negative integer`,
+      );
+    }
+    return Number.parseInt(value, 10);
   }
 
   private extractBearerToken(req: PrewarmRequestLike): string {
@@ -374,4 +582,57 @@ export class PrewarmService {
     const value = Number.parseInt(match[1] ?? '300', 10);
     return Number.isFinite(value) && value > 0 ? value : 300;
   }
+}
+
+/**
+ * The lowest positive cap among the service-level and revision-template
+ * maximums. Cloud Run caps a minimum at the active maximum, so a prewarm above
+ * it could never become warm capacity.
+ */
+function effectiveMaxInstances(service: CloudRunService): number | null {
+  const caps = [service.scaling?.maxInstanceCount, service.template?.scaling?.maxInstanceCount]
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  return caps.length > 0 ? Math.min(...caps) : null;
+}
+
+function parseGeneration(value: string | number | undefined): number | null {
+  if (value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/**
+ * A read is settled when Cloud Run is no longer reconciling, the serving
+ * generation caught up with the desired one, and the Ready condition
+ * succeeded. Only a settled read can confirm or contradict the requested
+ * minimum. Proto3 JSON omits a zero minimum, so a missing value reads as 0.
+ */
+function evaluateScalingRollout(
+  service: CloudRunService,
+  minInstances: number,
+  scalingScope: PrewarmScalingScope,
+): ScalingRolloutStatus {
+  const generation = parseGeneration(service.generation);
+  const observedGeneration = parseGeneration(service.observedGeneration);
+  if (
+    service.reconciling === true ||
+    (generation !== null && observedGeneration !== null && observedGeneration < generation)
+  ) {
+    return { kind: 'in_progress' };
+  }
+
+  const condition = service.terminalCondition;
+  if (condition?.state === 'CONDITION_FAILED') {
+    return { kind: 'failed', reason: condition.reason || 'unknown' };
+  }
+  if (condition?.state && condition.state !== 'CONDITION_SUCCEEDED') {
+    return { kind: 'in_progress' };
+  }
+
+  const scaling = scalingScope === 'service' ? service.scaling : service.template?.scaling;
+  const actual = Number(scaling?.minInstanceCount ?? 0);
+  return actual === minInstances ? { kind: 'applied' } : { kind: 'mismatch' };
 }

@@ -4,14 +4,20 @@ import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { AuthService } from './auth.service.js';
+import { AuthService, REFRESH_ROTATION_GRACE_MS } from './auth.service.js';
+import { hashSocialRegistrationBinding } from './social-oauth-state.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { ConsentService } from '../consent/consent.service.js';
 import type { AuthConsentCaptureItem } from '@grabit/shared';
+
+const SOCIAL_REGISTRATION_BINDING = 'test-social-registration-binding';
+const SOCIAL_REGISTRATION_BINDING_HASH = hashSocialRegistrationBinding(SOCIAL_REGISTRATION_BINDING);
 
 // Hash password once (argon2 is expensive)
 let preHashedPassword: string;
@@ -94,6 +100,19 @@ function makeMockUpdateChain(returningRows: Array<{ id: string }> = [{ id: rando
   return { set, where, returning };
 }
 
+/** Valkey stand-in for the per-code email verification attempt counter (INCR script). */
+function createAttemptCounter() {
+  const counts = new Map<string, number>();
+  return {
+    counts,
+    eval: vi.fn(async (_script: string, _numKeys: number, key: string) => {
+      const next = (counts.get(key) ?? 0) + 1;
+      counts.set(key, next);
+      return next;
+    }),
+  };
+}
+
 function containsPrimitiveValue(value: unknown, needle: unknown, seen = new Set<object>()): boolean {
   if (value === needle) return true;
   if (value === null || typeof value !== 'object') return false;
@@ -126,6 +145,7 @@ describe('AuthService', () => {
     insert: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    execute: ReturnType<typeof vi.fn>;
     transaction: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
@@ -145,7 +165,10 @@ describe('AuthService', () => {
     sendVerificationCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
     verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
+    claimPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
+  let releasePhoneClaim: ReturnType<typeof vi.fn>;
+  let attemptCounter: ReturnType<typeof createAttemptCounter>;
 
   beforeAll(async () => {
     preHashedPassword = await argon2.hash('Test1234!', {
@@ -194,16 +217,20 @@ describe('AuthService', () => {
         }),
       }),
       update: vi.fn().mockImplementation(() => makeMockUpdateChain()),
+      // pg_advisory_xact_lock of the lower-case address claim (lockAuthEmailClaim).
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
       transaction: vi.fn(async (callback: (tx: typeof mockDb) => Promise<unknown>) =>
         callback(mockDb),
       ),
     };
 
+    releasePhoneClaim = vi.fn().mockResolvedValue(undefined);
     mockSmsService = {
       verifyCode: vi.fn().mockResolvedValue({ verified: true }),
       sendVerificationCode: vi.fn().mockResolvedValue({ success: true, message: '' }),
       isPhoneVerified: vi.fn().mockResolvedValue(false),
       verifyPhoneVerificationToken: vi.fn(),
+      claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: releasePhoneClaim }),
     };
 
     // REVIEWS.md HIGH-03: capture reset link via EmailService spy
@@ -218,6 +245,8 @@ describe('AuthService', () => {
       captureConsent: vi.fn().mockResolvedValue(undefined),
     };
 
+    attemptCounter = createAttemptCounter();
+
     // Instantiate AuthService directly (no NestJS DI overhead)
     authService = new AuthService(
       mockJwtService as unknown as JwtService,
@@ -227,6 +256,7 @@ describe('AuthService', () => {
       mockEmailService as any,
       mockDb as any,
       mockConsentService as unknown as ConsentService,
+      attemptCounter as never,
     );
   });
 
@@ -311,6 +341,18 @@ describe('AuthService', () => {
       expect(mockUserRepo.create).toHaveBeenCalledTimes(1);
       expect(mockConsentService.captureConsent).toHaveBeenCalledTimes(1);
     });
+
+    it('stores a mixed-case signup email in canonical lower case and sends the code there', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockImplementation(async (data: Record<string, unknown>) => ({ ...mockUser, ...data, id: randomUUID() }));
+
+      const result = await authService.register({ ...mockRegisterDto, email: '  Hong@Naver.COM ' });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('  Hong@Naver.COM ');
+      expect(mockUserRepo.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'hong@naver.com' }), mockDb);
+      expect(result.email).toBe('hong@naver.com');
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith('hong@naver.com', expect.any(String), 'ko');
+    }, 15000);
 
     it('should throw ConflictException (409) if email already exists', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(mockUser);
@@ -405,6 +447,73 @@ describe('AuthService', () => {
       );
       expect(mockUserRepo.create).not.toHaveBeenCalled();
     });
+
+    it('이메일 확인 뒤 계정 생성 직전에 phone verification token을 1회 소비한다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: randomUUID(),
+        email: mockRegisterDto.email,
+      });
+
+      await authService.register(mockRegisterDto);
+
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        mockRegisterDto.phoneVerificationToken,
+        { phone: mockRegisterDto.phone, purpose: 'signup' },
+      );
+      const claimOrder =
+        mockSmsService.claimPhoneVerificationToken.mock.invocationCallOrder[0]!;
+      expect(mockUserRepo.findByEmail.mock.invocationCallOrder[0]!).toBeLessThan(claimOrder);
+      expect(claimOrder).toBeLessThan(mockUserRepo.create.mock.invocationCallOrder[0]!);
+      expect(releasePhoneClaim).not.toHaveBeenCalled();
+    }, 15000);
+
+    it('이미 소비된 phone verification token으로는 두 번째 계정을 만들지 않는다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockSmsService.claimPhoneVerificationToken.mockRejectedValueOnce(
+        new BadRequestException('이미 사용된 전화번호 인증입니다. 휴대폰 인증을 다시 진행해주세요.'),
+      );
+
+      await expect(
+        authService.register({ ...mockRegisterDto, email: 'second-account@test.com' }),
+      ).rejects.toThrow('이미 사용된 전화번호 인증입니다');
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    }, 15000);
+
+    it('이메일 중복으로 거절되면 phone verification token을 소비하지 않는다', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(mockSmsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
+    });
+
+    it('계정 생성 transaction이 실패하면 소비한 phone verification token을 되돌린다', async () => {
+      const writeError = new Error('duplicate key value violates unique constraint');
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockRejectedValueOnce(writeError);
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBe(writeError);
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
+    }, 15000);
+
+    it('re-checks the address under the claim and answers 409 to a sign-up that lost the race', async () => {
+      // The pre-check saw a free address; the account that won committed before the claim.
+      mockUserRepo.findByEmail
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...mockUser, email: 'new@test.com' });
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockUserRepo.findByEmail).toHaveBeenLastCalledWith('new@test.com', mockDb);
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      // The single-use phone token stays usable for another address.
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
+    }, 15000);
   });
 
   describe('validateUser', () => {
@@ -544,26 +653,82 @@ describe('AuthService', () => {
       expect(mockDb.transaction).toHaveBeenCalled();
     });
 
-    it('conditional revoke 0 rows이면 concurrent reuse로 보고 family를 폐기한다', async () => {
-      const rawToken = 'raced-refresh-token';
-      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-      const family = randomUUID();
+    function mockSelectSequence(...results: unknown[][]) {
+      for (const rows of results) {
+        mockDb.select.mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(rows),
+          }),
+        });
+      }
+    }
 
-      mockDb.select.mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            {
-              id: randomUUID(),
-              userId: mockUser.id,
-              tokenHash,
-              family,
-              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-              createdAt: new Date(),
-              revokedAt: null,
-            },
-          ]),
-        }),
-      });
+    // Mirrors the server-side derivation: child = HMAC(refresh secret, parent).
+    const deriveChild = (raw: string) =>
+      createHmac('sha256', 'test-refresh-secret')
+        .update(`refresh-rotation:v1:${raw}`)
+        .digest('hex');
+
+    function refreshRow(raw: string, family: string, overrides: Record<string, unknown> = {}) {
+      return {
+        id: randomUUID(),
+        userId: mockUser.id,
+        tokenHash: createHash('sha256').update(raw).digest('hex'),
+        family,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        createdAt: new Date(),
+        revokedAt: null as Date | null,
+        ...overrides,
+      };
+    }
+
+    it('rotates to the deterministic child so concurrent rotations of one parent converge', async () => {
+      const rawToken = 'deterministic-parent';
+      const family = randomUUID();
+      mockSelectSequence([refreshRow(rawToken, family)]);
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      const insertValues = vi.fn().mockResolvedValue([]);
+      mockDb.insert.mockReturnValue({ values: insertValues });
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result.refreshToken).toBe(deriveChild(rawToken));
+      expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+        family,
+        tokenHash: createHash('sha256').update(deriveChild(rawToken)).digest('hex'),
+      }));
+    });
+
+    it('a tab that loses the conditional revoke race receives the winner child instead of a 401', async () => {
+      const rawToken = 'raced-refresh-token';
+      const family = randomUUID();
+      const childRaw = deriveChild(rawToken);
+      mockSelectSequence(
+        [refreshRow(rawToken, family)], // initial read: still active
+        [refreshRow(rawToken, family, { revokedAt: new Date() })], // re-read after losing the race
+        [refreshRow(childRaw, family)], // winner's committed child
+      );
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      const conditionalRevoke = makeMockUpdateChain([]);
+      mockDb.update.mockReturnValueOnce({ set: conditionalRevoke.set });
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result).toEqual({ accessToken: 'mock-access-token', refreshToken: childRaw });
+      expect(conditionalRevoke.returning).toHaveBeenCalledWith({ id: expect.anything() });
+      // Only the losing conditional UPDATE ran; the family was not revoked.
+      expect(mockDb.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('a lost race against logout (no rotation child) still revokes the family', async () => {
+      const rawToken = 'raced-against-logout';
+      const family = randomUUID();
+      mockSelectSequence(
+        [refreshRow(rawToken, family)],
+        [refreshRow(rawToken, family, { revokedAt: new Date() })],
+        [], // no deterministic child exists
+      );
       mockUserRepo.findById.mockResolvedValue(mockUser);
       const conditionalRevoke = makeMockUpdateChain([]);
       const familyWhere = vi.fn().mockResolvedValue([]);
@@ -572,13 +737,105 @@ describe('AuthService', () => {
         .mockReturnValueOnce({ set: conditionalRevoke.set })
         .mockReturnValueOnce({ set: familySet });
 
-      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(UnauthorizedException);
 
-      expect(conditionalRevoke.returning).toHaveBeenCalledWith({
-        id: expect.anything(),
-      });
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
+    });
+
+    it('without a refresh secret a race loser gets a 401 but does not revoke the winner family', async () => {
+      mockConfigService.get.mockImplementation(() => undefined);
+      const rawToken = 'raced-without-secret';
+      const family = randomUUID();
+      mockSelectSequence([refreshRow(rawToken, family)]);
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      const conditionalRevoke = makeMockUpdateChain([]);
+      mockDb.update.mockReturnValueOnce({ set: conditionalRevoke.set });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow('유효하지 않은 리프레시 토큰입니다');
+
+      // Only the losing conditional UPDATE ran; no family revoke.
+      expect(mockDb.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('replaying a just-rotated parent inside the grace window returns the same active child without revoking the family', async () => {
+      const rawToken = 'tab-b-stale-cookie';
+      const family = randomUUID();
+      const childRaw = deriveChild(rawToken);
+      mockSelectSequence(
+        [refreshRow(rawToken, family, { revokedAt: new Date(Date.now() - 2_000) })],
+        [refreshRow(childRaw, family)],
+      );
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result).toEqual({ accessToken: 'mock-access-token', refreshToken: childRaw });
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('follows the rotation chain to the active grandchild when another tab already rotated the child', async () => {
+      const rawToken = 'very-stale-tab-cookie';
+      const family = randomUUID();
+      const childRaw = deriveChild(rawToken);
+      const grandchildRaw = deriveChild(childRaw);
+      mockSelectSequence(
+        [refreshRow(rawToken, family, { revokedAt: new Date(Date.now() - 5_000) })],
+        [refreshRow(childRaw, family, { revokedAt: new Date(Date.now() - 1_000) })],
+        [refreshRow(grandchildRaw, family)],
+      );
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result.refreshToken).toBe(grandchildRaw);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('reuse after the grace window is still treated as theft and revokes the family', async () => {
+      const rawToken = 'replayed-after-grace';
+      const family = randomUUID();
+      mockSelectSequence(
+        [refreshRow(rawToken, family, { revokedAt: new Date(Date.now() - REFRESH_ROTATION_GRACE_MS - 1_000) })],
+      );
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      mockDb.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: familyWhere }) });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(UnauthorizedException);
+
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
+      // The child lookup is skipped entirely outside the window.
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not hand out a child when the active descendant belongs to another family', async () => {
+      const rawToken = 'cross-family-replay';
+      const family = randomUUID();
+      mockSelectSequence(
+        [refreshRow(rawToken, family, { revokedAt: new Date() })],
+        [refreshRow(deriveChild(rawToken), randomUUID())],
+      );
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      mockDb.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: familyWhere }) });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(UnauthorizedException);
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
+    });
+
+    it('revokes the family instead of using the grace window for a withdrawn account', async () => {
+      const rawToken = 'withdrawn-grace-replay';
+      const family = randomUUID();
+      mockSelectSequence(
+        [refreshRow(rawToken, family, { revokedAt: new Date() })],
+        [refreshRow(deriveChild(rawToken), family)],
+      );
+      mockUserRepo.findById.mockResolvedValue({ ...mockUser, accountStatus: 'withdrawn' });
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      mockDb.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: familyWhere }) });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow('탈퇴 처리된 계정입니다');
       expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
     });
 
@@ -597,7 +854,8 @@ describe('AuthService', () => {
               family,
               expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
               createdAt: new Date(),
-              revokedAt: new Date(), // already revoked!
+              // already revoked, outside the rotation grace window
+              revokedAt: new Date(Date.now() - REFRESH_ROTATION_GRACE_MS - 1_000),
             },
           ]),
         }),
@@ -633,7 +891,7 @@ describe('AuthService', () => {
               family,
               expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
               createdAt: new Date(),
-              revokedAt: new Date(),
+              revokedAt: new Date(Date.now() - REFRESH_ROTATION_GRACE_MS - 1_000),
             },
           ]),
         }),
@@ -827,20 +1085,40 @@ describe('AuthService', () => {
     });
   });
 
-  describe('revokeRefreshToken', () => {
-    it('should mark token as revoked in DB', async () => {
+  describe('revokeRefreshToken (logout)', () => {
+    it('revokes every active token of the presented token family', async () => {
       const rawToken = 'token-to-revoke';
-
+      const family = randomUUID();
+      mockDb.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+            family,
+            expiresAt: new Date(Date.now() + 60_000),
+            createdAt: new Date(),
+            revokedAt: null,
+          }]),
+        }),
+      });
       const updateWhereMock = vi.fn().mockResolvedValue([]);
       const updateSetMock = vi.fn().mockReturnValue({ where: updateWhereMock });
       mockDb.update.mockReturnValue({ set: updateSetMock });
 
       await authService.revokeRefreshToken(rawToken);
 
-      expect(mockDb.update).toHaveBeenCalled();
       expect(updateSetMock).toHaveBeenCalledWith(
         expect.objectContaining({ revokedAt: expect.any(Date) }),
       );
+      // The family (device session) is revoked, not just the presented row.
+      expect(containsPrimitiveValue(updateWhereMock.mock.calls, family)).toBe(true);
+    });
+
+    it('does nothing for an unknown refresh token', async () => {
+      await authService.revokeRefreshToken('unknown-token');
+
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
   });
 
@@ -867,6 +1145,20 @@ describe('AuthService', () => {
       const url = new URL(mockEmailService.sendPasswordResetEmail.mock.calls[0]![1]);
       expect(url.pathname).toBe('/th/auth/reset-password');
       expect(url.searchParams.has('returnTo')).toBe(false);
+    });
+
+    it('finds the account case-insensitively and mails the reset link to the stored address', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'Hong@naver.com' });
+      mockJwtService.signAsync.mockResolvedValue('synthetic-reset-token');
+
+      await authService.requestPasswordReset('hong@NAVER.com');
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('hong@NAVER.com');
+      expect(mockEmailService.sendPasswordResetEmail).toHaveBeenCalledWith(
+        'Hong@naver.com',
+        expect.stringContaining('token=synthetic-reset-token'),
+        'ko',
+      );
     });
 
     it('should not reveal whether email exists (always returns silently)', async () => {
@@ -1063,9 +1355,7 @@ describe('AuthService', () => {
         from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([tokenRecord]) }),
       });
       mockDb.update
-        .mockReturnValueOnce({
-          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-        })
+        .mockReturnValueOnce(makeMockUpdateChain([{ id: tokenRecord.id }]))
         .mockReturnValueOnce({
           set: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
@@ -1089,6 +1379,69 @@ describe('AuthService', () => {
       });
 
       expect(mockDb.update).toHaveBeenCalledTimes(2);
+      // PR #235 review: the duplicate check, the code consumption and the email
+      // write run in one transaction under the lower-case address claim.
+      expect(mockDb.transaction).toHaveBeenCalledOnce();
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(email, mockDb);
+      expect(mockDb.execute.mock.invocationCallOrder[0]!)
+        .toBeLessThan(mockUserRepo.findByEmail.mock.invocationCallOrder[0]!);
+    });
+
+    it('refuses an account email change when another account committed the address first, without spending the code', async () => {
+      const email = 'taken@example.com';
+      const code = '123456';
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      // Under the claim, the re-check sees the account that won the race.
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, id: randomUUID(), email });
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            email,
+            purpose: 'account_email',
+            tokenHash: hashEmailCode(email, code, 'account_email'),
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+            consumedAt: null,
+            createdAt: new Date(),
+          }]),
+        }),
+      });
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('answers 410 when a parallel request of the same account consumed the code first', async () => {
+      const email = 'buyer@example.com';
+      const code = '123456';
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            email,
+            purpose: 'account_email',
+            tokenHash: hashEmailCode(email, code, 'account_email'),
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+            consumedAt: null,
+            createdAt: new Date(),
+          }]),
+        }),
+      });
+      mockDb.update.mockReturnValueOnce(makeMockUpdateChain([]));
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(mockDb.update).toHaveBeenCalledOnce();
     });
 
     it('rejects account email verification code confirmation for merged accounts', async () => {
@@ -1164,6 +1517,147 @@ describe('AuthService', () => {
       await expect(
         authEmailVerificationApi().verifyEmailVerificationCode(email, code),
       ).rejects.toThrow(/인증번호가 만료되었습니다/);
+    });
+
+    function signupCodeRecord(email: string, code: string) {
+      return {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(email, code),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date(),
+      };
+    }
+
+    it('refuses even the right code once five guesses were used and expires the code (audit #12)', async () => {
+      const email = 'guess@test.com';
+      const code = '135790';
+      const record = signupCodeRecord(email, code);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+      const invalidation = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(invalidation);
+
+      for (let guess = 1; guess <= 4; guess += 1) {
+        await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, `00000${guess}`))
+          .rejects.toThrow(/인증번호가 일치하지 않습니다/);
+      }
+      // The fifth wrong guess uses up the code.
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, '000005'))
+        .rejects.toThrow(GoneException);
+      expect(invalidation.set).toHaveBeenCalledWith({ expiresAt: expect.any(Date) });
+      // A sixth wrong guess and then the right code are both refused.
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, '000006'))
+        .rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      // The user was never marked verified.
+      expect(invalidation.set).not.toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+      expect(attemptCounter.eval).toHaveBeenLastCalledWith(
+        expect.stringContaining('INCR'),
+        1,
+        `auth:email-verification-attempts:${record.id}`,
+        expect.any(Number),
+      );
+    });
+
+    it('still accepts the right code within the guess limit', async () => {
+      const email = 'guess-ok@test.com';
+      const code = '246802';
+      const record = signupCodeRecord(email, code);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+
+      for (let guess = 1; guess <= 4; guess += 1) {
+        await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, `11111${guess}`))
+          .rejects.toThrow(BadRequestException);
+      }
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .resolves.toEqual({ verified: true });
+    });
+
+    it('applies the same guess limit to account email changes', async () => {
+      const email = 'new-address@test.com';
+      const code = '864209';
+      const record = {
+        ...signupCodeRecord(email, code),
+        purpose: 'account_email',
+        tokenHash: hashEmailCode(email, code, 'account_email'),
+      };
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([record]) }),
+      });
+      const update = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(update);
+
+      for (let guess = 1; guess <= 5; guess += 1) {
+        await expect(
+          authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, `22222${guess}`),
+        ).rejects.toThrow(guess < 5 ? BadRequestException : GoneException);
+      }
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toThrow(/인증번호 입력 횟수를 초과했습니다/);
+      expect(update.set).not.toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+    });
+
+    it('fails closed when the attempt counter is unavailable', async () => {
+      const email = 'counter-down@test.com';
+      const code = '975310';
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([signupCodeRecord(email, code)]) }),
+      });
+      attemptCounter.eval.mockRejectedValueOnce(new Error('Connection is closed.'));
+
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .rejects.toThrow(ServiceUnavailableException);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts an unused code that was issued to a mixed-case address before emails were lower-cased', async () => {
+      const storedEmail = 'Hong.Legacy@Naver.com';
+      const code = '246810';
+      const legacyRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email: storedEmail,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(storedEmail, code),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date(),
+      };
+      // A newer code for the account's previous address must not be picked.
+      const otherAddressRecord = {
+        ...legacyRecord,
+        id: randomUUID(),
+        email: 'previous@naver.com',
+        tokenHash: hashEmailCode('previous@naver.com', '000000'),
+        createdAt: new Date(Date.now() + 1_000),
+      };
+      const selectWhere = vi
+        .fn()
+        .mockResolvedValueOnce([]) // no row stored under the lower-case address
+        .mockResolvedValueOnce([legacyRecord, otherAddressRecord]); // the account's own codes
+      mockDb.select.mockReturnValue({ from: vi.fn().mockReturnValue({ where: selectWhere }) });
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: storedEmail });
+      const userUpdate = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(userUpdate);
+
+      await expect(
+        authEmailVerificationApi().verifyEmailVerificationCode('hong.legacy@naver.com', code),
+      ).resolves.toEqual({ verified: true });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('hong.legacy@naver.com');
+      expect(containsPrimitiveValue(selectWhere.mock.calls[1], mockUser.id)).toBe(true);
+      expect(userUpdate.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
     });
 
     it('rejects consumed, expired, and superseded verification tokens with distinct messages', async () => {
@@ -1334,7 +1828,7 @@ describe('AuthService', () => {
       expect(result.user).toBeDefined();
     });
 
-    it('marks an existing unverified social user verified and authenticates', async () => {
+    it('marks an existing unverified social user verified when the provider vouches for the same address', async () => {
       const existingUser = {
         ...createMockUser(),
         email: 'unverified-social@test.com',
@@ -1360,7 +1854,8 @@ describe('AuthService', () => {
       const result = await authService.findOrCreateSocialUser({
         provider: 'google',
         providerId: 'google-123',
-        email: existingUser.email,
+        email: 'Unverified-Social@Test.com',
+        emailVerified: true,
         name: existingUser.name,
       });
 
@@ -1371,6 +1866,171 @@ describe('AuthService', () => {
       expect(result.user?.isEmailVerified).toBe(true);
       expect(mockDb.update).toHaveBeenCalled();
       expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+    });
+
+    function mockLinkedSocialAccount(userId: string, provider: string, providerId: string, providerEmail: string | null) {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: randomUUID(), userId, provider, providerId, providerEmail, createdAt: new Date() },
+          ]),
+        }),
+      });
+    }
+
+    // Audit #100: a local account linked by verified identity must not have its
+    // never-verified signup address marked verified by a social login.
+    it.each([
+      {
+        scenario: 'the linked account stores a different (typo) address',
+        storedEmail: 'hong@naver.co',
+        profile: { email: 'hong@kakao.com', emailVerified: true },
+      },
+      {
+        scenario: 'the provider did not verify the address',
+        storedEmail: 'hong@naver.com',
+        profile: { email: 'hong@naver.com', emailVerified: false },
+      },
+      {
+        scenario: 'the provider returned no address',
+        storedEmail: 'hong@naver.com',
+        profile: { email: undefined, emailVerified: false },
+      },
+    ])('keeps a linked local account email unverified when $scenario', async ({ storedEmail, profile }) => {
+      const existingUser = {
+        ...createMockUser(),
+        email: storedEmail,
+        isEmailVerified: false,
+      };
+      // Linked through identity matching: the provider address was recorded on the link.
+      mockLinkedSocialAccount(existingUser.id, 'kakao', 'kakao-linked', profile.email ?? null);
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'kakao',
+        providerId: 'kakao-linked',
+        name: existingUser.name,
+        ...profile,
+      });
+
+      expect(result.status).toBe('authenticated');
+      expect(result.user?.isEmailVerified).toBe(false);
+      // No users.isEmailVerified write; the buyer must use /auth/verify-email.
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps a linked local account unverified even when the provider address equals the stored one but is unverified', async () => {
+      const existingUser = { ...createMockUser(), email: 'Hong@Naver.com', isEmailVerified: false };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-linked', 'hong@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-linked',
+        email: 'hong@naver.com',
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(false);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    // 2026-05-17 hotfix (78387887): social accounts created before social sign-up
+    // was marked verified are repaired on their next login, or they could never book.
+    it('repairs a legacy unverified placeholder social account on login so it can book', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'kakao_4411@social.grabit.com',
+        passwordHash: null,
+        isEmailVerified: false,
+        isPhoneVerified: true,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'kakao', '4411', null);
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+      const updateChain = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(updateChain);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'kakao',
+        providerId: '4411',
+        email: undefined,
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.status).toBe('authenticated');
+      expect(result.user).toMatchObject({ email: 'kakao_4411@social.grabit.com', isEmailVerified: true });
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+    });
+
+    it('repairs a legacy unverified social-only account whose address came from this provider link', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'Fan.Legacy@naver.com',
+        passwordHash: null,
+        isEmailVerified: false,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-legacy', 'fan.legacy@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+      const updateChain = makeMockUpdateChain();
+      mockDb.update.mockReturnValue(updateChain);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-legacy',
+        email: 'fan.legacy@naver.com',
+        // Naver never asserts verification; the hotfix policy still applies.
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(true);
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ isEmailVerified: true }));
+    });
+
+    it('does not repair a social-only account whose stored address differs from the provider link address', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'other@example.com',
+        passwordHash: null,
+        isEmailVerified: false,
+      };
+      mockLinkedSocialAccount(existingUser.id, 'naver', 'naver-second-link', 'fan@naver.com');
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'naver',
+        providerId: 'naver-second-link',
+        email: 'fan@naver.com',
+        emailVerified: false,
+        name: existingUser.name,
+      });
+
+      expect(result.user?.isEmailVerified).toBe(false);
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('binds a new registrationToken to the browser', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
+      });
+
+      await authService.findOrCreateSocialUser(
+        { provider: 'kakao', providerId: 'new-kakao', email: 'fan@kakao.com', emailVerified: true, name: 'Fan' },
+        { registrationBinding: SOCIAL_REGISTRATION_BINDING },
+      );
+
+      expect(mockJwtService.signAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purpose: 'social-registration',
+          binding: SOCIAL_REGISTRATION_BINDING_HASH,
+        }),
+        { expiresIn: '30m' },
+      );
+      const payload = mockJwtService.signAsync.mock.calls[0]![0] as Record<string, unknown>;
+      expect(JSON.stringify(payload)).not.toContain(SOCIAL_REGISTRATION_BINDING);
     });
 
     it('rejects merged users for an existing social account link', async () => {
@@ -1409,6 +2069,16 @@ describe('AuthService', () => {
   });
 
   describe('completeSocialRegistration', () => {
+    // The browser that finished the provider login holds this httpOnly cookie value.
+    const completeSocialWithBinding = (
+      registrationToken: string,
+      dto: Parameters<AuthService['completeSocialRegistration']>[1],
+      requestMeta?: Parameters<AuthService['completeSocialRegistration']>[2],
+    ) =>
+      authService.completeSocialRegistration(registrationToken, dto, requestMeta, {
+        registrationBinding: SOCIAL_REGISTRATION_BINDING,
+      });
+
     it('should create a verified social user + social account + terms then return auth tokens', async () => {
       const newUserId = randomUUID();
 
@@ -1419,6 +2089,7 @@ describe('AuthService', () => {
         email: 'kakao@test.com',
         name: 'Kakao User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
 
       // No existing user with this email
@@ -1434,7 +2105,7 @@ describe('AuthService', () => {
         isEmailVerified: true,
       });
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: 'Registered Name',
@@ -1508,6 +2179,7 @@ describe('AuthService', () => {
         email: 'social@example.com',
         name: 'Social Name',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
       mockUserRepo.findByEmail.mockResolvedValue(null);
@@ -1517,7 +2189,7 @@ describe('AuthService', () => {
         ]),
       );
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: 'Social Name',
@@ -1616,6 +2288,7 @@ describe('AuthService', () => {
         email: 'social-new@example.com',
         name: 'Social Name',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
       mockUserRepo.findByEmail.mockResolvedValue(null);
@@ -1629,7 +2302,7 @@ describe('AuthService', () => {
         isEmailVerified: true,
       });
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: 'Social Name',
@@ -1678,12 +2351,13 @@ describe('AuthService', () => {
         email: 'social@example.com',
         name: 'Social Name',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([staleTargetUser]);
       mockDb.update.mockImplementation(() => makeMockUpdateChain([]));
 
       await expect(
-        authService.completeSocialRegistration(
+        completeSocialWithBinding(
           'valid-registration-token',
           {
             name: 'Social Name',
@@ -1715,6 +2389,11 @@ describe('AuthService', () => {
       );
       expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
       expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: staleTargetUser.phone, purpose: 'social_registration' },
+      );
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
     });
 
     it('does not let provider email conflict block an exact single verified identity link', async () => {
@@ -1741,6 +2420,7 @@ describe('AuthService', () => {
         email: otherEmailOwner.email,
         name: 'Google User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
       mockUserRepo.findByEmail.mockResolvedValue(otherEmailOwner);
@@ -1751,7 +2431,7 @@ describe('AuthService', () => {
       );
 
       await expect(
-        authService.completeSocialRegistration('valid-registration-token', {
+        completeSocialWithBinding('valid-registration-token', {
           name: 'Google User',
           gender: 'female',
           country: 'KR',
@@ -1802,6 +2482,7 @@ describe('AuthService', () => {
         email: 'naver-link@example.com',
         name: 'Naver User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
         matchingCandidate,
@@ -1813,7 +2494,7 @@ describe('AuthService', () => {
         ]),
       );
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: ' Naver   User ',
@@ -1859,6 +2540,7 @@ describe('AuthService', () => {
         email: 'naver-new@example.com',
         name: 'Naver User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
         firstCandidate,
@@ -1875,7 +2557,7 @@ describe('AuthService', () => {
         isEmailVerified: true,
       });
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: 'Naver User',
@@ -1911,7 +2593,7 @@ describe('AuthService', () => {
       mockJwtService.verifyAsync.mockRejectedValue(new Error('jwt expired'));
 
       await expect(
-        authService.completeSocialRegistration('expired-token', {
+        completeSocialWithBinding('expired-token', {
           name: 'Name',
           gender: 'male',
           country: 'KR',
@@ -1936,13 +2618,14 @@ describe('AuthService', () => {
         email: existingUser.email,
         name: 'Google User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
 
       // Existing user found with same email
       mockUserRepo.findByEmail.mockResolvedValue(existingUser);
 
       await expect(
-        authService.completeSocialRegistration(
+        completeSocialWithBinding(
           'valid-registration-token',
           {
             name: existingUser.name,
@@ -1973,6 +2656,7 @@ describe('AuthService', () => {
         email: 'kakao@test.com',
         name: 'Kakao User',
         purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
       });
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
@@ -1984,7 +2668,7 @@ describe('AuthService', () => {
         isEmailVerified: true,
       });
 
-      const result = await authService.completeSocialRegistration(
+      const result = await completeSocialWithBinding(
         'valid-registration-token',
         {
           name: 'Registered Name',
@@ -2013,6 +2697,12 @@ describe('AuthService', () => {
         'signed-social-phone-token',
         { phone: '010-1234-5678', purpose: 'social_registration' },
       );
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledTimes(1);
+      expect(mockSmsService.claimPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: '010-1234-5678', purpose: 'social_registration' },
+      );
+      expect(releasePhoneClaim).not.toHaveBeenCalled();
       expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
       expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalledWith(
@@ -2022,13 +2712,137 @@ describe('AuthService', () => {
       expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
 
+    describe('registration token binding (forwarded link protection)', () => {
+      const socialDto = {
+        name: 'Victim Name',
+        gender: 'female' as const,
+        country: 'KR',
+        birthDate: '1990-01-01',
+        phone: '010-5555-6666',
+        phoneVerificationToken: 'victim-phone-token',
+        termsOfService: true,
+        privacyPolicy: true,
+        marketingConsent: false,
+        consentItems: makeSocialConsentItems(),
+      };
+
+      beforeEach(() => {
+        // The victim is an existing buyer whose identity matches exactly.
+        mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
+          { ...createMockUser(), name: 'Victim Name', phone: '010-5555-6666', birthDate: '1990-01-01', isPhoneVerified: true, accountStatus: 'active' },
+        ]);
+      });
+
+      it.each([
+        ['no binding cookie (link opened in another browser)', undefined, SOCIAL_REGISTRATION_BINDING_HASH],
+        ['a binding cookie from a different provider login', 'another-browser-binding', SOCIAL_REGISTRATION_BINDING_HASH],
+        ['a token issued without a binding', SOCIAL_REGISTRATION_BINDING, undefined],
+      ])('rejects completion with %s before linking or creating any account', async (_label, presentedBinding, tokenBinding) => {
+        mockJwtService.verifyAsync.mockResolvedValue({
+          provider: 'kakao',
+          providerId: 'attacker-kakao',
+          email: 'attacker@kakao.com',
+          name: 'Attacker',
+          purpose: 'social-registration',
+          ...(tokenBinding ? { binding: tokenBinding } : {}),
+        });
+
+        await expect(
+          authService.completeSocialRegistration('forwarded-registration-token', socialDto, undefined, {
+            registrationBinding: presentedBinding,
+          }),
+        ).rejects.toThrow(UnauthorizedException);
+
+        expect(mockDb.transaction).not.toHaveBeenCalled();
+        expect(mockDb.insert).not.toHaveBeenCalled();
+        expect(mockUserRepo.create).not.toHaveBeenCalled();
+      });
+    });
+
+    it.each([
+      ['admin role', { role: 'admin' }],
+      ['scanner capability bundle', { adminCapabilityBundle: 'scanner' }],
+      ['direct admin capabilities', { adminCapabilities: ['field.scan.verify'] }],
+    ])('never auto-links a social login to an account with %s', async (_label, privilege) => {
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'kakao',
+        providerId: 'kakao-to-staff',
+        email: 'someone@kakao.com',
+        name: 'Staff',
+        purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
+        { ...createMockUser(), name: 'Staff Name', phone: '010-7777-8888', birthDate: '1985-03-03', isPhoneVerified: true, accountStatus: 'active', ...privilege },
+      ]);
+
+      await expect(
+        completeSocialWithBinding('valid-registration-token', {
+          name: 'Staff Name',
+          gender: 'male',
+          country: 'KR',
+          birthDate: '1985-03-03',
+          phone: '010-7777-8888',
+          phoneVerificationToken: 'staff-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      // The refusal happens before the single-use phone token is claimed (u08 x u09b).
+      expect(mockSmsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
+    });
+
+    it('stores the provider email in lower case and keeps the social sign-up verified policy', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'naver',
+        providerId: 'naver-new',
+        email: 'Fan.User@Example.COM',
+        name: 'Fan',
+        purpose: 'social-registration',
+        binding: SOCIAL_REGISTRATION_BINDING_HASH,
+      });
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockImplementation(async (data: Record<string, unknown>) => ({
+        ...createMockUser(),
+        ...data,
+        id: randomUUID(),
+      }));
+
+      const result = await completeSocialWithBinding('valid-registration-token', {
+        name: 'Fan',
+        gender: 'female',
+        country: 'KR',
+        birthDate: '1999-09-09',
+        phone: '010-1111-2222',
+        phoneVerificationToken: 'fan-phone-token',
+        termsOfService: true,
+        privacyPolicy: true,
+        marketingConsent: false,
+        consentItems: makeSocialConsentItems(),
+      });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('fan.user@example.com');
+      // 2026-05-17 product policy: social-only sign-up completes without email OTP.
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'fan.user@example.com', isEmailVerified: true }),
+        expect.anything(),
+      );
+      expect(result.user).toMatchObject({ email: 'fan.user@example.com', isEmailVerified: true });
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+    });
+
     it('invalid phone verification token이면 social registration을 거부한다', async () => {
       mockSmsService.verifyPhoneVerificationToken.mockImplementation(() => {
         throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
       });
 
       await expect(
-        authService.completeSocialRegistration('valid-registration-token', {
+        completeSocialWithBinding('valid-registration-token', {
           name: 'Registered Name',
           gender: 'male',
           country: 'KR',
@@ -2334,6 +3148,7 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
         assertRequiredConsents: vi.fn(),
         captureConsent: vi.fn(),
       } as any,
+      createAttemptCounter() as never,
     );
   });
 

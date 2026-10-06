@@ -9,7 +9,9 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
+import { adminOperationsPrioritySchema } from '@grabit/shared';
 
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -17,6 +19,7 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import {
   AdminOperationsService,
   type AdminOperationsInboxFilters,
@@ -50,13 +53,12 @@ const signupLookupSchema = z.object({
   message: '가입 실패 조회 키가 필요합니다',
 });
 
-type RequestMeta = {
-  ip?: string;
-  headers?: {
-    'user-agent'?: string | string[];
-    'x-forwarded-for'?: string | string[];
-  };
-};
+// admin_audit_logs.user_agent is varchar(500).
+const AUDIT_USER_AGENT_MAX_LENGTH = 500;
+
+// An unknown priority used to fall into the 'normal' branch, so the rows and
+// the totals disagreed; reject it instead (u15).
+const inboxPriorityQuerySchema = adminOperationsPrioritySchema.optional();
 
 @Controller('admin/operations')
 @UseGuards(RolesGuard, AdminCapabilitiesGuard)
@@ -72,7 +74,8 @@ export class AdminOperationsController {
     @Query('source') source?: AdminOperationsInboxFilters['source'],
     @Query('category') category?: AdminOperationsInboxFilters['category'],
     @Query('status') status?: AdminOperationsInboxFilters['status'],
-    @Query('priority') priority?: AdminOperationsInboxFilters['priority'],
+    @Query('priority', new ZodValidationPipe(inboxPriorityQuerySchema))
+    priority?: AdminOperationsInboxFilters['priority'],
     @Query('includeResolved') includeResolved?: string,
     @Query('performanceId', new ZodValidationPipe(z.string().uuid().optional())) performanceId?: string,
     @Query('showtimeId', new ZodValidationPipe(z.string().uuid().optional())) showtimeId?: string,
@@ -110,7 +113,7 @@ export class AdminOperationsController {
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(escalateSchema)) body: z.infer<typeof escalateSchema>,
-    @Req() request: RequestMeta,
+    @Req() request: Request,
   ) {
     return this.adminOperationsService.escalateThread(
       id,
@@ -126,7 +129,7 @@ export class AdminOperationsController {
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(statusSchema)) body: z.infer<typeof statusSchema>,
-    @Req() request: RequestMeta,
+    @Req() request: Request,
   ) {
     return this.adminOperationsService.updateThreadStatus(
       id,
@@ -142,7 +145,7 @@ export class AdminOperationsController {
     @Param('id') id: string,
     @CurrentUser('id') actorUserId: string,
     @Body(new ZodValidationPipe(reassignSchema)) body: z.infer<typeof reassignSchema>,
-    @Req() request: RequestMeta,
+    @Req() request: Request,
   ) {
     return this.adminOperationsService.reassignThread(
       id,
@@ -162,14 +165,15 @@ export class AdminOperationsController {
   }
 }
 
-function requestContext(request: RequestMeta) {
-  const forwardedFor = firstHeader(request.headers?.['x-forwarded-for']);
+/**
+ * Audit context for support-thread mutations. The IP comes from the shared
+ * trusted resolver (forwarded headers only behind Cloudflare), never from a
+ * client-supplied X-Forwarded-For value (audit #123).
+ */
+function requestContext(request: Request) {
+  const userAgent = request.get('user-agent');
   return {
-    ipAddress: forwardedFor?.split(',')[0]?.trim() || request.ip || null,
-    userAgent: firstHeader(request.headers?.['user-agent']) ?? null,
+    ipAddress: resolveTrustedRequestIp(request),
+    userAgent: userAgent ? userAgent.slice(0, AUDIT_USER_AGENT_MAX_LENGTH) : null,
   };
-}
-
-function firstHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }

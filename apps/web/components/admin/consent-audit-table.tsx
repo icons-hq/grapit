@@ -4,6 +4,10 @@ import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 
 import { useState, type FormEvent } from 'react';
 import { Search } from 'lucide-react';
+import {
+  ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS,
+  type ConsentAuditRow as SharedConsentAuditRow,
+} from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -35,20 +39,7 @@ export interface ConsentAuditFilters {
   ip?: string;
 }
 
-export interface ConsentAuditRow {
-  itemKey: string;
-  version: string;
-  language: string;
-  maskedUser: {
-    id: string;
-    email: string;
-    phone: string;
-  };
-  maskedIp: string;
-  timestamp: string;
-  sourceFlow: string;
-  accepted: boolean;
-}
+export type ConsentAuditRow = SharedConsentAuditRow;
 
 interface ConsentAuditTableProps {
   auditRows: ConsentAuditRow[];
@@ -56,6 +47,12 @@ interface ConsentAuditTableProps {
   isError: boolean;
   onSearch: (filters: ConsentAuditFilters) => void;
   onRowOpen: (row: ConsentAuditRow) => void;
+  /** The server returns bounded pages; more rows exist behind the next cursor. */
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
+  /** Set when the server limited an unbounded query to its default lookback window. */
+  defaultWindowFrom?: string | null;
 }
 
 const LANGUAGE_OPTIONS = [
@@ -85,6 +82,10 @@ export function ConsentAuditTable({
   isError,
   onSearch,
   onRowOpen,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
+  defaultWindowFrom = null,
 }: ConsentAuditTableProps) {
   const [user, setUser] = useState('');
   const [item, setItem] = useState('');
@@ -120,7 +121,7 @@ export function ConsentAuditTable({
           <Input
             value={user}
             onChange={(event) => setUser(event.target.value)}
-            placeholder="user_123 또는 admin@example.com"
+            placeholder="회원 ID(UUID) 또는 admin@example.com"
             aria-label="사용자 ID 또는 이메일"
           />
         </label>
@@ -135,7 +136,7 @@ export function ConsentAuditTable({
           <Input
             value={version}
             onChange={(event) => setVersion(event.target.value)}
-            placeholder="2026-04-28"
+            placeholder="2026-05-11"
             aria-label="버전"
           />
         </label>
@@ -198,6 +199,13 @@ export function ConsentAuditTable({
         </div>
       </form>
 
+      {defaultWindowFrom && (
+        <p role="status" className="rounded-lg bg-white px-4 py-3 text-sm text-gray-600 shadow-sm">
+          시작 시각을 지정하지 않아 {formatDateTime(defaultWindowFrom)}부터 {ADMIN_CONSENT_AUDIT_DEFAULT_WINDOW_DAYS}일 범위의 기록만 조회했습니다.
+          이전 기록은 시작 시각을 지정하거나 사용자·IP로 조회하세요.
+        </p>
+      )}
+
       <div className="rounded-lg bg-white shadow-sm">
         {isError && (
           <div role="alert" className="border-b bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#C62828]">
@@ -250,7 +258,7 @@ export function ConsentAuditTable({
             {!isLoading &&
               auditRows.map((row) => (
                 <TableRow
-                  key={`${row.maskedUser.id}-${row.itemKey}-${row.version}-${row.timestamp}`}
+                  key={row.id}
                   role="button"
                   tabIndex={0}
                   className="min-h-11 cursor-pointer hover:bg-gray-50"
@@ -279,6 +287,19 @@ export function ConsentAuditTable({
               ))}
           </TableBody>
         </Table>
+        {!isLoading && hasMore && onLoadMore && (
+          <div className="flex justify-center border-t px-4 py-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-w-32"
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+            >
+              {isLoadingMore ? '불러오는 중…' : '더 보기'}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

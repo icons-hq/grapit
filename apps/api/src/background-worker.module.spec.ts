@@ -34,3 +34,20 @@ describe('background worker module graph', () => {
     expect(redisProviderOwners).toEqual([RedisModule]);
   });
 });
+
+describe('background worker payment confirm reconcile (#18)', () => {
+  it('runs the payment confirm reconcile worker in the bounded worker', async () => {
+    const { BackgroundWorkerModule } = await import('./background-worker.module.js');
+    const { ReservationFinalizationModule } = await import(
+      './modules/reservation/reservation-finalization.module.js'
+    );
+    const { PaymentConfirmReconcileWorker } = await import(
+      './modules/reservation/payment-confirm-reconcile.worker.js'
+    );
+
+    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, BackgroundWorkerModule))
+      .toContain(ReservationFinalizationModule);
+    expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ReservationFinalizationModule))
+      .toContain(PaymentConfirmReconcileWorker);
+  });
+});

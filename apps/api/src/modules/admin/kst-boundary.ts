@@ -82,44 +82,62 @@ export function buildDailyBucketSkeleton(days: number): string[] {
 }
 
 /**
- * ISO week bucket list (e.g. "2026-W17") for the last `weeks` weeks in KST.
- * Postgres `to_char(..., 'IYYY-"W"IW')` 결과와 동일한 형식을 목표로 한다.
+ * ISO 8601 week label ("2026-W17") of a KST calendar day, aligned with
+ * Postgres `to_char(date_trunc('week', ts), 'IYYY-"W"IW')`.
+ *
+ * Rule: "week 1 of ISO year Y is the week containing the first Thursday of Y"
+ * (equivalently, the week containing Jan 4). Weeks roll across calendar-year
+ * boundaries — e.g. the week of 2026-12-28..2027-01-03 is 2026-W53 even though
+ * it contains Jan 1 2027 (WR-02).
+ *
+ * @param kstDayStartMs KST epoch ms of the day's 00:00 (UTC fields = KST date).
+ */
+function isoWeekLabelForKstDay(kstDayStartMs: number): string {
+  const kst = new Date(kstDayStartMs);
+  // 1) `target` is the Thursday of the ISO week we want to label. The ISO year
+  //    is whatever calendar year that Thursday falls in.
+  // 2) `week1Monday` = Monday of ISO week 1 of that ISO year, derived from Jan 4.
+  // 3) weekNum = ((targetMonday - week1Monday) / 7 days) + 1.
+  const target = new Date(
+    Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()),
+  );
+  const dayNum = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNum); // move to Thursday
+  const isoYear = target.getUTCFullYear();
+  const jan4 = new Date(Date.UTC(isoYear, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const targetMonday = new Date(target);
+  targetMonday.setUTCDate(target.getUTCDate() - 3); // Thu -> Mon
+  const weekNum =
+    Math.round((targetMonday.getTime() - week1Monday.getTime()) / (7 * DAY_MS)) + 1;
+  return `${isoYear}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+/**
+ * Every ISO week (ASC) that overlaps the `days`-day KST window ending today,
+ * i.e. the same window as `kstBoundaryToUtc(days)`. The oldest bucket is the
+ * (possibly partial) week containing `today - (days - 1)`.
  *
  * review MEDIUM 6: 90d period에서 빈 주 0 revenue 채움용.
+ *
+ * The former week-count variant (`buildWeeklyBucketSkeleton(weeks)`) stepped
+ * back 7 days at a time from today and dropped the oldest partial week of the
+ * window (audit #131). It had no callers and was removed; use this function.
  */
-export function buildWeeklyBucketSkeleton(weeks: number): string[] {
+export function buildWeeklyBucketSkeletonForWindow(days: number): string[] {
+  if (!Number.isInteger(days) || days < 1) {
+    throw new RangeError(
+      `buildWeeklyBucketSkeletonForWindow: days must be a positive integer (got ${String(days)})`,
+    );
+  }
   const nowKstMs = Date.now() + KST_OFFSET_MS;
   const todayStartMs = Math.floor(nowKstMs / DAY_MS) * DAY_MS;
   const buckets: string[] = [];
   const seen = new Set<string>();
-  for (let i = weeks - 1; i >= 0; i -= 1) {
-    const dayMs = todayStartMs - i * 7 * DAY_MS;
-    const kst = new Date(dayMs);
-    // ISO 8601 week calculation aligned with Postgres `to_char(..., 'IYYY-"W"IW')`.
-    // Rule: "week 1 of ISO year Y is the week containing the first Thursday of Y"
-    // (equivalently, the week containing Jan 4). Weeks roll across calendar-year
-    // boundaries — e.g. the week of 2026-12-28..2027-01-03 is 2026-W53 even though
-    // it contains Jan 1 2027 (WR-02).
-    //
-    // 1) `target` is the Thursday of the ISO week we want to label. The ISO year
-    //    is whatever calendar year that Thursday falls in.
-    // 2) `week1Monday` = Monday of ISO week 1 of that ISO year, derived from Jan 4.
-    // 3) weekNum = ((targetMonday - week1Monday) / 7 days) + 1.
-    const target = new Date(
-      Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()),
-    );
-    const dayNum = target.getUTCDay() || 7;
-    target.setUTCDate(target.getUTCDate() + 4 - dayNum); // move to Thursday
-    const isoYear = target.getUTCFullYear();
-    const jan4 = new Date(Date.UTC(isoYear, 0, 4));
-    const jan4Day = jan4.getUTCDay() || 7;
-    const week1Monday = new Date(jan4);
-    week1Monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
-    const targetMonday = new Date(target);
-    targetMonday.setUTCDate(target.getUTCDate() - 3); // Thu -> Mon
-    const weekNum =
-      Math.round((targetMonday.getTime() - week1Monday.getTime()) / (7 * DAY_MS)) + 1;
-    const label = `${isoYear}-W${String(weekNum).padStart(2, '0')}`;
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const label = isoWeekLabelForKstDay(todayStartMs - i * DAY_MS);
     if (!seen.has(label)) {
       seen.add(label);
       buckets.push(label);

@@ -13,7 +13,7 @@ The Grabit account that represents a Buyer inside the service and can own Reserv
 _Avoid_: Real-world person, social provider account, email address.
 
 **Verified Buyer Identity**:
-The buyer identity evidence Grabit uses when deciding whether a new login link belongs to an existing Buyer Account. Future social-login linking can use a newly verified phone number plus birth date when exactly one active Buyer Account matches; historical cleanup uses stricter evidence.
+The buyer identity evidence Grabit uses when deciding whether a new login link belongs to an existing Buyer Account. Future social-login linking can use a newly verified phone number plus birth date when exactly one active Buyer Account matches; historical cleanup uses stricter evidence. Automatic linking only happens in the browser that completed the provider login and never targets admin or scanner accounts.
 _Avoid_: Phone-only match, provider email match, automatic global merge.
 
 **Social Login Link**:
@@ -29,11 +29,11 @@ An operator-controlled repair that moves existing ownership records from a dupli
 _Avoid_: Future social-login linking, automatic signup, global deduplication.
 
 **Safe Merge Group**:
-A group of duplicate Buyer Accounts whose verified identity evidence matches and whose target Buyer Account is unambiguous enough for an operator-approved batch merge.
+A group of duplicate Buyer Accounts whose verified identity evidence matches, whose target Buyer Account is unambiguous enough for an operator-approved batch merge, and in which no account has a payment that can still settle.
 _Avoid_: Every duplicate group, identity conflict, best-effort merge.
 
 **Manual Merge Allowlist**:
-An operator-approved list of duplicate Buyer Accounts that may be merged even when they are not eligible for automatic safe-group merging.
+An operator-approved list of duplicate Buyer Accounts that may be merged even when they are not eligible for automatic safe-group merging. It cannot override missing verified phone evidence or a payment still in progress for any account in the group.
 _Avoid_: Automatic merge rule, broad production filter, informal approval.
 
 **Merge Target Buyer Account**:
@@ -245,7 +245,7 @@ The cancellation-fee amount retained by Grabit when a Reservation or Ticket Item
 _Avoid_: Unrefunded balance, payment processor fee, Ticket Service Fee.
 
 **Administrative Full Refund Override**:
-An operator-authorized refund decision that bypasses the Cancellation Fee Schedule and refunds the full original payment amount, including Ticket Service Fees. It is separate from the default buyer and admin cancellation policy.
+An operator-authorized refund decision that bypasses the Cancellation Fee Schedule and refunds the full original payment amount, including Ticket Service Fees. It is separate from the default buyer and admin cancellation policy. It is the only refund path after the Cancellation Window closes, including on and after the show date.
 _Avoid_: Default refund policy, buyer self-service option, partial cancellation.
 
 **Administrative Entered Ticket Cancellation Override**:
@@ -281,7 +281,7 @@ The server-stored method, provider route and charge currency selected for a Prep
 _Avoid_: UI language, card issuer choice, actual provider payment result.
 
 **Provider Handoff**:
-The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured.
+The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured. For a merchant-confirmed method, the browser that made it can release it within seconds whenever the provider SDK rejected `requestPayment` (before opening checkout, or after the Buyer closed the checkout it opened), as long as no payment confirm was ever attempted for the order; otherwise only provider evidence ends it. Provider Handoff re-checks the Checkout Payment Method against the performance's current allowed payment methods and the showtime sales cutoff.
 _Avoid_: Payment success, browser redirect, confirmed Reservation.
 
 **Provider Partial Cancellation**:
@@ -349,7 +349,7 @@ A platform-wide launch control that keeps buyer booking closed across performanc
 _Avoid_: Performance Sale Status, Performance Publication, public catalog visibility.
 
 **Performance Publication**:
-The operator decision that makes a Performance visible on public buyer surfaces. It does not by itself make seats bookable.
+The operator decision that makes a Performance visible on public buyer surfaces. It does not by itself make seats bookable. When the Performance Sale Status is already open, publication opens sales at once, so the approver must confirm that explicitly; a published Performance is archived by ending its sale status, never deleted.
 _Avoid_: Performance Sale Status, Sitewide Booking Gate, ticketing open.
 
 **Performance Sale Status**:
@@ -365,15 +365,23 @@ A controlled booking and payment run by an authorized admin against a Published 
 _Avoid_: Public open, buyer sale, sandbox-only test, single-method-only smoke.
 
 **Admin Booking Bypass**:
-A limited operator permission for Admin Pre-Open Booking Smoke that lets an authorized admin book while Buyers are still blocked by the Sitewide Booking Gate or Performance Sale Status. It is not buyer access and is not evidence that public sales are open.
+A limited operator permission for Admin Pre-Open Booking Smoke that lets an authorized admin book while Buyers are still blocked by the Sitewide Booking Gate or Performance Sale Status. It is not buyer access and is not evidence that public sales are open. Only a full admin is authorized; restricted admin bundles such as scanner or finance book like Buyers. It never reopens a showtime whose sales have closed.
 _Avoid_: Public booking access, launch approval, general buyer bypass.
+
+**Per-Person Ticket Limit**:
+The performance's maximum ticket count for one person. Grabit identifies the person by a verified phone number (E.164): confirmed tickets of every Buyer Account that verified that phone count together, while a Buyer Account without a verified phone is limited on its own. Before payment, seats another account of that phone holds in an unexpired pending payment also count.
+_Avoid_: Per-account limit, per-order limit.
+
+**Showtime Sales Cutoff**:
+The moment a showtime stops accepting bookings: its scheduled start time. New seat locks, reservation prepares and payment approvals for a started showtime are rejected for every actor; a payment already approved is not rejected by the cutoff.
+_Avoid_: Cancellation Window, performance end.
 
 **Smoke Booking Cleanup**:
 The immediate cancellation, refund, and verified inventory restoration step after an Admin Pre-Open Booking Smoke. If normal cancellation does not return the Seat Identity to sellable inventory, the cleanup uses a controlled reopen path so real Performance inventory, settlement, and entry data stay clean.
 _Avoid_: Optional cleanup, manual note, leaving a paid test reservation.
 
 **Cancellation Fee Schedule**:
-A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only.
+A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only. The booking day is the KST date of the payment approval (`payments.paid_at`), not the seat-selection time; legacy payments without an approval time fall back to the reservation creation time.
 _Avoid_: Flat refund penalty, Reservation-level cancellation fee.
 
 **Cancellation Window**:

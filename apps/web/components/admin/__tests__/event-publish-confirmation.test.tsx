@@ -143,6 +143,42 @@ describe('EventPublishConfirmationDialog', () => {
   });
 });
 
+describe('EventPublishConfirmationDialog sale opening', () => {
+  it('shows that a published-upcoming performance will not open sales on its own', () => {
+    render(<EventPublishConfirmationDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()}
+      summary={{ ...reviewSummary, saleOpening: { mode: 'manual', at: null, startElapsed: false } }} />);
+
+    expect(screen.getByText('실제 판매 개시 · 한국 시간')).toBeInTheDocument();
+    expect(screen.getByText('자동 오픈 안 됨 · 판매 상태를 판매 중으로 바꿀 때 판매 시작')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: '공개 즉시 판매가 시작되는 것을 확인했습니다' })).not.toBeInTheDocument();
+  });
+
+  it('shows the scheduled KST opening computed by the server', () => {
+    render(<EventPublishConfirmationDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()}
+      summary={{ ...reviewSummary, saleOpening: { mode: 'scheduled', at: '2026-10-08T11:00:00.000Z', startElapsed: false } }} />);
+
+    expect(screen.getByText('2026-10-08 20:00 KST 자동 오픈')).toBeInTheDocument();
+  });
+
+  it('requires an explicit immediate-sale acknowledgement before publishing an open sale', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<EventPublishConfirmationDialog open onOpenChange={vi.fn()} onConfirm={onConfirm}
+      summary={{ ...reviewSummary, saleOpening: { mode: 'immediate', at: null, startElapsed: false } }} />);
+    const confirmButton = screen.getByRole('button', { name: '이벤트 게시하기' });
+
+    expect(screen.getByText('공개 즉시 판매 · 판매 중 상태이며 시작 시각 미지정')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('게시 사유'), '오픈 공지 완료');
+    await user.click(screen.getByRole('checkbox', { name: '변경된 필드와 판매 일정을 확인했습니다' }));
+    expect(confirmButton).toBeDisabled();
+
+    await user.click(screen.getByRole('checkbox', { name: '공개 즉시 판매가 시작되는 것을 확인했습니다' }));
+    await user.click(confirmButton);
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ reason: '오픈 공지 완료', immediateSaleConfirmed: true }));
+  });
+});
+
 describe('usePublishPerformance', () => {
   beforeEach(() => {
     vi.clearAllMocks();

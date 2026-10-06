@@ -7,37 +7,63 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
-import type { SeatState } from '@grabit/shared';
+import type { SeatState, SeatUpdateEvent } from '@grabit/shared';
+import { allowSocketIoFrontendOrigin } from '../../config/frontend-origins.js';
+import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
+import {
+  canPublishSocketIoEvents,
+  publishSocketIoRoomEvents,
+  type SocketIoRedisPublisher,
+} from './providers/socket-io-redis-emitter.js';
+
+export const BOOKING_SOCKET_NAMESPACE = '/booking';
+/**
+ * Legacy seat update event, sent for every state except `locked`.
+ *
+ * Web bundles from before audit #92 remove a selected seat when a `locked`
+ * event names another user, and the payload no longer names anyone, so such a
+ * tab would drop the seat the user just locked (the lock then stays orphaned
+ * until its TTL). Those bundles only listen to this event, so it never carries
+ * `locked`.
+ * TODO(next release): stop sending it once no pre-v2 web bundle can be open.
+ */
+export const SEAT_UPDATE_EVENT = 'seat-update';
+/** Carries every seat state, `locked` included. Current web bundles listen to both. */
+export const SEAT_UPDATE_V2_EVENT = 'seat-update.v2';
+
+/** The events one seat change is sent as, in this order. */
+export function seatUpdateEventNames(status: SeatState): readonly string[] {
+  return status === 'locked'
+    ? [SEAT_UPDATE_V2_EVENT]
+    : [SEAT_UPDATE_V2_EVENT, SEAT_UPDATE_EVENT];
+}
+
+export function showtimeRoom(showtimeId: string): string {
+  return `showtime:${showtimeId}`;
+}
+
+export type SeatUpdateListener = (showtimeId: string, seatId: string, status: SeatState) => void;
 
 @WebSocketGateway({
-  namespace: '/booking',
+  namespace: BOOKING_SOCKET_NAMESPACE,
   cors: {
-    origin: (
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void,
-    ) => {
-      const allowedOrigin =
-        process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
-      if (
-        process.env['NODE_ENV'] !== 'production' ||
-        !origin ||
-        origin === allowedOrigin
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS not allowed'));
-      }
-    },
+    origin: allowSocketIoFrontendOrigin,
     credentials: true,
   },
 })
 export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(BookingGateway.name);
+  private readonly redisPublisher: SocketIoRedisPublisher | null;
+  private readonly seatUpdateListeners = new Set<SeatUpdateListener>();
 
   @WebSocketServer()
   server?: Server;
+
+  constructor(@Optional() @Inject(REDIS_CLIENT) redis?: unknown) {
+    this.redisPublisher = canPublishSocketIoEvents(redis) ? redis : null;
+  }
 
   handleConnection(client: Socket): void {
     this.logger.log(`Client connected: ${client.id}`);
@@ -60,7 +86,7 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
       return { event: 'error', data: 'Invalid showtime ID' };
     }
 
-    void client.join(`showtime:${showtimeId}`);
+    void client.join(showtimeRoom(showtimeId));
     this.logger.log(`Client ${client.id} joined showtime:${showtimeId}`);
     return { event: 'joined', data: showtimeId };
   }
@@ -70,24 +96,92 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     @ConnectedSocket() client: Socket,
     @MessageBody() showtimeId: string,
   ): void {
-    void client.leave(`showtime:${showtimeId}`);
+    void client.leave(showtimeRoom(showtimeId));
     this.logger.log(`Client ${client.id} left showtime:${showtimeId}`);
   }
 
   /**
-   * Broadcasts a seat status update to all clients in the showtime room.
-   * A standalone Nest application context, such as the bounded background
-   * worker, does not initialize a Socket.IO server.
+   * Observes every seat update this process sends, before it is emitted.
+   * BookingService uses it to apply the change to the seat status snapshot it
+   * serves (audit #8). Returns an unsubscribe function.
    */
-  broadcastSeatUpdate(showtimeId: string, seatId: string, status: SeatState, userId?: string): void {
-    if (!this.server) {
-      return;
+  onSeatUpdate(listener: SeatUpdateListener): () => void {
+    this.seatUpdateListeners.add(listener);
+    return () => {
+      this.seatUpdateListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Broadcasts a seat status update to all clients in the showtime room, as
+   * `seat-update.v2` and, unless the seat was locked, as the legacy
+   * `seat-update` (see SEAT_UPDATE_EVENT).
+   *
+   * The room is joined without authentication, so the payload carries only the
+   * seat and its state, never who locked or bought it (audit #92). The trailing
+   * argument is accepted for existing callers and ignored.
+   */
+  broadcastSeatUpdate(
+    showtimeId: string,
+    seatId: string,
+    status: SeatState,
+    _ignoredActorId?: string,
+  ): void {
+    void this.publishSeatUpdate(showtimeId, seatId, status);
+  }
+
+  /**
+   * Same as `broadcastSeatUpdate`, awaitable. Inside the API the Socket.IO
+   * server (and its Redis adapter) fans the event out. A standalone Nest
+   * application context such as the bounded background worker has no server,
+   * so the event is published to Valkey in the adapter wire format instead
+   * (audit #151). Resolves false when nothing could be sent; never rejects.
+   */
+  async publishSeatUpdate(showtimeId: string, seatId: string, status: SeatState): Promise<boolean> {
+    this.notifySeatUpdateListeners(showtimeId, seatId, status);
+    const payload: SeatUpdateEvent = { seatId, status };
+    const room = showtimeRoom(showtimeId);
+    const events = seatUpdateEventNames(status);
+
+    if (this.server) {
+      for (const event of events) {
+        this.server.to(room).emit(event, payload);
+      }
+      return true;
     }
 
-    this.server.to(`showtime:${showtimeId}`).emit('seat-update', {
-      seatId,
-      status,
-      userId,
-    });
+    if (!this.redisPublisher) {
+      return false;
+    }
+
+    try {
+      await publishSocketIoRoomEvents(
+        this.redisPublisher,
+        BOOKING_SOCKET_NAMESPACE,
+        room,
+        events,
+        payload,
+      );
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Seat update publish failed without a Socket.IO server. showtimeId=${showtimeId}, seatId=${seatId}, status=${status}: ${sanitizeRedisErrorMessage(message)}`,
+      );
+      return false;
+    }
+  }
+
+  private notifySeatUpdateListeners(showtimeId: string, seatId: string, status: SeatState): void {
+    for (const listener of this.seatUpdateListeners) {
+      try {
+        listener(showtimeId, seatId, status);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Seat update listener failed. showtimeId=${showtimeId}, seatId=${seatId}, status=${status}: ${message}`,
+        );
+      }
+    }
   }
 }

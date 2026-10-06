@@ -6,13 +6,26 @@ import {
   tossWebhookSchema,
 } from './payment-webhook.controller.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
-import type {
-  AsyncPaymentProgressSnapshot,
+import {
   PaymentService,
-  TossWebhookRecordResult,
-  TossWebhookRequestBody,
+  type AsyncPaymentProgressSnapshot,
+  type TossWebhookRecordResult,
+  type TossWebhookRequestBody,
 } from './payment.service.js';
 import type { TossPaymentsClient, TossPaymentResponse } from './toss-payments.client.js';
+
+/**
+ * The provider and method PaymentService stores a webhook payment with (and
+ * later refunds and compensation-cancels it under). Pure prototype helpers.
+ */
+function resolveStoredWebhookMethod(webhook: TossWebhookRequestBody) {
+  const service = PaymentService.prototype as unknown as {
+    resolveWebhookProvider: (payload: TossWebhookRequestBody) => string;
+    resolveWebhookMethod: (payload: TossWebhookRequestBody, provider: string) => string;
+  };
+  const provider = service.resolveWebhookProvider(webhook);
+  return { provider, method: service.resolveWebhookMethod(webhook, provider) };
+}
 
 function createMockPaymentService() {
   return {
@@ -23,6 +36,7 @@ function createMockPaymentService() {
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
     finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     finalizePaymentStatusPartialCancelWebhook: vi.fn().mockResolvedValue('finalized'),
+    recordCompensationCancelAborted: vi.fn().mockResolvedValue(null),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
   };
@@ -307,7 +321,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );
@@ -531,7 +548,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );
@@ -748,7 +768,148 @@ describe('PaymentWebhookController', () => {
     );
   });
 
-  it('fails closed when a DONE webhook disagrees with queried Toss state', async () => {
+  it('accepts a domestic easy pay callback whose easyPay is the Payment object (D1 #70)', () => {
+    const parsed = tossWebhookSchema.parse({
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      data: {
+        paymentKey: 'pay_toss_pay',
+        orderId: 'GRP-TOSS-PAY',
+        status: 'DONE',
+        method: '간편결제',
+        easyPay: { provider: '토스페이', amount: 0, discountAmount: 0 },
+        currency: 'KRW',
+        totalAmount: 52000,
+      },
+    });
+
+    expect(parsed.data.easyPay).toBe('토스페이');
+  });
+
+  it('hands the service the provider-verified method, never the callback one (pay-server-2)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_CANCEL_PENDING');
+    // The callback says a foreign wallet; the provider says a mobile phone payment.
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '휴대폰',
+      currency: 'KRW',
+    }));
+
+    await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerVerified: { method: '휴대폰', easyPayProvider: null },
+        data: expect.objectContaining({ method: '휴대폰' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('takes the easy pay provider and the foreign wallet from the provider lookup', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    // The callback claims Alipay; the provider lookup shows TrueMoney.
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '해외간편결제',
+      easyPay: { provider: '트루머니' },
+    }));
+
+    await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerVerified: { method: '해외간편결제', easyPayProvider: '트루머니' },
+        data: expect.objectContaining({ easyPay: '트루머니', provider: 'TRUEMONEY' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('drops a callback ALIPAY wallet when the provider lookup reports a domestic card (pay-server-3)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '카드',
+      currency: 'KRW',
+    }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY',
+        easyPay: 'ALIPAY',
+      },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data.method).toBe('카드');
+    expect(webhook.data.provider).toBeUndefined();
+    expect(webhook.data.easyPay).toBeUndefined();
+    expect(webhook.providerVerified).toEqual({ method: '카드', easyPayProvider: null });
+    // Stored (and refunded or compensation-cancelled) as a domestic card, not
+    // as ALIPAY_PLUS/FOREIGN_EASY_PAY under the foreign easy pay scope.
+    expect(resolveStoredWebhookMethod(webhook)).toEqual({ provider: 'CARD', method: 'CARD' });
+  });
+
+  it('keeps the verified Alipay wallet when the provider lookup reports foreign easy pay (pay-server-3)', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      method: '해외간편결제',
+      easyPay: { provider: '알리페이' },
+    }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({ method: '해외간편결제', provider: 'ALIPAY', easyPay: '알리페이' });
+    expect(resolveStoredWebhookMethod(webhook)).toEqual({
+      provider: 'ALIPAY_PLUS',
+      method: 'FOREIGN_EASY_PAY',
+    });
+  });
+
+  it('keeps the callback wallet for a foreign easy pay lookup whose wallet it does not recognize', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ method: 'FOREIGN_EASY_PAY' }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({ provider: 'ALIPAY', easyPay: 'ALIPAY' });
+  });
+
+  it('falls back to the callback wallet only when the provider lookup reports no method', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ method: undefined }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'ALIPAY', easyPay: 'ALIPAY' },
+    });
+
+    const [webhook] = paymentService.upsertAsyncPaymentProgress.mock.calls[0]!;
+    expect(webhook.data).toMatchObject({
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY',
+      easyPay: 'ALIPAY',
+    });
+  });
+
+  it('acknowledges an out-of-order DONE webhook after the provider already moved to CANCELED', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
     tossClient.queryPayment.mockResolvedValueOnce(
@@ -757,16 +918,301 @@ describe('PaymentWebhookController', () => {
       }),
     );
 
-    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).rejects.toThrow(
-      'Toss provider state mismatch',
-    );
+    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).resolves.toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'IGNORED_STALE_PROVIDER_STATE',
+    });
 
+    expect(paymentService.findAsyncPaymentProgress).not.toHaveBeenCalled();
     expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventFailed).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-done-1',
+      'IGNORED_STALE_PROVIDER_STATE',
+      'provider status CANCELED is ahead of webhook status DONE',
+    );
+  });
+
+  it.each([
+    ['IN_PROGRESS', 'DONE'],
+    ['IN_PROGRESS', 'EXPIRED'],
+    ['WAITING_FOR_DEPOSIT', 'DONE'],
+    ['PARTIAL_CANCELED', 'CANCELED'],
+  ])('acknowledges a stale %s webhook when the provider is already %s', async (webhookStatus, providerStatus) => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ status: providerStatus }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, status: webhookStatus },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PROVIDER_STATE');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DONE', 'ABORTED'],
+    ['CANCELED', 'DONE'],
+    ['EXPIRED', 'IN_PROGRESS'],
+  ])('fails closed when a %s webhook disagrees with a provider %s that is not a later state', async (webhookStatus, providerStatus) => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ status: providerStatus }));
+
+    await expect(controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, status: webhookStatus },
+    })).rejects.toThrow('Toss provider state mismatch: status');
+
     expect(paymentService.markWebhookEventFailed).toHaveBeenCalledWith(
       'evt-payment-done-1',
       'PROCESSING_FAILED',
       expect.stringContaining('Toss provider state mismatch'),
     );
+  });
+
+  it('keeps identity mismatches fail-closed even when the provider status is later', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      orderId: 'GRP-OTHER-ORDER',
+      status: 'CANCELED',
+    }));
+
+    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).rejects.toThrow(
+      'Toss provider state mismatch: orderId, status',
+    );
+    expect(paymentService.markWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges a stale cancel IN_PROGRESS webhook when the same cancel request is already DONE', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult({ eventId: 'evt-cancel-in-progress-late' }));
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      status: 'CANCELED',
+      cancels: [{
+        cancelAmount: 150000,
+        cancelReason: 'buyer changed mind',
+        canceledAt: '2026-05-08T07:02:05.000Z',
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+      }],
+    }));
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-cancel-in-progress-late',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: { cancelStatus: 'IN_PROGRESS', cancelRequestId: 'cancel_refund-1' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PROVIDER_STATE');
+    expect(paymentService.finalizeConfirmedCancelWebhook).not.toHaveBeenCalled();
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('passes the provider-verified currency, not the callback currency, to DONE processing', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ currency: 'KRW', totalAmount: 108 }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, currency: 'USD', totalAmount: 108 },
+    });
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency: 'KRW', totalAmount: 108 }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('re-applies a DONE webhook after a local amount rejection so the captured charge can be refunded', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_amount_mismatch',
+    }));
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_COMPENSATED_AMOUNT_MISMATCH');
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('DONE_COMPENSATED_AMOUNT_MISMATCH');
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      name: 'a late DONE refunded for a seat conflict',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'payment_status_changed:done' },
+    },
+    {
+      name: 'a rejected charge already refunded',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'compensation_cancelled' },
+    },
+    {
+      name: 'an issued reservation the buyer cancelled',
+      progress: { reservationStatus: 'CANCELLED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'payment_status_changed:done' },
+    },
+    {
+      name: 'an issued reservation with a seat-level cancellation',
+      progress: { reservationStatus: 'CONFIRMED', paymentStatus: 'PARTIAL_CANCELED', paymentAsyncStatus: 'sync' },
+    },
+    {
+      name: 'a compensation cancel still in flight on a failed order',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'DONE', paymentAsyncStatus: 'cancel_pending' },
+      // Not an Alipay event, so only the duplicate rule forwards it.
+      data: { provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    },
+  ] as const)('forwards a second paymentKey DONE after $name so the duplicate charge is refunded', async (testCase) => {
+    const { progress } = testCase;
+    const event: TossWebhookRequestBody = {
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, ...('data' in testCase ? testCase.data : {}) },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      ...progress,
+      paymentKey: 'pay_first_charge',
+    }));
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_DUPLICATE_PAYMENT_COMPENSATED');
+
+    const result = await controller.handleTossWebhook(event);
+
+    expect(result.processingResultCode).toBe('DONE_DUPLICATE_PAYMENT_COMPENSATED');
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentKey: 'pay_async_1', status: 'DONE' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('keeps ignoring a DONE replay of the same paymentKey after its cancellation', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'CANCELLED',
+      paymentStatus: 'CANCELED',
+      paymentKey: 'pay_async_1',
+    }));
+
+    const result = await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('keeps ignoring a different-paymentKey DONE when the order only has an ordinary provider failure', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_status_changed:aborted',
+      paymentKey: 'pay_first_charge',
+    }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('still ignores DONE after an ordinary provider ABORTED', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_status_changed:aborted',
+    }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('records a provider ABORTED compensation cancel instead of acknowledging it silently', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult({ eventId: 'evt-comp-cancel-aborted' }));
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValueOnce({
+      id: 'payment-alipay-1',
+      paymentKey: 'pay_async_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY_PLUS',
+      currency: 'KRW',
+      amount: 150000,
+      providerMetadata: null,
+    });
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'PENDING_PAYMENT',
+      paymentStatus: 'DONE',
+      paymentAsyncStatus: 'cancel_pending',
+    }));
+    paymentService.recordCompensationCancelAborted.mockResolvedValueOnce('own');
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      status: 'DONE',
+      cancels: [{
+        cancelAmount: 108,
+        cancelReason: '판매 불가능 좌석으로 인한 자동 취소',
+        canceledAt: '2026-05-08T07:02:05.000Z',
+        cancelStatus: 'ABORTED',
+        cancelRequestId: 'cancel_reservation-1',
+      }],
+    }));
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-comp-cancel-aborted',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: { cancelStatus: 'ABORTED', cancelRequestId: 'cancel_reservation-1' },
+    });
+
+    expect(result.processingResultCode).toBe('ASYNC_DONE_COMPENSATION_CANCEL_ABORTED');
+    expect(paymentService.recordCompensationCancelAborted).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        cancelStatus: 'ABORTED',
+        cancelRequestId: 'cancel_reservation-1',
+      }),
+    }));
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-comp-cancel-aborted',
+      'ASYNC_DONE_COMPENSATION_CANCEL_ABORTED',
+      'own payment compensation cancel aborted; recovery scheduled',
+    );
+  });
+
+  it('uses the foreign easy pay secret scope for live TrueMoney webhooks without a provider', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        status: 'DONE',
+        method: '해외간편결제',
+        easyPay: '트루머니',
+        currency: 'USD',
+        totalAmount: 150000,
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
   });
 
   it('re-applies DONE webhook replay when post-commit side effects previously failed', async () => {
@@ -791,7 +1237,10 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      paymentStatusChangedEvent,
+      {
+        ...paymentStatusChangedEvent,
+        providerVerified: { method: 'FOREIGN_EASY_PAY', easyPayProvider: null },
+      },
       'DONE',
       'payment_status_changed:done',
     );

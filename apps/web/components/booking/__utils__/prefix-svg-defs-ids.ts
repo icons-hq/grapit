@@ -1,71 +1,98 @@
+import { sanitizeParsedSvg } from '@/lib/svg/safety';
+
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+/** Presentation attributes that can reference a `<defs>` element with `url(#id)`. */
+const URL_REFERENCE_ATTRIBUTES = [
+  'fill',
+  'stroke',
+  'filter',
+  'clip-path',
+  'mask',
+  'marker-start',
+  'marker-mid',
+  'marker-end',
+  'style',
+] as const;
+
+const LOCAL_URL_REFERENCE_PATTERN = /url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g;
+
+function isParseError(doc: Document): boolean {
+  return doc.documentElement.tagName === 'parsererror'
+    || doc.querySelector('parsererror') !== null;
+}
+
+function rewriteUrlReferences(value: string, idMap: ReadonlyMap<string, string>): string {
+  // A replacer function, never a replacement string: `$` patterns in an id must stay text.
+  return value.replace(LOCAL_URL_REFERENCE_PATTERN, (match, quote: string, id: string) => {
+    const nextId = idMap.get(id);
+    return nextId === undefined ? match : `url(${quote}#${nextId}${quote})`;
+  });
+}
+
+function rewriteHref(el: Element, namespace: string | null, idMap: ReadonlyMap<string, string>) {
+  const value = el.getAttributeNS(namespace, 'href');
+  if (!value?.startsWith('#')) return;
+  const nextId = idMap.get(value.slice(1));
+  if (nextId !== undefined) {
+    el.setAttributeNS(namespace, namespace === XLINK_NS ? 'xlink:href' : 'href', `#${nextId}`);
+  }
+}
+
 /**
- * W-2: SVG의 <defs> 내부 ID와 url(#...) 참조에 접두사를 부여하여
- * 같은 페이지 내 두 SVG 인스턴스(메인 좌석맵 + MiniMap) 간 ID 충돌을 방지.
+ * W-2: 같은 페이지의 두 SVG 인스턴스(메인 좌석맵 + MiniMap)가 `<defs>` ID를 공유하지 않도록
+ * `<defs>` 안의 ID와 그 참조에 접두사를 붙인다.
  *
- * - admin이 업로드한 SVG가 <defs>를 사용하는 경우 외부 호환성 확보
- * - DOMParser 기반 — 정규식 회피 (RESEARCH §Pitfall 8)
- * - parse 실패 시 graceful — 원본 string 반환
+ * 모든 치환은 파싱한 DOM의 속성 값에서 한다(audit #49). 직렬화된 문자열에 정규식 치환을 하면
+ * 공격자가 정한 ID 안의 `$\``, `$'`, `$&` 같은 치환 패턴이 문서 일부를 속성 값 안으로 복제해,
+ * HTML 재파싱 때 따옴표 경계가 무너지고 SVG 밖으로 마크업이 빠져나간다.
  *
- * ## Coverage 제한 (reviews revision 2026-04-21 LOW #6 + 12-REVIEW IN-04)
+ * - 치환 대상: `fill`·`stroke`·`filter`·`clip-path`·`mask`·`marker-*`·`style` 속성의 `url(#id)`,
+ *   `href`·`xlink:href`의 `#id`. 텍스트·주석은 건드리지 않는다.
+ * - 결과는 `image/svg+xml`로 다시 파싱해 `sanitizeParsedSvg`를 한 번 더 통과시킨 뒤 직렬화한다.
+ * - 파싱·정리에 실패하면 원본이 아니라 빈 문자열(빈 MiniMap)을 돌려준다.
  *
- * **현재 커버 (MVP 범위):**
- * - `fill="url(#id)"` / `stroke="url(#id)"` — gradient/pattern 참조
- * - CSS-style url("#id") / url('#id') — 사용 빈도는 낮지만 escape-safe
- *
- * **현재 미커버 (MVP out of scope):**
- * - `<use href="#id">` — SVG 2.0 표준 href
- * - `<use xlink:href="#id">` — 레거시 xlink 네임스페이스
- * - `<textPath href="#id">`, `<mpath href="#id">` 등 path reference
- *
- * **Serialize + regex 치환의 알려진 한계 (12-REVIEW IN-04):**
- * 아래 구현은 DOM을 파싱한 뒤 `XMLSerializer`로 전체 문자열을 만들어 `url(#oldId)` 토큰을 regex로
- * 일괄 치환한다. 이 방식은 다음과 같은 false-positive 리스크를 수반한다:
- * - `<text>url(#grad1)</text>` 같은 **text node**의 리터럴 문자열도 치환된다.
- * - `<![CDATA[... url(#grad1) ...]]>` **CDATA 섹션** 내의 리터럴도 치환된다.
- * - `<!-- url(#grad1) -->` **주석** 안의 리터럴도 치환된다.
- * - `<use href="#id">` / `<use xlink:href="#id">` 등 href 기반 참조는 **치환되지 않음** (위 "현재 미커버"와
- *   같은 제약). 즉 `<use>`를 쓰는 SVG는 MiniMap에서 원본 `<defs>` ID를 계속 참조하게 되어 충돌 가능.
- *
- * **Why MVP 수용:** 현재 `sample-seat-map.svg` 및 어드민 업로드 테스트 SVG 모두 `<use>`/`href` 참조,
- * text/CDATA/주석 내 `url(#...)` 리터럴을 사용하지 않음. `<defs>` + `url(#id)` 조합만 사용되는 단순
- * 좌석맵에는 충분하다. 향후 admin SVG 다양성이 커질 경우(특히 `<use>` 도입 또는 text에 `url(...)` 리터럴
- * 포함), serialize+regex 방식을 **DOM 기반 치환**(`fill`/`stroke` 속성, `style` 속성의 `url(...)`, `<use>`의
- * `href`/`xlink:href` 속성을 직접 set)으로 전환할 것을 권장한다. 이 리팩터는 별도 phase에서 다룬다.
- *
- * @param svgString - SVG outerHTML string
- * @param prefix - ID에 부여할 접두사 (e.g., 'mini-')
- * @returns prefix가 부여된 SVG outerHTML string. <defs> 없거나 ID 없으면 원본 그대로.
- *
- * @see .planning/phases/12-ux/12-REVIEWS.md §"Action Items" LOW #6
+ * @param svgString - 메인 좌석맵이 이미 sanitize·직렬화한 SVG 문자열
+ * @param prefix - ID 접두사 (예: 'mini-')
+ * @returns `<defs>` ID가 없으면 입력 그대로, 있으면 접두사를 붙이고 다시 정리한 SVG 문자열
  */
 export function prefixSvgDefsIds(svgString: string, prefix: string): string {
   if (!svgString.includes('<defs')) return svgString;
   try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(svgString, 'image/svg+xml');
-    if (doc.documentElement.tagName === 'parsererror') return svgString;
-    const defs = doc.querySelector('defs');
-    if (!defs) return svgString;
+    const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+    if (isParseError(doc)) return '';
+
     const idMap = new Map<string, string>();
-    Array.from(defs.querySelectorAll('[id]')).forEach((el) => {
+    doc.querySelectorAll('defs [id]').forEach((el) => {
       const oldId = el.getAttribute('id');
-      if (!oldId) return;
-      const newId = `${prefix}${oldId}`;
-      el.setAttribute('id', newId);
-      idMap.set(oldId, newId);
+      if (!oldId || idMap.has(oldId)) return;
+      idMap.set(oldId, `${prefix}${oldId}`);
     });
     if (idMap.size === 0) return svgString;
-    let serialized = new XMLSerializer().serializeToString(doc);
-    // url(#oldId) → url(#prefix-oldId) 일괄 치환 (정규식 메타문자 escape)
-    idMap.forEach((newId, oldId) => {
-      const escaped = oldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      serialized = serialized.replace(
-        new RegExp(`url\\(#${escaped}\\)`, 'g'),
-        `url(#${newId})`,
-      );
+
+    doc.querySelectorAll('defs [id]').forEach((el) => {
+      const nextId = idMap.get(el.getAttribute('id') ?? '');
+      if (nextId !== undefined) el.setAttribute('id', nextId);
     });
-    return serialized;
+    const elements = [doc.documentElement, ...Array.from(doc.documentElement.querySelectorAll('*'))];
+    for (const el of elements) {
+      for (const name of URL_REFERENCE_ATTRIBUTES) {
+        const value = el.getAttribute(name);
+        if (value?.includes('url(')) {
+          const next = rewriteUrlReferences(value, idMap);
+          if (next !== value) el.setAttribute(name, next);
+        }
+      }
+      rewriteHref(el, null, idMap);
+      rewriteHref(el, XLINK_NS, idMap);
+    }
+
+    // Defense in depth: what MiniMap injects is exactly what the sanitizer accepted.
+    const serialized = new XMLSerializer().serializeToString(doc.documentElement);
+    const checked = new DOMParser().parseFromString(serialized, 'image/svg+xml');
+    if (isParseError(checked) || !sanitizeParsedSvg(checked)) return '';
+    return new XMLSerializer().serializeToString(checked.documentElement);
   } catch {
-    return svgString;
+    return '';
   }
 }

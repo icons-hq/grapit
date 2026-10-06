@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -62,9 +63,7 @@ export const accountMergeRowChanges = pgTable(
   'account_merge_row_changes',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    batchId: uuid('batch_id')
-      .notNull()
-      .references(() => accountMergeBatches.id, { onDelete: 'cascade' }),
+    batchId: uuid('batch_id').notNull(),
     mergeGroupKey: varchar('merge_group_key', { length: 255 }).notNull(),
     tableName: varchar('table_name', { length: 120 }).notNull(),
     rowId: varchar('row_id', { length: 160 }).notNull(),
@@ -83,6 +82,12 @@ export const accountMergeRowChanges = pgTable(
       .defaultNow(),
   },
   (table) => [
+    // Migration 0031 names this FK explicitly.
+    foreignKey({
+      name: 'account_merge_row_changes_batch_id_fk',
+      columns: [table.batchId],
+      foreignColumns: [accountMergeBatches.id],
+    }).onDelete('cascade'),
     index('idx_account_merge_row_changes_batch').on(table.batchId),
     index('idx_account_merge_row_changes_source_target').on(
       table.sourceUserId,

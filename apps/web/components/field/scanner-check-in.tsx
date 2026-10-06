@@ -1,10 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
   Gift,
+  Home,
+  LogOut,
   ShieldAlert,
   TicketCheck,
   UserCheck,
@@ -25,6 +28,7 @@ import {
   type ScannerCheckInVerification,
 } from '@/hooks/use-field-operations';
 import { cn } from '@/lib/cn';
+import { formatFieldShowtimeKst } from '@/lib/field/showtime-format';
 
 interface ScannerCheckInProps {
   user: AdminCapabilityUser | null;
@@ -39,6 +43,13 @@ interface ScannerCheckInProps {
   onProcessEntry: () => void;
   onRedeemBenefit?: (benefitEntitlementId: string) => void;
   onSyncOffline: () => void;
+  /**
+   * Signs this account out and opens the login screen. Without it the access
+   * denied screen only links home.
+   */
+  onSwitchAccount?: () => void;
+  /** Whether a QR was scanned; the access denied title names the ticket only then. */
+  hasTicket?: boolean;
 }
 
 const RESULT_STYLES: Record<
@@ -110,9 +121,11 @@ export function ScannerCheckIn({
   onProcessEntry,
   onRedeemBenefit,
   onSyncOffline,
+  onSwitchAccount,
+  hasTicket = true,
 }: ScannerCheckInProps) {
   if (!hasScannerAccess(user)) {
-    return <ScannerAccessDenied />;
+    return <ScannerAccessDenied hasTicket={hasTicket} onSwitchAccount={onSwitchAccount} />;
   }
 
   if (!verification) {
@@ -142,12 +155,17 @@ export function ScannerCheckIn({
     && canRedeemBenefitsForVerification(verification);
   const showOfflineQueue =
     verification.result === 'offline-pending' || verification.offlineQueue.length > 0;
+  // A forged or unreadable QR identifies no ticket. A card of empty fields
+  // would read as a lookup still in progress, so it is left out.
+  const unverifiable = isUnverifiableResult(activeResult) || isUnverifiableResult(verification.result);
+  const hasTicketIdentity = verification.seats.length > 0 || Boolean(verification.reservationNumber?.trim());
 
   return (
+    // Rendered inside the scanner page's main landmark, so no main of its own.
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-[#F5F5F7]">
-      <main className="flex-1 space-y-4 p-4 pb-6">
+      <div className="flex-1 space-y-4 p-4 pb-6">
         {actionError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{actionError}</p>}
-        {!isOnline && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">연결이 끊겼습니다. 입장 요청은 동기화 대기로 저장되며, 특전 지급은 연결 복구 후 가능합니다.</p>}
+        {!isOnline && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">연결이 끊겼습니다. 연결이 끊기기 전에 서버 확인을 마친 이 티켓만 입장 동기화 대기로 저장할 수 있습니다. 끊긴 뒤 새로 스캔한 QR은 확인·입장 처리할 수 없으니 현장 책임자의 예외 원장 절차를 따르세요. 특전 지급은 연결 복구 후 가능합니다.</p>}
         <ResultBand
           result={activeResult}
           label={activeLabel}
@@ -165,7 +183,9 @@ export function ScannerCheckIn({
           />
         )}
 
-        <TicketIdentity verification={verification} result={activeResult} />
+        {(hasTicketIdentity || !unverifiable) && (
+          <TicketIdentity verification={verification} result={activeResult} unverifiable={unverifiable} />
+        )}
 
         {verification.benefitsAvailable === false && <p role="alert" className="text-sm text-red-700">특전 내역을 불러오지 못했습니다. 지급 전에 다시 확인해주세요.</p>}
         <BenefitRedemptionPanel
@@ -174,7 +194,7 @@ export function ScannerCheckIn({
           redeemingBenefitId={redeemingBenefitId}
           onRedeemBenefit={canRedeemBenefits ? onRedeemBenefit : undefined}
         />
-      </main>
+      </div>
 
       <div
         data-testid="scanner-sticky-action"
@@ -379,12 +399,19 @@ function getBenefitStateBadgeClassName(state: BenefitUiState): string {
   }
 }
 
-function ScannerAccessDenied() {
+function ScannerAccessDenied({
+  hasTicket,
+  onSwitchAccount,
+}: {
+  hasTicket: boolean;
+  onSwitchAccount?: () => void;
+}) {
+  const title = hasTicket ? '이 티켓을 검표할 권한이 없습니다' : '검표 권한이 없습니다';
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">
       <section
         role="alert"
-        aria-label="이 티켓을 검표할 권한이 없습니다"
+        aria-label={title}
         className="w-full rounded-lg border border-[#F3C7C7] bg-white p-5 shadow-sm"
       >
         <div className="flex items-start gap-3">
@@ -395,12 +422,30 @@ function ScannerAccessDenied() {
             <h1
               className="block text-heading font-semibold leading-[1.2] text-gray-900"
             >
-              이 티켓을 검표할 권한이 없습니다
+              {title}
             </h1>
             <p className="mt-3 text-base leading-[1.5] text-gray-700">
               검표 전용 계정 또는 관리자 권한이 있는 계정으로 다시 로그인하세요.
             </p>
           </div>
+        </div>
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+          {onSwitchAccount && (
+            <Button
+              type="button"
+              className="h-11 w-full bg-[#6C3CE0] hover:bg-[#5730B8] sm:flex-1"
+              onClick={onSwitchAccount}
+            >
+              <LogOut className="h-4 w-4" />
+              다른 계정으로 로그인
+            </Button>
+          )}
+          <Button asChild variant="outline" className="h-11 w-full sm:flex-1">
+            <Link href="/">
+              <Home className="h-4 w-4" />
+              홈으로
+            </Link>
+          </Button>
         </div>
       </section>
     </main>
@@ -455,11 +500,17 @@ function ResultBand({
 function TicketIdentity({
   verification,
   result,
+  unverifiable,
 }: {
   verification: ScannerCheckInVerification;
   result: ScannerCheckInResult;
+  unverifiable: boolean;
 }) {
   const style = RESULT_STYLES[result];
+  // The card renders only for a settled verify result, so a missing field is
+  // unknown, never "still loading".
+  const statusLabel = TICKET_STATUS_LABELS[verification.ticketStatus ?? '']
+    ?? (unverifiable ? '검증 실패' : '상태 확인 불가');
 
   return (
     <Card className="border-gray-200 bg-white shadow-sm">
@@ -468,16 +519,16 @@ function TicketIdentity({
           <div>
             <p className="text-sm font-semibold text-gray-500">티켓 정보</p>
             <h2 className="mt-1 text-heading font-semibold text-gray-900">
-              {verification.seats.length > 0 ? verification.seats.join(', ') : '좌석 확인 중'}
+              {verification.seats.length > 0 ? verification.seats.join(', ') : '좌석 확인 불가'}
             </h2>
           </div>
-          <Badge className={style.badge}>{({ ACTIVE: '유효', USED: '입장 완료', REVOKED: '사용 불가', EXPIRED: '만료' } as Record<string, string>)[verification.ticketStatus ?? ''] ?? '검표 확인'}</Badge>
+          <Badge className={cn('shrink-0 whitespace-nowrap', style.badge)}>{statusLabel}</Badge>
         </div>
 
         <dl className="space-y-3 text-base leading-[1.5]">
           <MetadataRow label="예매 번호" value={verification.reservationNumber} />
           <MetadataRow label="공연" value={verification.performanceTitle} />
-          <MetadataRow label="회차" value={formatTimestamp(verification.showtimeAt)} />
+          <MetadataRow label="회차" value={formatFieldShowtimeKst(verification.showtimeAt)} />
           <MetadataRow label="장소" value={verification.venueName} />
           <MetadataRow
             label="좌석"
@@ -494,10 +545,21 @@ function MetadataRow({ label, value }: { label: string; value?: string }) {
     <div className="grid grid-cols-[72px_1fr] gap-3">
       <dt className="font-semibold text-gray-500">{label}</dt>
       <dd className="min-w-0 font-semibold text-gray-900">
-        {value && value.trim().length > 0 ? value : '확인 중'}
+        {value && value.trim().length > 0 ? value : '확인 불가'}
       </dd>
     </div>
   );
+}
+
+const TICKET_STATUS_LABELS: Record<string, string> = {
+  ACTIVE: '유효',
+  USED: '입장 완료',
+  REVOKED: '사용 불가',
+  EXPIRED: '만료',
+};
+
+function isUnverifiableResult(result: ScannerCheckInResult): boolean {
+  return result === 'tampered' || result === 'rejected';
 }
 
 function hasScannerAccess(user: AdminCapabilityUser | null): boolean {

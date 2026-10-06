@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,7 +8,12 @@ import {
 
 const NOW = new Date('2026-05-14T03:00:00.000Z');
 
-function createMockDb(rows: AdminOperationsThreadRow[] = []) {
+type MockTotals = { all: number; escalated: number; overdue: number; dueSoon: number };
+
+function createMockDb(
+  rows: AdminOperationsThreadRow[] = [],
+  totals: MockTotals = { all: rows.length, escalated: 0, overdue: 0, dueSoon: 0 },
+) {
   const limit = vi.fn().mockResolvedValue(rows);
   const orderBy = vi.fn().mockReturnValue({ limit });
   const where = vi.fn().mockReturnValue({ orderBy });
@@ -15,18 +21,33 @@ function createMockDb(rows: AdminOperationsThreadRow[] = []) {
   const leftJoinAssignee = vi.fn().mockReturnValue({ leftJoin: leftJoinRefund });
   const leftJoinRequester = vi.fn().mockReturnValue({ leftJoin: leftJoinAssignee });
   const from = vi.fn().mockReturnValue({ leftJoin: leftJoinRequester });
-  const select = vi.fn().mockReturnValue({ from });
+
+  // Totals query: select({ all, ... }).from().leftJoin(refunds).where()
+  const countWhere = vi.fn().mockResolvedValue([totals]);
+  const countLeftJoin = vi.fn().mockReturnValue({ where: countWhere });
+  const countFrom = vi.fn().mockReturnValue({ leftJoin: countLeftJoin });
+
+  const select = vi.fn((fields?: Record<string, unknown>) =>
+    fields && 'all' in fields ? { from: countFrom } : { from });
 
   const returning = vi.fn().mockResolvedValue([{ id: 'thread-payment' }]);
   const updateWhere = vi.fn().mockReturnValue({ returning });
   const set = vi.fn().mockReturnValue({ where: updateWhere });
   const update = vi.fn().mockReturnValue({ set });
+  // Thread mutations run in a transaction; the tx client shares the update chain.
+  const tx = { update };
+  const transaction = vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
 
   return {
     select,
     update,
+    transaction,
+    _tx: tx,
     _set: set,
     _returning: returning,
+    _limit: limit,
+    _where: where,
+    _countWhere: countWhere,
   };
 }
 
@@ -240,7 +261,7 @@ describe('AdminOperationsService', () => {
     const service = new AdminOperationsService(db as never, auditService as never);
 
     await service.escalateThread(
-      'thread-payment',
+      '7c9e6679-7425-40de-944b-e07fc1f90ae7',
       'admin-1',
       { reason: 'Payment provider failure requires finance follow-up' },
       {
@@ -260,7 +281,7 @@ describe('AdminOperationsService', () => {
       actorUserId: 'admin-1',
       action: 'support.escalate',
       resourceType: 'support_thread',
-      resourceId: 'thread-payment',
+      resourceId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
       status: 'success',
       reason: 'Payment provider failure requires finance follow-up',
       changedFields: ['priority', 'escalationState', 'escalatedAt'],
@@ -272,6 +293,104 @@ describe('AdminOperationsService', () => {
       },
       ipAddress: '203.0.113.10',
       userAgent: 'Vitest Admin Console',
+    }, db._tx);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('audits status and assignee changes with their own actions inside the change transaction (u12)', async () => {
+    const db = createMockDb();
+    const auditService = createAuditService();
+    const service = new AdminOperationsService(db as never, auditService as never);
+    const threadId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    db._returning.mockResolvedValue([{ id: threadId }]);
+
+    await service.updateThreadStatus(threadId, 'admin-1', { status: 'resolved', reason: 'answered' }, { now: NOW });
+    await service.reassignThread(threadId, 'admin-1', { assigneeUserId: null, reason: 'unassign' }, { now: NOW });
+
+    expect(auditService.write.mock.calls.map(([input]) => input.action)).toEqual([
+      'support.resolve',
+      'support.assign',
+    ]);
+    for (const [, client] of auditService.write.mock.calls) {
+      expect(client).toBe(db._tx);
+    }
+    expect(db.transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['updateThreadStatus', (service: AdminOperationsService, id: string) =>
+      service.updateThreadStatus(id, 'admin-1', { status: 'resolved', reason: 'answered' }, { now: NOW })],
+    ['escalateThread', (service: AdminOperationsService, id: string) =>
+      service.escalateThread(id, 'admin-1', { reason: 'urgent' }, { now: NOW })],
+    ['reassignThread', (service: AdminOperationsService, id: string) =>
+      service.reassignThread(id, 'admin-1', { assigneeUserId: null, reason: 'unassign' }, { now: NOW })],
+  ])('%s answers 404 and writes no success audit when no thread was updated', async (_name, run) => {
+    const db = createMockDb();
+    const auditService = createAuditService();
+    const service = new AdminOperationsService(db as never, auditService as never);
+    db._returning.mockResolvedValue([]);
+
+    await expect(run(service, '7c9e6679-7425-40de-944b-e07fc1f90ae7')).rejects.toBeInstanceOf(NotFoundException);
+    expect(auditService.write).not.toHaveBeenCalled();
+
+    // A malformed id never reaches PostgreSQL (22P02).
+    await expect(run(service, 'not-a-thread-id')).rejects.toBeInstanceOf(NotFoundException);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports inbox totals from the full matching set instead of the loaded page', async () => {
+    const db = createMockDb(
+      [threadRow({ id: 'thread-overdue', slaDueAt: new Date('2026-05-14T02:00:00.000Z') })],
+      { all: 240, escalated: 30, overdue: 150, dueSoon: 12 },
+    );
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    const inbox = await service.listInbox({}, { now: NOW });
+
+    expect(inbox.rows).toHaveLength(1);
+    expect(inbox.totals).toEqual({ all: 240, escalated: 30, overdue: 150, dueSoon: 12 });
+    expect(db._countWhere).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads thread detail by id with a single-row query instead of scanning the newest inbox page', async () => {
+    const db = createMockDb([
+      threadRow({
+        id: '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        slaDueAt: new Date('2025-01-02T00:00:00.000Z'),
+      }),
+    ]);
+    const messagesOrderBy = vi.fn().mockResolvedValue([]);
+    const messagesWhere = vi.fn().mockReturnValue({ orderBy: messagesOrderBy });
+    const messagesFrom = vi.fn().mockReturnValue({ where: messagesWhere });
+    const baseSelect = db.select;
+    let call = 0;
+    db.select = vi.fn((fields?: Record<string, unknown>) => {
+      call += 1;
+      return call === 1 ? baseSelect(fields) : { from: messagesFrom };
+    }) as never;
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    const detail = await service.getThreadDetail(
+      '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+      { now: NOW },
+    );
+
+    expect(detail).toMatchObject({
+      id: '7d3c2f10-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+      sla: { state: 'overdue' },
+      messages: [],
     });
+    expect(db._limit).toHaveBeenCalledWith(1);
+    expect(db._countWhere).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a malformed thread id without querying the database', async () => {
+    const db = createMockDb();
+    const service = new AdminOperationsService(db as never, createAuditService() as never);
+
+    await expect(service.getThreadDetail('not-a-uuid', { now: NOW }))
+      .rejects.toThrow(NotFoundException);
+    expect(db.select).not.toHaveBeenCalled();
   });
 });

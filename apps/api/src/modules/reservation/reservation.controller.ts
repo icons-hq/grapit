@@ -2,6 +2,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Optional,
   Post,
   Put,
   Param,
@@ -31,6 +32,7 @@ import {
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
+import { QueueService } from '../queue/queue.service.js';
 import { ReservationService } from './reservation.service.js';
 import { RefundService } from '../refund/refund.service.js';
 
@@ -48,6 +50,8 @@ type QueueAdmissionRequest = ExpressRequest & {
   user: {
     id: string;
     role?: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: string[];
     isEmailVerified?: boolean;
     isPhoneVerified?: boolean;
   };
@@ -57,6 +61,8 @@ type QueueAdmissionRequest = ExpressRequest & {
 type AuthenticatedReservationUser = {
   id: string;
   role?: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
 };
@@ -66,6 +72,8 @@ export class ReservationController {
   constructor(
     private readonly reservationService: ReservationService,
     private readonly refundService: RefundService,
+    // QueueModule is global; optional only so narrow test modules can omit it.
+    @Optional() private readonly queueService?: QueueService,
   ) {}
 
   @UseGuards(AdmissionGuard)
@@ -83,6 +91,8 @@ export class ReservationController {
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
@@ -103,16 +113,34 @@ export class ReservationController {
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
     @Request() req: { user: AuthenticatedReservationUser },
+    @Query('locale') locale?: string,
   ) {
-    return this.reservationService.confirmAndCreateReservation(
+    const reservation = await this.reservationService.confirmAndCreateReservation(
       body as ConfirmPaymentRequest,
       {
         id: req.user.id,
         role: req.user.role,
+        adminCapabilityBundle: req.user.adminCapabilityBundle,
+        adminCapabilities: req.user.adminCapabilities,
         isEmailVerified: req.user.isEmailVerified,
         isPhoneVerified: req.user.isPhoneVerified,
       },
+      locale,
     );
+
+    // Return the queue slot as soon as the purchase is confirmed instead of
+    // holding it until the active/recovery window ends. The slot is the one of
+    // the queue session the order was prepared under, not the session of this
+    // browser: a confirm allowed through the Redis fallback carries an
+    // unrelated session that must keep its admission. Best effort: the release
+    // never throws, so it cannot turn a confirmed purchase into an error.
+    if (reservation.status === 'CONFIRMED') {
+      await this.queueService
+        ?.releaseAdmissionForOrder(body.orderId, req.user.id)
+        .catch(() => false);
+    }
+
+    return reservation;
   }
 
   @Get('users/me/reservations')

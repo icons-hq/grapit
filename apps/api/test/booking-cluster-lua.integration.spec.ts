@@ -73,13 +73,20 @@ function createBookingService(redis: Cluster, maxTicketsPerUser = 1): BookingSer
       from: () => ({
         where: () => queryRows(unavailableRows),
         innerJoin: () => {
-          const rows = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+          // One row type for both fixtures, so queryRows infers a single T.
+          const rows: Array<Record<string, unknown>> = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
                 },
               }]
-            : [{ performancePublishState: 'published', performanceStatus: 'selling', bookingStartsAt: null }];
+            : [{
+                // Sales close at the showtime start, so the fixture showtime has not started.
+                showtimeDateTime: new Date('2099-01-01T10:00:00.000Z'),
+                performancePublishState: 'published',
+                performanceStatus: 'selling',
+                bookingStartsAt: null,
+              }];
           return {
             where: () => queryRows(rows),
             leftJoin: () => ({
@@ -249,6 +256,7 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
       .toEqual({
         showtimeId,
         seats: { [seatKey]: 'locked' },
+        generatedAt: expect.any(Number),
       });
 
     await expect(service.unlockSeat(userId, showtimeId, seatKey))
@@ -260,7 +268,7 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
     expect(await cluster.sismember(lockedSeatsKey, runtimeSeatId)).toBe(0);
     await expect(service.getSeatStatus(showtimeId))
       .resolves
-      .toEqual({ showtimeId, seats: {} });
+      .toEqual({ showtimeId, seats: {}, generatedAt: expect.any(Number) });
   });
 
   it('assertOwnedSeatLocks preserves Phase 19 owner/missing/other-owner behavior under cluster mode', async () => {

@@ -2,7 +2,16 @@
 set -euo pipefail
 
 # Grabit - Google Memorystore for Valkey provisioning script
-# Usage: ./scripts/provision-valkey.sh <GCP_PROJECT_ID>
+# Usage: ./scripts/provision-valkey.sh <GCP_PROJECT_ID> --legacy-demo
+#
+# LEGACY / DEMO ONLY - NOT A TICKET-SALE SPECIFICATION.
+# This creates one shared-core-nano node with ZERO replicas, no maintenance
+# window and the default volatile-lru eviction policy. A node restart or
+# Memorystore maintenance wipes every seat lock, confirmation lease and queue
+# position. For a ticket opening follow
+# docs/runbooks/managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening
+# (replicas >= 1, multi-zone, explicit maintenance window, noeviction) and
+# verify with scripts/managed-demo/verify-valkey-sale-posture.mjs.
 #
 # NOTE (Phase 13 rename): 이미 provision된 (구-브랜드) Valkey 인스턴스는 이름 immutable
 # 이므로 그대로 사용 중. 본 스크립트 변수는 `grabit-*`로 갱신했지만 **재실행 금지**
@@ -31,7 +40,13 @@ set -euo pipefail
 #        --role="roles/secretmanager.secretAccessor" \
 #        --project=<PROJECT_ID>
 
-PROJECT_ID="${1:?Usage: $0 <GCP_PROJECT_ID>}"
+PROJECT_ID="${1:?Usage: $0 <GCP_PROJECT_ID> --legacy-demo}"
+if [ "${2:-}" != "--legacy-demo" ]; then
+  echo "Refusing to run: this script provisions a single-node, zero-replica demo Valkey." >&2
+  echo "It is not a ticket-sale posture. Re-run with --legacy-demo only for a demo/new project," >&2
+  echo "or follow docs/runbooks/managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening." >&2
+  exit 64
+fi
 REGION="asia-northeast3"
 INSTANCE_NAME="grabit-valkey"
 NETWORK="default"
@@ -59,7 +74,7 @@ echo ""
 echo "=== Step 3: Create Memorystore for Valkey instance ==="
 echo "Instance: $INSTANCE_NAME"
 echo "Region:   $REGION"
-echo "Node:     shared-core-nano (1 shard, 0 replicas, VALKEY_8_0)"
+echo "Node:     shared-core-nano (1 shard, 0 replicas, VALKEY_8_0) - DEMO ONLY, no availability SLA"
 echo ""
 gcloud memorystore instances create "$INSTANCE_NAME" \
   --project="$PROJECT_ID" \

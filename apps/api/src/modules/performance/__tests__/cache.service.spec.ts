@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { CacheService } from '../cache.service.js';
+import { CACHE_GENERATION_MEMO_MS, CacheService } from '../cache.service.js';
 
 /**
  * CacheService unit tests (Phase 07-02).
@@ -263,6 +263,199 @@ describe('CacheService', () => {
       const result = await service.get<typeof data>('cache:performances:detail:perf-1');
 
       expect(result).toEqual(data);
+    });
+  });
+
+  describe('getOrLoad()', () => {
+    it('returns a cached value without running the loader', async () => {
+      mockRedis.get.mockResolvedValueOnce(JSON.stringify({ id: 'cached' }));
+      const loader = vi.fn();
+
+      await expect(service.getOrLoad('cache:test:key', loader)).resolves.toEqual({ id: 'cached' });
+
+      expect(loader).not.toHaveBeenCalled();
+    });
+
+    it('coalesces concurrent misses for one key into a single loader call', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.set.mockResolvedValue('OK');
+      let release!: (value: { value: { id: string }; ttlSeconds: number }) => void;
+      const loader = vi.fn(() => new Promise<{ value: { id: string }; ttlSeconds: number }>((resolve) => {
+        release = resolve;
+      }));
+
+      const callers = Array.from({ length: 50 }, () => service.getOrLoad('cache:test:hot', loader));
+      await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(1));
+      release({ value: { id: 'fresh' }, ttlSeconds: 30 });
+
+      const results = await Promise.all(callers);
+      expect(results.every((result) => result.id === 'fresh')).toBe(true);
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(mockRedis.set).toHaveBeenCalledTimes(1);
+      expect(mockRedis.set).toHaveBeenCalledWith('cache:test:hot', JSON.stringify({ id: 'fresh' }), 'EX', 30);
+    });
+
+    it('releases the in-flight slot after a failure so the next request retries', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      const loader = vi.fn()
+        .mockRejectedValueOnce(new Error('pool timeout'))
+        .mockResolvedValueOnce({ value: 'ok', ttlSeconds: 10 });
+
+      await expect(service.getOrLoad('cache:test:retry', loader)).rejects.toThrow('pool timeout');
+      await expect(service.getOrLoad('cache:test:retry', loader)).resolves.toBe('ok');
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache values returned with a null TTL', async () => {
+      mockRedis.get.mockResolvedValue(null);
+
+      await expect(service.getOrLoad('cache:test:missing', async () => ({ value: null, ttlSeconds: null })))
+        .resolves.toBeNull();
+
+      expect(mockRedis.set).not.toHaveBeenCalled();
+    });
+
+    it('skips Redis entirely when readThrough is false', async () => {
+      await expect(service.getOrLoad(
+        'cache:test:bypass',
+        async () => ({ value: 'db', ttlSeconds: 300 }),
+        { readThrough: false },
+      )).resolves.toBe('db');
+
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generations', () => {
+    it('reads the initial generation when a scope was never bumped', async () => {
+      mockRedis.get.mockResolvedValueOnce(null);
+
+      await expect(service.getGeneration('catalog:list')).resolves.toBe('0');
+      expect(mockRedis.get).toHaveBeenCalledWith('cache:generation:catalog:list');
+    });
+
+    it('bumps to a fresh token with a TTL longer than any cached payload', async () => {
+      mockRedis.set.mockResolvedValue('OK');
+
+      await service.bumpGeneration('catalog:detail:perf-1');
+      await service.bumpGeneration('catalog:detail:perf-1');
+
+      const [first, second] = mockRedis.set.mock.calls;
+      expect(first?.[0]).toBe('cache:generation:catalog:detail:perf-1');
+      expect(first?.[2]).toBe('EX');
+      expect(first?.[3]).toBeGreaterThan(300);
+      expect(first?.[1]).not.toBe(second?.[1]);
+    });
+
+    it('returns null instead of a guessed generation when Redis fails', async () => {
+      mockRedis.get.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await expect(service.getGeneration('catalog:list')).resolves.toBeNull();
+    });
+
+    it('swallows bump failures after the DB commit and reports them to the caller', async () => {
+      mockRedis.set.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await expect(service.bumpGeneration('catalog:list')).resolves.toBe(false);
+      mockRedis.set.mockResolvedValueOnce('OK');
+      await expect(service.bumpGeneration('catalog:list')).resolves.toBe(true);
+    });
+
+    describe('in-process memo', () => {
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('costs one Redis read per scope per memo window instead of one per request', async () => {
+        vi.useFakeTimers();
+        mockRedis.get.mockResolvedValue('g1');
+
+        const tokens = await Promise.all(
+          Array.from({ length: 100 }, () => service.getGeneration('catalog:detail:perf-1')),
+        );
+        for (let i = 0; i < 100; i += 1) await service.getGeneration('catalog:detail:perf-1');
+
+        expect(new Set(tokens)).toEqual(new Set(['g1']));
+        expect(mockRedis.get).toHaveBeenCalledTimes(1);
+
+        // Another instance bumped meanwhile: seen once the window passes.
+        mockRedis.get.mockResolvedValue('g2');
+        await vi.advanceTimersByTimeAsync(CACHE_GENERATION_MEMO_MS);
+        await expect(service.getGeneration('catalog:detail:perf-1')).resolves.toBe('g2');
+        expect(mockRedis.get).toHaveBeenCalledTimes(2);
+      });
+
+      it('uses its own bump immediately instead of the memoized token', async () => {
+        mockRedis.get.mockResolvedValue(null);
+        mockRedis.set.mockResolvedValue('OK');
+        await expect(service.getGeneration('catalog:list')).resolves.toBe('0');
+
+        await service.bumpGeneration('catalog:list');
+        const bumped = mockRedis.set.mock.calls[0]?.[1] as string;
+
+        await expect(service.getGeneration('catalog:list')).resolves.toBe(bumped);
+        expect(mockRedis.get).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not let a read that overlapped a local bump overwrite the bumped token', async () => {
+        let releaseRead!: (value: string | null) => void;
+        mockRedis.get.mockImplementationOnce(() => new Promise((resolve) => {
+          releaseRead = resolve;
+        }));
+        mockRedis.set.mockResolvedValueOnce('OK');
+
+        const racingRead = service.getGeneration('catalog:list');
+        await vi.waitFor(() => expect(mockRedis.get).toHaveBeenCalledTimes(1));
+        await expect(service.bumpGeneration('catalog:list')).resolves.toBe(true);
+        const bumped = mockRedis.set.mock.calls[0]?.[1] as string;
+        releaseRead('old');
+        // The request that started before the bump keeps its (superseded) key.
+        await expect(racingRead).resolves.toBe('old');
+
+        await expect(service.getGeneration('catalog:list')).resolves.toBe(bumped);
+        expect(mockRedis.get).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not memoize a token read before a concurrent failed bump', async () => {
+        let releaseRead!: (value: string | null) => void;
+        mockRedis.get.mockImplementationOnce(() => new Promise((resolve) => {
+          releaseRead = resolve;
+        }));
+        mockRedis.set.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+        vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+        const racingRead = service.getGeneration('catalog:list');
+        await vi.waitFor(() => expect(mockRedis.get).toHaveBeenCalledTimes(1));
+        // Bump fails, so there is no fresh token to memoize either.
+        await expect(service.bumpGeneration('catalog:list')).resolves.toBe(false);
+        releaseRead('old');
+        await expect(racingRead).resolves.toBe('old');
+
+        mockRedis.get.mockResolvedValueOnce('current');
+        await expect(service.getGeneration('catalog:list')).resolves.toBe('current');
+        expect(mockRedis.get).toHaveBeenCalledTimes(2);
+      });
+
+      it('does not memoize a failed read', async () => {
+        mockRedis.get.mockRejectedValueOnce(new Error('ECONNREFUSED')).mockResolvedValueOnce('g3');
+        vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+        await expect(service.getGeneration('catalog:home')).resolves.toBeNull();
+        await expect(service.getGeneration('catalog:home')).resolves.toBe('g3');
+      });
+    });
+
+    it('keeps generation keys outside every catalog invalidation pattern', () => {
+      for (const pattern of [
+        /^cache:performances:list:/,
+        /^cache:home:/,
+        /^cache:performances:detail:/,
+      ]) {
+        expect(pattern.test('cache:generation:catalog:list')).toBe(false);
+      }
     });
   });
 });

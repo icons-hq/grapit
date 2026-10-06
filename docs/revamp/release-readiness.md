@@ -4,7 +4,19 @@
 
 ## 격리 부하·장애 실험
 
-`scripts/revamp/isolated-capacity.mjs`는 자체 PostgreSQL 16·Valkey 8 컨테이너와 API 프로세스를 만들고 종료 시 제거한다. 임의 대상 URL/운영 DATABASE_URL을 받지 않는다. 합성 구매자·현장 계정의 JWT/refresh family를 준비하되 실제 인증·대기열·권한 가드, HTTP, DB transaction을 통과한다. PG 승인, 메시지 발송, 실사용자 비밀번호/OAuth 부하는 포함하지 않는다.
+`scripts/revamp/isolated-capacity.mjs`는 자체 PostgreSQL 16·Valkey 8 컨테이너와 API 프로세스를 만들고 종료 시 제거한다. 임의 대상 URL/운영 DATABASE_URL을 받지 않는다. 합성 구매자·현장 계정의 JWT/refresh family를 준비하되 실제 인증·대기열·권한 가드, HTTP, DB transaction을 통과한다. 메시지 발송, 실사용자 비밀번호/OAuth 부하는 포함하지 않는다.
+
+2026-10 보완 뒤 하네스는 오픈 병목으로 지목된 경로를 각 wave에서 함께 측정한다. 결과 JSON의 `measured`/`excludes`가 범위를 기록한다.
+
+| 경로 | 측정 방식 | metric |
+| --- | --- | --- |
+| 공연 상세 동시 조회(조회수 hot row) | 전 세션이 같은 공연 상세를 동시에 연다 | `performance.detail` |
+| 채워진 좌석맵 조회 | 빈 좌석맵, 전 좌석 잠금 직후, checkout으로 판매된 뒤 각각 전 세션이 조회 | `seat.read`, `seat.read.locked`, `seat.read.sold` |
+| prepare/confirm과 회차 row lock 직렬화 | 잠금 보유 세션 전부가 같은 회차에서 prepare 후 confirm. PG는 API 프로세스에 preload한 `scripts/revamp/pg-stub-preload.mjs`가 `--pg-latency-ms`(기본 300ms) 지연으로 응답 | `checkout.prepare`, `checkout.confirm`, 판매 좌석·확정 예매·Ticket Item 수 대조 |
+| WAITING 대기열 | 좌석이 세션 절반뿐인 별도 공연에서 나머지가 WAITING으로 상태를 polling하고 순번 1..N 연속성을 확인. 1,000 초과 wave(최대 2,000)는 활성 입장 상한 초과분이 WAITING으로 남는지 기록 | `queue.waiting.enter`, `queue.waiting.status`, `waitingBeyondCap` |
+| Socket.IO fan-out | `--socket-clients`(기본 100) 개 클라이언트가 회차 room에 join한 상태에서 잠금 폭주, lock 요청 시점부터 `seat-update` 수신까지 | `socket.seat-update`, 전달 수 = 클라이언트 × 잠금 성공 |
+
+여전히 제외되는 범위는 실제 PG 승인/취소 지연과 공급자 rate limit, 대기열 위치 push 이벤트(`queue:position`/`queue:admitted`), 다중 API 인스턴스와 Socket.IO Redis adapter 교차 전달, 연결 폭주(cold connection), Cloud Run/Cloud SQL/Valkey 자원 한도다. PG stub은 `GRABIT_PG_STUB=isolated-load-test-only`일 때만 설치되고 `NODE_ENV=production` 또는 live Toss 키가 있으면 기동을 거부한다.
 
 API 1개, DB pool 2개, Valkey standalone인 로컬 Mac 환경에서 측정했다. 각 사용자 연결을 64개씩 준비한 뒤 측정 단계마다 동시에 요청했다. 단순히 동시 Promise 수만으로 운영의 지속 처리량이나 동시 접속 한도를 보장하지 않는다.
 
@@ -22,9 +34,12 @@ API 1개, DB pool 2개, Valkey standalone인 로컬 Mac 환경에서 측정했�
 
 ```bash
 # 저장소 루트, 의존성 설치 및 Docker 실행 필요. 같은 dist의 dev/build와 병행하지 않는다.
-node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000 \
+node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000,1500 \
+  --socket-clients=100 --pg-latency-ms=300 \
   --output=/absolute/private/new-capacity-result.json
 ```
+
+위 표의 100/500/1,000 수치는 보완 전 하네스 결과라 상세 hot row, 채워진 좌석맵, checkout, WAITING, fan-out을 포함하지 않는다. 보완 뒤 로컬 확인(2026-10-02, 같은 Mac·pool 2·PG stub 300ms)은 20/60 세션에서 전 항목 통과였다. 1,100 세션은 활성 입장 1,000·상한 초과 WAITING 100, 판매 좌석·확정 예매·Ticket Item 각 1,000으로 정합성은 통과했지만 `checkout.confirm` p95 5,105ms, `checkout.prepare` 2,019ms, `seat.lock`·`socket.seat-update` 약 1.3초로 `capacity_limited`(exit 2)였다. 이 측정은 #56(발권 잠금 `FOR SHARE`) 적용 전 코드(`13e08f2e`)에서 한 것이다. 당시 같은 회차 confirm이 회차 행 `FOR NO KEY UPDATE`로 직렬화된 것이 병목으로 드러났고, `FOR SHARE` 적용 후의 같은 회차 confirm p95와 `wait_event`는 다시 측정해야 한다. 이 로컬 수치는 아래 "실제 용량" 근거로 쓰지 않는다.
 
 원 근거는 비공개 `grapit-revamp-autonomy-2026-09-21/isolated-capacity*.json`과 `isolated-capacity-warm-sessions-as-run.mjs`에 있다. 이번 결과로 운영 DB pool·인스턴스 상한·과금 설정을 올리지 않았다. 실제 판매 목표 부하, 연결 폭주, 지속 부하, Cloud Run cold start, Cloud SQL/Valkey 자원·p95는 격리된 운영 동등 환경에서 추가 확인해야 한다.
 
@@ -47,9 +62,9 @@ node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000 \
 
 이 값은 배포 직전 다시 읽는다. 이미 판매가 활성화돼 있으므로 배포를 이유로 예매 flag를 임의로 끄지 않는다. 승인 API도 해당 flag를 검사하므로 준비 중 결제가 있을 때 단순 차단은 결제 복귀를 방해할 수 있다. 운영 SQL 변경은 `.github/workflows/deploy.yml`의 migration job만 사용한다.
 
-`scripts/revamp/production-preflight.mjs`는 정확한 Cloud SQL secret 대상과 DB 이름을 검사하고, `default_transaction_read_only=on` 및 repeatable-read READ ONLY transaction으로 환불·관리자/예매 감사·webhook ledger까지 17개 테이블을 조회한다. 출력에는 원본 행·연락처·인증값·QR을 넣지 않고 SHA-256 지문만 남긴다. `--baseline`으로 이전 열만 대조하므로 추가된 nullable 열은 데이터 변경으로 오인하지 않는다. 새 행은 별도로 세며, 기존 식별자 누락, 주문/결제 소유권·원금·원청구액 변경, 완료 환불 또는 append-only 동의/운영 감사의 변경은 exit 2다. 다른 기존 열의 변경도 별도로 보고해 정상적인 로그인/거래와 대조한다. `preservationPassed`만으로 동의·권리 상태 변경까지 자동 합격시키지 않는다.
+`scripts/revamp/production-preflight.mjs`는 정확한 Cloud SQL secret 대상과 DB 이름을 검사하고, 기본으로 `cloud-sql-proxy grapit-491806:asia-northeast3:grabit-db-managed-demo`를 빈 loopback 포트에 직접 띄워 연결 대상을 instance에 묶은 뒤 종료 시 내린다. 판매 용량 복원으로 다른 instance를 쓰면 `--instance=<project:region:instance>`(또는 `REVAMP_PROD_CLOUD_SQL_INSTANCE`)로 지정한다. 형식이 소문자 `project:region:instance`가 아니면 `invalid_arguments`로 멈추고, secret의 host·proxy 인자·`connection.instance`·결과 `target`(`<instance 이름>/grapit`)·baseline 대조가 모두 그 instance를 따른다. 테이블을 읽기 전에 연결된 서버의 `pg_control_system().system_identifier` SHA-256을 `server.identity`로, 그 출처를 `server.source`로 기록한다. 애플리케이션 role이 `pg_control_system()`을 실행할 수 없으면 `pg_postmaster_start_time()`(마이크로초)과 DB OID의 SHA-256으로 대신 식별하고 `server.source`에 그 사실을 남긴다. 이 대체 식별값은 DB 서버가 재시작되면 바뀌므로, baseline과 비교 사이에 Cloud SQL maintenance 등으로 재시작됐다면 비교는 `baseline_server_mismatch`로 멈춘다(안전 쪽 실패). 두 방법 모두 실패하면 첫 baseline 수집부터 `server_identity_unavailable`로 exit 1하고 증거를 쓰지 않는다. `--baseline`의 identity와 다르거나, identity 출처가 다르거나(`baseline_server_identity_source_mismatch`), baseline에 identity가 없으면 비교 없이 exit 1로 끝낸다. 이미 떠 있는 proxy(`--proxy-port`)는 script-managed 실행에서 기록한 identity를 `--expected-server-id`로 함께 줄 때만 허용한다. secret이 Cloud Run용 unix-socket 형식(`user:pw@/grapit?host=/cloudsql/...`)이어도 파싱하며, 파싱·대상·proxy 실패는 값 없는 고정 메시지와 `code=`만 출력한다. 이어서 `default_transaction_read_only=on` 및 repeatable-read READ ONLY transaction으로 환불·관리자/예매 감사·webhook ledger까지 17개 테이블을 조회한다. 출력에는 원본 행·연락처·인증값·QR을 넣지 않고 SHA-256 지문만 남긴다. `--baseline`으로 이전 열만 대조하므로 추가된 nullable 열은 데이터 변경으로 오인하지 않는다. 새 행은 별도로 세며, 기존 식별자 누락, 주문/결제 소유권·원금·원청구액 변경, 완료 환불 또는 append-only 동의/운영 감사의 변경은 exit 2다. 다른 기존 열의 변경도 별도로 보고해 정상적인 로그인/거래와 대조한다. `preservationPassed`만으로 동의·권리 상태 변경까지 자동 합격시키지 않는다.
 
-실행자는 해당 instance에 연결한 로컬 Cloud SQL Auth Proxy만 사용한다. `database-url` secret은 CLI 인자·파일·출력에 쓰지 않고 프로세스 환경에만 전달한다. 전후 출력은 서로 다른 절대 경로로 보관한다. 격리 통합 테스트는 실제 PostgreSQL에서 정상 추가/설정 변경과 원금 변조/식별자 삭제/완료 환불 및 감사 변조·삭제를 구분하며 원문 민감값 비노출을 검증한다.
+실행자는 `cloud-sql-proxy`(또는 `CLOUD_SQL_PROXY_BIN`)와 ADC만 준비하고 포트를 직접 고르지 않는다. 이전 버전으로 만든 baseline은 server identity가 없으므로 배포 전 기준선을 이 버전으로 다시 수집한다. 기준선과 배포 후 실행은 같은 DB role로 수행해 identity 출처를 맞춘다. 기준선 수집 단계에서 `server.source`를 확인해, 대체 식별값을 쓰는 경우 배포 창 안에서 재시작 이력이 없는지 함께 기록한다. `database-url` secret은 CLI 인자·파일·출력에 쓰지 않고 프로세스 환경에만 전달하며 proxy 자식 프로세스에도 넘기지 않는다. 전후 출력은 서로 다른 절대 경로로 보관한다. 격리 통합 테스트는 실제 PostgreSQL에서 정상 추가/설정 변경과 원금 변조/식별자 삭제/완료 환불 및 감사 변조·삭제를 구분하며 원문 민감값 비노출을 검증한다.
 
 ## 한 번의 통합 배포와 복귀 절차
 
@@ -57,7 +72,7 @@ node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000 \
 2. API/Web 현재 revision·traffic·이미지 SHA, worker 이미지, Scheduler 상태, 최신 백업, 진행 중 결제/환불과 보존 지문을 다시 수집한다. 기존 method 없는 준비 주문이 새로 생겼으면 종료를 임의 처리하지 않고 PG와 대조해 전환 시점을 조정한다.
 3. CI/CD가 additive `0034`–`0037` migration → 동일 SHA worker → API → Web 순서로 반영하도록 한다. 정산 구 API의 HTTP 410 전환은 ADR 0012에 따른 명시적 예외이며 API/Web을 한 릴리스로 다루고 열린 정산 화면을 새로고침한다.
 4. API/Web ready revision 및 실제 traffic·이미지 SHA가 후보와 일치하고 worker 실행이 성공했는지 확인한다. canonical 도메인에서 로그인 유지·홈/내 티켓/과거 예매·관리자 읽기·번역·권한 거부·모바일 렌더를 확인한다. 새 실결제/입장/특전 지급은 별도 리허설 대상이다.
-5. 읽기 전용 보존 지문을 비교한다. 신규 정상 행은 별도 집계하며 기존 원금/식별자 누락은 즉시 조사한다. 로그인·조회로 바뀐 열도 감사/요청과 설명 가능해야 한다. 기술 배포 성공과 아래 외부 gate 상태를 따로 기록한다.
+5. 읽기 전용 보존 지문을 비교한다. 배포 후 실행에는 `--expected-migrations=<배포 후 migration 수>`(0034–0037 반영 후 값)를 넘겨 다르면 exit 3으로 멈추고 대상·migration job을 먼저 확인한다. `connection.proxy=script-managed`와 전후 `server.identity`·`server.source` 일치를 함께 기록한다. 신규 정상 행은 별도 집계하며 기존 원금/식별자 누락은 즉시 조사한다. 로그인·조회로 바뀐 열도 감사/요청과 설명 가능해야 한다. 기술 배포 성공과 아래 외부 gate 상태를 따로 기록한다.
 6. 새 거래·입장·지급·보안 감사 사실이 없는 배포 직후 실패라면 같은 대상의 이전 API/Web traffic과 worker 이미지를 함께 복귀한다. `0034`–`0037`의 추가 열은 남겨 둔다. **이미 새 계약으로 처리한 사실이 있으면 예전 계정 일괄 입장 동작으로 단순 복귀하지 않고, 사실을 보존하는 호환 revision/전진 수정을 사용한다.** DB를 과거 백업으로 덮어써 거래를 지우지 않는다.
 
 기존 `scripts/rollback-cutover.sh`는 과거 LB URL map용이다. 현재 Cloudflare/Cloud Run 앱 릴리스 복귀에 사용하지 않는다. 앱 복귀는 정확한 Cloud Run revision으로 `services update-traffic`, worker는 기록된 immutable 이미지로 승인된 배포 경로를 사용하고 결과를 재조회한다. edge·secret·비용 설정을 함께 바꾸는 작업은 이번 앱 릴리스에 포함하지 않는다.
@@ -73,7 +88,7 @@ node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000 \
 | test webhook | Nest HTTP 정상/중복 200·입력 400·처리 실패 500 회귀 통과 | 외화 test MID 전용 HTTPS 수신 경로와 test 인증값. 전체 API 노출 없이 webhook 경로만 연결, 실제 전송·중복·지연과 원장 대조 |
 | SMS/메일/OAuth | 앱 생성·오답·재요청·실패·언어/returnTo는 실제 API, 외부 전달은 대역 | 승인된 테스트 수신 번호/메일과 공급자 로그인. 실제 도달 후 기존 주문 복귀·중복 계정 방지 |
 | 실제 단말/현장 | viewport·키보드·대체 입력·HTTP 동시 소비·오프라인 재전송 통과 | iOS Safari, Android Chrome, 카메라 2대, 현장 담당자. 동행자 분리 입장·통신 단절/재연결·중복 스캔·실물 품목별 1회 인수 |
-| 실제 용량 | 로컬 100/500/1,000 및 장애 결과 위 표 | 예정 판매 동시 트래픽과 운영 동등 격리 환경. 지속 부하·cold start·연결 폭주·자원 및 오류율 증거 |
+| 실제 용량 | 로컬 100/500/1,000 및 장애 결과 위 표, 보완된 하네스의 병목 시나리오 | 예정 판매 동시 트래픽과 운영 동등 격리 환경. 공연 상세 동시 조회, 채워진 좌석맵, 같은 회차 prepare/confirm(PG stub 지연), 1,000 초과 WAITING, Socket.IO fan-out을 포함한 지속 부하·cold start·연결 폭주·자원 및 오류율 증거. Phase 26 k6 gate는 동시 VU 목표와 전 구매 흐름 측정 없이는 PASS가 되지 않는다(`docs/runbooks/phase26-cutover-ops.md`) |
 | 소액 live/정산 | test PG·격리 원장/CSV 재계산 완료 | 운영 테스트 공연/좌석·카드 소유자·1건 금액/수수료·환불 조건을 먼저 고정. 본인 인증 뒤 실제 PG 승인/취소와 은행·카드사 자료를 별도 대조 |
 
 위 입력 없이 agent가 본인 인증, 실제 기기, 실물 지급, 은행 반영을 완료했다고 기록하지 않는다. 구체적인 리허설 준비까지 진행하고 사람이 필요한 마지막 동작만 인계한다. 외부 연락은 사용자의 전송 지시가 있을 때만 한다.

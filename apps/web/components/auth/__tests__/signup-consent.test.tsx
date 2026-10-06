@@ -77,7 +77,10 @@ describe('SignupStep2 itemized launch consent', () => {
     expect(screen.queryByLabelText(/중국 PIPL 고지 확인/)).not.toBeInTheDocument();
     expect(screen.getAllByText('필수')).toHaveLength(requiredRows.length);
     expect(screen.getByText('선택')).toBeInTheDocument();
-    expect(screen.getAllByText(/v2026-04-28/)).toHaveLength(4);
+    // Terms and marketing documents are effective 2026-04-28; the privacy policy
+    // shown for privacy and PIPA rows is v1.2, effective 2026-05-11.
+    expect(screen.getAllByText('v2026-04-28')).toHaveLength(2);
+    expect(screen.getAllByText('v2026-05-11')).toHaveLength(2);
     expect(screen.getAllByText(/ko/)).toHaveLength(4);
     expect(screen.getAllByRole('button', { name: '보기' })).toHaveLength(4);
 
@@ -133,7 +136,7 @@ describe('SignupStep2 itemized launch consent', () => {
         consentItems: expect.arrayContaining([
           expect.objectContaining({
             key: 'pipa_required',
-            version: '2026-04-28',
+            version: '2026-05-11',
             language: 'ko',
             accepted: true,
             required: true,
@@ -152,14 +155,41 @@ describe('SignupStep2 itemized launch consent', () => {
     );
     expect(
       onComplete.mock.calls[0]?.[0].consentItems.map(
-        (item: { key: string }) => item.key,
+        (item: { key: string; version: string }) => [item.key, item.version],
       ),
     ).toEqual([
-      'terms',
-      'privacy',
-      'pipa_required',
-      'marketing',
+      ['terms', '2026-04-28'],
+      ['privacy', '2026-05-11'],
+      ['pipa_required', '2026-05-11'],
+      ['marketing', '2026-04-28'],
     ]);
+  });
+
+  it('does not carry over an earlier acceptance of a superseded privacy policy version', () => {
+    render(
+      <SignupStep2
+        onComplete={vi.fn()}
+        onBack={vi.fn()}
+        defaultValues={{
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: (['terms', 'privacy', 'pipa_required'] as const).map((key) => ({
+            key,
+            version: '2026-04-28',
+            language: 'ko',
+            accepted: true,
+            required: true,
+            sourceFlow: 'signup',
+          })),
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/이용약관 동의/)).toBeChecked();
+    expect(screen.getByLabelText(/개인정보처리방침 동의/)).not.toBeChecked();
+    expect(screen.getByLabelText(/개인정보 필수 수집 및 이용 동의/)).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '다음' })).toBeDisabled();
   });
 
   it('shows the canonical English legal text and records that document language for Thai consent', async () => {

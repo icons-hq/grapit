@@ -38,7 +38,9 @@ async function mockScannerSession(page: Page) {
 }
 
 async function mockVerify(page: Page) {
+  const attemptIds: string[] = [];
   await page.route('**/api/v1/field/check-in/verify**', async (route: Route) => {
+    attemptIds.push(route.request().postDataJSON().deviceAttemptId);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -52,6 +54,7 @@ async function mockVerify(page: Page) {
       }),
     });
   });
+  return attemptIds;
 }
 
 async function expectNoRawSecrets(page: Page) {
@@ -64,7 +67,8 @@ async function expectNoRawSecrets(page: Page) {
 test.describe('phase27 offline sync browser contracts', () => {
   test('offline consume failure stores a pending scan and recovered connectivity syncs it', async ({ page }) => {
     await mockScannerSession(page);
-    await mockVerify(page);
+    const verifyAttemptIds = await mockVerify(page);
+    const syncedAttemptIds: string[] = [];
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&showtimeId=${fieldShowtimeId}`);
     await expect(
@@ -85,8 +89,9 @@ test.describe('phase27 offline sync browser contracts', () => {
     await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
 
-    await page.context().setOffline(false);
+    // Recovered connectivity syncs automatically, so the server mock must exist first.
     await page.route('**/api/v1/field/check-in/offline-sync**', async (route: Route) => {
+      syncedAttemptIds.push(route.request().postDataJSON().attempts[0].deviceAttemptId);
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -102,13 +107,28 @@ test.describe('phase27 offline sync browser contracts', () => {
         }),
       });
     });
-
-    await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
+    await page.context().setOffline(false);
 
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '보류 스캔 동기화 완료',
     );
+    // Nothing is left to sync: the sync action goes away and the settled scan is
+    // kept as a folded receipt with its server result.
+    await expect(page.getByRole('button', { name: '보류 스캔 동기화' })).toHaveCount(0);
+    expect(page.url()).not.toContain(rawQrToken);
+    const receipts = page.getByTestId('offline-sync-receipts');
+    await expect(receipts).toContainText('보류 스캔 0건 · 동기화 완료 1건 · 거절 0건 보기');
+    await receipts.getByText('보류 스캔 0건 · 동기화 완료 1건 · 거절 0건 보기').click();
+    await expect(receipts.getByText('서버 확정')).toBeVisible();
+    await expect(receipts.getByText('보류 스캔 동기화 완료')).toBeVisible();
     await expect(page.getByTestId('offline-sync-status')).toContainText('서버 확정');
+    // The scan keeps its card and shows its own server result instead of offering entry again.
+    await expect(page.getByRole('status', { name: '보류 스캔 동기화 완료' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '이 좌석 입장 처리' })).toHaveCount(0);
+    // Verify, the queued entry and its sync carry one attempt id, so the server
+    // never records the scanner's own re-check as a new duplicate scan.
+    expect(syncedAttemptIds).toHaveLength(1);
+    expect(new Set(verifyAttemptIds)).toEqual(new Set(syncedAttemptIds));
     await expectNoRawSecrets(page);
   });
 
@@ -142,12 +162,12 @@ test.describe('phase27 offline sync browser contracts', () => {
     await page.getByRole('button', { name: '이 좌석 입장 처리' }).click();
     await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
     await page.context().setOffline(false);
-    await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
 
     await expect(page.getByTestId('offline-sync-status')).toContainText('충돌 확인 필요');
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '이미 입장 처리된 티켓입니다',
     );
+    await expect(page.getByRole('status', { name: '이미 입장 처리된 티켓입니다' })).toBeVisible();
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     await expectNoRawSecrets(page);
   });

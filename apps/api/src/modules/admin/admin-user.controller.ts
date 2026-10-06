@@ -151,10 +151,12 @@ export class AdminUserController {
   }
 }
 
+// admin_audit_logs.user_agent is varchar(500) and request_id varchar(120);
+// an oversized header must not fail the audit insert and roll back the change.
 function requestContext(request: Request) {
   return {
     ipAddress: resolveTrustedRequestIp(request),
-    userAgent: request.get('user-agent') ?? null,
-    requestId: request.get('x-request-id') ?? null,
+    userAgent: request.get('user-agent')?.slice(0, 500) ?? null,
+    requestId: request.get('x-request-id')?.slice(0, 120) ?? null,
   };
 }

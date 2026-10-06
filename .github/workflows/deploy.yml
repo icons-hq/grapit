@@ -3,6 +3,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      allow_booking_reopen:
+        description: >-
+          Allow this deploy to switch a live BOOKING_ENABLED=false API/Web back to true.
+          Use only after the ticket-opening evidence gates pass.
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref_name }}
@@ -23,6 +30,43 @@ env:
   WEB_MAX_INSTANCES: ${{ vars.WEB_MAX_INSTANCES || '50' }}
   API_CPU_ALLOCATION_FLAG: ${{ vars.API_CPU_ALLOCATION_FLAG || '--no-cpu-throttling' }}
   BACKGROUND_PROCESSING_ENABLED: ${{ vars.BACKGROUND_PROCESSING_ENABLED || 'true' }}
+  # Sitewide booking gate shared by API, Web and the background worker. Unset keeps
+  # the current production behaviour (open). The kill-switch procedure in
+  # docs/runbooks/managed-demo-cost-floor.md changes this variable first. The
+  # migrate job refuses a reopen and records each service's live value and revision,
+  # and deploy-api/deploy-web re-read the live value right before deploying so a close
+  # made mid-run is preserved, also in a run dispatched with allow_booking_reopen=true.
+  BOOKING_ENABLED: ${{ vars.BOOKING_ENABLED || 'true' }}
+  # Prewarm patches the service-level minimum (no new revision). 'template' is the
+  # Phase 24-21 revision-template fallback if the service-level update is refused.
+  PREWARM_SCALING_SCOPE: ${{ vars.PREWARM_SCALING_SCOPE || 'service' }}
+  API_CONCURRENCY: ${{ vars.API_CONCURRENCY || '250' }}
+  # Migration sessions fail fast instead of queueing hot-table traffic behind an
+  # ACCESS EXCLUSIVE lock request inside drizzle's single migration transaction.
+  MIGRATION_LOCK_TIMEOUT: ${{ vars.MIGRATION_LOCK_TIMEOUT || '5s' }}
+  MIGRATION_STATEMENT_TIMEOUT: ${{ vars.MIGRATION_STATEMENT_TIMEOUT || '60s' }}
+  # Set to true for the ticket-opening/entry window: any pending migration fails the deploy.
+  MIGRATION_FREEZE: ${{ vars.MIGRATION_FREEZE || 'false' }}
+  # Worst-case PostgreSQL connection budget inputs. The budget counts each process's
+  # real pg-boss cap: RUNTIME_PGBOSS_POOL_MAX when set, otherwise the code default
+  # (3 with background processing, 1 for a producer-only API; the worker Job is 3).
+  DB_CONNECTION_RESERVE: ${{ vars.DB_CONNECTION_RESERVE || '5' }}
+  DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'false' }}
+  # Optional runtime settings, passed to the API and worker only when the repository
+  # variable is set (deploy-guards.mjs runtime-env); unset keeps each process's code
+  # default. RUNTIME_PGBOSS_POOL_MAX has no default on purpose: the producer-only API
+  # uses 1 pg-boss connection and the worker 3. Removing a variable later does not
+  # remove a value already set on the API service (env vars are merged); the database
+  # preflight counts such a leftover PGBOSS_POOL_MAX and warns. See the cost-floor runbook.
+  RUNTIME_PGBOSS_POOL_MAX: ${{ vars.PGBOSS_POOL_MAX }}
+  RUNTIME_PGBOSS_START_MAX_ATTEMPTS: ${{ vars.PGBOSS_START_MAX_ATTEMPTS }}
+  RUNTIME_DB_STATEMENT_TIMEOUT_MS: ${{ vars.DB_STATEMENT_TIMEOUT_MS }}
+  RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: ${{ vars.DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS }}
+  RUNTIME_PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED: ${{ vars.PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED }}
+  RUNTIME_SMS_ALLOWED_COUNTRIES: ${{ vars.SMS_ALLOWED_COUNTRIES }}
+  RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_MINUTE }}
+  RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_HOUR: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_HOUR }}
+  RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: ${{ vars.SMS_LOCAL_RATE_LIMITS_ENABLED }}
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
@@ -31,6 +75,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Start-of-run live BOOKING_ENABLED (true/false/unreadable) and latest revision of
+    # each service, read by the deploy jobs' booking gate re-check.
+    outputs:
+      api_live: ${{ steps.booking_guard.outputs.api_live }}
+      api_revision: ${{ steps.booking_guard.outputs.api_revision }}
+      web_live: ${{ steps.booking_guard.outputs.web_live }}
+      web_revision: ${{ steps.booking_guard.outputs.web_revision }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,6 +122,10 @@ jobs:
         env:
           CLOUD_RUN_API_URL: ${{ vars.CLOUD_RUN_API_URL }}
           CLOUD_RUN_WEB_URL: ${{ vars.CLOUD_RUN_WEB_URL }}
+      - name: Validate deploy configuration
+        # Also exports PGOPTIONS (lock_timeout/statement_timeout) for every later
+        # database session in this job, including drizzle-kit migrate.
+        run: node scripts/managed-demo/deploy-guards.mjs validate-config
       - run: pnpm install --frozen-lockfile
       - id: auth
         uses: google-github-actions/auth@v3
@@ -78,6 +133,25 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
+      - name: Guard sitewide booking gate
+        id: booking_guard
+        env:
+          ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+        run: |
+          for service in "${API_SERVICE}" "${WEB_SERVICE}"; do
+            if ! gcloud run services describe "${service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format=json > "${RUNNER_TEMP}/${service}.json"; then
+              # Unreadable live state: the guard only allows closing or an explicit reopen.
+              : > "${RUNNER_TEMP}/${service}.json"
+            fi
+          done
+          node scripts/managed-demo/deploy-guards.mjs booking-gate \
+            --service "${API_SERVICE}=${RUNNER_TEMP}/${API_SERVICE}.json" \
+            --service "${WEB_SERVICE}=${RUNNER_TEMP}/${WEB_SERVICE}.json" \
+            --snapshot "api=${API_SERVICE}" \
+            --snapshot "web=${WEB_SERVICE}"
       - name: Start Cloud SQL Auth Proxy
         run: |
           gcloud components install cloud-sql-proxy --quiet 2>/dev/null || true
@@ -93,6 +167,12 @@ jobs:
           done
           echo "Cloud SQL Proxy failed to accept connections within 30s" >&2
           exit 1
+      - name: Database preflight (migration timeouts, freeze, connection budget)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        # The booking guard step saved the live API description. With PGBOSS_POOL_MAX unset,
+        # the budget still counts a value an earlier deploy left on the API service.
+        run: node scripts/managed-demo/deploy-guards.mjs db-preflight --api-service-json "${RUNNER_TEMP}/${API_SERVICE}.json"
       - name: Pre-apply event category enum migration
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -203,6 +283,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -217,6 +303,35 @@ jobs:
             --location="${GCP_REGION}" \
             --format='value(state)')
           test "${SCHEDULER_STATE}" = 'ENABLED'
+      - name: Re-check sitewide booking gate before deploy
+        id: booking_gate
+        env:
+          ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+          LIVE_AT_GUARD: ${{ needs.migrate-production.outputs.api_live }}
+          REVISION_AT_GUARD: ${{ needs.migrate-production.outputs.api_revision }}
+        run: |
+          # Migrations already ran; retry a transient describe error instead of
+          # failing this job and leaving the deploy half done.
+          for attempt in 1 2 3; do
+            if gcloud run services describe "${API_SERVICE}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format=json > "${RUNNER_TEMP}/live-service.json"; then
+              break
+            fi
+            : > "${RUNNER_TEMP}/live-service.json"
+            if [ "${attempt}" -lt 3 ]; then sleep 5; fi
+          done
+          node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
+            --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json" \
+            --live-at-guard "${LIVE_AT_GUARD}" --revision-at-guard "${REVISION_AT_GUARD}"
+      - name: Resolve optional API runtime settings
+        id: runtime_env
+        run: node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
+      # Probes: startup uses /api/v1/health (Valkey PING), so a new revision only takes
+      # traffic once Valkey answers, the same gate bootstrap already applies. Liveness uses
+      # /api/v1/health/live (no dependency I/O), which fails only while a Valkey client is
+      # stuck in the ioredis `end` state; a Valkey outage or failover never restarts instances.
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.API_SERVICE }}
@@ -227,10 +342,13 @@ jobs:
             --set-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
             --min-instances=${{ env.API_MIN_INSTANCES }}
             --max-instances=${{ env.API_MAX_INSTANCES }}
-            --concurrency=250
+            --concurrency=${{ env.API_CONCURRENCY }}
+            --timeout=3600
             --memory=512Mi
             --cpu=1
             --port=8080
+            --startup-probe=httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=1,timeoutSeconds=1,failureThreshold=180
+            --liveness-probe=httpGet.path=/api/v1/health/live,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6
             ${{ env.API_CPU_ALLOCATION_FLAG }}
             --session-affinity
             --allow-unauthenticated
@@ -245,17 +363,20 @@ jobs:
             NAVER_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/naver/callback
             GOOGLE_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/google/callback
             PREWARM_ALLOWED_SERVICE_NAME=${{ env.API_SERVICE }}
-            PREWARM_MAX_MIN_INSTANCES=80
+            PREWARM_MAX_MIN_INSTANCES=${{ env.API_MAX_INSTANCES }}
+            PREWARM_SCALING_SCOPE=${{ env.PREWARM_SCALING_SCOPE }}
             DB_POOL_MAX=${{ env.DB_POOL_MAX }}
             DB_POOL_IDLE_TIMEOUT_MS=30000
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
             BACKGROUND_PROCESSING_ENABLED=${{ env.BACKGROUND_PROCESSING_ENABLED }}
-            CUTOVER_GATE_LEDGER_PATH=/app/phase26/26-GATE-LEDGER.json
+            CUTOVER_GATE_LEDGER_PATH=${{ vars.CUTOVER_GATE_LEDGER_PATH || '/app/phase26/26-GATE-LEDGER.json' }}
+            CUTOVER_GATE_LEDGER_MAX_AGE_DAYS=${{ vars.CUTOVER_GATE_LEDGER_MAX_AGE_DAYS || '30' }}
             R2_UPLOAD_CACHE_CONTROL_ENABLED=true
-            BOOKING_ENABLED=true
+            BOOKING_ENABLED=${{ steps.booking_gate.outputs.booking_enabled }}
             PAYPAL_CHECKOUT_ENABLED=true
             ALIPAY_CHECKOUT_ENABLED=true
             PAYPAL_KRW_USD_RATE=${{ vars.PAYPAL_KRW_USD_RATE }}
+            ${{ steps.runtime_env.outputs.env_vars }}
           secrets: |
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest
@@ -332,16 +453,49 @@ jobs:
 
   deploy-web:
     runs-on: ubuntu-latest
-    needs: deploy-api
+    # migrate-production is listed for its booking gate outputs: `needs` exposes only
+    # direct dependencies.
+    needs:
+      - migrate-production
+      - deploy-api
     permissions:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Re-check sitewide booking gate before deploy
+        id: booking_gate
+        env:
+          ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+          LIVE_AT_GUARD: ${{ needs.migrate-production.outputs.web_live }}
+          REVISION_AT_GUARD: ${{ needs.migrate-production.outputs.web_revision }}
+        run: |
+          # Migrations already ran; retry a transient describe error instead of
+          # failing this job and leaving the deploy half done.
+          for attempt in 1 2 3; do
+            if gcloud run services describe "${WEB_SERVICE}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${GCP_REGION}" \
+              --format=json > "${RUNNER_TEMP}/live-service.json"; then
+              break
+            fi
+            : > "${RUNNER_TEMP}/live-service.json"
+            if [ "${attempt}" -lt 3 ]; then sleep 5; fi
+          done
+          node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
+            --service "${WEB_SERVICE}=${RUNNER_TEMP}/live-service.json" \
+            --live-at-guard "${LIVE_AT_GUARD}" --revision-at-guard "${REVISION_AT_GUARD}"
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.WEB_SERVICE }}
@@ -358,7 +512,7 @@ jobs:
             --allow-unauthenticated
           env_vars: |
             NODE_ENV=production
-            BOOKING_ENABLED=true
+            BOOKING_ENABLED=${{ steps.booking_gate.outputs.booking_enabled }}
             NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN=https://heygrabit.com
           secrets: |
             SENTRY_DSN=sentry-dsn-web:latest

@@ -1,17 +1,33 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Banner } from '@grabit/shared';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  PERFORMANCE_QUERY_MAX_PAGE,
+  type Banner,
+  type PerformanceListResponse,
+} from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { useHomeBanners } from '../use-performances';
+import {
+  CATALOG_BOOKING_START_REFETCH_GRACE_MS,
+  resetCatalogRefetchJitterForTests,
+} from '@/components/performance/performance-display-status';
+import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
+import {
+  clampCatalogPage,
+  useBrowsePerformances,
+  useHomeBanners,
+  usePerformances,
+} from '../use-performances';
+
+const navigation = vi.hoisted(() => ({ search: '' }));
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'ko',
 }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 vi.mock('@/lib/api-client', () => ({
@@ -63,6 +79,60 @@ function banner(id: string, deviceTarget: Banner['deviceTarget']): Banner {
   };
 }
 
+describe('catalog page bounds', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.search = '';
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [], total: 0, page: 1, limit: 20, totalPages: 0,
+    });
+  });
+
+  function requestedPage() {
+    const [url] = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    return new URL(String(url), 'https://heygrabit.test').searchParams.get('page');
+  }
+
+  it('clamps out-of-range pages to what the API accepts', () => {
+    expect(clampCatalogPage(PERFORMANCE_QUERY_MAX_PAGE + 1)).toBe(PERFORMANCE_QUERY_MAX_PAGE);
+    expect(clampCatalogPage(0)).toBe(1);
+    expect(clampCatalogPage(Number.NaN)).toBe(1);
+    expect(clampCatalogPage(2.7)).toBe(2);
+  });
+
+  it('requests the last allowed genre page for a hand-edited ?page= above the API limit', async () => {
+    navigation.search = `page=${PERFORMANCE_QUERY_MAX_PAGE + 4000}`;
+
+    const { result } = renderHook(() => usePerformances('artist_celebrity'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe(String(PERFORMANCE_QUERY_MAX_PAGE));
+  });
+
+  it('requests page 1 for a non-numeric ?page= instead of an invalid query', async () => {
+    navigation.search = 'page=abc';
+
+    const { result } = renderHook(() => usePerformances('artist_celebrity'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe('1');
+  });
+
+  it('clamps the home browse page as well', async () => {
+    const { result } = renderHook(
+      () => useBrowsePerformances('selling', PERFORMANCE_QUERY_MAX_PAGE + 1),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedPage()).toBe(String(PERFORMANCE_QUERY_MAX_PAGE));
+  });
+});
+
 describe('useHomeBanners', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,5 +176,118 @@ describe('useHomeBanners', () => {
       'desktop-only',
       'shared',
     ]);
+  });
+});
+
+describe('useBrowsePerformances', () => {
+  const OPEN_MS = Date.parse('2026-10-01T11:00:00.000Z');
+  const REFETCH_AT_MS = OPEN_MS + CATALOG_BOOKING_START_REFETCH_GRACE_MS;
+  const row = {
+    id: 'opening', title: 'Opening', genre: 'artist_celebrity' as const, posterUrl: null, status: 'upcoming' as const,
+    startDate: '2026-10-09T15:00:00.000Z', endDate: '2026-10-09T15:00:00.000Z', venueName: null,
+    bookingStartsAt: '2026-10-01T11:00:00.000Z',
+  };
+  const page: PerformanceListResponse = { data: [row], total: 1, page: 1, limit: 12, totalPages: 1 };
+  const get = apiClient.get as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(OPEN_MS - 60_000);
+    // Jitter 0: the refetch lands exactly grace after the booking start.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    resetCatalogRefetchJitterForTests();
+    resetServerClockForTests();
+    get.mockReset();
+    get.mockResolvedValue(page);
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'visibilityState');
+    resetServerClockForTests();
+    resetCatalogRefetchJitterForTests();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function advanceTo(timeMs: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(timeMs - Date.now());
+    });
+  }
+
+  it('refetches the filtered list after the nearest booking start in the page passes', async () => {
+    renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    await advanceTo(REFETCH_AT_MS - 1);
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // Even if the refetch still carries the opened row, its start is before the
+    // new fetch time, so the list stops polling.
+    get.mockResolvedValue({ ...page, data: [{ ...row, status: 'selling' }] });
+    await advanceTo(REFETCH_AT_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+
+    await advanceTo(REFETCH_AT_MS + 10 * 60_000);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the refetch when the page re-renders between the booking start and the refetch', async () => {
+    // Only the upcoming filter can hold a row whose booking start is still ahead: the
+    // API's on-sale filter returns rows whose start passed or is unset (catalog-card.ts).
+    const { rerender } = renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // For example typing in the search box re-renders HomePage one second after the start.
+    await advanceTo(OPEN_MS + 1_000);
+    rerender();
+    await advanceTo(OPEN_MS + 2_000);
+    rerender();
+
+    await advanceTo(REFETCH_AT_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches after the server booking start on a device clock that runs 90 seconds fast', async () => {
+    // The device reads OPEN + 30s while the server is still at OPEN - 60s.
+    vi.setSystemTime(OPEN_MS + 30_000);
+    recordServerTimeSample({
+      serverNowMs: OPEN_MS - 60_000 + 100,
+      requestStartedAtMs: OPEN_MS + 30_000,
+      responseReceivedAtMs: OPEN_MS + 30_200,
+    });
+    renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // On the device clock the start already passed when the page was fetched; anchored
+    // to the device clock the list would never refetch. The server clock still waits
+    // for the start: the refetch lands at server REFETCH_AT = device REFETCH_AT + 90s.
+    await advanceTo(REFETCH_AT_MS + 90_000 - 1);
+    expect(get).toHaveBeenCalledTimes(1);
+
+    await advanceTo(REFETCH_AT_MS + 90_000);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches in a background tab because window focus does not refetch', async () => {
+    renderHook(() => useBrowsePerformances('upcoming', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    await advanceTo(REFETCH_AT_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not refetch the unfiltered list, whose rows do not move at the booking start', async () => {
+    renderHook(() => useBrowsePerformances('all', 1), { wrapper: createWrapper() });
+    await advanceTo(Date.now());
+    expect(get).toHaveBeenCalledTimes(1);
+
+    await advanceTo(REFETCH_AT_MS + 10 * 60_000);
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });

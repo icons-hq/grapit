@@ -10,6 +10,10 @@ import {
   asc,
   desc,
   eq,
+  inArray,
+  isNotNull,
+  lt,
+  not,
   notInArray,
   or,
   sql,
@@ -49,6 +53,18 @@ const HIGH_RISK_CATEGORIES = new Set<SupportThreadCategory>([
 ]);
 
 const DUE_SOON_MINUTES = 120;
+const ESCALATED_PRIORITIES: SupportThreadPriority[] = ['urgent', 'high'];
+const ESCALATED_STATES: SupportThreadEscalationState[] = [
+  'auto_escalated',
+  'manual_escalated',
+];
+const HIGH_RISK_SOURCES: SupportThreadSource[] = [
+  'refund_dispute',
+  'signup_failure',
+];
+const RESPONDED_STATUSES: SupportThreadStatus[] = ['resolved', 'closed'];
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 const CATEGORY_LABELS: Record<SupportThreadCategory, string> = {
   general: '일반 문의',
@@ -245,7 +261,9 @@ export class AdminOperationsService {
     context: AdminOperationsExecutionContext = {},
   ): Promise<AdminOperationsInboxResponse> {
     const now = context.now ?? new Date();
-    const rows = await this.fetchThreadRows(filters);
+    const where = buildThreadPredicate(filters, now);
+    const limit = Math.min(Math.max(filters.limit ?? 100, 1), 200);
+    const rows = await this.fetchThreadRows(where, now, limit);
     const inboxRows = rows
       .map((row) => toInboxRow(row, now))
       .filter((row) => matchesRuntimeFilters(row, filters))
@@ -254,12 +272,7 @@ export class AdminOperationsService {
     return {
       generatedAt: now.toISOString(),
       rows: inboxRows,
-      totals: {
-        all: inboxRows.length,
-        escalated: inboxRows.filter((row) => row.escalation.escalated).length,
-        overdue: inboxRows.filter((row) => row.sla.state === 'overdue').length,
-        dueSoon: inboxRows.filter((row) => row.sla.state === 'due_soon').length,
-      },
+      totals: await this.countThreadTotals(where, now),
     };
   }
 
@@ -267,14 +280,21 @@ export class AdminOperationsService {
     threadId: string,
     context: AdminOperationsExecutionContext = {},
   ): Promise<AdminOperationsThreadDetail> {
-    const inbox = await this.listInbox(
-      { includeResolved: true, limit: 200 },
-      context,
-    );
-    const row = inbox.rows.find((item) => item.id === threadId);
-    if (!row) {
+    const now = context.now ?? new Date();
+    if (!UUID_PATTERN.test(threadId)) {
       throw new NotFoundException('운영 항목을 찾을 수 없습니다');
     }
+    // Look the thread up by id: the inbox window only holds the newest/most
+    // urgent rows, so older threads must still resolve here.
+    const [thread] = await this.fetchThreadRows(
+      eq(supportThreads.id, threadId),
+      now,
+      1,
+    );
+    if (!thread) {
+      throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+    }
+    const row = toInboxRow(thread, now);
 
     const messages = await this.db
       .select({
@@ -354,28 +374,37 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('상태 변경 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        status: input.status,
-        resolvedAt: input.status === 'resolved' ? now : null,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId));
+    // The change and its audit row commit together; an unknown thread writes
+    // neither (u12 audit integrity).
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          status: input.status,
+          resolvedAt: input.status === 'resolved' ? now : null,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['status'],
-      before: null,
-      after: { status: input.status },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.resolve',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['status'],
+        before: null,
+        after: { status: input.status },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, status: input.status };
@@ -392,34 +421,40 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('에스컬레이션 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        priority: 'urgent',
-        escalationState: 'manual_escalated',
-        escalatedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId))
-      .returning({ id: supportThreads.id });
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          priority: 'urgent',
+          escalationState: 'manual_escalated',
+          escalatedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['priority', 'escalationState', 'escalatedAt'],
-      before: null,
-      after: {
-        priority: 'urgent',
-        escalationState: 'manual_escalated',
-        escalatedAt: now.toISOString(),
-      },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.escalate',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['priority', 'escalationState', 'escalatedAt'],
+        before: null,
+        after: {
+          priority: 'urgent',
+          escalationState: 'manual_escalated',
+          escalatedAt: now.toISOString(),
+        },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, escalationState: 'manual_escalated' };
@@ -436,27 +471,34 @@ export class AdminOperationsService {
     if (!reason) {
       throw new BadRequestException('담당자 변경 사유를 입력해주세요');
     }
+    assertThreadId(threadId);
 
-    await this.db
-      .update(supportThreads)
-      .set({
-        assigneeUserId: input.assigneeUserId,
-        updatedAt: now,
-      })
-      .where(eq(supportThreads.id, threadId));
+    await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(supportThreads)
+        .set({
+          assigneeUserId: input.assigneeUserId,
+          updatedAt: now,
+        })
+        .where(eq(supportThreads.id, threadId))
+        .returning({ id: supportThreads.id });
+      if (!updated) {
+        throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+      }
 
-    await this.adminAuditService.write({
-      actorUserId,
-      action: 'support.escalate',
-      resourceType: 'support_thread',
-      resourceId: threadId,
-      status: 'success',
-      reason,
-      changedFields: ['assigneeUserId'],
-      before: null,
-      after: { assigneeUserId: input.assigneeUserId },
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+      await this.adminAuditService.write({
+        actorUserId,
+        action: 'support.assign',
+        resourceType: 'support_thread',
+        resourceId: threadId,
+        status: 'success',
+        reason,
+        changedFields: ['assigneeUserId'],
+        before: null,
+        after: { assigneeUserId: input.assigneeUserId },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      }, tx);
     });
 
     return { id: threadId, assigneeUserId: input.assigneeUserId };
@@ -484,53 +526,11 @@ export class AdminOperationsService {
   }
 
   private async fetchThreadRows(
-    filters: AdminOperationsInboxFilters,
+    where: SQL | undefined,
+    now: Date,
+    limit: number,
   ): Promise<AdminOperationsThreadRow[]> {
-    const predicates: SQL[] = [];
-    const limit = Math.min(Math.max(filters.limit ?? 100, 1), 200);
-    if (filters.performanceId || filters.showtimeId) {
-      predicates.push(sql`exists (
-        select 1 from reservations as context_reservation
-        join showtimes as context_showtime on context_showtime.id = context_reservation.showtime_id
-        where context_reservation.id = coalesce(${supportThreads.reservationId}, ${refunds.reservationId})
-          ${filters.performanceId ? sql`and context_showtime.performance_id = ${filters.performanceId}::uuid` : sql``}
-          ${filters.showtimeId ? sql`and context_showtime.id = ${filters.showtimeId}::uuid` : sql``}
-      )`);
-    }
-
-    if (!filters.includeResolved) {
-      predicates.push(notInArray(supportThreads.status, ['resolved', 'closed']));
-    }
-    if (filters.source) {
-      predicates.push(eq(supportThreads.source, filters.source));
-    }
-    if (filters.category) {
-      predicates.push(eq(supportThreads.category, filters.category));
-    }
-    if (filters.status) {
-      predicates.push(eq(supportThreads.status, filters.status));
-    }
-    if (filters.signupFailureEmailHash || filters.signupFailurePhoneHash) {
-      const signupPredicates: SQL[] = [];
-      if (filters.signupFailureEmailHash) {
-        signupPredicates.push(
-          eq(
-            supportThreads.signupFailureEmailHash,
-            filters.signupFailureEmailHash,
-          ),
-        );
-      }
-      if (filters.signupFailurePhoneHash) {
-        signupPredicates.push(
-          eq(
-            supportThreads.signupFailurePhoneHash,
-            filters.signupFailurePhoneHash,
-          ),
-        );
-      }
-      predicates.push(or(...signupPredicates)!);
-    }
-
+    const ranks = threadRankSql(now);
     const rows = await this.db
       .select({
         thread: supportThreads,
@@ -557,12 +557,165 @@ export class AdminOperationsService {
       .leftJoin(users, eq(supportThreads.userId, users.id))
       .leftJoin(assigneeUsers, eq(supportThreads.assigneeUserId, assigneeUsers.id))
       .leftJoin(refunds, eq(supportThreads.refundId, refunds.id))
-      .where(predicates.length > 0 ? and(...predicates) : undefined)
-      .orderBy(desc(supportThreads.createdAt))
+      .where(where)
+      // Same order as compareInboxRows, applied before LIMIT so escalated and
+      // overdue threads are never cut by newer low-urgency ones.
+      .orderBy(
+        desc(ranks.escalated),
+        desc(ranks.sla),
+        desc(supportThreads.createdAt),
+      )
       .limit(limit);
 
     return rows as AdminOperationsThreadRow[];
   }
+
+  private async countThreadTotals(
+    where: SQL | undefined,
+    now: Date,
+  ): Promise<AdminOperationsInboxResponse['totals']> {
+    const ranks = threadRankSql(now);
+    const [totals] = await this.db
+      .select({
+        all: sql<number>`(count(*))::int`,
+        escalated: sql<number>`(count(*) filter (where ${ranks.escalated} = 1))::int`,
+        overdue: sql<number>`(count(*) filter (where ${ranks.sla} = ${slaRank('overdue')}))::int`,
+        dueSoon: sql<number>`(count(*) filter (where ${ranks.sla} = ${slaRank('due_soon')}))::int`,
+      })
+      .from(supportThreads)
+      .leftJoin(refunds, eq(supportThreads.refundId, refunds.id))
+      .where(where);
+
+    return {
+      all: Number(totals?.all ?? 0),
+      escalated: Number(totals?.escalated ?? 0),
+      overdue: Number(totals?.overdue ?? 0),
+      dueSoon: Number(totals?.dueSoon ?? 0),
+    };
+  }
+}
+
+function buildThreadPredicate(
+  filters: AdminOperationsInboxFilters,
+  now: Date,
+): SQL | undefined {
+  const predicates: SQL[] = [];
+  if (filters.performanceId || filters.showtimeId) {
+    predicates.push(sql`exists (
+      select 1 from reservations as context_reservation
+      join showtimes as context_showtime on context_showtime.id = context_reservation.showtime_id
+      where context_reservation.id = coalesce(${supportThreads.reservationId}, ${refunds.reservationId})
+        ${filters.performanceId ? sql`and context_showtime.performance_id = ${filters.performanceId}::uuid` : sql``}
+        ${filters.showtimeId ? sql`and context_showtime.id = ${filters.showtimeId}::uuid` : sql``}
+    )`);
+  }
+
+  if (!filters.includeResolved) {
+    predicates.push(notInArray(supportThreads.status, ['resolved', 'closed']));
+  }
+  if (filters.source) {
+    predicates.push(eq(supportThreads.source, filters.source));
+  }
+  if (filters.category) {
+    predicates.push(eq(supportThreads.category, filters.category));
+  }
+  if (filters.status) {
+    predicates.push(eq(supportThreads.status, filters.status));
+  }
+  if (filters.priority) {
+    predicates.push(priorityPredicate(filters.priority, now));
+  }
+  if (filters.signupFailureEmailHash || filters.signupFailurePhoneHash) {
+    // Mirrors matchesRuntimeFilters: signup-failure threads matching every
+    // provided hash, so the totals count the same rows as the list.
+    predicates.push(
+      or(
+        eq(supportThreads.source, 'signup_failure'),
+        eq(supportThreads.category, 'signup_failure'),
+      )!,
+    );
+    if (filters.signupFailureEmailHash) {
+      predicates.push(
+        eq(
+          supportThreads.signupFailureEmailHash,
+          filters.signupFailureEmailHash,
+        ),
+      );
+    }
+    if (filters.signupFailurePhoneHash) {
+      predicates.push(
+        eq(
+          supportThreads.signupFailurePhoneHash,
+          filters.signupFailurePhoneHash,
+        ),
+      );
+    }
+  }
+
+  return predicates.length > 0 ? and(...predicates) : undefined;
+}
+
+/**
+ * SQL mirrors of resolveEscalation and resolveSla. Thresholds reproduce the
+ * rounding in resolveSla: overdue when the rounded remaining minutes are below
+ * zero, due soon while they are at most DUE_SOON_MINUTES.
+ */
+function threadRankSql(now: Date): { escalated: SQL; sla: SQL } {
+  const overdueBefore = new Date(now.getTime() - 30_000);
+  const dueSoonBefore = new Date(
+    now.getTime() + (DUE_SOON_MINUTES * 60 + 30) * 1000,
+  );
+  const escalated = or(
+    inArray(supportThreads.category, [...HIGH_RISK_CATEGORIES]),
+    inArray(supportThreads.source, HIGH_RISK_SOURCES),
+    inArray(supportThreads.priority, ESCALATED_PRIORITIES),
+    inArray(supportThreads.escalationState, ESCALATED_STATES),
+  )!;
+  const responded = or(
+    isNotNull(supportThreads.firstResponseAt),
+    inArray(supportThreads.status, RESPONDED_STATUSES),
+  )!;
+
+  return {
+    escalated: sql`(case when ${escalated} then 1 else 0 end)`,
+    sla: sql`(case
+      when ${responded} then ${slaRank('responded')}
+      when ${lt(supportThreads.slaDueAt, overdueBefore)} then ${slaRank('overdue')}
+      when ${lt(supportThreads.slaDueAt, dueSoonBefore)} then ${slaRank('due_soon')}
+      else ${slaRank('within_sla')} end)`,
+  };
+}
+
+/** Inlines a constant SLA rank as an integer literal (never user input). */
+function slaRank(state: AdminOperationsSlaState): SQL {
+  return sql.raw(String(SLA_SORT_RANK[state]));
+}
+
+/** A malformed id can match no thread; answer 404 before PostgreSQL 22P02. */
+function assertThreadId(threadId: string): void {
+  if (!UUID_PATTERN.test(threadId)) {
+    throw new NotFoundException('운영 항목을 찾을 수 없습니다');
+  }
+}
+
+function priorityPredicate(
+  priority: AdminOperationsPriority,
+  now: Date,
+): SQL {
+  const ranks = threadRankSql(now);
+  if (priority === 'escalated') return sql`${ranks.escalated} = 1`;
+
+  const notEscalated = not(sql`${ranks.escalated} = 1`);
+  if (priority === 'overdue') {
+    return and(notEscalated, sql`${ranks.sla} = ${slaRank('overdue')}`)!;
+  }
+  if (priority === 'due_soon') {
+    return and(notEscalated, sql`${ranks.sla} = ${slaRank('due_soon')}`)!;
+  }
+  return and(
+    notEscalated,
+    sql`${ranks.sla} in (${slaRank('responded')}, ${slaRank('within_sla')})`,
+  )!;
 }
 
 function toInboxRow(

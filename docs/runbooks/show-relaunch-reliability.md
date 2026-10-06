@@ -8,8 +8,10 @@
 - migration `0033`은 모든 회차의 활성 `showtime_id + seat_key`를 유일하게 만든다. 취소 이력은 보존한다. 기본 베네핏 중복 방지는 `active`와 `redeemed`를 모두 포함한다.
 - 보상 취소 `cancel_pending` 동안 DONE 재전송은 재발권하지 않는다. PG CANCELED만 미발권 취소 완료로 수렴한다. 전체 취소는 `CANCEL_STATUS_CHANGED`와 `PAYMENT_STATUS_CHANGED/CANCELED` 양쪽에서 같은 finalizer로 처리한다. 잘못된 금액의 callback도 이미 수락한 결제 상태를 덮어쓰지 않는다.
 - 일반 confirm과 비동기 progress는 동일 주문의 Redis confirmation lease를 공유한다. 잠금 경합·유실은 503 재시도로 처리한다. 타 요청이 처리 중인 정상 결제를 보상 취소하지 않는다. 이전 진행/실패/만료 이벤트는 확정·취소된 상태를 되돌리지 못한다. 이미 발권된 취소는 progress가 부분 갱신하지 않고 취소 finalizer로 수렴하도록 재시도한다.
-- 두 발권 경로는 같은 기본 베네핏 생성 함수와 사용자·공연 단위 매수 제한/advisory lock을 사용한다. 회차가 달라도 공연 매수 제한을 지킨다. 초과 결제 보상 사유는 좌석 충돌과 구분한다.
-- 베네핏 생성의 showtime 잠금은 `FOR NO KEY UPDATE`다. Ticket FK의 KEY SHARE와 호환해 동시 결제의 lock upgrade deadlock을 피하며 설정 변경과는 직렬화한다.
+- 두 발권 경로는 같은 기본 베네핏 생성 함수와 사용자·공연 단위 매수 제한/advisory lock을 사용한다. 회차가 달라도 공연 매수 제한을 지킨다. 초과 결제 보상 사유는 좌석 충돌과 구분한다. (2026-10 감사 #62 이후 '사용자'는 같은 인증 휴대폰(E.164)을 쓰는 Buyer Account 전체이며, 휴대폰 미인증 계정만 계정 단위로 남는다.)
+- 베네핏 생성(두 발권 경로)의 showtime 잠금은 `FOR SHARE`다(2026-10 감사 #56으로 `FOR NO KEY UPDATE`에서 변경). 같은 회차의 결제끼리는 공유해 병렬로 확정되고, Ticket FK의 KEY SHARE와도 호환한다. 설정 저장·live run·rollback·현장 특전 수령·repair apply는 `FOR NO KEY UPDATE`를 잡으므로 발권과는 계속 직렬화된다. 발권 transaction 안에서 이 잠금을 더 강한 모드로 올리지 않는다(공유 보유자끼리 upgrade하면 deadlock).
+- 설정 저장·live run·rollback은 transaction 시작 시 `lock_timeout 3s`, `statement_timeout 30s`를 건다. 결제가 회차를 잡고 있으면 기다리지 않고 409(`잠시 후 다시 시도`)로 실패하며, 기존 권리 동기화는 판매 수와 무관한 3개의 set-based 문장으로 처리한다. 작업이 30초를 넘으면 503(`판매가 한산한 시간에 다시 시도`)으로 취소되므로 판매가 한산한 시간에 다시 실행한다.
+- 현장 특전 수령도 transaction 시작 시 `lock_timeout 3s`, `statement_timeout 10s`를 건다(2026-10 감사 D6). 결제가 회차를 잡고 있으면 3초 뒤 409(`실물을 지급하지 말고 같은 요청으로 다시 확인`)로 끝나고 기록을 남기지 않는다. 그래서 수령 요청이 pool 연결을 붙잡고 기다리거나, 그 뒤에 같은 회차의 발권이 줄을 서지 않는다. 같은 요청을 다시 보내면 결제가 끝난 뒤 처리된다.
 - 최초 payment deadline은 서버의 공연 정책을 사용하고 prepare 시 선택 좌석의 Redis TTL을 동일 기한으로 맞춘다(기존 TTL이 길면 단축). 공유 선택 목록과 관련 없는 좌석의 TTL은 줄이지 않는다. 결제 앱으로 넘길 때 기존 grace(8분, 생성 후 총 15분 cap)와 서버 응답 deadline을 유지한다. 클라이언트가 보낸 deadline을 기준으로 삼지 않는다. 화면 제목에는 고정 7분을 표시하지 않고 서버 countdown을 기준으로 안내한다. prepare 응답을 결제 위젯 호출 전에 적용하고, 좌석 선택 화면을 포함한 모든 클라이언트 타이머를 서버 기한에 맞춰 단축·연장한다. 준비 응답이 늦게 도착했을 때 화면이 종료됐거나 공연·회차·좌석 선택이 바뀌었으면 새 선택의 타이머를 변경하지 않고 이전 pending 예약만 정리한다(기존 결제 재개는 보존).
 - 만료 worker는 예약 상태/진단만 정리한다. 사용자 전체 잠금을 해제하지 않는다. 과거 예약과 같은 사용자의 새 시도를 구별할 수 없으므로 Redis 자체 TTL이 잠금 만료를 담당한다. 사용자 ‘선택 해제’는 Lua의 원자적 owner 확인을 사용한다.
 - 소셜 로그인 callback의 오류·재시도·로딩·toast는 선택 언어를 사용한다. 기존 번역을 공유하고 계정 충돌 후 기존 계정으로 로그인하는 안내를 보존한다. session refresh는 AuthInitializer 한 곳에서만 수행하며 실패 후 로딩을 종료한다.
@@ -23,7 +25,7 @@
 | --- | --- | --- |
 | A01 | edge proxy 회귀 및 운영 HTTP/www→canonical 301, HTTPS·callback 200 확인 | 실제 외부 공유 링크의 단말별 확인 |
 | A02 | auth 초기화·마이페이지·QR 조회 회귀 | 당시 해외 인앱 브라우저/OS 재현 |
-| A03 | SMS 국가코드·send/verify 오류·throttle 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인 | 태국 실제 번호 수신·공급자 전달 결과 |
+| A03 | SMS 국가코드·send/verify 오류 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인. 당시 'throttle 테스트'는 운영에 없는 가짜 controller의 IP throttle을 검사해 앱 SMS 제한이 꺼진 상태를 놓쳤다(2026-09 감사 #36). 이제 앱 제한은 번호별 30초 cooldown·시간당 5회 발송·15분 10회 확인과 분당·시간당 전체 발송 예산이며, 실제 SmsController·SmsService를 Valkey로 검증한다. IP 축 제한은 공유 IP 장애 때문에 두지 않는다 | 태국 실제 번호 수신·공급자 전달 결과. Twilio Verify rate limit·잔액·비용 알림 설정 확인 |
 | A04 | 발송 실패와 인증 불일치 UI/오류 매핑 회귀 | 실제 발송 오류 표시 확인 |
 | A05 | 인증/대체 진입 코드 유지. 운영 Twilio 중국 감시 발송 허용 및 기존 지원 티켓의 발송 활성화·당시 실제 수신 성공 확인 | 다음 판매 전 중국 실제 번호 수신·인증 재검증 |
 | A06 | 소셜 callback 언어별 오류·재시도, refresh 1회 및 실패 후 로딩 종료, 추가정보·공유 IP throttle 회귀 | Naver 운영 앱 승인 및 실제 계정 왕복 |
@@ -85,23 +87,143 @@ ROLLBACK;
 
 코드 rollback 시에도 소유권 보호 인덱스를 임의 제거하지 않는다. 0033 이전 앱과 혼재하는 롤링 구간에는 충돌 오류가 발생할 수 있으므로 한산한 시간에 수행하고 예약/웹훅 실패율을 관찰한다. 인덱스 사전검사 실패는 데이터 검토로 돌아가며, 자동 삭제로 우회하지 않는다.
 
+### main merge 시 자동 migration 보호
+
+Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `drizzle-kit migrate`를 실행한다. drizzle은 pending migration 전체를 한 transaction으로 적용하므로 hot table(`reservations`, `payments`, `ticket_items`, `showtimes`, `seat_inventories`) DDL은 진행 중 transaction이 끝날 때까지 ACCESS EXCLUSIVE를 기다린다. 그동안 뒤따르는 조회·결제 확정이 모두 그 뒤에 줄을 선다. 이를 막기 위해 다음을 적용한다.
+
+- migration job의 모든 DB 세션은 `PGOPTIONS`로 `lock_timeout`(기본 `5s`)과 `statement_timeout`(기본 `60s`)을 받는다. 잠금을 시간 안에 얻지 못하면 migration 전체가 rollback되고 API/Web 배포 job은 실행되지 않는다. 한산한 시간에 Deploy를 재실행한다. 값은 repository variable `MIGRATION_LOCK_TIMEOUT`/`MIGRATION_STATEMENT_TIMEOUT`으로 바꾸며, DB preflight가 실제 세션 값을 다시 읽어 미적용이면 migration을 거부한다.
+- 판매 오픈 전날부터 현장 입장 종료까지 repository variable `MIGRATION_FREEZE=true`를 둔다. 이 기간에는 pending migration이 하나라도 있으면 Deploy가 DB 변경 전에 실패한다. schema 변경이 없는 hotfix는 그대로 배포된다. freeze 해제는 hot table 잠금 영향을 검토한 뒤 명시적으로 한다.
+- 대형 테이블 인덱스는 단일 transaction migration 안에서 `CREATE INDEX CONCURRENTLY`를 쓸 수 없다. 별도 승인 runbook으로 `CONCURRENTLY` 생성 후 migration은 `IF NOT EXISTS`로 확인만 하도록 분리한다.
+- 더 긴 잠금 대기가 필요한 migration은 `SET LOCAL lock_timeout`을 쓰지 않는다(0038 이후는 `apps/api/src/database/migration-lock-timeout.spec.ts`가 CI에서 막는다). 단독 배포로 분리하고, 판매 시간대를 피한 승인된 창에서 repository variable `MIGRATION_LOCK_TIMEOUT`(최대 `30s`)을 올린다.
+- 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
+- 이미 운영에 적용된 0033에는 역사적인 `SET LOCAL lock_timeout = '10s'`가 남아 있다(0037까지는 적용 완료라 수정하지 않는다). `SET LOCAL`은 transaction이 끝날 때까지 유지되고 drizzle은 pending migration을 한 transaction으로 적용하므로, 0033이 pending인 환경(예: 빈 DB에 처음부터 적용)에서는 같은 batch의 뒤 migration도 `MIGRATION_LOCK_TIMEOUT`(기본 5s) 대신 10s를 받는다. 그런 환경에 적용할 때만 0033 뒤 DDL을 10s 대기 기준으로 검토한다. 새 migration에서는 이 패턴을 쓰지 않는다(위 항목).
+
+### 2026-10 감사 migration batch(0038–0047) 첫 배포
+
+감사 수정 브랜치를 처음 배포하면 0038–0047 열 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다. 모든 잠금은 batch 전체가 commit될 때까지 유지된다. `ACCESS EXCLUSIVE`는 write뿐 아니라 읽기(`SELECT`)도 막고, `SHARE`·`SHARE ROW EXCLUSIVE`는 읽기는 두고 write를 막는다. 잠금 대기는 batch 전체가 `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 따른다. 이 batch의 migration에는 `SET LOCAL lock_timeout`이 없다.
+
+| Migration | 잠금 대상 | 영향 |
+| --- | --- | --- |
+| 0038 | `reservation_seats`, `payments` | `CONCURRENTLY` 없는 인덱스 생성(`SHARE`). 생성 동안 두 테이블 write(좌석 선택 prepare, confirm, webhook 기록)가 멈춘다. |
+| 0039 | `users`, `reservations` | `users` 인덱스 생성(`SHARE`, 가입·프로필 write 대기)과 `reservations` 전 행 `UPDATE`(행 잠금, 예약 write 대기). 사전 확인·batch 선변환은 아래 '예매 게이트 변경의 배포 차단 점검'을 따른다. |
+| 0040 | `ticket_benefits`, `ticket_benefit_entitlements`, `admin_audit_logs` | 컬럼 type 변경(`ticket_benefits`)과 컬럼 추가(`ticket_benefit_entitlements`)는 `ACCESS EXCLUSIVE`라 특전 설정·지급 조회와 발권 시 특전 동기화가 읽기까지 멈춘다. FK 추가는 참조 대상 `admin_audit_logs`에 `SHARE ROW EXCLUSIVE`를 잡아 관리자 감사 기록 INSERT(감사 대상 관리자 작업 전체)가 기다린다. |
+| 0041 | `support_notices` | 컬럼 추가는 `ACCESS EXCLUSIVE`라 공지 조회(공개 공지 화면 포함)와 편집이 멈추고, 이어지는 인덱스 생성(`SHARE`) 동안 공지 write가 기다린다. |
+| 0043 | `seat_inventories` | `CONCURRENTLY` 없는 부분 인덱스 생성. 생성 동안 `SHARE` 잠금으로 좌석 상태 write(확정 시 sold, 취소 시 held/available, 관리자 좌석 작업)가 멈춘다. 대상 행이 적어도 전체 테이블을 스캔한다. |
+| 0044 | `ticket_scan_events` | 컬럼 추가, `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가가 `ACCESS EXCLUSIVE`다. 검표 기록과 현장 모니터 조회가 멈춘다. |
+| 0046 | `users` | 인덱스 생성. 로그인 조회는 계속되고 write만 기다린다. |
+
+0042(감사 enum 값), 0045(`consent_items` 행 INSERT), 0047(문의 상태·담당자 변경 감사 enum 값)은 hot table을 잠그지 않는다. 그래도 앞 migration이 잡은 잠금은 이들이 끝나 batch가 commit될 때까지 남는다.
+
+- 판매 오픈, 현장 입장, 결제 확정이 몰리는 시간대를 피한 배포 창에서 실행하고, 그 창 밖에서는 `MIGRATION_FREEZE=true`를 유지한다.
+- 실행 전에 `seat_inventories`, `reservations`, `ticket_scan_events` 행 수와 활성 트랜잭션(`pg_stat_activity`의 `state <> 'idle'`)을 확인한다. 잠금 대기로 실패하면 transaction 전체가 rollback되므로 한산한 시간에 다시 실행한다.
+- 대형 운영 데이터에서 0038·0039(`idx_users_verified_phone_suffix`)·0043·0046 인덱스 생성이 오래 걸릴 것으로 보이면, 별도 승인 runbook으로 같은 이름의 인덱스를 `CREATE INDEX CONCURRENTLY`로 먼저 만든다. migration은 `IF NOT EXISTS`라 그 뒤에는 아무 일도 하지 않는다.
+
+## 예매 게이트 변경의 배포 차단 점검 (2026-10 감사 #62·#68·#70)
+
+### 결제수단 정책 (#70)
+
+reservation prepare는 공연 `allowed_payment_methods`에 없는 결제수단을 409로 거절한다. 정책 행이 없거나 목록이 비면 플랫폼 기본값 `["CARD"]`만 허용한다. 결제 단계 화면은 좌석을 유지한 채 다른 수단을 고르게 한다. 그래도 위젯에 보이는 수단이 정책에서 빠져 있으면 구매자는 그 수단으로 결제할 수 없다.
+
+서버가 강제하는 집합은 공연 정책(없으면 `["CARD"]`)과 `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`(`CARD`·`TRANSFER`·`SIMPLE_PAY`·`FOREIGN_EASY_PAY`)의 교집합이다. 정책에 `VIRTUAL_ACCOUNT`·`MOBILE_PHONE`이 저장돼 있어도 팔지 않는다. 이 집합을 세 지점에서 다시 본다.
+
+- 결제 handoff(`POST /payments/branch`): 요청 수단과 예매에 저장된 수단이 모두 집합에 있어야 한다. 아니면 `checkout_started_at`을 기록하기 전에 409 `CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE`다.
+- 동기 confirm: Toss 승인 응답의 실제 결제수단(`method`, 간편결제면 `easyPay.provider`)이 저장된 결제수단·간편결제사와 같고 집합 안이어야 한다. 아니면 발권하지 않고 보상 취소한 뒤 400 `PAYMENT_APPROVAL_MISMATCH`다(아래 계약).
+- 비동기 DONE(웹훅·pending return): provider 조회 결과의 결제수단으로 같은 판정을 한다. 아니면 `payment_method_not_allowed`로 전액 보상 취소한다(`ASYNC_DONE_PAYMENT_METHOD_NOT_ALLOWED_CANCELLED`). 입금이 끝난 가상계좌는 환불 계좌가 있어야 전액 취소되므로 자동 취소하지 않고 즉시 `attention`(진단 `ASYNC_DONE_COMPENSATION_ATTENTION`, error 로그)으로 남긴다. 운영자가 결제사에서 환불한다.
+
+운영 주의 — 판매 중 결제수단 제거: confirm과 비동기 DONE은 주문 시점이 아니라 승인 처리 시점의 현재 공연 정책으로 결제수단을 판정한다. 그래서 판매 중인 공연의 허용 결제수단에서 수단을 빼면, 이미 Provider Handoff(`checkout_started_at` 기록)나 결제사 승인까지 마친 그 수단의 결제도 confirm·비동기 DONE에서 보상 취소(자동 환불)되고 발권되지 않으며 좌석이 풀린다. 신규 결제만 막으려는 장애 대응이라도 같다.
+
+- 바꾸기 전에 그 공연에서 해당 수단으로 진행 중인 결제를 승인된 접근 경로로 read-only로 센다. 0건일 때 바꾼다. 0건이 아니면 그 주문들이 결제 기한으로 끝날 때까지 기다리거나, 판매·대기열 시간 밖으로 미룬다. `$1`은 공연 id, `<METHOD>`는 `CARD`·`TRANSFER`·`SIMPLE_PAY`·`FOREIGN_EASY_PAY` 중 빼려는 범주다.
+
+  ```sql
+  BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+  SELECT count(*)
+  FROM reservations r
+  JOIN showtimes s ON s.id = r.showtime_id
+  WHERE s.performance_id = $1
+    AND r.status = 'PENDING_PAYMENT'
+    AND r.checkout_started_at IS NOT NULL
+    AND r.checkout_payment_method->>'method' = '<METHOD>';
+  ROLLBACK;
+  ```
+
+- 관리자 공연 편집 폼은 공개 공연에서 결제수단을 빼면 저장 전에 확인을 요구한다(admin-console-2). 확인 창이 나오면 위 쿼리 결과를 먼저 본다.
+- 0건을 확인한 뒤 바꿨더라도 그 사이 handoff한 주문은 같은 보상 취소를 겪는다. 판매가 몰리는 시간에는 바꾸지 않는다.
+
+1. Toss 위젯 관리자에서 `DEFAULT`·`uspay` variant에 실제로 켜진 결제수단을 read-only로 확인해 기준 목록을 정한다. 범주는 국내·해외 카드 `CARD`, 계좌이체 `TRANSFER`, 토스페이·네이버페이·카카오페이 `SIMPLE_PAY`, Alipay·PayPal·TrueMoney `FOREIGN_EASY_PAY`다. [2026-09-21 가맹점 설정 확인](../research/2026-09-21-payment-merchant-settings-audit.md) 기준으로 `DEFAULT`는 카드·계좌이체, `uspay`는 카드·Alipay·PayPal이므로 기준 목록은 `["CARD", "TRANSFER", "FOREIGN_EASY_PAY"]`다. 국내 간편결제가 켜져 있으면 `"SIMPLE_PAY"`를 추가한다.
+2. 배포 전에 판매 종료가 아닌 공개 공연 전체를 아래 쿼리로 점검한다. 쿼리의 목록을 1번 기준 목록으로 바꿔 넣는다. 결과가 한 행이라도 있으면 배포를 멈추고 관리자 공연 편집에서 결제수단을 저장한다. 운영자가 특정 공연에서 의도적으로 뺀 범주는 그 공연만 예외로 기록한다.
+3. 배포 전 관리자 화면은 `SIMPLE_PAY`를 선택지에 두지 않고, 불러올 때와 저장할 때 지운다. 이번 release부터 관리자 화면은 `@grabit/shared`의 `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`(`CARD`, `TRANSFER`, `SIMPLE_PAY`, `FOREIGN_EASY_PAY`)를 모두 제공한다. 이 목록은 결제 화면이 prepare에 보낼 수 있는 범주와 같다. 기준 목록에 `SIMPLE_PAY`가 있으면 나머지 범주만 배포 전에 맞춘다. 배포는 판매·대기열 시간 밖에 하고, 배포 직후 각 공연 편집에서 `국내 간편결제`를 체크해 저장한 뒤 점검 쿼리를 다시 실행해 0행을 확인한다. 그 사이 국내 간편결제를 고른 구매자는 좌석을 유지한 채 다른 수단 안내를 받는다.
+
+```sql
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+-- 목록은 1번에서 정한 기준 목록. 국내 간편결제가 켜져 있으면 "SIMPLE_PAY"를 추가한다.
+SELECT p.id, p.title, p.status, bp.id IS NULL AS missing_policy, bp.allowed_payment_methods
+FROM performances p
+LEFT JOIN booking_policies bp ON bp.performance_id = p.id
+WHERE p.publish_state = 'published' AND p.status <> 'ended'
+  AND (bp.id IS NULL
+    OR NOT bp.allowed_payment_methods @> '["CARD", "TRANSFER", "FOREIGN_EASY_PAY"]'::jsonb);
+ROLLBACK;
+```
+
+- 웹은 위젯이 알려 주는 결제수단 코드를 명시 표로 분류한다. 가상계좌·휴대폰은 정확히 분류한 뒤 모든 공연 정책에서 거절하고(prepare도 `isCheckoutPaymentMethodAllowed`로 409), PAYCO·삼성페이·상품권·카드사 바로가기·미지의 코드는 미지원으로 표시해 서버로 보내지 않는다. 기본 `CARD` 분류는 없다. 관리자 화면의 허용 목록 4종(`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`)이 서버가 받는 집합과 같다.
+- 그래도 위젯 iframe 안에서 결제창이 열린 뒤 수단이 바뀌는 경로는 서버가 막는다. confirm과 비동기 DONE이 실제 승인 결제수단을 저장된 수단·공연 정책과 대조하므로, 그런 결제는 발권되지 않고 보상 취소(가상계좌 입금 완료 건은 `attention`)로 끝난다. 다만 구매자는 인증까지 마친 뒤 취소를 겪으므로, Toss 위젯 variant에 가상계좌·휴대폰 결제를 켜지 않는 운영 원칙은 그대로다.
+
+### migration 0039 (#62·#68)
+
+0039는 `reservations`의 admission token 원문을 `sha256:<hex>` digest로 바꾸는 UPDATE를 포함한다. prepare가 그동안 cookie token을 저장했으므로 과거 예약 대부분이 대상이다. drizzle migrator는 대기 중인 migration 전체를 한 transaction에서 실행한다. 그래서 행 잠금이 migrate commit까지 유지되고, 그동안 같은 예약을 갱신하는 confirm·webhook·만료 worker가 기다린다. 0039에는 `SET LOCAL lock_timeout`이 없다. `MIGRATION_LOCK_TIMEOUT`(기본 5s)을 넘는 잠금 대기는 migration을 실패시킨다(전체 rollback).
+
+1. 배포 전에 대상 행 수를 확인한다. `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';`
+2. 0039가 포함된 배포는 판매·대기열 시간 밖에 실행한다. 결제 기한이 남은 `PENDING_PAYMENT` 예약이 없는 시간이 가장 안전하다.
+3. 행 수가 커서 한 번에 다시 쓰기 부담스러우면, 배포 전에 승인된 운영 DB 절차로 같은 변환을 batch로 미리 실행한다. 아래 문장을 갱신 행이 0이 될 때까지 반복한다. 이전 revision은 이 컬럼을 예매 상세 응답에만 싣고, 웹은 그 값을 읽지 않는다. 따라서 미리 변환해도 동작이 바뀌지 않는다. 그러면 migration의 UPDATE는 그 사이 새로 쓰인 행만 다룬다.
+
+   ```sql
+   UPDATE reservations
+   SET admission_token = 'sha256:' || encode(sha256(convert_to(admission_token, 'UTF8')), 'hex')
+   WHERE id IN (
+     SELECT id FROM reservations
+     WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%'
+     LIMIT 5000
+   );
+   ```
+
+4. 롤링 구간에 이전 revision이 원문을 다시 쓸 수 있다. 새 API revision이 트래픽 100%를 받은 뒤, 승인된 운영 DB 절차로 0039의 `UPDATE reservations ...` 문장(또는 3번 batch)을 한 번 더 실행한다. 이미 digest인 값은 바뀌지 않는다. 1번 확인 쿼리의 결과가 0이어야 한다.
+5. 다시 쓴 행의 dead tuple을 정리하도록 승인된 운영 DB 절차로 `VACUUM (ANALYZE) reservations;`를 실행한다. 행 내용은 바뀌지 않는다.
+
+0039는 `idx_users_verified_phone_suffix`도 transaction 안에서 비동시로 만든다. 만드는 동안 `users` 쓰기가 기다리므로 같은 이유로 피크 밖에 배포한다. 같은 휴대폰의 linked 계정 pending 좌석 집계는 0038(감사 #59)이 만드는 `idx_reservation_seats_reservation_id`를 쓰므로, 0038이 같은 배포 또는 그 이전에 적용돼 있어야 한다. 배포 후 `SELECT indexname FROM pg_indexes WHERE indexname IN ('idx_users_verified_phone_suffix', 'idx_reservation_seats_reservation_id');`가 2행인지 확인한다.
+
+### 같은 휴대폰 계정의 결제 대기 (#62)
+
+같은 인증 휴대폰의 다른 계정이 결제 기한 안의 `PENDING_PAYMENT` 좌석을 갖고 있으면 좌석 lock과 prepare가 매수 제한(409)으로 막는다. 결제 기한이 지나거나 그 예매를 취소하면 풀린다. prepare 전의 Redis 좌석 hold는 계정 단위다. 그래서 두 계정이 거의 동시에 prepare를 통과하면, confirm advisory lock 뒤의 결제가 Toss 승인 후 매수 초과 보상 취소된다. CS 안내는 기존 매수 초과 보상 취소와 같다.
+
 ## 기본 베네핏 누락 복구
 
 `included-benefit-repair.cli`는 설정 최신 버전의 included 권리만 다룬다. `CONFIRMED` 예약, `DONE` 결제, `active` 티켓에 한정한다. 추첨/수령/취소 이력을 바꾸지 않는다. 이미 active 또는 redeemed인 같은 권리는 제외한다.
+
+**실행 시간대:** 판매 오픈 직후, 결제 피크, 해당 회차 입장·특전 지급 시간대에는 apply하지 않는다. apply는 회차 행을 `FOR NO KEY UPDATE`로 잡아 그 회차의 발권·설정 변경·현장 특전 수령을 commit까지 멈춘다. 한산한 시간 또는 해당 회차 판매가 소강일 때 실행한다. dry-run은 언제든 가능하다.
 
 ```bash
 pnpm --filter @grabit/api build
 # DATABASE_URL은 승인된 대상 환경에서 비밀 주입한다. 명령행에 값을 적지 않는다.
 node apps/api/dist/ops/included-benefit-repair.cli.js dry-run <showtime-uuid>
-node apps/api/dist/ops/included-benefit-repair.cli.js apply <showtime-uuid> <reviewed-hash>
+node apps/api/dist/ops/included-benefit-repair.cli.js apply <showtime-uuid> <reviewed-hash> \
+  --operator-user-id <admin-user-uuid> --reason "<승인 근거 10-500자>"
 node apps/api/dist/ops/included-benefit-repair.cli.js dry-run <showtime-uuid>
 ```
 
 1. dry-run은 READ ONLY/REPEATABLE READ다. 두 mode 모두 회차가 없으면 `BENEFIT_REPAIR_SHOWTIME_NOT_FOUND`로 실패한다. 회차·누락 티켓 수·권리 수·해시만 출력한다.
 2. 회차와 생성 대상 목록의 해시를 검토한다. hash에는 ticket id, benefit identity, configuration id와 표시문구 snapshot이 포함된다.
-3. 명시 승인 후 apply한다. 회차 → 티켓 순서로 잠근 뒤 후보를 다시 계산한다. 해시가 달라졌으면 중단한다.
-4. 검토된 누락 권리만 INSERT한다. 실제 returning 수가 예상과 다르면 transaction을 취소한다.
-5. 다시 dry-run하여 누락 0/0을 확인하고, 티켓·제한 베네핏·수령 기록 수가 보존됐는지 별도 대조한다. 출력 JSON은 운영 증거로 보관한다.
+3. 명시 승인 후 apply한다. `--operator-user-id`는 `benefits.manage` 권한이 있는 활성 관리자여야 한다(아니면 `BENEFIT_REPAIR_OPERATOR_NOT_ALLOWED`). apply는 `lock_timeout 2s`로 회차를 잠근 뒤 후보를 다시 계산한다. 해시가 달라졌거나 후보 티켓이 그 사이 취소되면 `BENEFIT_REPAIR_CANDIDATES_CHANGED`로 중단한다. 결제·현장 처리와 경합하면 `BENEFIT_REPAIR_LOCK_TIMEOUT`으로 실패하므로 한산한 시간에 dry-run부터 다시 한다.
+4. 후보 티켓(예약·결제 포함)만 `FOR SHARE`로 잠근다. 나머지 티켓의 검표·취소는 막지 않는다. 검토된 누락 권리만 1,000행 단위로 INSERT한다. 실제 returning 수가 예상과 다르면 transaction을 취소한다.
+5. 같은 transaction에서 `admin_audit_logs`에 `benefits.included_repair.apply`(실행자, 사유, 검토 해시, 설정 id, 대상 수) 1행을 남기고, 생성한 권리의 `repair_audit_log_id`에 그 audit id를 기록한다. 출력 JSON의 `auditLogId`로 대조한다. 정상 자동 발급 권리는 이 값이 NULL이다.
+6. 다시 dry-run하여 누락 0/0을 확인하고, 티켓·제한 베네핏·수령 기록 수가 보존됐는지 별도 대조한다. 출력 JSON은 운영 증거로 보관한다.
+
+```sql
+-- repair로 생긴 권리와 실행 근거
+SELECT e.id, e.ticket_item_id, e.benefit_identity, a.actor_user_id, a.reason, a.created_at
+FROM ticket_benefit_entitlements e
+JOIN admin_audit_logs a ON a.id = e.repair_audit_log_id
+WHERE e.showtime_id = '<showtime-uuid>';
+```
 
 2026-09-18 09:39 KST 읽기 전용 재조회: Girl Rules 회차 `3d66b3d3-61f3-427c-9fda-1a5eece511c5`는 3티켓·13권리 누락, 전체 공연 활성 좌석 중복 0, 기본 권리 중복 0, 재고 소유권 불일치 0이었다. 이 수치는 실행 시 다시 확인하며 이 문서 자체가 apply 승인은 아니다.
 
@@ -132,12 +254,32 @@ AND NOT EXISTS (
 
 새 공연마다 품목/회차별 `기초 재고 + 입고 + 반환 - 실제 지급 - 손실 = 마감 잔량`을 대조한다. 권리수, 발표표, 추가 보상표, 지급 원장, 실물 잔량은 각각의 기준시각과 버전을 적는다. 기술 테스트는 이 원장 작성과 운영자 인수를 대체하지 않는다.
 
+## 결제 승인 확인 계약 (2026-09-30 오픈 감사 반영)
+
+동기 `POST /payments/confirm`은 Toss 승인 응답을 그대로 믿지 않는다. 아래 계약은 `ReservationFinalizationService` 기준이다.
+
+- 승인 응답은 요청한 `paymentKey`·`orderId`와 같아야 하고 `status=DONE`이어야 한다. 국내·해외카드 KRW 경로는 `currency=KRW`와 원화 금액을, PayPal·해외카드 USD 경로는 `currency=USD`(외화 상점 표기 `MUSD` 포함)와 저장된 견적 cent 금액을 요구한다. 결제수단도 경로별 허용 목록(국내 카드·계좌이체·간편결제, 해외카드는 카드, PayPal은 해외간편결제)에 있어야 한다. 휴대폰은 국내 경로에서도 받지 않는다. 그다음 승인 `method`(한글·영문 라벨, 간편결제면 `easyPay.provider`)를 범주로 바꿔 예매에 고정된 `checkout_payment_method`와 같은지(간편결제는 토스페이·네이버페이·카카오페이 중 같은 간편결제사인지), 공연의 강제 집합 안인지 본다. 가상계좌·휴대폰·상품권·PAYCO 등 그 밖의 간편결제사는 언제나 불일치다. 새 승인, 결과 불명 뒤 조회로 찾은 승인, 회차 시작 뒤 조회로 찾은 승인 모두 같은 판정이다. 하나라도 다르면 발권하지 않고 즉시 전액 보상 취소한다(결제수단 불일치 사유는 `허용되지 않은 결제수단으로 인한 자동 취소`). 가상계좌 `WAITING_FOR_DEPOSIT`처럼 DONE이 아닌 승인도 같은 처리다.
+- 새 승인을 보상할 때(승인 불일치, 승인 뒤 좌석 잠금 상실, 발권 transaction의 좌석 충돌·영구 실패)도 승인 전 게이트와 같은 순서다. `DONE`/`cancel_pending` 결제 행(`confirmCompensationClaim: true`)으로 먼저 선점하고, 취소가 완료되면 `CANCELED`/`compensation_cancelled`, 예약 `FAILED`, 진단 `CONFIRM_APPROVAL_COMPENSATED`를 남긴다. 선점 뒤에는 늦은 DONE 웹훅·pending return이 `DONE_CANCEL_PENDING`으로 끝나 발권하지 않는다. 취소가 `IN_PROGRESS`이면 `compensation_cancel_pending`, 실패하면 `compensation_cancel_failed`로 reconcile job을 등록한다. 선점 행을 DB에 쓰지 못하면 결제사 취소만 하고 reconcile job을 등록한다. 취소가 완료돼도 남는 로컬 기록이 없으므로 `compensation_cancelled_unrecorded`로 등록하고, job이 클라이언트 창이 끝난 뒤 조회로 `CANCELED`를 확인해 같은 기록을 남긴다(등록할 context가 없으면 `CRITICAL: unclaimed compensation cancel has no reconcile context`). 결과 불명 뒤 조회에서 이미 `CANCELED`인 결제가 나오면 같은 기록(`CANCELED`·`FAILED`·`CONFIRM_APPROVAL_COMPENSATED`)을 남긴 뒤 409다.
+- PayPal·해외카드 USD confirm은 예매에 고정된 `checkout_payment_method`가 같은 결제수단일 때만 Toss를 호출한다. 반대로 PayPal·해외카드로 고정된 예매를 국내 경로(기본 키, 원화 금액)로 confirm하면 Toss 호출 전에 400이다.
+- Toss 승인 호출 직전에 Valkey `{payment-provider-confirm}:<orderId>`(값 paymentKey, 24시간)를 기록한다. 기록하지 못하면 Toss를 호출하지 않고 503이다. 이 표지가 없는 주문은 Toss 승인을 요청한 적이 없으므로 아래 회차 cutoff와 승인 전 거절에서 Toss 조회를 생략한다. 표지를 읽지 못하면 조회한다. Provider Handoff 해제를 막는 `{payment-confirm-attempt}` 표지(게이트 전에 기록)와는 별개다.
+- 회차 시작 시각(`showtimes.date_time`)이 지났으면 Toss 승인을 호출하지 않는다. 승인 요청 표지가 있으면 같은 paymentKey를 조회한다. 미승인(`IN_PROGRESS`·`ABORTED`·`EXPIRED` 등)이거나 결제가 없으면(`NOT_FOUND_PAYMENT`) 403 `이미 시작된 회차는 예매할 수 없습니다.`를 반환한다. 이전 시도에서 이미 승인된 결제는 판매 마감으로 거절하지 않고 조회한 승인 결과로 확정한다. 조회 자체가 실패하면(timeout, 통신 오류, 5xx, rate limit, 형식이 맞지 않는 응답) 승인 여부를 모르므로 403 대신 503으로 재시도시키고 reconcile job을 등록한다.
+- 결제 행이 없고 승인 요청 표지가 있는 주문이 Toss 승인 전 확정 거절(좌석 점유 시간 만료, 1인 매수 제한, 좌석 잠금 상실 409)에 걸리면 같은 paymentKey를 먼저 조회한다. 이전 시도가 승인까지 갔지만 아래의 503으로 끝나 DB 기록이 없는 경우를 이 거절이 방치하지 않게 하기 위해서다. 이 주문의 승인이 확인되면 confirm lease를 다시 확인하고, `DONE`/`cancel_pending` 결제 행으로 주문을 선점(claim)한 뒤 게이트별 사유로 전액 보상 취소한다. 취소가 완료되면 결제 행 `CANCELED`/`compensation_cancelled`, 예약 `FAILED`, 진단 `CONFIRM_APPROVAL_COMPENSATED`를 남기고 원래 409를 반환한다. `payments.reservation_id`가 unique라서 선점과 발권 commit 중 하나만 성공한다. 선점된 주문은 confirm 재시도(409)와 늦은 DONE 웹훅(`DONE_CANCEL_PENDING`)으로 발권되지 않는다. 미승인이면 원래 409를 반환하고, `ABORTED/EXPIRED`면 실패 기록도 남긴다. 조회 실패, 선점 직전 lease 상실, 취소 미완료·실패는 reconcile job을 등록한다. Redis 장애로 좌석 잠금을 확인하지 못한 경우는 조회하지 않고 오류로 재시도시킨다.
+- Toss 호출은 승인 30초·취소 60초·조회 15초에서 끊는다. timeout, 통신 오류, 5xx, JSON이 아닌 응답, `ALREADY_PROCESSED_PAYMENT`는 결과 불명으로 보고 같은 paymentKey를 조회한다. 이 주문의 승인이 확인되면 발권을 계속하고, 승인되지 않은 `ABORTED/EXPIRED`가 확인되면 웹훅과 같은 실패 기록(결제 행·예약 FAILED·진단)을 남긴다. 확인할 수 없으면 보상 취소 없이 503으로 재시도시킨다. 조회한 결제의 orderId가 다르면 어떤 쓰기나 취소도 하지 않는다. confirm에는 결정적 Idempotency-Key를 보내지 않는다. Toss는 같은 paymentKey를 두 번 승인하지 않으며, 같은 키로 저장된 일시 오류 응답이 재시도를 막을 수 있기 때문이다.
+- 승인 뒤 confirm lease 갱신이 실패하거나 다른 처리자에게 넘어가도 보상 취소하지 않는다. 다른 처리자가 확정했으면 그 결과를 성공으로 반환하고, 아니면 503으로 재시도시킨다. 만료된 lease를 다시 얻었고 아무도 확정하지 않았으면 이어서 확정한다. 좌석 잠금 상실(409)만 보상 취소 사유다. Redis 오류로 확인하지 못하면 503이다.
+- 발권 transaction이 일시 DB 오류(pool 획득 timeout, 연결 끊김, deadlock, serialization, failover)로 실패하면 최대 3회 재시도한다. 매번 먼저 확정 여부를 다시 읽어 COMMIT 응답 유실을 성공으로 처리한다. 재시도를 모두 실패했거나 영구 오류일 때만 보상 취소한다. 단, 연결이 끊긴 시도(COMMIT이 적용됐을 수 있음)가 있었는데 확정 상태도 다시 읽지 못했다면 보상 취소 대신 503으로 재시도시킨다. 연결을 얻지 못했거나 서버가 rollback한 오류뿐이었다면 커밋되지 않은 것이 확실하므로 그대로 보상 취소한다.
+- 주문이 이미 다른 paymentKey의 결제로 확정돼 있으면 이번 승인은 중복 청구이므로 그 승인만 `중복 결제로 인한 자동 취소`로 취소하고(확정된 결제 행은 건드리지 않음) 확정된 예매를 반환한다. 이 취소가 실패해도 확정된 예매를 반환하고 reconcile job이 취소를 재시도한다.
+- commit 이후의 좌석 잠금 정리, sold broadcast, QR 발급, 알림 예약 실패는 confirm 결과를 바꾸지 않는다. QR과 알림은 다음 예매 조회에서 다시 시도한다. confirm 직후 상세 조회가 5xx나 인프라 오류로 실패하면 503 `결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.`를 반환한다. 404 같은 4xx 응답은 결제 완료로 안내하지 않고 그대로 반환한다.
+- 승인 뒤 결과 불명 503(`PAYMENT_CONFIRM_OUTCOME_UNKNOWN`의 모든 reason), 새 승인의 보상 취소 실패·미완료, 중복 승인 취소 실패, 예상하지 못한 승인 후 오류는 클라이언트 재시도에 의존하지 않는다. 같은 요청 안에서 pg-boss `payment-confirm-reconcile` job(`short` 정책, singletonKey `<orderId>:<paymentKey>`, 60초 뒤 시작)을 등록한다. 대기열 입장 창이 끝나면 `/payments/confirm`은 AdmissionGuard에서 403으로 막히고, PayPal DONE 웹훅은 발권하지 않기 때문이다. job은 API(`BACKGROUND_PROCESSING_ENABLED=true`)나 bounded background worker에서 confirm·웹훅과 같은 주문 lease(`{payment-confirm}:<orderId>`)를 잡고 실행되며 티켓을 발권하지 않는다. 클라이언트가 아직 확정할 수 있는 동안(`admission_active_until_at`과 `payment_deadline_at`+60초 중 늦은 시각까지)은 Toss를 조회하지 않고 그 시각 30초 뒤로 다시 예약한다. 그 뒤에는 다음 순서로 처리한다. 같은 paymentKey의 결제 행이 있으면 기록된 것으로 보고 끝내며, `DONE`/`cancel_pending` 행은 confirm이 선점한 행(`confirmCompensationClaim: true`이고 `asyncDoneCompensation` 기록이 없음)만 취소를 마무리한다. 그 밖의 `DONE`/`cancel_pending` 행은 비동기 DONE 보상 복구가 소유하므로 조회·취소·진단 없이 `async_compensation_owned`로 끝낸다. 반대로 비동기 DONE 복구는 confirm 선점 행을 채택하지 않는다. 한 행의 소유자는 하나라서 attention·진단이 두 번 남지 않는다. 다른 paymentKey의 결제 행이 있으면 이 승인은 기록될 수 없으므로 이 승인만 취소한다. 결제 행이 없으면 Toss 조회 결과로 정한다. 승인이면 위 게이트와 같은 방식으로 선점→전액 보상 취소(`결제 유효 시간 초과로 인한 자동 취소`)→기록하고, `ABORTED/EXPIRED`면 실패를 기록한다. 조회 실패·`IN_PROGRESS`·진행 중인 취소·lease 경합은 1분부터 최대 30분 간격의 backoff로 재시도한다. 모든 취소 직전에 lease 소유와 '승인 상태이며 진행 중인 취소 없음'을 조회로 확인한다. 20회(약 8시간) 안에 수렴하지 않으면 `CRITICAL: PAYMENT_CONFIRM_RECONCILE_EXHAUSTED`를 남기고 멈춘다.
+- 결과 불명 경로는 `PAYMENT_CONFIRM_OUTCOME_UNKNOWN`(paymentKey·orderId 포함), 승인 불일치는 `CRITICAL: provider approval does not match the order`, 중복 승인은 `CRITICAL: order committed with another payment`, 보상 취소 실패는 `CRITICAL: compensation cancel failed`, 선점 행 없이 끝난 보상 취소를 job에 넘기지 못하면 `CRITICAL: unclaimed compensation cancel has no reconcile context` 로그를 남긴다. reconcile job을 등록하지 못하면 `CRITICAL: payment confirm reconcile not scheduled`/`CRITICAL: payment confirm reconcile enqueue failed`를, 재시도 한도에 이르면 `CRITICAL: PAYMENT_CONFIRM_RECONCILE_EXHAUSTED`를 남긴다. 운영 알림은 이 문자열들을 기준으로 건다. 수동 대조는 이 CRITICAL 로그와 아래 gate의 orderId 기준 조회로 한다.
+
 ## 새 공연 오픈의 남은 gate
 
-- [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다.
+- 결제 확인 운영 점검: 국내·외화 상점 모두 `PAYMENT_STATUS_CHANGED` 웹훅 URL과 서명 secret이 등록·일치하는지, 최근 `EXPIRED/ABORTED` 이벤트가 `payment_webhook_events`에 처리 완료로 쌓이는지 확인한다. 승인 전 확정 거절(점유 만료·매수 초과·회차 시작)은 confirm 시점 조회로 `ABORTED/EXPIRED`가 확인되지 않는 한 PG가 결제를 만료시키는 웹훅이 올 때까지 예약을 `PENDING_PAYMENT`로 둔다(ADR 0010). Toss 위젯 variant에 가상계좌 등 비동기 입금 수단을 켜지 않는다. 위 로그 문자열의 log-based alert를 만들고, pg-boss `payment-confirm-reconcile` job이 실행되는지(가장 오래된 `created` job 나이) 확인한다. `checkout_started_at` 이후 30분 넘게 결제 행이 없는 `PENDING_PAYMENT` 예약은 orderId로 Toss 주문 조회(`GET /v1/payments/orders/{orderId}`)를 국내·외화 상점 키 각각으로 실행해 대조한다. 결제 행이 없는 예약에는 paymentKey가 DB에 남지 않기 때문이다. 승인 건은 결제 행부터 본다. `DONE`/`cancel_pending` 행의 `provider_metadata`에 `confirmCompensationClaim: true`가 있고 `asyncDoneCompensation`이 없으면 reconcile job(`payment-confirm-reconcile`, singletonKey `<orderId>:<paymentKey>`) 소관이니 그 job과 로그를 확인한다. 그 밖의 행은 비동기 DONE 보상 복구 소관이다(`asyncDoneCompensation.state`·`attempts`·`lastError`). 결제 행 없이 승인만 있는 건만 reconcile job 로그(`PAYMENT_CONFIRM_OUTCOME_UNKNOWN`)로 추적한다. confirm 안에서 보상된 주문은 `PENDING_PAYMENT`로 남지 않고 `FAILED`·`CONFIRM_APPROVAL_COMPENSATED`가 된다. `DB_POOL_MAX`·`--concurrency`·Cloud SQL `max_connections`·인스턴스 수를 같은 회차 동시 confirm 부하로 다시 산정한다.
+- [판매 운영 용량 복원](managed-demo-cost-floor.md#restore-for-an-actual-ticket-opening): booking gate를 닫은 상태에서 DB/Valkey/API/Web 용량 및 지속 worker를 복원하고 대상 공연으로 부하·queue·롤백을 검증한다. 현재 demo의 5분 worker 주기를 현장 운영 성능으로 간주하지 않는다. Valkey는 replica 1개 이상·multi-zone·오픈/입장일을 피한 maintenance window·`noeviction`을 `verify-valkey-sale-posture.mjs`로 확인하고, DB connection 예산과 WebSocket 동시 연결을 포함한 API 용량을 검증한다.
+- [사이트 전체 예매 kill switch](managed-demo-cost-floor.md#sitewide-booking-kill-switch): `BOOKING_ENABLED`는 API·Web·worker가 같은 repository variable을 쓴다. 닫을 때는 variable을 먼저 `false`로 바꾼 뒤 live API → Web → worker를 갱신한다. 다시 여는 배포는 수동 dispatch의 `allow_booking_reopen=true` 없이는 거부된다. API·Web 배포 job은 배포 직전에 live 값을 다시 읽으므로, 진행 중인 Deploy 도중에 닫은 상태도 유지된다. `allow_booking_reopen=true` run에서도 시작 때 열려 있었거나 run 도중 revision이 바뀐 서비스는 닫힌 채 두고 경고한다. 시작 때부터 닫혀 있었고 바뀌지 않은 서비스만 경고와 함께 다시 연다. 시작 시점 기록을 읽지 못하면 승인 run은 경고와 함께 연다. 진행 중 run이 있었다면 끝난 뒤 runtime flag를 다시 확인하고, 재개방 run 자체를 멈추려면 `gh run cancel`로 취소한다.
 - [결제 운영 UAT](live-foreign-payment-cancel-uat-2026-06-03.md): 명시 승인된 계정·결제 금액·수단으로 승인 → 발권 → 취소 → PG/DB 대조를 수행한다. 고객 연락, 임의 계정 병합, 실제 결제/환불은 포함 승인 없이는 실행하지 않는다.
 - [기존 오픈 evidence gates](ticketing-open-evidence-gates-2026-06-03.md): actual phone/browser, scanner 권한, 동시 스캔, 연결 단절/복구, 수동 검색 예외, 실물 원장 담당자 인수를 남긴다. 미실행 항목은 pass가 아니다.
-
+- [2026-10 오픈 감사 수정의 운영 후속 조치](open-audit-remediation-2026-10.md): 감사 수정 브랜치의 배포 전·배포 직후·오픈 리허설 운영 조치와 결정 대기 항목을 감사 번호와 함께 모은 목록이다.
 
 ## 이번 검증 기록 (2026-09-18)
 
@@ -147,7 +289,7 @@ AND NOT EXISTS (
 | API 전체 integration | 6파일·63테스트 통과. testcontainers PostgreSQL 16/Valkey 8, 운영 DB 미사용 |
 | 핵심 재현 | 기존 상태의 중복 좌석, 7분 deadline, 베네핏 누락, 잠금 탈취, 이미 수령한 권리 재생성, 동시 late DONE 보상 취소, showtime deadlock, 역순 상태 퇴행, 매수 초과, 보상 취소 중 재발권을 red 확인 후 green |
 | 브라우저 E2E | 8파일·34테스트 통과: 소셜 오류/다국어/재시도, 결제 pending/failed/expired, floor/queue, QR 검표/권한/중복, offline 재연결, CSV/수동 오픈. 결제/사용자 API는 fixture |
-| 가입 SMS E2E | 별도 PostgreSQL/Valkey 컨테이너에 migration/seed 후 실제 API 기동, 발송 cooldown·000000 인증·오입력 3테스트 통과. 공급자 자격증명 없이 SMS mock 사용; 실제 SMS 미발송 |
+| 가입 SMS E2E | 별도 PostgreSQL/Valkey 컨테이너에 migration/seed 후 실제 API 기동, 발송 cooldown·000000 인증·오입력 3테스트 통과. 공급자 자격증명 없이 SMS mock 사용; 실제 SMS 미발송. 정정(2026-09 감사 #36): SMS mock은 앱 cooldown·발송 한도를 건너뛰고 당시 앱 제한도 꺼져 있었으므로, 이 cooldown은 웹 화면 타이머 확인이며 서버 제한의 증거가 아니다 |
 | 실제 render | localhost:3218 예매 취소 상세 1440×1100 / 390×844 및 en callback 1440×1000, th/zh-CN callback 390×844. 새 문구·가로 overflow 0·페이지 런타임 오류 0 확인 |
 | 정적 검증 | 전체 typecheck 통과. lint 오류 0(기존 경고 남음). API build 통과. diff/문서 상대 경로 검사 통과 |
 | 운영 read-only | 09:39 KST 전체 인덱스 preflight 0/0, 재고 불일치 0. 10:05 KST 실제 복구 함수 dry-run 3티켓/13권리, applied 0 |
@@ -159,7 +301,6 @@ AND NOT EXISTS (
 검토 시 출처: `implement`의 검증·리뷰·작업 브랜치 커밋 절차를 적용했다. `code-review`의 Standards/Spec 검토에서 발견된 잠금·이벤트·보상 취소·매수 제한·감사 이력 문제를 수정하고 관련 재현을 추가했다. 브라우저는 Browser 스킬 미제공으로 저장소 Playwright 사용. render 증거와 읽기 전용 집계는 로컬 artifacts `grapit-relaunch-2026-09-18`에 별도 보관한다.
 
 새 실제 PG 승인/취소, 카드사 반영, 중국/태국 전화 수신, 현장 카메라/네트워크, 실물 지급 원장과 판매 운영 부하는 미검증이다. 사용자는 운영 변경을 모두 승인했으나 해외 SMS·카드 실검증 담당자는 아직 미배정이며 과거 포스터 실물 기록은 없다고 확인했다. 재승인 문제가 아닌 실제 수행자·검증 환경·원장 부재다. 로컬 테스트나 정상 과거 거래 대조로 이 gate를 pass 처리하지 않는다.
-
 
 ## 운영 반영 증거 (2026-09-18)
 

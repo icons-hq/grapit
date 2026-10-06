@@ -12,7 +12,12 @@ import {
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
+import {
+  parseBookingStartMs,
+  resolveBookingStartPerformanceStatus,
+} from './performance-display-status';
 import type { PerformanceCardData } from '@grabit/shared';
 
 interface PerformanceCardProps {
@@ -28,11 +33,17 @@ export function PerformanceCard({
 }: PerformanceCardProps) {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
-  const { bookingEnabled } = useRuntimeFlags();
-  const displayStatus = getDisplayPerformanceStatus(
-    performance.status,
-    bookingEnabled,
+  const { bookingEnabled, isResolved: flagsResolved } = useRuntimeFlags();
+  // Server-corrected clock, the same verdict the detail page and its booking CTA use.
+  const bookingStartReached = useServerTimeReached(
+    parseBookingStartMs(performance.bookingStartsAt),
   );
+  const saleStatus = resolveBookingStartPerformanceStatus(
+    performance.status,
+    performance.bookingStartsAt,
+    !bookingStartReached,
+  );
+  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
 
   return (
     <Link
@@ -78,7 +89,7 @@ export function PerformanceCard({
           </p>
         )}
         <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
-          {performance.status === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
+          {saleStatus === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
         </p>
         {performance.minPrice != null && <p className="mt-2 text-sm font-semibold text-foreground">{copy.home.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(activeLocale).format(performance.minPrice)}`)}<span className="ml-1 text-xs font-normal text-muted-foreground">{copy.home.feeSeparate}</span></p>}
       </div>

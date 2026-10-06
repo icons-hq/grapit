@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { inspect } from 'node:util';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { BenefitConfiguration, BenefitDefinition } from '@grabit/shared';
@@ -797,6 +799,145 @@ describe('BenefitRunnerService', () => {
       .rejects.toBeInstanceOf(ConflictException);
 
     expect(insertCalls).toEqual([]);
+  });
+
+  it('maps a benefit lock timeout during live runs to a conflict instead of a server error', async () => {
+    const adminBenefitsService = createAdminBenefitsService({
+      lockShowtimeForBenefitMutation: vi.fn().mockRejectedValue(
+        Object.assign(new Error('Failed query'), { cause: { code: '55P03' } }),
+      ),
+    });
+    const { service, insertCalls } = createService([[]], { adminBenefitsService });
+
+    const result = service.runLive({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      configurationId: CONFIG_ID,
+      confirmed: true,
+    }, { now: NOW, randomSeed: 'internal-live-seed' });
+
+    await expect(result).rejects.toBeInstanceOf(ConflictException);
+    await expect(result).rejects.toThrow('잠시 후 다시 시도');
+    expect(insertCalls).toEqual([]);
+  });
+
+  it('refuses to run a stored configuration whose included benefit carries an exclusion the runner ignores', async () => {
+    const benefits = [
+      includedBenefit({ identity: 'vip-photocard', mutuallyExclusiveWith: ['signed-poster'] }),
+      limitedBenefit({ identity: 'signed-poster', quantity: 1 }),
+    ];
+    const live = createService(liveRows(benefits, [candidate('ticket-001', 'buyer-a')]));
+
+    await expect(live.service.runLive({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      configurationId: CONFIG_ID,
+      confirmed: true,
+    }, { now: NOW, randomSeed: 'internal-live-seed' }))
+      .rejects.toThrow('기본 포함 특전에는 함께 배정하지 않을 특전을 설정할 수 없습니다');
+    expect(live.insertCalls).toEqual([]);
+
+    const test = createService(testRows(benefits, [candidate('ticket-001', 'buyer-a')]));
+    await expect(test.service.runTest({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      configurationId: CONFIG_ID,
+    }, { now: NOW })).rejects.toBeInstanceOf(BadRequestException);
+    expect(test.insertCalls).toEqual([]);
+  });
+
+  it('inserts large live assignments in chunks below the PostgreSQL bind parameter limit', async () => {
+    const candidates = Array.from({ length: 2500 }, (_, index) =>
+      candidate(`bulk-${index}`, `buyer-bulk-${index}`));
+    const { service, insertCalls } = createService(liveRows([
+      limitedBenefit({ identity: 'bulk-photo', quantity: 2500 }),
+    ], candidates));
+
+    const result = await service.runLive({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      configurationId: CONFIG_ID,
+      confirmed: true,
+    }, { now: NOW, randomSeed: 'internal-live-seed' });
+
+    const chunks = insertCalls
+      .filter((call) => call.table === ticketBenefitEntitlements)
+      .map((call) => (call.values as unknown[]).length);
+    expect(chunks).toEqual([1000, 1000, 500]);
+    expect(result.resultSummary.totalAssignedCount).toBe(2500);
+  });
+
+  it('exports a live run with the current entitlement state instead of the run-time snapshot', async () => {
+    const snapshotRow = (entitlementId: string, label: string) => ({
+      benefitEntitlementId: entitlementId,
+      ticketItemId: ticketId(label),
+      showtimeId: SHOWTIME_ID,
+      runId: RUN_ID,
+      source: 'live_run',
+      runMode: 'live',
+      attachedToTicket: true,
+      benefitIdentity: 'meet-and-greet',
+      benefitKind: 'limited',
+      benefitNameKo: '밋앤그릿',
+      state: 'active',
+      assignedAt: NOW.toISOString(),
+      redeemedAt: null,
+    });
+    const missingEntitlementId = '00000000-0000-4000-8000-00000000e003';
+    const redeemedAt = new Date('2026-06-19T10:00:00.000Z');
+    const { service, selectCalls } = createService([
+      [runRow({
+        resultSummary: {
+          ...runRow().resultSummary,
+          exportRows: [
+            snapshotRow(ENTITLEMENT_ID_1, 'ticket-active'),
+            snapshotRow(ENTITLEMENT_ID_2, 'ticket-now-inactive'),
+            snapshotRow(missingEntitlementId, 'ticket-missing'),
+          ],
+        },
+      })],
+      [
+        {
+          id: ENTITLEMENT_ID_1,
+          ticketItemId: ticketId('ticket-active'),
+          benefitIdentity: 'meet-and-greet',
+          state: 'redeemed',
+          inactiveReason: null,
+          redeemedAt,
+        },
+        {
+          id: ENTITLEMENT_ID_2,
+          ticketItemId: ticketId('ticket-now-inactive'),
+          benefitIdentity: 'meet-and-greet',
+          state: 'inactive',
+          inactiveReason: 'replaced_by_live_run',
+          redeemedAt: null,
+        },
+      ],
+      [
+        ticketCustomerMetadata('ticket-active'),
+        ticketCustomerMetadata('ticket-now-inactive'),
+        ticketCustomerMetadata('ticket-missing'),
+      ],
+    ]);
+
+    const result = await service.exportRun(RUN_ID, { actorUserId: ACTOR_ID, now: NOW });
+
+    expect(selectCalls[1]?.table).toBe(ticketBenefitEntitlements);
+    // run_id has no index: the lookup must lead with the run's showtime so the
+    // (showtime_id, ticket_item_id) index serves it instead of a full table scan.
+    const lookup = new PgDialect().sqlToQuery(selectCalls[1]?.where as SQL);
+    expect(lookup.sql).toMatch(/"showtime_id" = \$1 and .*"run_id" = \$2/);
+    expect(lookup.params).toEqual([SHOWTIME_ID, RUN_ID]);
+    const lines = result.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
+    expect(lines[0]).toMatch(/,"Inactive Reason"$/);
+    const lineFor = (label: string) => lines.find((line) => line.includes(ticketId(label)));
+    expect(lineFor('ticket-active'))
+      .toContain(`,"redeemed","${NOW.toISOString()}","${redeemedAt.toISOString()}",`);
+    expect(lineFor('ticket-now-inactive')).toContain(',"inactive",');
+    expect(lineFor('ticket-now-inactive')).toMatch(/,"replaced_by_live_run"$/);
+    expect(lineFor('ticket-missing')).toMatch(/,"inactive",.*,"entitlement_not_found"$/);
+    expect(lines.filter((line) => line.includes(',"active",'))).toEqual([]);
   });
 
   it('rolls back to a previous live run and skips inactive Ticket Items', async () => {

@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { resolveOptionalRuntimeEnv } from './deploy-guards.mjs';
 
 const SECRET_BINDINGS = [
   ['DATABASE_URL', 'database-url'],
@@ -26,6 +27,19 @@ function assertSlug(value, name) {
   if (!/^[a-z][a-z0-9-]*[a-z0-9]$/.test(value)) {
     throw new Error(`${name} must be a lowercase resource slug`);
   }
+}
+
+// The sitewide booking gate must match API/Web (deploy.yml passes the same
+// repository variable to all three). Missing keeps the historical `true`.
+function bookingEnabledValue(env) {
+  const value = env.BOOKING_ENABLED?.trim();
+  if (value === undefined || value === '') {
+    return 'true';
+  }
+  if (value !== 'true' && value !== 'false') {
+    throw new Error('BOOKING_ENABLED must be exactly "true" or "false"');
+  }
+  return value;
 }
 
 function assertPositiveNumber(value, name) {
@@ -69,6 +83,10 @@ export function buildBackgroundWorkerJob(env) {
   const paypalKrwUsdRate = required(env, 'PAYPAL_KRW_USD_RATE');
   const dbPoolMax = required(env, 'DB_POOL_MAX');
   const cloudSqlConnectionName = required(env, 'CLOUD_SQL_CONNECTION_NAME');
+  const bookingEnabled = bookingEnabledValue(env);
+  // pg-boss and session limits from the runbook gate (RUNTIME_* repository
+  // variables); unset keeps the worker's code defaults.
+  const optionalRuntimeEnv = resolveOptionalRuntimeEnv(env, 'worker');
 
   for (const [value, name] of [
     [projectId, 'GCP_PROJECT_ID'],
@@ -113,7 +131,7 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('NODE_ENV', 'production'),
               plainEnv('VALKEY_MODE', valkeyMode),
               plainEnv('FRONTEND_URL', frontendUrl),
-              plainEnv('BOOKING_ENABLED', 'true'),
+              plainEnv('BOOKING_ENABLED', bookingEnabled),
               plainEnv('PAYPAL_KRW_USD_RATE', paypalKrwUsdRate),
               plainEnv('DB_POOL_MAX', dbPoolMax),
               plainEnv('DB_POOL_IDLE_TIMEOUT_MS', '30000'),
@@ -121,6 +139,7 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('BACKGROUND_PROCESSING_ENABLED', 'true'),
               plainEnv('PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS', '0'),
               plainEnv('BACKGROUND_WORKER_WINDOW_MS', '30000'),
+              ...optionalRuntimeEnv.map(([envName, value]) => plainEnv(envName, value)),
               ...SECRET_BINDINGS.map(([envName, secret]) => secretEnv(envName, secret)),
             ],
             resources: {

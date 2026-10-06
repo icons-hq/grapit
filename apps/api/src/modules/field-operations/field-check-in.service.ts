@@ -1,6 +1,6 @@
 import { ConflictException, Inject, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
-import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, asc, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import {
   parseFieldCheckInToken,
   ticketBenefitDisplayCopySchema,
@@ -26,12 +26,31 @@ import {
   AdminAuditService,
   type AdminAuditStatus,
 } from '../admin/admin-audit.service.js';
+import { kstTodayBoundaryUtc } from '../admin/kst-boundary.js';
 import {
   QrTicketService,
   type QrTicketScannerContract,
 } from '../ticket/qr-ticket.service.js';
 
 const UNKNOWN_SCANNER_USER_ID = '00000000-0000-4000-8000-000000000000';
+const FIELD_SHOWTIME_LIST_LIMIT = 200;
+const FIELD_SHOWTIME_LOOKBACK_MS = 12 * 60 * 60 * 1000;
+const VERIFY_ATTEMPT_PREFIX = 'verify:';
+
+type ScanEventResult = 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used';
+type ScanEventStage = 'verify' | 'consume';
+
+/**
+ * Earliest showtime start the field scanner can still pick: every showtime of
+ * the current KST day plus late shows that started within the last 12 hours.
+ * Listing from here in ascending order keeps today's showtimes selectable no
+ * matter how many future showtimes are registered.
+ */
+export function fieldShowtimeListLowerBound(): Date {
+  const lookback = new Date(Date.now() - FIELD_SHOWTIME_LOOKBACK_MS);
+  const kstDayStart = kstTodayBoundaryUtc().startUtc;
+  return lookback < kstDayStart ? lookback : kstDayStart;
+}
 
 export interface FieldScannerContext {
   scannerUserId: string;
@@ -62,7 +81,8 @@ export class FieldCheckInService {
       dateTime: showtimes.dateTime, venueName: venues.name })
       .from(showtimes).innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(venues, eq(performances.venueId, venues.id))
-      .orderBy(desc(showtimes.dateTime)).limit(200);
+      .where(gte(showtimes.dateTime, fieldShowtimeListLowerBound()))
+      .orderBy(asc(showtimes.dateTime), asc(showtimes.id)).limit(FIELD_SHOWTIME_LIST_LIMIT);
   }
 
   async verify(
@@ -94,8 +114,10 @@ export class FieldCheckInService {
           outcome: 'tampered',
           caseName: caseNameForOutcome('tampered'),
           redactedTokenRef: redactedTokenRef(token),
+          requestedShowtimeId: input.showtimeId ?? null,
         },
       });
+      await this.recordVerifyRejection({ contract: null, request: input, token, context, outcome: 'tampered' });
 
       return response;
     }
@@ -107,7 +129,8 @@ export class FieldCheckInService {
       outcome,
       processable,
       ticket: toTicketContext(contract, token, benefits.entitlements, benefits.available),
-      rejectionReason: processable ? null : rejectionReasonFor(outcome),
+      ...resultLabelForContract(outcome, contract),
+      rejectionReason: processable ? null : rejectionReasonForContract(outcome, contract),
       verifiedAt,
       ...(outcome === 'already_used' ? { priorScan: await this.findPriorSuccessfulScan(this.db, contract) } : {}),
     };
@@ -123,8 +146,11 @@ export class FieldCheckInService {
           caseName: caseNameForOutcome(outcome),
           redactedTokenRef: redactedTokenRef(token),
           maskedJti: contract.maskedJti,
+          ...(contract.cancellationPending ? { cancellationPending: true } : {}),
+          requestedShowtimeId: input.showtimeId ?? null,
         },
       });
+      await this.recordVerifyRejection({ contract, request: input, token, context, outcome });
     }
 
     return response;
@@ -139,18 +165,29 @@ export class FieldCheckInService {
       verified = await this.qrTicketService.verifyTicketForScannerContract(input.token);
     } catch (error) {
       if (!(error instanceof UnauthorizedException)) throw error;
-      await this.writeAudit({ action: 'field.scan.consume', status: 'denied', resourceId: redactedTokenRef(input.token), context,
-        after: { outcome: 'tampered', redactedTokenRef: redactedTokenRef(input.token) } });
-      return { outcome: 'tampered', ticket: null, scanEventId: null, rejectionReason: rejectionReasonFor('tampered') };
+      return this.db.transaction(async (tx) => {
+        // Same attempt lock as the valid path below, so a concurrent valid consume
+        // of this attempt waits instead of colliding on the attempt's unique receipt.
+        await lockScanAttempt(tx, input.deviceAttemptId);
+        await this.writeAudit({ action: 'field.scan.consume', status: 'denied', resourceId: redactedTokenRef(input.token), context,
+          after: { outcome: 'tampered', redactedTokenRef: redactedTokenRef(input.token), requestedShowtimeId: input.showtimeId } }, tx);
+        // No ticket can be identified, so the rejection is attributed to the gate showtime only.
+        // A retried attempt keeps its first record.
+        const scanEventId = await this.recordScanEvent(tx, { contract: null, context, token: input.token,
+          deviceAttemptId: input.deviceAttemptId, requestedShowtimeId: input.showtimeId, outcome: 'tampered',
+          rejectionReason: rejectionReasonFor('tampered'), stage: 'consume', keepFirstAttempt: true });
+        return { outcome: 'tampered', ticket: null, scanEventId, rejectionReason: rejectionReasonFor('tampered') };
+      });
     }
 
     return this.db.transaction(async (tx) => {
       // An attempt has one receipt even if a response is lost or devices retry concurrently.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.deviceAttemptId}, 0))`);
+      await lockScanAttempt(tx, input.deviceAttemptId);
       const [receipt] = await tx.select().from(ticketScanEvents)
         .where(eq(ticketScanEvents.deviceAttemptId, input.deviceAttemptId)).limit(1);
       if (receipt) {
-        if (receipt.ticketItemId !== verified.ticketItemId || (receipt.metadata?.['requestedShowtimeId'] ?? receipt.showtimeId) !== input.showtimeId
+        const receiptShowtimeId = receipt.requestedShowtimeId ?? receipt.metadata?.['requestedShowtimeId'] ?? receipt.showtimeId;
+        if (receipt.metadata?.['stage'] === 'verify' || receipt.ticketItemId !== verified.ticketItemId || receiptShowtimeId !== input.showtimeId
           || receipt.scannerUserId !== context.scannerUserId || receipt.metadata?.['redactedTokenRef'] !== redactedTokenRef(input.token)) {
           throw new ConflictException('다른 검표에 사용된 요청입니다. 티켓을 다시 확인해주세요.');
         }
@@ -158,6 +195,8 @@ export class FieldCheckInService {
           outcome: receipt.result === 'success' ? 'entered' : receipt.result as FieldCheckInOutcome,
           ticket: toTicketContext(verified, input.token), scanEventId: receipt.id,
           consumedAt: receipt.result === 'success' ? receipt.scannedAt.toISOString() : null,
+          ...(receipt.rejectionReason === CANCELLATION_PENDING_REJECTION_REASON
+            ? { resultLabel: CANCELLATION_PENDING_RESULT_LABEL } : {}),
           rejectionReason: receipt.rejectionReason,
         };
       }
@@ -182,12 +221,13 @@ export class FieldCheckInService {
       const entered = outcome === 'processable';
       const scanEventId = await this.recordScanEvent(tx, { contract, context, token: input.token,
         deviceAttemptId: input.deviceAttemptId, requestedShowtimeId: input.showtimeId, outcome: entered ? 'success' : scanResultForOutcome(outcome),
-        rejectionReason: entered ? null : rejectionReasonFor(outcome) });
+        rejectionReason: entered ? null : rejectionReasonForContract(outcome, contract), stage: 'consume' });
       await this.writeAudit({ action: 'field.scan.consume', status: entered ? 'success' : 'denied', resourceId: ticketResourceId(contract), context,
         after: { outcome: entered ? 'entered' : outcome, scanEventId, redactedTokenRef: redactedTokenRef(input.token),
           admissionUnit: 'ticket_item', consumedTicketItemCount: entered ? 1 : 0 } }, tx);
       return { outcome: entered ? 'entered' : outcome, ticket: toTicketContext(contract, input.token), scanEventId,
-        consumedAt: entered ? consumedAt.toISOString() : null, rejectionReason: entered ? null : rejectionReasonFor(outcome), priorScan };
+        consumedAt: entered ? consumedAt.toISOString() : null, ...resultLabelForContract(outcome, contract),
+        rejectionReason: entered ? null : rejectionReasonForContract(outcome, contract), priorScan };
     });
   }
 
@@ -273,48 +313,107 @@ export class FieldCheckInService {
     }
   }
 
+  /**
+   * Records a scan the verify step rejected (already used, cancelled/refunded,
+   * expired, another showtime or an unverifiable QR) so the field monitor sees
+   * rejections that never reach consume. One event per scanner attempt: the
+   * attempt id is namespaced away from consume receipts, repeated checks of the
+   * same attempt keep the first event, and a re-check after consume recorded the
+   * attempt (the refresh right after entry) adds nothing. Callers that do not
+   * identify the attempt keep the audit-only behavior.
+   */
+  private async recordVerifyRejection(input: {
+    contract: QrTicketScannerContract | null;
+    request: FieldCheckInVerifyRequest;
+    token: string;
+    context?: Partial<FieldScannerContext>;
+    outcome: FieldCheckInOutcome;
+  }): Promise<void> {
+    const attemptId = input.request.deviceAttemptId?.trim();
+    const scannerUserId = input.context?.scannerUserId;
+    const requestedShowtimeId = input.request.showtimeId ?? input.contract?.showtimeId;
+    if (!attemptId || !scannerUserId || !requestedShowtimeId) {
+      return;
+    }
+
+    if (input.contract) {
+      const [consumed] = await this.db
+        .select({ id: ticketScanEvents.id })
+        .from(ticketScanEvents)
+        .where(and(
+          eq(ticketScanEvents.deviceAttemptId, attemptId),
+          eq(ticketScanEvents.ticketItemId, input.contract.ticketItemId),
+        ))
+        .limit(1);
+      if (consumed) {
+        return;
+      }
+    }
+
+    await this.recordScanEvent(this.db, {
+      contract: input.contract,
+      context: { scannerUserId, scanSource: 'online' },
+      outcome: scanResultForOutcome(input.outcome),
+      deviceAttemptId: `${VERIFY_ATTEMPT_PREFIX}${attemptId}`,
+      requestedShowtimeId,
+      token: input.token,
+      // A pending cancellation keeps its own reason, as consume records it.
+      rejectionReason: input.contract
+        ? rejectionReasonForContract(input.outcome, input.contract)
+        : rejectionReasonFor(input.outcome),
+      stage: 'verify',
+      keepFirstAttempt: true,
+    });
+  }
+
   private async recordScanEvent(
     db: ScanEventDb,
     input: {
-      contract: QrTicketScannerContract;
-      context: FieldScannerContext;
-      outcome: 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used';
+      contract: QrTicketScannerContract | null;
+      context: Pick<FieldScannerContext, 'scannerUserId' | 'scanSource' | 'offlineSyncState'>;
+      outcome: ScanEventResult;
       deviceAttemptId: string;
       requestedShowtimeId: string;
       token: string;
       rejectionReason?: string | null;
+      stage: ScanEventStage;
+      /** Ignore a concurrent or repeated insert for the same device attempt. */
+      keepFirstAttempt?: boolean;
     },
-  ): Promise<string> {
-    const fallbackId = randomUUID();
+  ): Promise<string | null> {
     const insertBuilder = db.insert(ticketScanEvents);
     if (!insertBuilder || typeof insertBuilder.values !== 'function') {
-      return fallbackId;
+      return null;
     }
 
-    const [row] = await insertBuilder
-      .values({
-        ticketId: input.contract.ticketId ?? fallbackId,
-        ticketItemId: input.contract.ticketItemId,
-        reservationId: input.contract.reservationId,
-        showtimeId: input.contract.showtimeId,
-        scannerUserId: input.context.scannerUserId,
-        result: input.outcome,
-        source: input.context.scanSource ?? 'online',
-        syncState: input.context.offlineSyncState
-          ?? resolveScanSyncState(input.context.scanSource, input.outcome),
-        deviceAttemptId: input.deviceAttemptId,
-        maskedJti: input.contract.maskedJti,
-        rejectionReason: input.rejectionReason ?? null,
-        metadata: {
-          redactedTokenRef: redactedTokenRef(input.token),
-          performanceId: input.contract.performanceId,
-          requestedShowtimeId: input.requestedShowtimeId,
-          ticketItemId: input.contract.ticketItemId,
-        },
-      })
+    const { contract } = input;
+    const statement = insertBuilder.values({
+      ticketId: contract?.ticketId ?? null,
+      ticketItemId: contract?.ticketItemId ?? null,
+      reservationId: contract?.reservationId ?? null,
+      showtimeId: contract?.showtimeId ?? null,
+      requestedShowtimeId: input.requestedShowtimeId,
+      scannerUserId: input.context.scannerUserId,
+      result: input.outcome,
+      source: input.context.scanSource ?? 'online',
+      syncState: input.context.offlineSyncState
+        ?? resolveScanSyncState(input.context.scanSource, input.outcome),
+      deviceAttemptId: input.deviceAttemptId,
+      maskedJti: contract?.maskedJti ?? null,
+      rejectionReason: input.rejectionReason ?? null,
+      metadata: {
+        stage: input.stage,
+        redactedTokenRef: redactedTokenRef(input.token),
+        requestedShowtimeId: input.requestedShowtimeId,
+        ...(contract
+          ? { performanceId: contract.performanceId, ticketItemId: contract.ticketItemId }
+          : {}),
+      },
+    });
+    const [row] = await (input.keepFirstAttempt ? statement.onConflictDoNothing() : statement)
       .returning({ id: ticketScanEvents.id });
 
-    return row?.id ?? fallbackId;
+    return row?.id ?? null;
   }
 
   private async writeAudit(
@@ -342,6 +441,11 @@ export class FieldCheckInService {
       db,
     );
   }
+}
+
+/** Serializes every consume of one device attempt, valid or unverifiable, until commit. */
+async function lockScanAttempt(tx: Pick<DrizzleDB, 'execute'>, deviceAttemptId: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${deviceAttemptId}, 0))`);
 }
 
 function extractToken(input: FieldCheckInVerifyRequest): string {
@@ -386,6 +490,7 @@ function toTicketContext(
     maskedJti: contract.maskedJti,
     benefitEntitlements,
     benefitsAvailable,
+    cancellationPending: contract.cancellationPending,
   };
 }
 
@@ -454,7 +559,7 @@ function ticketResourceId(contract: QrTicketScannerContract): string {
 
 function scanResultForOutcome(
   outcome: FieldCheckInOutcome,
-): 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used' {
+): ScanEventResult {
   if (outcome === 'processable' || outcome === 'entered') {
     return 'success';
   }
@@ -466,13 +571,38 @@ function scanResultForOutcome(
 
 function resolveScanSyncState(
   source: FieldScannerContext['scanSource'],
-  outcome: 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used',
+  outcome: ScanEventResult,
 ): 'not_required' | 'synced' | 'rejected' {
   if (source !== 'offline_sync') {
     return 'not_required';
   }
 
   return outcome === 'success' ? 'synced' : 'rejected';
+}
+
+// A requested-but-unconfirmed cancellation is not a completed refund: staff must
+// refuse entry and escalate instead of telling the buyer it was refunded.
+const CANCELLATION_PENDING_REJECTION_REASON =
+  '취소 처리 중인 티켓입니다. 환불이 확정되지 않았으니 입장시키지 말고 현장 책임자에게 확인해주세요';
+// Headline shown instead of the client's refunded label ('환불 또는 취소된 티켓입니다').
+const CANCELLATION_PENDING_RESULT_LABEL = '취소 처리 중 · 입장 불가';
+
+function resultLabelForContract(
+  outcome: FieldCheckInOutcome,
+  contract: Pick<QrTicketScannerContract, 'cancellationPending'>,
+): { resultLabel?: string } {
+  return outcome === 'refunded_cancelled' && contract.cancellationPending
+    ? { resultLabel: CANCELLATION_PENDING_RESULT_LABEL }
+    : {};
+}
+
+function rejectionReasonForContract(
+  outcome: FieldCheckInOutcome,
+  contract: Pick<QrTicketScannerContract, 'cancellationPending'>,
+): string {
+  return outcome === 'refunded_cancelled' && contract.cancellationPending
+    ? CANCELLATION_PENDING_REJECTION_REASON
+    : rejectionReasonFor(outcome);
 }
 
 function rejectionReasonFor(outcome: FieldCheckInOutcome): string {
