@@ -1,4 +1,12 @@
-import { expect, test, devices, type Browser, type Page, type Route } from '@playwright/test';
+import {
+  expect,
+  test,
+  devices,
+  type Browser,
+  type Page,
+  type Route,
+  type WebSocketRoute,
+} from '@playwright/test';
 
 const FLOOR_BROWSER_PERFORMANCE_ID = 'floor-browser';
 const FLOOR_BROWSER_SHOWTIME_ID = 'showtime-floor-browser';
@@ -187,13 +195,76 @@ async function mockAuthenticatedSession(page: Page) {
   });
 }
 
+interface MockBookingSocket {
+  broadcastSeatUpdate: (seatId: string, status: 'locked' | 'available') => void;
+  /** Showtimes the page joined over the mocked socket, in order. */
+  joinedShowtimeIds: string[];
+}
+
+/**
+ * Stands in for the API's `/booking` Socket.IO namespace (Engine.IO v4 /
+ * Socket.IO v5 framing). While its socket is connected the seat page takes
+ * released seats from the server's seat-update broadcast instead of patching
+ * them from the unlock response, so the mocked lock routes broadcast the same
+ * way BookingGateway does. Without this stand-in the page would connect to
+ * whatever API runs on :8080, which never hears about the mocked unlocks.
+ */
+async function mockBookingSocket(page: Page): Promise<MockBookingSocket> {
+  const sockets = new Set<WebSocketRoute>();
+  const joinedShowtimeIds: string[] = [];
+  await page.routeWebSocket(/\/socket\.io\/\?/, (ws) => {
+    sockets.add(ws);
+    ws.onClose(() => {
+      sockets.delete(ws);
+    });
+    ws.onMessage((message) => {
+      if (typeof message !== 'string') {
+        return;
+      }
+      if (message.startsWith('40/booking,')) {
+        ws.send(`40/booking,${JSON.stringify({ sid: 'floor-browser-socket' })}`);
+        return;
+      }
+      if (message.startsWith('42/booking,')) {
+        const [event, showtimeId] = JSON.parse(message.slice('42/booking,'.length)) as [string, unknown];
+        if (event === 'join-showtime' && typeof showtimeId === 'string') {
+          joinedShowtimeIds.push(showtimeId);
+        }
+      }
+    });
+    // A long ping interval keeps the client heartbeat from expiring mid-test.
+    ws.send(`0${JSON.stringify({
+      sid: 'floor-browser-engine',
+      upgrades: [],
+      pingInterval: 600_000,
+      pingTimeout: 600_000,
+      maxPayload: 1_000_000,
+    })}`);
+  });
+
+  return {
+    broadcastSeatUpdate: (seatId, status) => {
+      // seat-update.v2 for every state, plus the legacy copy unless locked.
+      const events = status === 'locked' ? ['seat-update.v2'] : ['seat-update.v2', 'seat-update'];
+      for (const ws of sockets) {
+        for (const event of events) {
+          ws.send(`42/booking,${JSON.stringify([event, { seatId, status }])}`);
+        }
+      }
+    },
+    joinedShowtimeIds,
+  };
+}
+
 async function stubFloorBrowserRoutes(
   page: Page,
   lockRequests: Array<{ seatId?: string }> = [],
   unlockRequests: Array<{ seatId?: string }> = [],
-) {
+): Promise<MockBookingSocket> {
   await enableBooking(page);
   await mockAuthenticatedSession(page);
+  const bookingSocket = await mockBookingSocket(page);
+  const { broadcastSeatUpdate } = bookingSocket;
 
   const performanceDetail = createFloorBrowserPerformanceDetail();
   const lockedSeatKeys = new Set<string>();
@@ -266,6 +337,7 @@ async function stubFloorBrowserRoutes(
     lockRequests.push(payload);
     const runtimeSeatId = payload.seatId ?? '1F:A-1';
     lockedSeatKeys.add(runtimeSeatId);
+    broadcastSeatUpdate(runtimeSeatId, 'locked');
     const separatorIndex = runtimeSeatId.indexOf(':');
     const floorKey = separatorIndex > 0 ? runtimeSeatId.slice(0, separatorIndex) : '1F';
     const seatId = separatorIndex > 0 ? runtimeSeatId.slice(separatorIndex + 1) : runtimeSeatId;
@@ -286,11 +358,15 @@ async function stubFloorBrowserRoutes(
   });
 
   await page.route('**/api/v1/booking/seats/lock-all/**', async (route: Route) => {
+    const unlockedSeats = [...lockedSeatKeys];
     lockedSeatKeys.clear();
+    for (const seatId of unlockedSeats) {
+      broadcastSeatUpdate(seatId, 'available');
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ unlockedSeats: [] }),
+      body: JSON.stringify({ unlockedSeats }),
     });
   });
 
@@ -298,7 +374,9 @@ async function stubFloorBrowserRoutes(
     const pathSegments = new URL(route.request().url()).pathname.split('/');
     const seatId = decodeURIComponent(pathSegments.at(-1) ?? '');
     unlockRequests.push({ seatId });
-    lockedSeatKeys.delete(seatId);
+    if (lockedSeatKeys.delete(seatId)) {
+      broadcastSeatUpdate(seatId, 'available');
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -321,6 +399,8 @@ async function stubFloorBrowserRoutes(
       body: SECOND_FLOOR_SVG,
     });
   });
+
+  return bookingSocket;
 }
 
 async function selectDateAndShowtime(page: Page) {
@@ -455,10 +535,12 @@ test.describe('booking floor-browser seat selection', () => {
   test('desktop center click updates summary, timer, CTA, and preserves 1F selection across floor switches', async ({ page }) => {
     const lockRequests: Array<{ seatId?: string }> = [];
     const unlockRequests: Array<{ seatId?: string }> = [];
-    await stubFloorBrowserRoutes(page, lockRequests, unlockRequests);
+    const bookingSocket = await stubFloorBrowserRoutes(page, lockRequests, unlockRequests);
 
     await page.goto(`/booking/${FLOOR_BROWSER_PERFORMANCE_ID}`);
     await selectDateAndShowtime(page);
+    // Released seats come back through the server broadcast while the socket is connected.
+    await expect.poll(() => bookingSocket.joinedShowtimeIds).toContain(FLOOR_BROWSER_SHOWTIME_ID);
     await expect(getNextButton(page)).toBeDisabled();
     await clickExcludedSeat(page, 'A-99');
     await expect(getNextButton(page)).toBeDisabled();
@@ -470,7 +552,9 @@ test.describe('booking floor-browser seat selection', () => {
     await expect(getNextButton(page)).toBeDisabled();
     expect(unlockRequests.at(-1)?.seatId).toBe('1F:A-1');
 
+    // Picking the released seat again sends a new lock instead of a "taken" notice.
     await clickSeatLabelCenter(page);
+    await expect.poll(() => lockRequests.length).toBe(2);
     expect(lockRequests.at(-1)?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
 
@@ -493,6 +577,7 @@ test.describe('booking floor-browser seat selection', () => {
     await page.reload();
     await selectDateAndShowtime(page);
     await clickSeatLabelCenter(page);
+    await expect.poll(() => lockRequests.length).toBe(3);
     expect(lockRequests.at(-1)?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
     await page.getByRole('button', { name: '1층 A열 1번 선택 해제' }).click();

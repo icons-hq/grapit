@@ -144,7 +144,8 @@ test.describe('toss-payment phase24 recovery states', () => {
       venue: 'Phase 24 Venue',
     });
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    // `?locale=` rides on the confirm request, so the guard matches any query.
+    await page.route('**/api/v1/payments/confirm**', async (route: Route) => {
       confirmIntercepted = true;
       await route.fulfill({ status: 500, body: 'unexpected confirm call' });
     });
@@ -176,7 +177,8 @@ test.describe('toss-payment phase24 recovery states', () => {
     let confirmCount = 0;
     await enableBooking(page);
     await mockAuthenticatedSession(page);
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    // `?locale=` rides on the confirm request, so the guard matches any query.
+    await page.route('**/api/v1/payments/confirm**', async (route: Route) => {
       confirmCount += 1;
       await route.fulfill({ status: 500, body: 'unexpected confirm call' });
     });

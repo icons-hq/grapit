@@ -167,7 +167,8 @@ test.describe('phase26 QR visibility', () => {
     await enableBooking(page);
     await mockAuthenticatedSession(page);
 
-    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+    // The confirm request carries the display locale (`?locale=`), so match any query.
+    await page.route('**/api/v1/payments/confirm**', async (route: Route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

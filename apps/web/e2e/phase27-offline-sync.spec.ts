@@ -112,8 +112,15 @@ test.describe('phase27 offline sync browser contracts', () => {
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '보류 스캔 동기화 완료',
     );
-    await expect(page.getByRole('button', { name: '보류 스캔 동기화' })).toBeDisabled();
+    // Nothing is left to sync: the sync action goes away and the settled scan is
+    // kept as a folded receipt with its server result.
+    await expect(page.getByRole('button', { name: '보류 스캔 동기화' })).toHaveCount(0);
     expect(page.url()).not.toContain(rawQrToken);
+    const receipts = page.getByTestId('offline-sync-receipts');
+    await expect(receipts).toContainText('보류 스캔 0건 · 동기화 완료 1건 · 거절 0건 보기');
+    await receipts.getByText('보류 스캔 0건 · 동기화 완료 1건 · 거절 0건 보기').click();
+    await expect(receipts.getByText('서버 확정')).toBeVisible();
+    await expect(receipts.getByText('보류 스캔 동기화 완료')).toBeVisible();
     await expect(page.getByTestId('offline-sync-status')).toContainText('서버 확정');
     // The scan keeps its card and shows its own server result instead of offering entry again.
     await expect(page.getByRole('status', { name: '보류 스캔 동기화 완료' })).toBeVisible();
