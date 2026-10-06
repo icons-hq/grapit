@@ -74,7 +74,7 @@ WHERE u.account_status = 'active'
 ## Login Email Case
 
 - New signups, social sign-ups and email verification codes use the lower-case address. An unused code issued before this change (stored with the address as typed) is still accepted: when no lower-case row exists, the account's own codes are compared case-insensitively. Login, signup duplicate checks, password reset and email verification requests look up `lower(users.email)` (index `idx_users_email_lower`, migration 0046), preferring the exact spelling, then an active account, then the oldest account when legacy rows differ only by case.
-- Existing rows are not rewritten and there is no case-insensitive unique constraint yet.
+- Existing rows are not rewritten and there is no case-insensitive unique constraint yet. Instead, sign-up, social sign-up and account email change take a PostgreSQL advisory lock on the lower-case address (`pg_advisory_xact_lock(hashtextextended('auth-email:<address>', 0))`) for the transaction that re-checks and writes it. Two buyers claiming the same free address at once get one success and one `409 이미 사용 중인 이메일입니다` (social sign-up: `ACCOUNT_LINK_CONFIRMATION_REQUIRED`); the refused email change keeps its unused code and a refused sign-up gets its phone verification back. Any future writer of `users.email` (scripts, admin tools) must take the same lock.
 
 ## Email Verification Codes
 

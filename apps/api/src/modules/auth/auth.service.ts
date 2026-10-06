@@ -24,7 +24,7 @@ import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { isSocialPlaceholderEmail } from '../../common/email-address.js';
-import { isSameAuthEmail, normalizeAuthEmail } from './auth-email.js';
+import { isSameAuthEmail, lockAuthEmailClaim, normalizeAuthEmail } from './auth-email.js';
 import {
   hashSocialRegistrationBinding,
   isSocialRegistrationBindingValid,
@@ -193,7 +193,15 @@ export class AuthService {
       'signup',
     );
     const user = await this.db.transaction(async (tx) => {
-      // 3. Insert user
+      // 3. Claim the address and re-check it inside the claim: a concurrent
+      // sign-up or account email change of the same address has committed by
+      // now (lockAuthEmailClaim), so the loser gets 409, not a raw unique error.
+      await lockAuthEmailClaim(tx, email);
+      if (await this.userRepository.findByEmail(email, tx)) {
+        throw new ConflictException('이미 사용 중인 이메일입니다');
+      }
+
+      // 4. Insert user
       const createdUser = await this.userRepository.create({
         email,
         passwordHash,
@@ -207,7 +215,7 @@ export class AuthService {
         isPhoneVerified: true,
       }, tx);
 
-      // 4. Insert terms agreement and consent audit in the same transaction.
+      // 5. Insert terms agreement and consent audit in the same transaction.
       await tx.insert(schema.termsAgreements).values({
         userId: createdUser.id,
         termsOfService: dto.termsOfService,
@@ -634,29 +642,43 @@ export class AuthService {
       await this.rejectWrongEmailVerificationCode(latestRecord, attempt);
     }
 
-    const existingUser = await this.userRepository.findByEmail(normalizedEmail);
-    if (existingUser && existingUser.id !== userId) {
-      throw new ConflictException('이미 사용 중인 이메일입니다');
-    }
+    // The duplicate check, the code consumption and the email write are one
+    // claim of the address: another account verifying the same address at the
+    // same time waits here, then gets 409 and keeps its code.
+    const updatedUser = await this.db.transaction(async (tx) => {
+      await lockAuthEmailClaim(tx, normalizedEmail);
+      const existingUser = await this.userRepository.findByEmail(normalizedEmail, tx);
+      if (existingUser && existingUser.id !== userId) {
+        throw new ConflictException('이미 사용 중인 이메일입니다');
+      }
 
-    await this.db
-      .update(schema.emailVerificationTokens)
-      .set({ consumedAt: new Date() })
-      .where(eq(schema.emailVerificationTokens.id, latestRecord.id));
+      const consumed = await tx
+        .update(schema.emailVerificationTokens)
+        .set({ consumedAt: new Date() })
+        .where(and(
+          eq(schema.emailVerificationTokens.id, latestRecord.id),
+          isNull(schema.emailVerificationTokens.consumedAt),
+        ))
+        .returning({ id: schema.emailVerificationTokens.id });
+      if (consumed.length === 0) {
+        throw new GoneException('이미 사용된 인증번호입니다');
+      }
 
-    const [updatedUser] = await this.db
-      .update(schema.users)
-      .set({
-        email: normalizedEmail,
-        isEmailVerified: true,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.users.id, userId))
-      .returning();
+      const [updated] = await tx
+        .update(schema.users)
+        .set({
+          email: normalizedEmail,
+          isEmailVerified: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.users.id, userId))
+        .returning();
 
-    if (!updatedUser) {
-      throw new UnauthorizedException('사용자 인증이 필요합니다');
-    }
+      if (!updated) {
+        throw new UnauthorizedException('사용자 인증이 필요합니다');
+      }
+      return updated;
+    });
 
     return {
       verified: true,
@@ -1206,6 +1228,15 @@ export class AuthService {
       'social_registration',
     );
     const user = await this.db.transaction(async (tx) => {
+      // Same claim as sign-up and account email change (lockAuthEmailClaim).
+      await lockAuthEmailClaim(tx, email);
+      if (await this.userRepository.findByEmail(email, tx)) {
+        throw new ConflictException({
+          code: 'ACCOUNT_LINK_CONFIRMATION_REQUIRED',
+          message: 'Sign in to the existing account before linking this social provider.',
+        });
+      }
+
       // 3. Create new user (passwordHash = null for social-only accounts)
       const createdUser = await this.userRepository.create({
         email,

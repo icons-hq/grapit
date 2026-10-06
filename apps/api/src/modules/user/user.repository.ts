@@ -26,10 +26,11 @@ export class UserRepository {
    * Case-insensitive account lookup (served by idx_users_email_lower).
    * Legacy rows may differ only by case; the exact spelling wins, then an active
    * account, then the oldest one, so existing logins keep resolving to the same row.
+   * Pass the transaction to re-check an address under `lockAuthEmailClaim`.
    */
-  async findByEmail(email: string) {
+  async findByEmail(email: string, db: Pick<DrizzleDB, 'select'> = this.db) {
     const requestedEmail = email.trim();
-    const results = await this.db
+    const results = await db
       .select()
       .from(schema.users)
       .where(sql`lower(${schema.users.email}) = ${requestedEmail.toLowerCase()}`);

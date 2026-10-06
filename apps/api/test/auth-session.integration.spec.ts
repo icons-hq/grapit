@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { createHmac, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -15,6 +16,8 @@ import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../src/modules/auth/auth.service.js';
+import { lockAuthEmailClaim } from '../src/modules/auth/auth-email.js';
+import { hashSocialRegistrationBinding } from '../src/modules/auth/social-oauth-state.js';
 import { UserRepository } from '../src/modules/user/user.repository.js';
 import type { SmsService } from '../src/modules/sms/sms.service.js';
 import type { EmailService } from '../src/modules/auth/email/email.service.js';
@@ -37,6 +40,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
     verifyPhoneVerificationToken: vi.fn(),
     claimPhoneVerificationToken: vi.fn().mockResolvedValue({ release: phoneClaimRelease }),
   };
+  const attemptCounter = { eval: vi.fn().mockResolvedValue(1) };
 
   beforeAll(async () => {
     const postgres = await startPostgresContainer({ database: 'auth_session_test' });
@@ -68,7 +72,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
         captureConsent: vi.fn().mockResolvedValue(undefined),
       } as unknown as ConsentService,
       // Email verification attempt counter (Valkey INCR); this suite covers PostgreSQL only.
-      { eval: vi.fn().mockResolvedValue(1) },
+      attemptCounter,
     );
   }, 120000);
 
@@ -299,5 +303,151 @@ describe('Auth session and email identity — PostgreSQL', () => {
       const indexes = await db.execute(sql`select indexdef from pg_indexes where indexname = 'idx_users_email_lower'`);
       expect(indexes.rows[0]).toMatchObject({ indexdef: expect.stringContaining('lower((email)::text)') });
     });
+  });
+
+  // PR #235 review: the duplicate check ran before, and apart from, the email
+  // write, so two claims of a free address both passed it and the loser failed
+  // on users_email_unique with a raw error after spending its code.
+  describe('concurrent claims of one login email', () => {
+    async function issueAccountEmailCode(userId: string, email: string, code: string) {
+      const [token] = await db.insert(schema.emailVerificationTokens).values({
+        userId,
+        email,
+        purpose: 'account_email',
+        tokenHash: createHmac('sha256', 'integration-jwt-secret')
+          .update(`account_email:${email}:${code}`)
+          .digest('hex'),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      }).returning();
+      return token!;
+    }
+
+    function uniquePhone() {
+      return `010${Math.floor(Math.random() * 1e8).toString().padStart(8, '0')}`;
+    }
+
+    async function emailOwners(email: string) {
+      return db.select().from(schema.users).where(sql`lower(${schema.users.email}) = ${email}`);
+    }
+
+    it('lets one of two accounts verifying the same new address win; the other gets 409 and keeps its code', async () => {
+      const first = await createBuyer('claim.first@example.test');
+      const second = await createBuyer('claim.second@example.test');
+      const target = 'claim.target@example.test';
+      const codes = [
+        await issueAccountEmailCode(first.id, target, '111111'),
+        await issueAccountEmailCode(second.id, target, '222222'),
+      ];
+
+      // Hold both requests at the guess counter, which runs before the duplicate
+      // check, and release them together so both checks race the first write.
+      const waiting: Array<() => void> = [];
+      attemptCounter.eval.mockImplementation(() => new Promise((resolve) => {
+        waiting.push(() => resolve(1));
+        if (waiting.length === 2) waiting.forEach((release) => release());
+      }));
+      let results: PromiseSettledResult<unknown>[];
+      try {
+        results = await Promise.allSettled([
+          auth.verifyAccountEmailVerificationCode(first.id, target, '111111'),
+          auth.verifyAccountEmailVerificationCode(second.id, target, '222222'),
+        ]);
+      } finally {
+        attemptCounter.eval.mockReset();
+        attemptCounter.eval.mockResolvedValue(1);
+      }
+
+      expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const loser = results.findIndex((result) => result.status === 'rejected');
+      expect((results[loser] as PromiseRejectedResult).reason).toBeInstanceOf(ConflictException);
+
+      const owners = await emailOwners(target);
+      expect(owners).toHaveLength(1);
+      expect(owners[0]!.id).toBe([first, second][1 - loser]!.id);
+      const [loserCode] = await db.select().from(schema.emailVerificationTokens)
+        .where(eq(schema.emailVerificationTokens.id, codes[loser]!.id));
+      expect(loserCode!.consumedAt).toBeNull();
+      const [loserAccount] = await db.select().from(schema.users)
+        .where(eq(schema.users.id, [first, second][loser]!.id));
+      expect(loserAccount!.email).toBe(['claim.first@example.test', 'claim.second@example.test'][loser]);
+    }, 30000);
+
+    const writers: Array<[string, (address: string) => Promise<unknown>]> = [
+      ['sign-up', (address) => auth.register({
+        email: address.toUpperCase(),
+        password: 'Test1234!',
+        name: 'Held Signup',
+        gender: 'female',
+        country: 'KR',
+        birthDate: '1995-05-15',
+        phone: uniquePhone(),
+        phoneVerificationToken: 'phone-token',
+        termsOfService: true,
+        privacyPolicy: true,
+        marketingConsent: false,
+        consentItems: [],
+      } as never)],
+      ['social sign-up', async (address) => {
+        const registrationToken = await new JwtService({ secret: 'integration-jwt-secret' }).signAsync({
+          provider: 'kakao',
+          providerId: randomUUID(),
+          email: address,
+          name: 'Held Social',
+          purpose: 'social-registration',
+          binding: hashSocialRegistrationBinding('held-binding'),
+        }, { expiresIn: '30m' });
+        return auth.completeSocialRegistration(registrationToken, {
+          name: 'Held Social',
+          gender: 'unspecified',
+          country: 'KR',
+          birthDate: '1994-04-14',
+          phone: uniquePhone(),
+          phoneVerificationToken: 'phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: [],
+        } as never, { ipAddress: '127.0.0.1' }, { registrationBinding: 'held-binding' });
+      }],
+      ['account email change', async (address) => {
+        const buyer = await createBuyer(`changer.${randomUUID().slice(0, 8)}@example.test`);
+        await issueAccountEmailCode(buyer.id, address, '333333');
+        return auth.verifyAccountEmailVerificationCode(buyer.id, address, '333333');
+      }],
+    ];
+
+    it.each(writers)('makes the %s wait for a concurrent claim of the same address, then answer 409', async (_label, write) => {
+      const address = `held.${randomUUID().slice(0, 8)}@example.test`;
+      phoneClaimRelease.mockClear();
+      let settled = false;
+      let pending: Promise<unknown> | undefined;
+
+      await db.transaction(async (tx) => {
+        // Another claim of the address (any spelling) holds it until this commits.
+        await lockAuthEmailClaim(tx, address.toUpperCase());
+        pending = write(address);
+        pending.then(() => { settled = true; }, () => { settled = true; });
+        await delay(500);
+        expect(settled).toBe(false);
+        await tx.insert(schema.users).values({
+          email: address,
+          name: 'Address Winner',
+          phone: uniquePhone(),
+          gender: 'unspecified',
+          birthDate: '1990-01-01',
+          isPhoneVerified: true,
+          isEmailVerified: true,
+        });
+      });
+
+      await expect(pending).rejects.toBeInstanceOf(ConflictException);
+      const owners = await emailOwners(address);
+      expect(owners).toHaveLength(1);
+      expect(owners[0]!.name).toBe('Address Winner');
+      if (_label !== 'account email change') {
+        // The refused sign-up gives its single-use phone token back.
+        expect(phoneClaimRelease).toHaveBeenCalledOnce();
+      }
+    }, 30000);
   });
 });
