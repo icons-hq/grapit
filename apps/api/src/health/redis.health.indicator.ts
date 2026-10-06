@@ -3,6 +3,7 @@ import { HealthIndicatorService, type HealthIndicatorResult } from '@nestjs/term
 import type IORedis from 'ioredis';
 
 import {
+  findEndedRedisClients,
   getRedisRuntimeMetadata,
   REDIS_CLIENT,
 } from '../modules/booking/providers/redis.provider.js';
@@ -38,9 +39,10 @@ function sanitizeHealthMessage(message: string): string {
  * Recovery does not depend on this endpoint: the ioredis clients created by
  * `redis.provider.ts` (and the duplicated Socket.IO subscriber) keep
  * reconnecting with a bounded backoff and never enter the terminal `end`
- * state on their own. Whether a Cloud Run probe also calls this endpoint is
- * decided by the API deploy flags in `.github/workflows/deploy.yml`; this
- * indicator does not assume one exists.
+ * state on their own. `/api/v1/health` (ping) is the startup probe;
+ * `/api/v1/health/live` ({@link RedisHealthIndicator.isLive}, no Valkey round
+ * trip) is the liveness probe, so a Valkey outage never restarts instances
+ * (`.github/workflows/deploy.yml`).
  *
  * Terminus 11.1 API: we inject HealthIndicatorService and call
  * `service.check(key).up()` / `.down(data)`. The old `HealthIndicator` base
@@ -88,5 +90,27 @@ export class RedisHealthIndicator {
         message: sanitizeHealthMessage(message),
       });
     }
+  }
+
+  /**
+   * Liveness without a Valkey round trip: down only while a client is in
+   * ioredis' terminal `end` state (see `findEndedRedisClients`), the state an
+   * instance cannot recover from by itself. Reconnecting during a Valkey
+   * outage or failover stays up, so the outage never restarts every instance.
+   */
+  isLive(key: string): HealthIndicatorResult {
+    const indicator = this.healthIndicatorService.check(key);
+    const metadata = getRedisRuntimeMetadata(this.redis);
+    const endedClients = findEndedRedisClients(this.redis);
+
+    if (endedClients.length > 0) {
+      return indicator.down({
+        ...metadata,
+        endedClients,
+        message: 'redis client stopped reconnecting (end state)',
+      });
+    }
+
+    return indicator.up({ ...metadata });
   }
 }

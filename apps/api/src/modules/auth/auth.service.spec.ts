@@ -145,6 +145,7 @@ describe('AuthService', () => {
     insert: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    execute: ReturnType<typeof vi.fn>;
     transaction: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
@@ -216,6 +217,8 @@ describe('AuthService', () => {
         }),
       }),
       update: vi.fn().mockImplementation(() => makeMockUpdateChain()),
+      // pg_advisory_xact_lock of the lower-case address claim (lockAuthEmailClaim).
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
       transaction: vi.fn(async (callback: (tx: typeof mockDb) => Promise<unknown>) =>
         callback(mockDb),
       ),
@@ -494,6 +497,21 @@ describe('AuthService', () => {
       mockUserRepo.create.mockRejectedValueOnce(writeError);
 
       await expect(authService.register(mockRegisterDto)).rejects.toBe(writeError);
+      expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
+    }, 15000);
+
+    it('re-checks the address under the claim and answers 409 to a sign-up that lost the race', async () => {
+      // The pre-check saw a free address; the account that won committed before the claim.
+      mockUserRepo.findByEmail
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...mockUser, email: 'new@test.com' });
+
+      await expect(authService.register(mockRegisterDto)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockUserRepo.findByEmail).toHaveBeenLastCalledWith('new@test.com', mockDb);
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      // The single-use phone token stays usable for another address.
       expect(releasePhoneClaim).toHaveBeenCalledTimes(1);
     }, 15000);
   });
@@ -1337,9 +1355,7 @@ describe('AuthService', () => {
         from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([tokenRecord]) }),
       });
       mockDb.update
-        .mockReturnValueOnce({
-          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
-        })
+        .mockReturnValueOnce(makeMockUpdateChain([{ id: tokenRecord.id }]))
         .mockReturnValueOnce({
           set: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
@@ -1363,6 +1379,69 @@ describe('AuthService', () => {
       });
 
       expect(mockDb.update).toHaveBeenCalledTimes(2);
+      // PR #235 review: the duplicate check, the code consumption and the email
+      // write run in one transaction under the lower-case address claim.
+      expect(mockDb.transaction).toHaveBeenCalledOnce();
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith(email, mockDb);
+      expect(mockDb.execute.mock.invocationCallOrder[0]!)
+        .toBeLessThan(mockUserRepo.findByEmail.mock.invocationCallOrder[0]!);
+    });
+
+    it('refuses an account email change when another account committed the address first, without spending the code', async () => {
+      const email = 'taken@example.com';
+      const code = '123456';
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      // Under the claim, the re-check sees the account that won the race.
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, id: randomUUID(), email });
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            email,
+            purpose: 'account_email',
+            tokenHash: hashEmailCode(email, code, 'account_email'),
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+            consumedAt: null,
+            createdAt: new Date(),
+          }]),
+        }),
+      });
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(mockDb.execute).toHaveBeenCalledOnce();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('answers 410 when a parallel request of the same account consumed the code first', async () => {
+      const email = 'buyer@example.com';
+      const code = '123456';
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{
+            id: randomUUID(),
+            userId: mockUser.id,
+            email,
+            purpose: 'account_email',
+            tokenHash: hashEmailCode(email, code, 'account_email'),
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+            consumedAt: null,
+            createdAt: new Date(),
+          }]),
+        }),
+      });
+      mockDb.update.mockReturnValueOnce(makeMockUpdateChain([]));
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(mockUser.id, email, code),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(mockDb.update).toHaveBeenCalledOnce();
     });
 
     it('rejects account email verification code confirmation for merged accounts', async () => {

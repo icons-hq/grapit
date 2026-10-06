@@ -338,6 +338,7 @@ describe('ReservationFinalizationService', () => {
       status: 'DONE',
       currency: 'USD',
       method: 'FOREIGN_EASY_PAY',
+      easyPay: { provider: 'PAYPAL' },
       totalAmount: 108,
       approvedAt: '2026-05-29T10:01:00.000Z',
     });

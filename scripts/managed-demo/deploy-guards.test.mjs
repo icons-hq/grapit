@@ -898,9 +898,12 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   );
   assert.ok(describeIndex > 0 && describeIndex < preflightCall, 'db-preflight reads the guard describe output');
 
-  // #7/#61: liveness on the Redis-only health route and an explicit WebSocket timeout.
-  assert.match(workflow, /--liveness-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,/);
+  // #7/#61: startup on the Valkey PING route and an explicit WebSocket timeout. PR #235
+  // review: liveness uses the dependency-free route, never the PING route, so a Valkey
+  // outage or reconnect cannot restart every healthy instance.
   assert.match(workflow, /--startup-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,/);
+  assert.match(workflow, /--liveness-probe=httpGet\.path=\/api\/v1\/health\/live,httpGet\.port=8080,/);
+  assert.doesNotMatch(workflow, /--liveness-probe=httpGet\.path=\/api\/v1\/health,/);
   assert.match(workflow, /--timeout=3600\b/);
 
   // #150: prewarm can never request more minimum instances than the API maximum, and the
@@ -936,10 +939,11 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   assert.match(api, /\n {12}\$\{\{ steps\.runtime_env\.outputs\.env_vars \}\}\n {10}secrets: \|/);
   assert.doesNotMatch(api, /\n {12}(PGBOSS_POOL_MAX|DB_STATEMENT_TIMEOUT_MS)=/);
 
-  // #7 follow-up: with the self-reconnecting Valkey client (u07) the liveness probe samples
-  // every 10s and tolerates 6 failures (about one minute) before restarting an instance.
+  // #7 follow-up: the liveness probe samples every 10s and tolerates 6 failures (about one
+  // minute), far longer than the one-second reconnect after an unexpected ioredis `end`,
+  // before restarting an instance whose Valkey client stays in `end`.
   assert.match(
     workflow,
-    /--liveness-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6\n/,
+    /--liveness-probe=httpGet\.path=\/api\/v1\/health\/live,httpGet\.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6\n/,
   );
 });

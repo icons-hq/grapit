@@ -25,12 +25,15 @@ export type ApprovedPaymentMethodCategory =
 
 export interface ApprovedPaymentMethod {
   category: ApprovedPaymentMethodCategory;
-  /** The easy pay provider, set for SIMPLE_PAY and a recognised FOREIGN_EASY_PAY wallet. */
+  /**
+   * The easy pay provider, set for SIMPLE_PAY and a recognised FOREIGN_EASY_PAY
+   * wallet. A FOREIGN_EASY_PAY without it is an unknown wallet.
+   */
   provider?: PaymentProvider;
 }
 
 export type ApprovedMethodPolicyMismatch =
-  /** Virtual account, mobile phone, gift certificate, unknown label or easy pay provider. */
+  /** Virtual account, mobile phone, gift certificate, unknown label, easy pay provider or foreign wallet. */
   | 'unsupported_method'
   /** The performance policy (or the platform default) does not allow the category. */
   | 'not_allowed_by_policy'
@@ -38,7 +41,7 @@ export type ApprovedMethodPolicyMismatch =
   | 'checkout_method_missing'
   /** The approved category differs from the order's frozen checkout method. */
   | 'checkout_method_mismatch'
-  /** A domestic easy pay approved with another provider than the one checked out. */
+  /** An easy pay (domestic or foreign wallet) approved with another provider than the one checked out. */
   | 'checkout_provider_mismatch';
 
 /**
@@ -79,13 +82,35 @@ const SIMPLE_PAY_PROVIDER_BY_LABEL: Readonly<Record<string, PaymentProvider>> = 
   KAKAOPAY: 'KAKAOPAY',
 };
 
-/** Foreign wallets; the provider is informational (their checks stay route-specific). */
+/**
+ * Foreign wallet `easyPay` codes (해외 간편결제 연동하기 > 응답 확인하기). The
+ * provider is compared with the frozen checkout provider like a domestic easy
+ * pay. Checkout sells Toss `ALIPAY` as `ALIPAY_PLUS`; the other asynchronous
+ * wallets Toss groups with it (중국 및 동남아 간편결제: AlipayHK, BillEase,
+ * Boost, BPI, DANA, GCash, Rabbit LINE Pay, Touch 'n Go) settle through the
+ * same Alipay+ checkout, key and quote, so they read as `ALIPAY_PLUS` and a
+ * wallet that checkout settled with is never refunded as a mismatch. TrueMoney
+ * stays its own provider (unsupported, refunded by the async DONE provider
+ * check) and PayPal its own synchronous route. Any other code, or none, is an
+ * unknown wallet and never passes the policy.
+ */
 const FOREIGN_EASY_PAY_PROVIDER_BY_LABEL: Readonly<Record<string, PaymentProvider>> = {
   PAYPAL: 'PAYPAL',
   페이팔: 'PAYPAL',
   ALIPAY: 'ALIPAY_PLUS',
   ALIPAY_PLUS: 'ALIPAY_PLUS',
   알리페이: 'ALIPAY_PLUS',
+  ALIPAYHK: 'ALIPAY_PLUS',
+  BILLEASE: 'ALIPAY_PLUS',
+  BOOST: 'ALIPAY_PLUS',
+  BPI: 'ALIPAY_PLUS',
+  DANA: 'ALIPAY_PLUS',
+  다나: 'ALIPAY_PLUS',
+  GCASH: 'ALIPAY_PLUS',
+  지캐시: 'ALIPAY_PLUS',
+  RABBIT_LINE_PAY: 'ALIPAY_PLUS',
+  TOUCHNGO: 'ALIPAY_PLUS',
+  터치앤고: 'ALIPAY_PLUS',
   TRUEMONEY: 'TRUEMONEY',
   트루머니: 'TRUEMONEY',
 };
@@ -190,9 +215,10 @@ export function isEnforcedCheckoutPaymentMethod(
 
 /**
  * Compares a provider-verified approval with the order's frozen checkout
- * method and the enforced policy. Foreign wallets compare the category only;
- * their provider checks (PayPal route, unsupported TrueMoney) stay on their own
- * paths. Returns null when the approval may be issued.
+ * method and the enforced policy. An easy pay, domestic or foreign wallet,
+ * must also be approved with the frozen checkout provider; an unknown provider
+ * is unsupported in both, since it cannot be proven to be the one checked out.
+ * Returns null when the approval may be issued.
  */
 export function findApprovedMethodPolicyMismatch(
   approved: ApprovedPaymentMethod,
@@ -204,6 +230,7 @@ export function findApprovedMethodPolicyMismatch(
     category === 'UNSUPPORTED'
     || category === 'VIRTUAL_ACCOUNT'
     || category === 'MOBILE_PHONE'
+    || (category === 'FOREIGN_EASY_PAY' && !approved.provider)
   ) {
     return 'unsupported_method';
   }
@@ -216,7 +243,10 @@ export function findApprovedMethodPolicyMismatch(
   if (checkoutPaymentMethod.method !== category) {
     return 'checkout_method_mismatch';
   }
-  if (category === 'SIMPLE_PAY' && approved.provider !== checkoutPaymentMethod.provider) {
+  if (
+    (category === 'SIMPLE_PAY' || category === 'FOREIGN_EASY_PAY')
+    && approved.provider !== checkoutPaymentMethod.provider
+  ) {
     return 'checkout_provider_mismatch';
   }
   return null;

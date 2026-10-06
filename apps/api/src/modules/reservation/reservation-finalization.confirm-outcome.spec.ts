@@ -411,14 +411,34 @@ describe('ReservationFinalizationService provider approval validation (#1, #74)'
     expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
   });
 
+  /**
+   * PR #235 review: a PayPal order whose paymentKey turns out to be an Alipay+
+   * payment (async wallet approved without our confirm, found by the
+   * ALREADY_PROCESSED lookup) matched the category and was issued as PayPal.
+   */
+  it.each([
+    ['another foreign wallet', { provider: 'ALIPAY' }],
+    ['no wallet', null],
+  ])('cancels a PayPal-route approval settled with %s', async (_label, easyPay) => {
+    const deps = createDependencies({ reservation: paypalReservation() });
+    const record = withCompensationRecord(deps.db);
+    deps.tossClient.confirmPayment.mockRejectedValue(
+      new TossPaymentError('ALREADY_PROCESSED_PAYMENT', '이미 처리된 결제 입니다.', 400),
+    );
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval({ easyPay }));
+
+    await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
+      .rejects.toBeInstanceOf(BadRequestException);
+
+    expect(deps.tossClient.cancelPayment).toHaveBeenCalledOnce();
+    expectRecordedCompensation(deps, record, '허용되지 않은 결제수단으로 인한 자동 취소');
+    expect(deps.qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+  });
+
   it('issues a PayPal approval only when Toss settled the quoted USD amount', async () => {
     const deps = createDependencies({ reservation: paypalReservation() });
     const { inserted } = withIssuance(deps.db);
-    deps.tossClient.confirmPayment.mockResolvedValue(domesticApproval({
-      currency: 'USD',
-      method: '해외간편결제',
-      totalAmount: 108,
-    }));
+    deps.tossClient.confirmPayment.mockResolvedValue(paypalApproval());
 
     await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
       .resolves.toEqual({ reservationId: 'reservation-1' });
@@ -677,11 +697,7 @@ describe('ReservationFinalizationService unknown provider outcome (#18, #73)', (
     deps.tossClient.confirmPayment.mockRejectedValue(
       new TossPaymentError('ALREADY_PROCESSED_PAYMENT', '이미 처리된 결제 입니다.', 400),
     );
-    deps.tossClient.queryPayment.mockResolvedValue(domesticApproval({
-      currency: 'USD',
-      method: '해외간편결제',
-      totalAmount: 108,
-    }));
+    deps.tossClient.queryPayment.mockResolvedValue(paypalApproval());
 
     await expect(deps.service.confirmAndCreateReservation(PAYPAL_DTO, 'user-1'))
       .resolves.toEqual({ reservationId: 'reservation-1' });
@@ -1145,6 +1161,7 @@ function paypalApproval(overrides: Record<string, unknown> = {}) {
     currency: 'USD',
     method: '해외간편결제',
     totalAmount: 108,
+    easyPay: { provider: 'PAYPAL' },
     ...overrides,
   });
 }

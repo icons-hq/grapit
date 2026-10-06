@@ -81,7 +81,7 @@ describe('Payment confirm core — PostgreSQL', () => {
 
   function paypalPayment(paymentKey: string, orderId: string, overrides: Record<string, unknown> = {}) {
     return { paymentKey, orderId, status: 'DONE', currency: 'USD', method: '해외간편결제', totalAmount: 35.36,
-      approvedAt: new Date().toISOString(), ...overrides };
+      easyPay: { provider: 'PAYPAL' }, approvedAt: new Date().toISOString(), ...overrides };
   }
 
   function reconcilePayload(orderId: string, paymentKey: string): PaymentConfirmReconcileJobPayload {
@@ -293,7 +293,8 @@ describe('Payment confirm core — PostgreSQL', () => {
     const toss = {
       confirmPayment: vi.fn(),
       queryPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId, status: 'DONE',
-        currency: 'USD', method: '해외간편결제', totalAmount: 35.36, approvedAt: new Date().toISOString() }),
+        currency: 'USD', method: '해외간편결제', easyPay: { provider: 'PAYPAL' }, totalAmount: 35.36,
+        approvedAt: new Date().toISOString() }),
       cancelPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
         status: 'CANCELED', totalAmount: 35.36, cancels: [{ cancelStatus: 'DONE' }] }),
     };

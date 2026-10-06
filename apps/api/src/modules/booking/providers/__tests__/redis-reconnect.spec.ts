@@ -8,12 +8,14 @@ import type IORedis from 'ioredis';
 import type { Cluster } from 'ioredis';
 import {
   clusterReconnectDelayWithQueueFlush,
+  findEndedRedisClients,
   REDIS_CLUSTER_UNAVAILABLE_MESSAGE,
   REDIS_CONNECT_TIMEOUT_MS,
   REDIS_MAX_RETRIES_PER_REQUEST,
   REDIS_RECONNECT_MAX_DELAY_MS,
   redisProvider,
   redisReconnectDelay,
+  registerRedisClientGuards,
   registerRedisEndRecovery,
 } from '../redis.provider.js';
 
@@ -579,5 +581,55 @@ describe('registerRedisEndRecovery', () => {
     await vi.advanceTimersByTimeAsync(500);
 
     expect(connect).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * PR #235 review: the API liveness probe (`/api/v1/health/live`) fails only for
+ * a client in the terminal `end` state, including the Socket.IO subscriber,
+ * which is created outside the DI container and guarded on its own.
+ */
+describe('findEndedRedisClients', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createStatusClient(status: string) {
+    const emitter = new EventEmitter();
+    return Object.assign(emitter, {
+      status,
+      connect: vi.fn().mockResolvedValue(undefined),
+      quit: vi.fn().mockResolvedValue('OK'),
+      disconnect: vi.fn(),
+    });
+  }
+
+  it('reports a guarded subscriber only while it is in the end state', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const subscriber = createStatusClient('ready');
+    registerRedisClientGuards(subscriber as unknown as IORedis, 'liveness test subscriber');
+
+    for (const status of ['connecting', 'reconnecting', 'close', 'ready']) {
+      subscriber.status = status;
+      expect(findEndedRedisClients()).not.toContain('liveness test subscriber');
+    }
+
+    subscriber.status = 'end';
+    expect(findEndedRedisClients()).toContain('liveness test subscriber');
+
+    // The end recovery reconnected it.
+    subscriber.status = 'connecting';
+    expect(findEndedRedisClients()).not.toContain('liveness test subscriber');
+  });
+
+  it('reports the given shared client by its guard label, once', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const shared = createStatusClient('end');
+    expect(findEndedRedisClients(shared)).toContain('shared client');
+
+    registerRedisClientGuards(shared as unknown as IORedis, 'liveness test shared');
+    const ended = findEndedRedisClients(shared);
+    expect(ended).toContain('liveness test shared');
+    expect(ended).not.toContain('shared client');
   });
 });

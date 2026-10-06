@@ -874,12 +874,56 @@ export function registerRedisEndRecovery(
 }
 
 /**
+ * Guarded clients the API liveness probe watches, by guard label: the shared
+ * client and the Socket.IO subscriber. A process has one client per label; a
+ * newer client registered under the same label replaces the older one.
+ */
+const livenessTrackedRedisClients = new Map<string, WeakRef<object>>();
+
+function readRedisClientStatus(client: unknown): string | undefined {
+  if (typeof client !== 'object' || client === null) return undefined;
+  const status = (client as { status?: unknown }).status;
+  return typeof status === 'string' ? status : undefined;
+}
+
+/**
+ * Labels of the clients left in ioredis' terminal `end` state: the given
+ * shared client and every guarded client of this process.
+ *
+ * `end` is the only state an instance cannot leave by itself. A reconnecting
+ * or closed link (Valkey down or failing over) recovers on its own, since the
+ * reconnect strategy never gives up, and a fresh instance could not reach
+ * Valkey either, so it is not a liveness failure. `end` follows only a
+ * quit()/disconnect() (a shutdown), and an unexpected one is reconnected by
+ * {@link registerRedisEndRecovery} about a second later; a client still in
+ * `end` across consecutive liveness probes has stopped recovering, and only a
+ * restart brings seat locks, the queue, throttling and pub/sub back.
+ */
+export function findEndedRedisClients(sharedClient?: unknown): string[] {
+  const clients = new Map<object, string>();
+  if (typeof sharedClient === 'object' && sharedClient !== null) {
+    clients.set(sharedClient, 'shared client');
+  }
+  for (const [label, ref] of livenessTrackedRedisClients) {
+    const client = ref.deref();
+    if (client) {
+      clients.set(client, label);
+    }
+  }
+  return [...clients]
+    .filter(([client]) => readRedisClientStatus(client) === 'end')
+    .map(([, label]) => label);
+}
+
+/**
  * Attaches the sanitized error logger and the unexpected-end recovery to a
- * client created outside the provider factory (the Socket.IO subscriber).
+ * client, and puts it under the API liveness probe ({@link findEndedRedisClients}).
+ * Used for the shared client and the Socket.IO subscriber.
  */
 export function registerRedisClientGuards(client: IORedis | Cluster, label: string): void {
   registerRedisErrorLogging(client);
   registerRedisEndRecovery(client, label);
+  livenessTrackedRedisClients.set(label, new WeakRef(client));
 }
 
 /**
