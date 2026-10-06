@@ -14,6 +14,7 @@ describe('public read endpoint throttling', () => {
 
   it('skips the coarse default throttler for health reads', () => {
     expect(Reflect.getMetadata(DEFAULT_SKIP_METADATA, HealthController.prototype.check)).toBe(true);
+    expect(Reflect.getMetadata(DEFAULT_SKIP_METADATA, HealthController.prototype.live)).toBe(true);
   });
 
   it('keeps public seat status reads on a dedicated default-throttler budget (audit #8)', () => {

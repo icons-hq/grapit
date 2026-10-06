@@ -328,6 +328,10 @@ jobs:
       - name: Resolve optional API runtime settings
         id: runtime_env
         run: node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
+      # Probes: startup uses /api/v1/health (Valkey PING), so a new revision only takes
+      # traffic once Valkey answers, the same gate bootstrap already applies. Liveness uses
+      # /api/v1/health/live (no dependency I/O), which fails only while a Valkey client is
+      # stuck in the ioredis `end` state; a Valkey outage or failover never restarts instances.
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.API_SERVICE }}
@@ -344,7 +348,7 @@ jobs:
             --cpu=1
             --port=8080
             --startup-probe=httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=1,timeoutSeconds=1,failureThreshold=180
-            --liveness-probe=httpGet.path=/api/v1/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6
+            --liveness-probe=httpGet.path=/api/v1/health/live,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6
             ${{ env.API_CPU_ALLOCATION_FLAG }}
             --session-affinity
             --allow-unauthenticated

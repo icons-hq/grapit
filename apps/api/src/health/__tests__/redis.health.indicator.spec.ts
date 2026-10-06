@@ -209,4 +209,48 @@ describe('RedisHealthIndicator', () => {
     expect(serialized).not.toContain('+821012345678');
     expect(serialized).not.toContain('paymentKey=secret');
   });
+
+  /**
+   * PR #235 review: the liveness probe used the PING route, so a Valkey outage
+   * or reconnect made every healthy instance fail liveness and restart.
+   */
+  describe('isLive (liveness, no Valkey round trip)', () => {
+    it.each(['ready', 'connecting', 'reconnecting', 'close'])(
+      'stays up without pinging while the client is %s',
+      (status) => {
+        const redis = Object.assign(createMockRedis(), { status });
+        redis.ping.mockRejectedValue(new Error('Connection is closed.'));
+        indicator = new RedisHealthIndicator(mockHealth as never, redis as never);
+
+        const result = indicator.isLive('redis') as IndicatorResult;
+
+        expect(result['redis']?.status).toBe('up');
+        expect(result['redis']?.client).toBe('ioredis-cluster');
+        expect(redis.ping).not.toHaveBeenCalled();
+      },
+    );
+
+    it('reports down while the shared client is stuck in the terminal end state', () => {
+      const redis = Object.assign(createMockRedis(), { status: 'end' });
+      indicator = new RedisHealthIndicator(mockHealth as never, redis as never);
+
+      const result = indicator.isLive('redis') as IndicatorResult & {
+        redis: { endedClients?: string[] };
+      };
+
+      expect(result['redis']?.status).toBe('down');
+      expect(result['redis']?.endedClients).toContain('shared client');
+      expect(result['redis']?.message).toBe('redis client stopped reconnecting (end state)');
+      expect(redis.ping).not.toHaveBeenCalled();
+    });
+
+    it('stays up for the local in-memory client', () => {
+      indicator = new RedisHealthIndicator(
+        mockHealth as never,
+        withRedisMetadata({ get: vi.fn() }, { mode: 'in-memory', client: 'in-memory', configured: false }) as never,
+      );
+
+      expect((indicator.isLive('redis') as IndicatorResult)['redis']?.status).toBe('up');
+    });
+  });
 });
