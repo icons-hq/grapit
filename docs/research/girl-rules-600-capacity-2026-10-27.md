@@ -8,6 +8,8 @@ Keep API 1 vCPU/512 MiB, Web 1 vCPU/1 GiB and the existing SQL tier. Use at most
 
 The queue scripts assign monotonic order atomically within each performance hash slot. Direct entry and reconciliation both enforce the configured active cap; ETA uses it too. Old and new writers must not coexist during an active queue. Perform the rollout behind the existing booking gate after queue/payment activity drains.
 
+Socket.IO rejects unauthenticated Engine.IO handshakes before upgrading, even when the client never joins a namespace. Login/refresh issues a Secure, HttpOnly, SameSite=None access cookie scoped to `/socket.io/`; tooling may use a Bearer access token. Browser origins must match `FRONTEND_URL`. Each process allows four transports per signed account and 850 in total (including pending handshakes), leaving HTTP capacity within concurrency 1000. Slots are released on close; connections expire with the access token and reconnect using the refreshed cookie. Transactional HTTP authorization remains unchanged. This does not certify resistance to volumetric network attacks or possession of many valid accounts.
+
 Payment confirmation keeps the per-order lease, per-user advisory limit lock, provider result validation and transactional seat/payment/ticket-item writes. The receipt read issues or heals QR credentials once; standalone finalization retains immediate QR issuance. Prepared parameterized reads reuse SQL structure without caching customer data. Missing QR credentials are re-read in a new statement after the reservation lock, preserving PostgreSQL READ COMMITTED visibility during competing issue/cancel operations.
 
 ## Synthetic local verification
@@ -23,6 +25,8 @@ Payment confirmation keeps the per-order lease, per-user advisory limit lock, pr
 Every waiting actor holds a queue socket (400/800/1300 initially), with all 400 subsequent admission notifications delivered per wave. One hundred booking sockets receive all 60,000 expected seat notifications per wave with no duplicates. Duplicate confirmation retries converge on the same reservation. Active admission never exceeds 200. Disposable Postgres/Valkey interruption and recovery pass. Human selection/payment time is compressed, so the run duration is not a sellout-time forecast.
 
 API unit tests: 2672 passed. API database/Valkey integration tests: 406 passed. Typecheck passed. The local test uses macOS/Node24 and does not certify Cloud Run CPU/cgroup, Cloud SQL micro performance or actual provider latency. The cloud rehearsal and cutover results will be recorded separately after execution; no production capacity is claimed from this file's local result alone.
+
+The local measurements above precede the transport-authentication follow-up. The harness now sends authenticated socket handshakes; actual-cloud measurements must use that final source. The transport regression suite uses a real Engine.IO server to check anonymous/forged/expired access rejection, browser origin and cookie handling, concurrent account/total limits, and slot reuse after disconnect.
 
 ## Operational validation
 

@@ -5,6 +5,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis, { Cluster } from 'ioredis';
 import type { ServerOptions } from 'socket.io';
 import { redisReconnectDelay, registerRedisClientGuards } from './redis.provider.js';
+import { SocketTransportGuard } from './socket-transport-guard.js';
 
 const SOCKET_IO_REDIS_READY_TIMEOUT_MS = 5000;
 
@@ -215,9 +216,16 @@ export class RedisIoAdapter extends IoAdapter {
   }
 
   createIOServer(port: number, options?: ServerOptions): unknown {
-    const server = super.createIOServer(port, options) as {
+    const guard = new SocketTransportGuard(process.env['JWT_SECRET'] ?? '');
+    const server = super.createIOServer(port, {
+      ...options,
+      allowRequest: guard.allowRequest,
+      connectTimeout: 5000,
+    }) as {
       adapter: (adapter: ReturnType<typeof createAdapter>) => void;
+      engine: { on(event: 'connection', listener: typeof guard.connected): unknown };
     };
+    server.engine.on('connection', guard.connected);
     if (this.adapterConstructor) {
       server.adapter(this.adapterConstructor);
     }

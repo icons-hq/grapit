@@ -397,7 +397,9 @@ records, and do not use `wrangler delete` as the first rollback action.
 
 ## Immediate infrastructure rollback
 
-Use this path during the retention window:
+For the 2026-10-27 retirement, close the booking gate first and redeploy the recorded pre-cutover application image against the **current** micro DB and validated HA Valkey, retaining standalone protocol and bounded pools. Recheck the serving revision, worker and health before reopening. The application-only rollback must not point at a retired DB or Valkey. A DB restore is a separate incident procedure: restore a retained export into a new isolated instance, reconcile subsequent writes against the current source of truth, validate it, then perform an explicitly approved connection cutover.
+
+The following is the **historical August retention-window procedure**. It is not executable after its legacy resources are retired:
 
 1. start `grapit-db` if it was stopped;
 2. add a new `database-url` version containing the same value as preserved version `2`, or explicitly bind version `2` during an emergency deploy;
@@ -419,6 +421,8 @@ For an approved rollout:
 4. Rehearse on the actual deployment before the public sale, including two warm API instances, waiting sockets plus HTTP, queue refill, payment/QR correctness and provider test-mode flow. The local benchmark ran warm processes; scale-to-zero cold starts were not measured. If using prewarm, follow its verification procedure below and return the minimum to zero after traffic drains.
 5. Plan around 600–1,000 arrivals; treat 1,500 as the tested local burst case. The web closes its queue socket once the seat screen is ready, but handoff/reconnect overlap and uneven routing still consume capacity. Two instances at concurrency 1000 provide 2,000 request slots, not 2,000 parallel DB operations. The 1,500-arrival case has less headroom than the general 1.5× rule below and requires live routing evidence; do not claim it as a certified production limit.
 6. Check API latency/5xx/429, instance memory, DB CPU/pool waits and Valkey memory/evictions during rehearsal. A pool acquisition timeout, confirm p95 above two seconds, lost queue events or an oversell fails the gate. Tune the admission cap downward within the existing budget when needed and remeasure; increasing Cloud Run concurrency alone does not add CPU or database capacity.
+
+Socket transports require a valid access token before upgrade, through the Secure/HttpOnly `/socket.io/` cookie issued at login/refresh or a Bearer header for tooling. The per-process cap is 850 transports and four per signed account, including unfinished handshakes; closed transports release their slots. Browser origins must match `FRONTEND_URL`. Rejected or disconnected clients use existing reconnect and HTTP polling fallback. Verify a fresh login/refresh cookie and an authenticated reconnect after deployment, as older sessions may not yet carry the cookie. This reduces unauthenticated slot exhaustion but does not replace upstream volumetric protection.
 
 The current single-zone micro DB and single-node Valkey remain an availability risk: a node restart can interrupt the sale and lose transient locks/queue positions. The local capacity result does not waive maintenance/eviction checks, backup recovery, reconciliation, monitoring or an explicit operational decision about that risk. This profile schedules no resource purchase and makes no claim of zero usage charges. In particular, open WebSockets keep Cloud Run instances active and billable ([official behavior](https://docs.cloud.google.com/run/docs/triggering/websockets)).
 

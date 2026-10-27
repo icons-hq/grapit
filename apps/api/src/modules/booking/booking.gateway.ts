@@ -117,8 +117,8 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * `seat-update.v2` and, unless the seat was locked, as the legacy
    * `seat-update` (see SEAT_UPDATE_EVENT).
    *
-   * The room is joined without authentication, so the payload carries only the
-   * seat and its state, never who locked or bought it (audit #92). The trailing
+   * The transport requires an access token, but rooms remain read-only and the
+   * payload carries only the seat and state, never its buyer (audit #92). The trailing
    * argument is accepted for existing callers and ignored.
    */
   broadcastSeatUpdate(

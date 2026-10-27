@@ -52,6 +52,7 @@ import {
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
 import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
+import { SOCKET_ACCESS_COOKIE, SOCKET_ACCESS_COOKIE_OPTIONS } from '../../common/socket-access.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN']).default('ko');
 // Login emails are compared case-insensitively; normalize before validation.
@@ -131,6 +132,7 @@ export class AuthController {
   ) {
     const result = await this.authService.login(req.user as ValidatedUser);
     this.setRefreshTokenCookie(res, result.refreshToken);
+    this.setSocketAccessCookie(res, result.accessToken);
 
     return {
       accessToken: result.accessToken,
@@ -156,6 +158,7 @@ export class AuthController {
 
     const result = await this.authService.refreshTokens(token);
     this.setRefreshTokenCookie(res, result.refreshToken);
+    this.setSocketAccessCookie(res, result.accessToken);
 
     return {
       accessToken: result.accessToken,
@@ -174,6 +177,7 @@ export class AuthController {
     }
 
     res.clearCookie(AUTH_COOKIE_NAME, { path: '/', sameSite: 'none', secure: true });
+    res.clearCookie(SOCKET_ACCESS_COOKIE, SOCKET_ACCESS_COOKIE_OPTIONS);
 
     return { message: 'Logged out' };
   }
@@ -396,6 +400,7 @@ export class AuthController {
     }
 
     this.setRefreshTokenCookie(res, result.refreshToken);
+    this.setSocketAccessCookie(res, result.accessToken);
 
     return {
       accessToken: result.accessToken,
@@ -432,6 +437,7 @@ export class AuthController {
         if (result.refreshToken) {
           this.setRefreshTokenCookie(res, result.refreshToken);
         }
+        if (result.accessToken) this.setSocketAccessCookie(res, result.accessToken);
         res.redirect(
           buildSocialCallbackUrl(frontendUrl, callbackState.locale, {
             status: 'authenticated',
@@ -487,6 +493,13 @@ export class AuthController {
       sameSite: 'none',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/',
+    });
+  }
+
+  private setSocketAccessCookie(res: Response, token: string): void {
+    res.cookie(SOCKET_ACCESS_COOKIE, token, {
+      ...SOCKET_ACCESS_COOKIE_OPTIONS,
+      maxAge: 15 * 60 * 1000,
     });
   }
 

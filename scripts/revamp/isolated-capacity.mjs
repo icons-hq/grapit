@@ -317,7 +317,7 @@ async function openSeatSockets(showtimeId, count, lockSentAt) {
   const received = Array.from({ length: count }, () => new Set());
   received.duplicateDeliveries = 0;
   await inBatches(Array.from({ length: count }, (_, index) => index), async (index) => {
-    const socket = io(`${bases[index % apiInstances]}/booking`, { transports: ['websocket'], reconnection: false, forceNew: true, timeout: 10000 });
+    const socket = io(`${bases[index % apiInstances]}/booking`, { transports: ['websocket'], extraHeaders: { Authorization: `Bearer ${jwt.sign({ sub: randomUUID(), role: 'user' }, { secret: jwtSecret, expiresIn: '1h' })}` }, reconnection: false, forceNew: true, timeout: 10000 });
     openSockets.push(socket);
     await new Promise((done, fail) => { socket.once('connect', done); socket.once('connect_error', fail); });
     await new Promise((done, fail) => {
@@ -537,7 +537,7 @@ async function exerciseOpening(count, buyers) {
     // Match the browser: waiting customers keep a queue socket, then close it
     // when moving to seat selection. They continue HTTP polling as a fallback.
     await inBatches(queue.filter((record) => record.state === 'WAITING'), async (record) => {
-      const socket = io(`${bases[record.actor.lane]}/queue`, { transports: ['websocket'], reconnection: false, forceNew: true, timeout: 10000 });
+      const socket = io(`${bases[record.actor.lane]}/queue`, { transports: ['websocket'], extraHeaders: { Authorization: `Bearer ${record.actor.token}` }, reconnection: false, forceNew: true, timeout: 10000 });
       queueSockets.set(record.sessionId, socket);
       socket.on('queue:admitted', () => admittedViaSocket.add(record.sessionId));
       socket.on('queue:position', () => { queuePositionMessages++; });
