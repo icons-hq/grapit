@@ -443,6 +443,11 @@ export interface ReservationFinalizationResult {
   reservationId: string;
 }
 
+export interface ReservationFinalizationOptions {
+  /** The buyer receipt read issues/repairs QR before returning its response. */
+  qrIssuance?: 'immediate' | 'reservation-read';
+}
+
 @Injectable()
 export class ReservationFinalizationService {
   private readonly logger = new Logger(ReservationFinalizationService.name);
@@ -461,6 +466,7 @@ export class ReservationFinalizationService {
   async confirmAndCreateReservation(
     dto: ConfirmPaymentRequest,
     userId: string,
+    options: ReservationFinalizationOptions = {},
   ): Promise<ReservationFinalizationResult> {
     const confirmLockToken = randomUUID();
     const confirmLockAcquired = await this.bookingService.acquirePaymentConfirmLock(
@@ -495,6 +501,7 @@ export class ReservationFinalizationService {
         dto,
         userId,
         confirmLockToken,
+        options,
       );
     } finally {
       clearInterval(refreshTimer);
@@ -914,6 +921,7 @@ export class ReservationFinalizationService {
     dto: ConfirmPaymentRequest,
     userId: string,
     confirmLockToken: string,
+    options: ReservationFinalizationOptions,
   ): Promise<ReservationFinalizationResult> {
     const [existingPayment] = await this.db
       .select()
@@ -1257,6 +1265,7 @@ export class ReservationFinalizationService {
         showtimeId: reservation.showtimeId,
         pendingSeats,
         committedPaymentId,
+        deferQrToReservationRead: options.qrIssuance === 'reservation-read',
       });
 
       return { reservationId: reservation.id };
@@ -1288,6 +1297,7 @@ export class ReservationFinalizationService {
     showtimeId: string;
     pendingSeats: FloorAwareSeatSelection[];
     committedPaymentId: string | null;
+    deferQrToReservationRead?: boolean;
   }): Promise<void> {
     const seatIds = input.pendingSeats.map((seat) => seat.seatKey);
     try {
@@ -1320,7 +1330,7 @@ export class ReservationFinalizationService {
       );
     }
 
-    if (this.qrTicketService && input.committedPaymentId) {
+    if (this.qrTicketService && input.committedPaymentId && !input.deferQrToReservationRead) {
       try {
         await this.qrTicketService.ensureIssuedTicketsForReservation({
           reservationId: input.reservationId,

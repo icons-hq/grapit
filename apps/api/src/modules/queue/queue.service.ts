@@ -6,8 +6,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type IORedis from 'ioredis';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
@@ -49,6 +51,18 @@ export const QUEUE_WAITING_COOKIE_MAX_AGE_MS = QUEUE_WAIT_SESSION_SECONDS * 1000
 const QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS = 60;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
+
+/** Existing installations keep their cap unless an explicit capacity profile sets it. */
+export function resolveQueueAdmissionLimit(value: unknown): number {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return QUEUE_MAX_ACTIVE_ADMISSIONS;
+  }
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > QUEUE_MAX_ACTIVE_ADMISSIONS) {
+    throw new Error(`QUEUE_MAX_ACTIVE_ADMISSIONS must be an integer between 1 and ${QUEUE_MAX_ACTIVE_ADMISSIONS}`);
+  }
+  return limit;
+}
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
 // Queue requests run at most one reconcile per performance per interval.
 const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
@@ -141,6 +155,7 @@ const NO_WAIT_ESTIMATE: QueueWaitEstimate = {
 export function estimateQueueWait(params: {
   position: number;
   remainingSeats: number;
+  activeAdmissionLimit?: number;
 }): QueueWaitEstimate {
   const position = Math.floor(params.position);
   const remainingSeats = Math.floor(params.remainingSeats);
@@ -154,7 +169,7 @@ export function estimateQueueWait(params: {
     return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
   }
 
-  const cycleCapacity = Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS);
+  const cycleCapacity = Math.min(remainingSeats, resolveQueueAdmissionLimit(params.activeAdmissionLimit));
   const cycles = Math.ceil(position / cycleCapacity);
   const maxSeconds = cycles * QUEUE_ETA_CYCLE_MAX_SECONDS;
   if (maxSeconds > QUEUE_ETA_MAX_SECONDS) {
@@ -189,6 +204,8 @@ type QueueSessionRecord = {
   admissionTokenHash: string;
   state: QueueSessionState;
   enteredAt: string;
+  /** Redis-assigned registration order; absent on legacy sessions. */
+  queueOrder?: string;
   admittedAt: string | null;
   activeUntilAt: string | null;
   reentryGraceUntilAt: string | null;
@@ -297,6 +314,7 @@ type OrderAdmissionBinding = {
 @Injectable()
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
+  private readonly maxActiveAdmissions: number;
   private readonly reconcileInFlight = new Set<string>();
   // One fresh remaining-seat computation per performance per instance at a
   // time; concurrent cache misses share it.
@@ -306,7 +324,10 @@ export class QueueService {
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly gateway: QueueGateway,
-  ) {}
+    @Optional() config?: ConfigService,
+  ) {
+    this.maxActiveAdmissions = resolveQueueAdmissionLimit(config?.get('QUEUE_MAX_ACTIVE_ADMISSIONS'));
+  }
 
   async resolveBrowserIdentity(
     userId: string,
@@ -481,10 +502,11 @@ export class QueueService {
 
     const reply = (await this.redis.eval(
       CREATE_QUEUE_SESSION_LUA,
-      3,
+      4,
       identityKey,
       this.sessionKey(performanceId, record.queueSessionId),
       this.waitingQueueKey(performanceId),
+      `{queue:${performanceId}}:last-order`,
       record.queueSessionId,
       JSON.stringify(record),
       String(ttlMs),
@@ -640,7 +662,7 @@ export class QueueService {
 
     const capacity = Math.min(
       await this.calculateRemainingSeats(performanceId),
-      QUEUE_MAX_ACTIVE_ADMISSIONS,
+      this.maxActiveAdmissions,
     );
     if (capacity <= 0) {
       return;
@@ -1106,7 +1128,7 @@ export class QueueService {
       return;
     }
 
-    const capacity = Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS);
+    const capacity = Math.min(remainingSeats, this.maxActiveAdmissions);
     const activeCount = await this.redis.scard(this.activeAdmissionsKey(performanceId));
     const slotsToFill = Math.max(0, capacity - activeCount);
 
@@ -1355,7 +1377,7 @@ export class QueueService {
     ];
   }
 
-  /** Sliding WAITING expiresAt, ttlMs, and the original enteredAt score. */
+  /** Sliding WAITING expiry and its original registration order. */
   private buildWaitingRenewalArgs(record: QueueSessionRecord, now: Date): string[] {
     return [
       new Date(now.getTime() + QUEUE_WAIT_SESSION_SECONDS * 1000).toISOString(),
@@ -1365,6 +1387,8 @@ export class QueueService {
   }
 
   private resolveEnteredAtScore(record: QueueSessionRecord, now: Date = new Date()): number {
+    const order = Number(record.queueOrder);
+    if (Number.isSafeInteger(order) && order > 0) return order;
     const enteredAt = Date.parse(record.enteredAt);
     return Number.isFinite(enteredAt) ? enteredAt : now.getTime();
   }
@@ -1393,7 +1417,9 @@ export class QueueService {
     const state = this.resolveVisibleState(record, recoveryOrderId, options.now);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
     const estimate =
-      state === WAITING ? estimateQueueWait({ position, remainingSeats }) : NO_WAIT_ESTIMATE;
+      state === WAITING
+        ? estimateQueueWait({ position, remainingSeats, activeAdmissionLimit: this.maxActiveAdmissions })
+        : NO_WAIT_ESTIMATE;
 
     return {
       queueSessionId: record.queueSessionId,

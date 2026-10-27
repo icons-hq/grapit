@@ -72,17 +72,14 @@ describe('QrTicketService reminder scheduling isolation', () => {
     // reservation (audit #107); the reads inside it use the same chain.
     const db = {
       select: vi.fn()
-        // Lock-free fast path: issue context, then no active credential.
+        // Joined context has no active credential in either snapshot.
         .mockReturnValueOnce(chainResult([issueContextRow]))
-        .mockReturnValueOnce(chainResult([]))
-        // Under the reservation lock: re-read context, still missing, insert, re-read.
-        .mockReturnValueOnce(chainResult([issueContextRow]))
-        .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([{ ...ticketRecord(), ...seatIdentity }])),
+        .mockReturnValueOnce(chainResult([issueContextRow])),
       insert: vi.fn().mockReturnValue({
         values: vi.fn().mockReturnValue({
-          onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
-          returning: vi.fn().mockResolvedValue([ticketRecord()]),
+          onConflictDoNothing: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([ticketRecord()]),
+          }),
         }),
       }),
       execute: vi.fn().mockResolvedValue({ rows: [{ id: 'reservation-1' }] }),

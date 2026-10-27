@@ -12,7 +12,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
+import { eq, and, or, sql, desc, inArray, ne, isNull } from 'drizzle-orm';
 import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   isCheckoutPaymentMethodAllowed,
@@ -20,6 +20,7 @@ import {
 } from '@grabit/shared';
 import { fetchReviewedPerformanceTranslations } from '../translation/performance-translation-overlay.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { jsonRows } from '../../database/json-rows.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
 import { restoreCancellationPendingBenefitEntitlements } from '../../database/benefit-entitlement-restoration.js';
@@ -405,6 +406,7 @@ function isPaymentProvider(provider: string): provider is PaymentProvider {
 export class ReservationService {
   private readonly logger = new Logger(ReservationService.name);
   private readonly reservationFinalizationService: ReservationFinalizationService;
+  private reservationDetailQuery?: ReturnType<ReservationService['createReservationDetailQuery']>;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -1481,10 +1483,12 @@ export class ReservationService {
     this.featureFlags.assertBookingEnabled(actor);
     assertBookingVerificationComplete(actor);
 
-    const result = await this.reservationFinalizationService.confirmAndCreateReservation(
-      dto,
-      userId,
-    );
+    // The receipt below already awaits QR issuance/self-healing. Avoid doing
+    // that same read/issuance pass twice in one confirm response. Standalone
+    // finalizers keep immediate issuance, including runtimes without this reader.
+    const result = this.qrTicketService
+      ? await this.reservationFinalizationService.confirmAndCreateReservation(dto, userId, { qrIssuance: 'reservation-read' })
+      : await this.reservationFinalizationService.confirmAndCreateReservation(dto, userId);
 
     try {
       return await this.getReservationDetail(result.reservationId, userId, locale);
@@ -1584,8 +1588,8 @@ export class ReservationService {
     return result;
   }
 
-  async getReservationDetail(reservationId: string, userId: string, locale?: string): Promise<ReservationDetail> {
-    const [row] = await this.db
+  private createReservationDetailQuery() {
+    return this.db
       .select({
         reservation: {
           id: reservations.id,
@@ -1641,6 +1645,18 @@ export class ReservationService {
           providerCheckMessage: reservationPaymentFailureDiagnostics.providerCheckMessage,
         },
         refund: refunds,
+        payment: payments,
+        seats: jsonRows(reservationSeats, eq(reservationSeats.reservationId, reservations.id)),
+        ticketItemRows: jsonRows(ticketItems, eq(ticketItems.reservationId, reservations.id),
+          sql`${ticketItems.createdAt}, ${ticketItems.id}`),
+        benefitEntitlementRows: jsonRows(ticketBenefitEntitlements, and(
+          eq(ticketBenefitEntitlements.showtimeId, reservations.showtimeId),
+          sql`${ticketBenefitEntitlements.ticketItemId} in (
+            select ${ticketItems.id} from ${ticketItems} where ${ticketItems.reservationId} = ${reservations.id}
+          )`,
+        )!, sql`${ticketBenefitEntitlements.createdAt}, ${ticketBenefitEntitlements.id}`),
+        tierColors: jsonRows(performanceSeatTiers, eq(performanceSeatTiers.performanceId, performances.id)),
+        ticketEmailUser: { email: users.email, isEmailVerified: users.isEmailVerified },
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
@@ -1648,38 +1664,37 @@ export class ReservationService {
       .leftJoin(venues, eq(performances.venueId, venues.id))
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(users, eq(users.id, reservations.userId))
       .leftJoin(
         reservationPaymentFailureDiagnostics,
         eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
       )
-      .where(and(eq(reservations.id, reservationId), eq(reservations.userId, userId)));
+      .where(and(
+        eq(reservations.id, sql.placeholder('reservationId')),
+        eq(reservations.userId, sql.placeholder('userId')),
+      ))
+      .prepare('reservation-detail-v1');
+  }
+
+  async getReservationDetail(reservationId: string, userId: string, locale?: string): Promise<ReservationDetail> {
+    // Cache SQL compilation, never query results. Every execution binds its
+    // owner/order and reads a fresh database snapshot on a pooled connection.
+    this.reservationDetailQuery ??= this.createReservationDetailQuery();
+    const [row] = await this.reservationDetailQuery.execute({ reservationId, userId });
 
     if (!row) {
       throw new NotFoundException('예매를 찾을 수 없습니다');
     }
 
-    const seats = await this.db
-      .select()
-      .from(reservationSeats)
-      .where(eq(reservationSeats.reservationId, reservationId));
-
-    const [payment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.reservationId, reservationId));
-
-    const ticketItemRows = await this.db
-      .select()
-      .from(ticketItems)
-      .where(eq(ticketItems.reservationId, reservationId))
-      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
-    const benefitEntitlementsByTicketItemId = ticketItemRows.length > 0
-      ? await this.loadBenefitEntitlementsForTicketItems(
-          row.reservation.showtimeId,
-          ticketItemRows.map((ticketItem) => ticketItem.id),
-        )
-      : new Map<string, BenefitEntitlement[]>();
-    const tierColorByName = await this.loadTierColorByName(row.performance.id);
+    const { seats, payment, ticketItemRows, ticketEmailUser } = row;
+    const benefitEntitlementsByTicketItemId = new Map<string, BenefitEntitlement[]>();
+    for (const entitlement of row.benefitEntitlementRows) {
+      const values = benefitEntitlementsByTicketItemId.get(entitlement.ticketItemId) ?? [];
+      values.push(this.mapBenefitEntitlement(entitlement));
+      benefitEntitlementsByTicketItemId.set(entitlement.ticketItemId, values);
+    }
+    const tierColorByName = new Map(row.tierColors.map((tier) => [tier.tierName, tier.color]));
 
     let qrTickets: QrTicket[] = [];
     if (
@@ -1720,13 +1735,6 @@ export class ReservationService {
         });
     const qrTicket = qrTickets.find((ticket) => ticket.status === 'ACTIVE' && ticket.token)
       ?? this.createBlockingQrTicket(row.reservation.createdAt);
-    const [ticketEmailUser] = await this.db
-      .select({
-        email: users.email,
-        isEmailVerified: users.isEmailVerified,
-      })
-      .from(users)
-      .where(eq(users.id, userId));
     if (!ticketEmailUser) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
     }
@@ -1794,7 +1802,7 @@ export class ReservationService {
         ? toRefundTimeline(row.refund) : ticketItemRefundTimeline(ticketItemRows),
       cancelledSeatHold: null,
       cancellationRecovery: reservationCancellationRecovery(ticketItemRows, row.refund ?? null),
-      refundProviderAmount: reservationProviderRefund(ticketItemRows, row.refund ?? null, payment),
+      refundProviderAmount: reservationProviderRefund(ticketItemRows, row.refund ?? null, payment ?? undefined),
       qrTicket,
       ticketEmailDelivery: resolveTicketEmailDelivery({
         email: ticketEmailUser.email,
@@ -1806,46 +1814,6 @@ export class ReservationService {
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       ticketItems: ticketItemDtos,
     };
-  }
-
-  private async loadBenefitEntitlementsForTicketItems(
-    showtimeId: string,
-    ticketItemIds: string[],
-  ): Promise<Map<string, BenefitEntitlement[]>> {
-    if (ticketItemIds.length === 0) {
-      return new Map();
-    }
-
-    const entitlementRows = await this.db
-      .select()
-      .from(ticketBenefitEntitlements)
-      .where(and(
-        eq(ticketBenefitEntitlements.showtimeId, showtimeId),
-        inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds),
-      ))
-      .orderBy(asc(ticketBenefitEntitlements.createdAt), asc(ticketBenefitEntitlements.id));
-    const result = new Map<string, BenefitEntitlement[]>();
-
-    for (const row of entitlementRows) {
-      const entitlement = this.mapBenefitEntitlement(row);
-      const entitlements = result.get(row.ticketItemId) ?? [];
-      entitlements.push(entitlement);
-      result.set(row.ticketItemId, entitlements);
-    }
-
-    return result;
-  }
-
-  private async loadTierColorByName(performanceId: string): Promise<Map<string, string>> {
-    const rows = await this.db
-      .select({
-        tierName: performanceSeatTiers.tierName,
-        color: performanceSeatTiers.color,
-      })
-      .from(performanceSeatTiers)
-      .where(eq(performanceSeatTiers.performanceId, performanceId));
-
-    return new Map(rows.map((row) => [row.tierName, row.color]));
   }
 
   private mapBenefitEntitlement(row: TicketBenefitEntitlementRow): BenefitEntitlement {

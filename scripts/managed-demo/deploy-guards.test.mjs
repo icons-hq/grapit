@@ -57,6 +57,8 @@ test('validates workflow defaults and builds fail-fast migration session options
   const config = validateDeployConfig(workflowDefaults);
 
   assert.equal(config.bookingEnabled, true);
+  assert.equal(config.queueMaxActiveAdmissions, 200);
+  assert.equal(config.apiNodeHeapMaxMb, 256);
   assert.equal(buildMigrationPgOptions(config), '-c lock_timeout=5s -c statement_timeout=60s');
 });
 
@@ -70,6 +72,9 @@ test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
     [{ MIGRATION_LOCK_TIMEOUT: '30s', MIGRATION_STATEMENT_TIMEOUT: '20s' }, /must be shorter/],
     [{ API_MIN_INSTANCES: '5', API_MAX_INSTANCES: '4' }, /API_MIN_INSTANCES must not exceed/],
     [{ API_CONCURRENCY: '0' }, /API_CONCURRENCY must be between/],
+    [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '0' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
+    [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '1001' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
+    [{ API_NODE_HEAP_MAX_MB: '512' }, /API_NODE_HEAP_MAX_MB must be between/],
     [{ MIGRATION_FREEZE: 'on' }, /MIGRATION_FREEZE must be exactly/],
     [{ PREWARM_SCALING_SCOPE: 'revision' }, /PREWARM_SCALING_SCOPE must be exactly/],
     [{ PREWARM_SCALING_SCOPE: undefined }, /PREWARM_SCALING_SCOPE must be exactly/],
@@ -916,7 +921,9 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   // runtime value or the API code default, so there is no separate workflow budget input
   // whose default (3) would overcount the producer-only API.
   assert.doesNotMatch(workflow, /\n {2}PGBOSS_POOL_MAX:/);
-  assert.match(workflow, /BACKGROUND_PROCESSING_ENABLED: \$\{\{ vars\.BACKGROUND_PROCESSING_ENABLED \|\| 'true' \}\}/);
+  assert.match(workflow, /BACKGROUND_PROCESSING_ENABLED: \$\{\{ vars\.BACKGROUND_PROCESSING_ENABLED \|\| 'false' \}\}/);
+  assert.match(workflow, /QUEUE_MAX_ACTIVE_ADMISSIONS=\$\{\{ env\.QUEUE_MAX_ACTIVE_ADMISSIONS \}\}/);
+  assert.match(workflow, /NODE_OPTIONS=--max-old-space-size=\$\{\{ env\.API_NODE_HEAP_MAX_MB \}\}/);
 
   // u18a → u20 handoff: the runtime pool and session limits come from the same
   // repository variables with no workflow default, and the API passes them only when set.

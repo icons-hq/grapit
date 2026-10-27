@@ -1,0 +1,835 @@
+{
+  "startedAt": "2026-10-27T02:07:25.179Z",
+  "environment": "disposable-local",
+  "sourceCommit": "b45352acafaf6902934a8f7e6fd0b237ece2de0f",
+  "trackedChangesSha256": "3ffaaf41bba1f443ebc3adf0ef5802fed17caa2050640962e4fe00c220f0d3f4",
+  "harnessSha256": "14a4a56d99a536a8367ddace3588e788845d2be9d4a684937b2f1d1bf0acf3ca",
+  "runtimeSourceFiles": 545,
+  "runtimeSourceSha256": "f9132c5cc530a24867ef6e41ca5fb91c6d32f82b1f78404f77a76273af905ec9",
+  "runtime": {
+    "node": "v26.5.0",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "kernel": "27.0.0"
+  },
+  "build": "Shared TypeScript and API SWC rebuilt immediately before this run",
+  "scenario": "bounded-seat-opening",
+  "saleSeats": 600,
+  "topology": {
+    "apiProcesses": 2,
+    "dbPoolMax": 2,
+    "activeAdmissionLimit": 200,
+    "apiHeapMb": 256,
+    "apiMemoryBudgetMb": 512,
+    "valkeyMode": "standalone",
+    "socketClients": 100,
+    "pgStubLatencyMs": 300
+  },
+  "profileConfirm": false,
+  "connectionModel": "Fresh actors per wave; one HTTP/1.1 keep-alive connection per actor; warm-up in batches of 64 before each idle-separated wave, then simultaneous requests",
+  "authentication": "synthetic users and persisted refresh families; real JWT, queue and capability guards",
+  "measured": [
+    "performance detail opened by every session at once (view_count hot row)",
+    "seat map read when empty, when every seat is locked, and after checkout has sold them",
+    "queue enter/status including WAITING beyond remaining seats and the 200 active-admission cap",
+    "per-session seat lock, single-seat contention and Socket.IO seat-update fan-out to joined clients",
+    "prepare and confirm on one showtime through an in-process PG stub with injected latency",
+    "complete the entire finite seat inventory in admission-sized cohorts while waiting customers poll and receive queue WebSocket events"
+  ],
+  "excludes": [
+    "real PG approval/cancel latency and provider rate limits (confirm uses scripts/revamp/pg-stub-preload.mjs)",
+    "load balancer routing and real provider state shared between instances (synthetic PG approvals are per process)",
+    "cold TCP connection storms (connections are pre-warmed)",
+    "human seat-choice/provider interaction time (checkout cohorts are intentionally compressed)",
+    "field QR consume and same-QR contention (separate full-capacity mode)",
+    "password/OAuth load",
+    "production capacity, Cloud Run cold start and Cloud SQL/Valkey resource limits",
+    "real devices"
+  ],
+  "waves": [
+    {
+      "sessions": 600,
+      "seats": 600,
+      "admitted": 200,
+      "initialWaiting": 400,
+      "finalWaiting": 0,
+      "peakActiveAdmissions": 200,
+      "activeAdmissionLimit": 200,
+      "cohorts": [
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              503,
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              503,
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        }
+      ],
+      "durationMs": 15494,
+      "checkout": {
+        "confirmed": 600,
+        "soldSeats": 600,
+        "confirmedReservations": 600,
+        "ticketItems": 600,
+        "qrCredentials": 600,
+        "duplicateConfirmSucceeded": true
+      },
+      "socketFanout": {
+        "clients": 100,
+        "expectedDeliveries": 60000,
+        "delivered": 60000,
+        "duplicateDeliveries": 0
+      },
+      "queueSockets": {
+        "connected": 400,
+        "admissionEventsReceived": 400,
+        "expectedAdmissionEvents": 400,
+        "positionMessagesReceived": 200
+      },
+      "apiRssMiBObservedMax": [
+        283,
+        279
+      ],
+      "waitingRoom": {
+        "positionsContiguous": true,
+        "allWaitingAfterSellout": true
+      },
+      "metrics": {
+        "performance.detail": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 44,
+          "p95Ms": 59,
+          "maxMs": 62,
+          "statuses": {
+            "200": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "seat.read": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 44,
+          "p95Ms": 47,
+          "maxMs": 48,
+          "statuses": {
+            "200": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "queue.enter": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 259,
+          "p95Ms": 267,
+          "maxMs": 279,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "socket.seat-update": {
+          "requests": 60000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 180,
+          "p95Ms": 220,
+          "maxMs": 230,
+          "statuses": {
+            "delivered": 60000
+          },
+          "outcomes": {
+            "none": 60000
+          }
+        },
+        "seat.lock": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 181,
+          "p95Ms": 220,
+          "maxMs": 230,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "queue.status": {
+          "requests": 1794,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 113,
+          "p95Ms": 143,
+          "maxMs": 149,
+          "statuses": {
+            "200": 1794
+          },
+          "outcomes": {
+            "none": 1794
+          }
+        },
+        "checkout.prepare": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 372,
+          "p95Ms": 462,
+          "maxMs": 475,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "checkout.duplicate-inflight": {
+          "requests": 9,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 70,
+          "p95Ms": 796,
+          "maxMs": 796,
+          "statuses": {
+            "201": 3,
+            "503": 6
+          },
+          "outcomes": {
+            "none": 9
+          }
+        },
+        "checkout.confirm": {
+          "requests": 597,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 825,
+          "p95Ms": 937,
+          "maxMs": 940,
+          "statuses": {
+            "201": 597
+          },
+          "outcomes": {
+            "none": 597
+          }
+        },
+        "checkout.duplicate-replay": {
+          "requests": 6,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 7,
+          "p95Ms": 7,
+          "maxMs": 7,
+          "statuses": {
+            "201": 6
+          },
+          "outcomes": {
+            "none": 6
+          }
+        },
+        "seat.read.sold": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 57,
+          "p95Ms": 75,
+          "maxMs": 77,
+          "statuses": {
+            "200": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        }
+      },
+      "invariantsPassed": true,
+      "latencyTargetsPassed": true,
+      "memoryBudgetPassed": true,
+      "sloPassed": true
+    },
+    {
+      "sessions": 1000,
+      "seats": 600,
+      "admitted": 200,
+      "initialWaiting": 800,
+      "finalWaiting": 400,
+      "peakActiveAdmissions": 200,
+      "activeAdmissionLimit": 200,
+      "cohorts": [
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        }
+      ],
+      "durationMs": 16699,
+      "checkout": {
+        "confirmed": 600,
+        "soldSeats": 600,
+        "confirmedReservations": 600,
+        "ticketItems": 600,
+        "qrCredentials": 600,
+        "duplicateConfirmSucceeded": true
+      },
+      "socketFanout": {
+        "clients": 100,
+        "expectedDeliveries": 60000,
+        "delivered": 60000,
+        "duplicateDeliveries": 0
+      },
+      "queueSockets": {
+        "connected": 800,
+        "admissionEventsReceived": 400,
+        "expectedAdmissionEvents": 400,
+        "positionMessagesReceived": 900
+      },
+      "apiRssMiBObservedMax": [
+        305,
+        294
+      ],
+      "waitingRoom": {
+        "positionsContiguous": true,
+        "allWaitingAfterSellout": true
+      },
+      "metrics": {
+        "performance.detail": {
+          "requests": 1000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 53,
+          "p95Ms": 71,
+          "maxMs": 72,
+          "statuses": {
+            "200": 1000
+          },
+          "outcomes": {
+            "none": 1000
+          }
+        },
+        "seat.read": {
+          "requests": 1000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 53,
+          "p95Ms": 58,
+          "maxMs": 58,
+          "statuses": {
+            "200": 1000
+          },
+          "outcomes": {
+            "none": 1000
+          }
+        },
+        "queue.enter": {
+          "requests": 1000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 462,
+          "p95Ms": 466,
+          "maxMs": 478,
+          "statuses": {
+            "201": 1000
+          },
+          "outcomes": {
+            "none": 1000
+          }
+        },
+        "socket.seat-update": {
+          "requests": 60000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 172,
+          "p95Ms": 222,
+          "maxMs": 234,
+          "statuses": {
+            "delivered": 60000
+          },
+          "outcomes": {
+            "none": 60000
+          }
+        },
+        "seat.lock": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 174,
+          "p95Ms": 223,
+          "maxMs": 234,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "queue.status": {
+          "requests": 4998,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 174,
+          "p95Ms": 324,
+          "maxMs": 354,
+          "statuses": {
+            "200": 4998
+          },
+          "outcomes": {
+            "none": 4998
+          }
+        },
+        "checkout.prepare": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 434,
+          "p95Ms": 652,
+          "maxMs": 677,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "checkout.duplicate-inflight": {
+          "requests": 9,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 84,
+          "p95Ms": 859,
+          "maxMs": 859,
+          "statuses": {
+            "201": 3,
+            "503": 6
+          },
+          "outcomes": {
+            "none": 9
+          }
+        },
+        "checkout.confirm": {
+          "requests": 597,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 871,
+          "p95Ms": 1000,
+          "maxMs": 1005,
+          "statuses": {
+            "201": 597
+          },
+          "outcomes": {
+            "none": 597
+          }
+        },
+        "checkout.duplicate-replay": {
+          "requests": 6,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 6,
+          "p95Ms": 7,
+          "maxMs": 7,
+          "statuses": {
+            "201": 6
+          },
+          "outcomes": {
+            "none": 6
+          }
+        },
+        "seat.read.sold": {
+          "requests": 1000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 87,
+          "p95Ms": 130,
+          "maxMs": 133,
+          "statuses": {
+            "200": 1000
+          },
+          "outcomes": {
+            "none": 1000
+          }
+        }
+      },
+      "invariantsPassed": true,
+      "latencyTargetsPassed": true,
+      "memoryBudgetPassed": true,
+      "sloPassed": true
+    },
+    {
+      "sessions": 1500,
+      "seats": 600,
+      "admitted": 200,
+      "initialWaiting": 1300,
+      "finalWaiting": 900,
+      "peakActiveAdmissions": 200,
+      "activeAdmissionLimit": 200,
+      "cohorts": [
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        },
+        {
+          "buyers": 200,
+          "prepared": 200,
+          "confirmed": 200,
+          "duplicateConfirmSucceeded": true,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          }
+        }
+      ],
+      "durationMs": 17735,
+      "checkout": {
+        "confirmed": 600,
+        "soldSeats": 600,
+        "confirmedReservations": 600,
+        "ticketItems": 600,
+        "qrCredentials": 600,
+        "duplicateConfirmSucceeded": true
+      },
+      "socketFanout": {
+        "clients": 100,
+        "expectedDeliveries": 60000,
+        "delivered": 60000,
+        "duplicateDeliveries": 0
+      },
+      "queueSockets": {
+        "connected": 1300,
+        "admissionEventsReceived": 400,
+        "expectedAdmissionEvents": 400,
+        "positionMessagesReceived": 1000
+      },
+      "apiRssMiBObservedMax": [
+        343,
+        350
+      ],
+      "waitingRoom": {
+        "positionsContiguous": true,
+        "allWaitingAfterSellout": true
+      },
+      "metrics": {
+        "performance.detail": {
+          "requests": 1500,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 81,
+          "p95Ms": 105,
+          "maxMs": 106,
+          "statuses": {
+            "200": 1500
+          },
+          "outcomes": {
+            "none": 1500
+          }
+        },
+        "seat.read": {
+          "requests": 1500,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 79,
+          "p95Ms": 85,
+          "maxMs": 85,
+          "statuses": {
+            "200": 1500
+          },
+          "outcomes": {
+            "none": 1500
+          }
+        },
+        "queue.enter": {
+          "requests": 1500,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 553,
+          "p95Ms": 583,
+          "maxMs": 586,
+          "statuses": {
+            "201": 1500
+          },
+          "outcomes": {
+            "none": 1500
+          }
+        },
+        "socket.seat-update": {
+          "requests": 60000,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 159,
+          "p95Ms": 196,
+          "maxMs": 209,
+          "statuses": {
+            "delivered": 60000
+          },
+          "outcomes": {
+            "none": 60000
+          }
+        },
+        "seat.lock": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 161,
+          "p95Ms": 196,
+          "maxMs": 209,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "queue.status": {
+          "requests": 8998,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 286,
+          "p95Ms": 396,
+          "maxMs": 405,
+          "statuses": {
+            "200": 8998
+          },
+          "outcomes": {
+            "none": 8998
+          }
+        },
+        "checkout.prepare": {
+          "requests": 600,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 567,
+          "p95Ms": 629,
+          "maxMs": 643,
+          "statuses": {
+            "201": 600
+          },
+          "outcomes": {
+            "none": 600
+          }
+        },
+        "checkout.duplicate-inflight": {
+          "requests": 9,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 73,
+          "p95Ms": 856,
+          "maxMs": 856,
+          "statuses": {
+            "201": 3,
+            "503": 6
+          },
+          "outcomes": {
+            "none": 9
+          }
+        },
+        "checkout.confirm": {
+          "requests": 597,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 862,
+          "p95Ms": 871,
+          "maxMs": 872,
+          "statuses": {
+            "201": 597
+          },
+          "outcomes": {
+            "none": 597
+          }
+        },
+        "checkout.duplicate-replay": {
+          "requests": 6,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 5,
+          "p95Ms": 7,
+          "maxMs": 7,
+          "statuses": {
+            "201": 6
+          },
+          "outcomes": {
+            "none": 6
+          }
+        },
+        "seat.read.sold": {
+          "requests": 1500,
+          "unexpectedErrors": 0,
+          "errorRate": 0,
+          "p50Ms": 141,
+          "p95Ms": 185,
+          "maxMs": 190,
+          "statuses": {
+            "200": 1500
+          },
+          "outcomes": {
+            "none": 1500
+          }
+        }
+      },
+      "invariantsPassed": true,
+      "latencyTargetsPassed": true,
+      "memoryBudgetPassed": true,
+      "sloPassed": true
+    }
+  ],
+  "faults": [
+    {
+      "component": "valkey",
+      "duringPause": "transport_error",
+      "afterResume": 409,
+      "sameOwnerAfterRetry": true
+    },
+    {
+      "component": "postgres",
+      "duringPause": "transport_error",
+      "afterResume": 200
+    }
+  ],
+  "completedAt": "2026-10-27T02:08:22.958Z",
+  "highestPassingSessions": 1500,
+  "status": "measured_targets_passed",
+  "faultRecoveryPassed": true,
+  "cleanupFailures": [],
+  "disposableResourcesRemoved": true
+}

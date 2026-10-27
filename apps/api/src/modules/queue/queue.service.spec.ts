@@ -15,6 +15,7 @@ import {
   QueueService,
   RELEASE_QUEUE_RECONCILE_LOCK_LUA,
   estimateQueueWait,
+  resolveQueueAdmissionLimit,
 } from './queue.service.js';
 import type { QueueGateway } from './queue.gateway.js';
 import {
@@ -253,8 +254,14 @@ class FakeRedis {
     return this.zsets.get(key)?.size ?? 0;
   }
 
-  async zrange(key: string, start: number, stop: number): Promise<string[]> {
-    return this.ordered(key).slice(start, stop + 1);
+  async zrange(key: string, start: number, stop: number, withScores?: 'WITHSCORES'): Promise<string[]> {
+    const ordered = this.ordered(key);
+    const from = start < 0 ? Math.max(ordered.length + start, 0) : start;
+    const to = stop < 0 ? ordered.length + stop + 1 : stop + 1;
+    const selected = ordered.slice(from, to);
+    return withScores === 'WITHSCORES'
+      ? selected.flatMap((member) => [member, String(this.zsets.get(key)!.get(member))])
+      : selected;
   }
 
   async eval(script: string, numKeys: number, ...keysAndArgs: (string | number)[]): Promise<unknown> {
@@ -562,6 +569,17 @@ describe('QueueService', () => {
   });
 
   describe('wait estimate (audit #91)', () => {
+    it('uses the configured admission cap for a 600-seat opening estimate', () => {
+      expect(estimateQueueWait({ position: 201, remainingSeats: 600, activeAdmissionLimit: 200 }))
+        .toEqual({ etaSeconds: 2 * QUEUE_ETA_CYCLE_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: false });
+      expect(resolveQueueAdmissionLimit('200')).toBe(200);
+      expect(resolveQueueAdmissionLimit(undefined)).toBe(1000);
+    });
+
+    it.each(['0', '-1', '1.5', '1001', 'invalid'])('rejects an invalid admission cap %s at startup', (value) => {
+      expect(() => resolveQueueAdmissionLimit(value)).toThrow('QUEUE_MAX_ACTIVE_ADMISSIONS');
+    });
+
     it('bounds the audit example by admission cycles instead of a fixed per-position step', () => {
       // 1000+ seats: ~1000 admissions per 10-13 minute cycle, position 5000.
       const estimate = estimateQueueWait({ position: 5_000, remainingSeats: 8_000 });
@@ -746,9 +764,9 @@ describe('QueueService', () => {
         // Opening burst: 9 buyers enter before any reconcile pass has run, so
         // their first snapshot is taken while the first wave is still in line.
         for (let index = 0; index < 9; index += 1) {
-          // Entries a few milliseconds apart (same-millisecond scores would be
-          // ordered by random session id, as in Redis).
-          vi.setSystemTime(openAt + index * 10);
+          // One fixed-time opening burst; registration order must survive even
+          // when every buyer shares the same application-clock millisecond.
+          vi.setSystemTime(openAt);
           const entry = await enter(`burst-${index}`);
           const stored = await internals.readQueueSessionRecord(
             performanceId,

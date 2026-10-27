@@ -42,22 +42,23 @@ function createUpdateResult<T>(rows: T[]) {
   };
 }
 
-function createConflictSafeInsert() {
-  const onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
+function createConflictSafeInsert(rows: unknown[]) {
+  const onConflictDoNothing = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(rows) });
   const values = vi.fn().mockReturnValue({ onConflictDoNothing });
   return { values, onConflictDoNothing };
 }
 
 /**
  * Transaction used by the missing-credential issuance path. `lockedRows` is the
- * result of the reservation share lock; `selects` are the re-reads made while
- * the lock is held (issue context, existing credentials, issued credentials).
+ * result of the reservation share lock; `selects` return the joined context
+ * and, only on an insert conflict, the concurrently issued credentials.
  */
 function createIssueTransaction(input: {
   lockedRows?: Array<Record<string, unknown>>;
   selects: unknown[][];
+  inserted?: unknown[];
 }) {
-  const insert = createConflictSafeInsert();
+  const insert = createConflictSafeInsert(input.inserted ?? []);
   const tx = {
     execute: vi.fn().mockResolvedValue({ rows: input.lockedRows ?? [{ id: 'reservation-1' }] }),
     select: vi.fn(),
@@ -213,20 +214,13 @@ describe('QrTicketService', () => {
       },
     ];
     const issue = createIssueTransaction({
-      selects: [
-        contextRows,
-        [],
-        [
-          { ...issuedTicketA1, ...seatA1 },
-          { ...issuedTicketA2, ...seatA2 },
-        ],
-      ],
+      selects: [contextRows],
+      inserted: [issuedTicketA1, issuedTicketA2],
     });
     const mockDb = {
       select: vi
         .fn()
-        .mockReturnValueOnce(chainResult(contextRows))
-        .mockReturnValueOnce(chainResult([])),
+        .mockReturnValueOnce(chainResult(contextRows)),
       insert: vi.fn(),
       update: vi.fn(),
       transaction: issue.transaction,
@@ -294,19 +288,15 @@ describe('QrTicketService', () => {
     });
     const ticketA2 = createTicketRecord({ id: 'ticket-a2', ticketItemId: 'ticket-item-a2', qrTokenJti: 'qr-jti-a2' });
     const issue = createIssueTransaction({
-      selects: [
-        [contextRow('ticket-item-a2', seatA2)],
-        [{ ...ticketA2, ...seatA2 }],
-      ],
+      selects: [[{ ...contextRow('ticket-item-a2', seatA2), ticket: ticketA2 }]],
     });
     const mockDb = {
       select: vi
         .fn()
         .mockReturnValueOnce(chainResult([
           contextRow('ticket-item-a1', seatA1),
-          contextRow('ticket-item-a2', seatA2),
-        ]))
-        .mockReturnValueOnce(chainResult([{ ...ticketA2, ...seatA2 }])),
+          { ...contextRow('ticket-item-a2', seatA2), ticket: ticketA2 },
+        ])),
       insert: vi.fn(),
       update: vi.fn(),
       transaction: issue.transaction,
@@ -350,8 +340,7 @@ describe('QrTicketService', () => {
           showtimeId: 'showtime-1',
           showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
           ticketItem: { id: 'ticket-item-1', ...seatA1 },
-        }]))
-        .mockReturnValueOnce(chainResult([])),
+        }])),
       insert: vi.fn(),
       update: vi.fn(),
       transaction: issue.transaction,
@@ -389,13 +378,13 @@ describe('QrTicketService', () => {
       },
     ];
     const issue = createIssueTransaction({
-      selects: [contextRows, [], [{ ...ticketRecord, ...seatIdentity }]],
+      selects: [contextRows],
+      inserted: [ticketRecord],
     });
     const mockDb = {
       select: vi
         .fn()
         .mockReturnValueOnce(chainResult(contextRows))
-        .mockReturnValueOnce(chainResult([]))
         .mockReturnValueOnce(chainResult([createVerifiableTicketRow()])),
       insert: vi.fn(),
       transaction: issue.transaction,
@@ -516,14 +505,8 @@ describe('QrTicketService', () => {
       },
     ];
     const issue = createIssueTransaction({
-      selects: [
-        contextRows,
-        [],
-        [
-          { ...issuedTicketA1, ...seatA1 },
-          { ...issuedTicketA2, ...seatA2 },
-        ],
-      ],
+      selects: [contextRows],
+      inserted: [issuedTicketA1, issuedTicketA2],
     });
     const mockDb = {
       select: vi
@@ -535,8 +518,7 @@ describe('QrTicketService', () => {
             paymentStatus: 'DONE',
           },
         ]))
-        .mockReturnValueOnce(chainResult(contextRows))
-        .mockReturnValueOnce(chainResult([])),
+        .mockReturnValueOnce(chainResult(contextRows)),
       insert: vi.fn(),
       update: vi.fn(),
       transaction: issue.transaction,
@@ -1742,8 +1724,8 @@ describe('QrTicketService', () => {
           showtimeId: 'showtime-1',
           showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
           ticketItem: { id: 'ticket-item-1', ...seatIdentity },
+          ticket: unscheduled,
         }]))
-        .mockReturnValueOnce(chainResult([unscheduled]))
         .mockReturnValueOnce(chainResult([recordedByOtherRequest])),
       update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: casWhere }) }),
       insert: vi.fn(),
@@ -1776,7 +1758,7 @@ describe('QrTicketService', () => {
     expect(pgBoss.send).toHaveBeenCalledTimes(1);
     expect(casWhere).toHaveBeenCalledTimes(1);
     // The losing request re-reads the persisted row instead of claiming its own job id.
-    expect(mockDb.select).toHaveBeenCalledTimes(3);
+    expect(mockDb.select).toHaveBeenCalledTimes(2);
     expect(ticket?.status).toBe('ACTIVE');
   });
 
@@ -1805,10 +1787,7 @@ describe('QrTicketService', () => {
               showtimeId: 'showtime-1',
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
               ticketItem: { id: 'ticket-item-1', ...seatIdentity },
-            }]))
-            .mockReturnValueOnce(chainResult([{
-              ...createTicketRecord({ secretVersion: '2026-05', emailJobId: 'qr-email-job-1' }),
-              ...seatIdentity,
+              ticket: createTicketRecord({ secretVersion: '2026-05', emailJobId: 'qr-email-job-1' }),
             }])),
         } as never,
         keyringConfig as never,
@@ -1929,10 +1908,7 @@ describe('QrTicketService', () => {
               showtimeId: 'showtime-1',
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
               ticketItem: { id: 'ticket-item-1', ...seatIdentity },
-            }]))
-            .mockReturnValueOnce(chainResult([{
-              ...createTicketRecord({ secretVersion: 'constructor', emailJobId: 'qr-email-job-1' }),
-              ...seatIdentity,
+              ticket: createTicketRecord({ secretVersion: 'constructor', emailJobId: 'qr-email-job-1' }),
             }])),
         } as never,
         keyringConfig as never,

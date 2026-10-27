@@ -5,6 +5,10 @@ import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
+import { ReservationService } from '../src/modules/reservation/reservation.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -43,6 +47,7 @@ describe('Payment confirm core — PostgreSQL', () => {
   let pool: Pool;
   let closePool: (() => Promise<void>) | undefined;
   let db: DrizzleDB;
+  let observedQueries: string[] | undefined;
   let boss: (PgBossContract & { start(): Promise<void>; stop(options?: Record<string, unknown>): Promise<void> }) | undefined;
 
   beforeAll(async () => {
@@ -51,7 +56,7 @@ describe('Payment confirm core — PostgreSQL', () => {
     pool = new Pool({ host: postgres.host, port: postgres.port,
       user: 'postgres', password: 'test', database: 'confirm_core_test', max: 4 });
     closePool = createPostgresPoolCleanup(pool);
-    db = drizzle(pool, { schema });
+    db = drizzle(pool, { schema, logger: { logQuery: (query) => { observedQueries?.push(query); } } });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
   }, 120000);
 
@@ -143,7 +148,7 @@ describe('Payment confirm core — PostgreSQL', () => {
     return { userId: user!.id, reservation: reservation! };
   }
 
-  function finalization(toss: Record<string, unknown>, pgBoss?: PgBossContract) {
+  function finalization(toss: Record<string, unknown>, pgBoss?: PgBossContract, qr?: QrTicketService) {
     const bookingService = {
       acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
       refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
@@ -158,8 +163,53 @@ describe('Payment confirm core — PostgreSQL', () => {
       parseProviderDecimalToMinor: (value: string) => Math.round(Number(value) * 100),
     };
     return new ReservationFinalizationService(db, toss as never, bookingService as never,
-      { broadcastSeatUpdate: vi.fn() } as never, undefined, quoteService as never, pgBoss);
+      { broadcastSeatUpdate: vi.fn() } as never, qr, quoteService as never, pgBoss);
   }
+
+  it('returns the buyer receipt with a real seat QR after one issuance pass', async () => {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01') });
+    const paymentKey = `pay-${randomUUID()}`;
+    const toss = { confirmPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
+      status: 'DONE', currency: 'KRW', method: '카드', totalAmount: 52000, approvedAt: new Date().toISOString() }),
+      queryPayment: vi.fn(), cancelPayment: vi.fn() };
+    const qr = new QrTicketService(db, new ConfigService({
+      QR_TICKET_SECRET: 'isolated-confirm-read-test-signing-secret', QR_TICKET_SECRET_VERSION: 'test-v1',
+    }), new JwtService(), {} as never, { isAvailable: false } as never);
+    const issue = vi.spyOn(qr, 'ensureIssuedTicketsForReservation');
+    const service = new ReservationService(db, toss as never, {} as never, {} as never,
+      { assertBookingEnabled: () => {} } as never, {} as never, qr, finalization(toss, undefined, qr));
+    const detail = await service.confirmAndCreateReservation({ paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId);
+    expect(detail.status).toBe('CONFIRMED');
+    expect(detail.ticketItems).toHaveLength(1);
+    expect(detail.ticketItems[0]!.qrCredential?.token).toBeTruthy();
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, reservation.id))).toHaveLength(1);
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+
+    observedQueries = [];
+    const readback = await service.getReservationDetail(reservation.id, userId);
+    const readQueries = observedQueries;
+    observedQueries = undefined;
+    expect(readback).toEqual(detail);
+    expect(readQueries.length).toBeLessThanOrEqual(2);
+    await expect(service.getReservationDetail(reservation.id, randomUUID())).rejects.toThrow('예매를 찾을 수 없습니다');
+    await db.update(users).set({ email: 'updated-confirm-reader@example.test' }).where(eq(users.id, userId));
+    expect((await service.getReservationDetail(reservation.id, userId)).ticketEmailDelivery.email)
+      .toBe('updated-confirm-reader@example.test');
+  });
+
+  it('still issues QR credentials when a finalizer runs without the buyer receipt reader', async () => {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01') });
+    const paymentKey = `pay-${randomUUID()}`;
+    const toss = { confirmPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId,
+      status: 'DONE', currency: 'KRW', method: '카드', totalAmount: 52000, approvedAt: new Date().toISOString() }),
+      queryPayment: vi.fn(), cancelPayment: vi.fn() };
+    const qr = new QrTicketService(db, new ConfigService({
+      QR_TICKET_SECRET: 'isolated-confirm-read-test-signing-secret', QR_TICKET_SECRET_VERSION: 'test-v1',
+    }), new JwtService(), {} as never, { isAvailable: false } as never);
+    await finalization(toss, undefined, qr).confirmAndCreateReservation({ paymentKey, orderId: reservation.tossOrderId!, amount: 52000 }, userId);
+    expect(await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, reservation.id))).toHaveLength(1);
+  });
 
   it('rejects a started showtime before calling Toss confirm', async () => {
     const { userId, reservation } = await pendingOrder({ showtimeAt: new Date(Date.now() - 60_000) });
