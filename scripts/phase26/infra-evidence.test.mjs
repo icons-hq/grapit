@@ -11,6 +11,31 @@ function liveApi({ maxScale = '4', env = {} } = {}) {
   return { service: 'grabit-api', state: 'CONFIG_READY_NOT_DRILLED', maxScale, env };
 }
 
+test('counts the independent worker application pool when the API pool is larger', () => {
+  const evidence = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
+    liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
+  });
+  assert.equal(evidence.connectionEstimate.required, 22);
+  assert.deepEqual(evidence.connectionEstimate.inputs.workerDbPoolMax, { value: 2, source: 'workflow-default' });
+});
+
+test('prefers the live worker pools over deployment defaults and unrelated API values', () => {
+  const evidence = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
+    liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
+    liveWorker: { state: 'CONFIG_READY_NOT_DRILLED', env: { DB_POOL_MAX: '3', PGBOSS_POOL_MAX: '4' } },
+  });
+  assert.equal(evidence.connectionEstimate.required, 24);
+  assert.deepEqual(evidence.connectionEstimate.inputs.workerDbPoolMax, { value: 3, source: 'live' });
+  assert.deepEqual(evidence.connectionEstimate.inputs.workerPgBossPoolMax, { value: 4, source: 'live' });
+
+  const blocked = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
+    liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
+    liveWorker: { state: 'BLOCKED', error: 'permission denied' },
+  });
+  assert.equal(blocked.connectionEstimate.required, 22);
+  assert.equal(blocked.connectionEstimate.inputs.workerDbPoolMax.source, 'workflow-default');
+});
+
 test('reads the templated deploy.yml values instead of the literal ${{ text', () => {
   // Before audit #54/#58 follow-up: `--max-instances=(\d+)` never matched
   // `${{ env.API_MAX_INSTANCES }}` and DB_POOL_MAX captured "${{", so the estimate was always null.
@@ -23,6 +48,7 @@ test('reads the templated deploy.yml values instead of the literal ${{ text', ()
   assert.deepEqual(evidence.workflowDefaults, {
     API_MAX_INSTANCES: '2',
     DB_POOL_MAX: '2',
+    WORKER_DB_POOL_MAX: '2',
     PGBOSS_POOL_MAX: null,
     DB_CONNECTION_RESERVE: '5',
     BACKGROUND_PROCESSING_ENABLED: 'false',
@@ -38,6 +64,7 @@ test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
   assert.deepEqual(warm.inputs, {
     apiMaxInstances: { value: 2, source: 'workflow-default' },
     dbPoolMax: { value: 2, source: 'workflow-default' },
+    workerDbPoolMax: { value: 2, source: 'workflow-default' },
     backgroundProcessing: { value: false, source: 'workflow-default' },
     apiPgBossPoolMax: { value: 1, source: 'code-default' },
     workerPgBossPoolMax: { value: 3, source: 'code-default' },
@@ -59,6 +86,7 @@ test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
   assert.deepEqual(demo.connectionEstimate.inputs, {
     apiMaxInstances: { value: 4, source: 'live' },
     dbPoolMax: { value: 2, source: 'live' },
+    workerDbPoolMax: { value: 2, source: 'workflow-default' },
     backgroundProcessing: { value: false, source: 'live' },
     apiPgBossPoolMax: { value: 1, source: 'code-default' },
     workerPgBossPoolMax: { value: 3, source: 'code-default' },

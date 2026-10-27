@@ -28,7 +28,7 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GUARDS_CLI = join(REPO_ROOT, 'scripts/managed-demo/deploy-guards.mjs');
 
-// Workflow defaults from .github/workflows/deploy.yml when no repository variable is set.
+// Historical higher-capacity inputs exercise both warning and enforced budgets.
 const workflowDefaults = {
   BOOKING_ENABLED: 'true',
   MIGRATION_LOCK_TIMEOUT: '5s',
@@ -420,6 +420,27 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
   });
   assert.equal(sized.required, 30 * 11 + 11 + 10);
   assert.equal(sized.ok, true);
+});
+
+test('API five and worker two fit the micro budget; another API connection fails closed', () => {
+  const config = validateDeployConfig({
+    ...workflowDefaults, API_MIN_INSTANCES: '0', API_MAX_INSTANCES: '2',
+    DB_POOL_MAX: '5', WORKER_DB_POOL_MAX: '2', BACKGROUND_PROCESSING_ENABLED: 'false',
+    DB_CONNECTION_BUDGET_ENFORCE: 'true',
+  });
+  assert.equal(config.workerDbPoolMax, 2);
+  const input = {
+    config,
+    settings: { max_connections: 25, superuser_reserved: 3, reserved: 0, lock_timeout: '5s', statement_timeout: '1min' },
+    journal: { entries: [{ tag: '0001_a', when: 100 }] }, lastAppliedMillis: 100,
+  };
+  const accepted = evaluateDbPreflight(input);
+  assert.equal(accepted.ok, true);
+  assert.match(accepted.lines.join('\n'), /required 22 \/ available 22/);
+  const rejected = evaluateDbPreflight({ ...input, config: { ...config, dbPoolMax: 6 } });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.failures.join('\n'), /required 24 \/ available 22/);
+  assert.throws(() => validateDeployConfig({ ...workflowDefaults, WORKER_DB_POOL_MAX: '0' }), /WORKER_DB_POOL_MAX/);
 });
 
 test('the deploy budget uses each process pg-boss cap, not one workflow value (x4 deploy-budget)', () => {

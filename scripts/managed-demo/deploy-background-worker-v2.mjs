@@ -81,7 +81,8 @@ export function buildBackgroundWorkerJob(env) {
   const valkeyMode = required(env, 'VALKEY_MODE');
   const frontendUrl = required(env, 'CLOUD_RUN_WEB_URL');
   const paypalKrwUsdRate = required(env, 'PAYPAL_KRW_USD_RATE');
-  const dbPoolMax = required(env, 'DB_POOL_MAX');
+  const dbPoolKey = env.WORKER_DB_POOL_MAX === undefined ? 'DB_POOL_MAX' : 'WORKER_DB_POOL_MAX';
+  const dbPoolMax = required(env, dbPoolKey);
   const cloudSqlConnectionName = required(env, 'CLOUD_SQL_CONNECTION_NAME');
   const bookingEnabled = bookingEnabledValue(env);
   // pg-boss and session limits from the runbook gate (RUNTIME_* repository
@@ -105,7 +106,7 @@ export function buildBackgroundWorkerJob(env) {
   }
   assertHttpsOrigin(frontendUrl, 'CLOUD_RUN_WEB_URL');
   assertPositiveNumber(paypalKrwUsdRate, 'PAYPAL_KRW_USD_RATE');
-  assertPositiveNumber(dbPoolMax, 'DB_POOL_MAX');
+  assertPositiveNumber(dbPoolMax, dbPoolKey);
   if (!cloudSqlConnectionName.startsWith(`${projectId}:${region}:`)) {
     throw new Error('CLOUD_SQL_CONNECTION_NAME must match the deployment project and region');
   }

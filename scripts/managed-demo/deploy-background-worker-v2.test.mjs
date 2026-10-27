@@ -85,6 +85,16 @@ test('passes pg-boss and session limits to the worker only when set (u18a → u2
   );
 });
 
+test('an API pool increase does not enlarge an explicitly bounded worker pool', () => {
+  const container = buildBackgroundWorkerJob({
+    ...validEnv, DB_POOL_MAX: '5', WORKER_DB_POOL_MAX: '2',
+  }).template.template.containers[0];
+  assert.equal(container.env.find(({ name }) => name === 'DB_POOL_MAX').value, '2');
+  for (const value of ['', '0', 'not-a-number']) {
+    assert.throws(() => buildBackgroundWorkerJob({ ...validEnv, WORKER_DB_POOL_MAX: value }), /WORKER_DB_POOL_MAX/);
+  }
+});
+
 test('uses the shared BOOKING_ENABLED gate instead of a hardcoded true', () => {
   const envValue = (env) =>
     buildBackgroundWorkerJob(env)
