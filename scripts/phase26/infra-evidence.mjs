@@ -9,6 +9,7 @@ import { estimateConnectionDemand } from '../managed-demo/deploy-guards.mjs';
 
 const DEFAULT_PROJECT = 'grapit-491806';
 const API_SERVICE = 'grabit-api';
+const BACKGROUND_WORKER_JOB = 'grabit-background-worker';
 // Mirror apps/api/src/modules/jobs/pgboss.provider.ts; the Deploy workflow's
 // connection budget (deploy-guards.mjs validateDeployConfig) uses the same rule.
 const DEFAULT_PGBOSS_POOL_MAX_PROCESSING = 3;
@@ -262,12 +263,12 @@ function input(value, source) {
 
 /**
  * DB pool evidence from deploy.yml plus, when collected, the live grabit-api
- * service. Live values win over workflow defaults (repository variables can
+ * service and bounded worker Job. Live values win over workflow defaults (repository variables can
  * differ from them). The connection estimate uses the Deploy workflow's budget
  * formula: API instances x (app pool + API pg-boss cap) + worker (app pool +
  * worker pg-boss cap) + reserve. Every input records where it came from.
  */
-export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi = null } = {}) {
+export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi = null, liveWorker = null } = {}) {
   const poolKeys = ['DB_POOL_MAX', 'DB_POOL_IDLE_TIMEOUT_MS', 'DB_POOL_CONNECTION_TIMEOUT_MS'];
   const deployValues = {};
   for (const key of poolKeys) {
@@ -277,6 +278,7 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
   const workflowDefaults = {
     API_MAX_INSTANCES: readWorkflowEnvDefault(deployYaml, 'API_MAX_INSTANCES') ?? null,
     DB_POOL_MAX: readWorkflowEnvDefault(deployYaml, 'DB_POOL_MAX') ?? null,
+    WORKER_DB_POOL_MAX: readWorkflowEnvDefault(deployYaml, 'WORKER_DB_POOL_MAX') ?? null,
     PGBOSS_POOL_MAX: readWorkflowEnvDefault(deployYaml, 'RUNTIME_PGBOSS_POOL_MAX', 'PGBOSS_POOL_MAX') ?? null,
     DB_CONNECTION_RESERVE: readWorkflowEnvDefault(deployYaml, 'DB_CONNECTION_RESERVE') ?? null,
     BACKGROUND_PROCESSING_ENABLED: readWorkflowEnvDefault(deployYaml, 'BACKGROUND_PROCESSING_ENABLED') ?? null,
@@ -284,6 +286,8 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
 
   const live = liveApi && liveApi.state !== STATES.BLOCKED ? liveApi : null;
   const liveEnv = live?.env ?? {};
+  const worker = liveWorker && liveWorker.state !== STATES.BLOCKED ? liveWorker : null;
+  const workerEnv = worker?.env ?? {};
   const pick = (liveValue, workflowValue) => {
     if (liveValue !== null && liveValue !== undefined) return input(liveValue, 'live');
     if (workflowValue !== null && workflowValue !== undefined) return input(workflowValue, 'workflow-default');
@@ -292,6 +296,10 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
 
   const apiMaxInstances = pick(integerOrNull(live?.maxScale ?? undefined), integerOrNull(workflowDefaults.API_MAX_INSTANCES));
   const dbPoolMax = pick(integerOrNull(liveEnv.DB_POOL_MAX), integerOrNull(workflowDefaults.DB_POOL_MAX));
+  const workerDbPoolMax = pick(
+    integerOrNull(workerEnv.DB_POOL_MAX),
+    integerOrNull(workflowDefaults.WORKER_DB_POOL_MAX ?? workflowDefaults.DB_POOL_MAX),
+  );
   const reserve = input(integerOrNull(workflowDefaults.DB_CONNECTION_RESERVE), 'workflow-default');
   // Same parsing as the API: only "false" turns background processing off; unset is on.
   // A live service without the variable runs the code default, not the workflow default.
@@ -303,8 +311,8 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
     backgroundProcessing = { value: processes(workflowDefaults.BACKGROUND_PROCESSING_ENABLED), source: 'workflow-default' };
   }
   // The live API value is the API's real cap, but it can be a leftover of an earlier
-  // deploy (the API service merges env vars). The worker Job is rebuilt from the
-  // workflow on every deploy, so its cap is the workflow value or the code default.
+  // deploy (the API service merges env vars). The worker Job has its own live
+  // value; when unreadable, label its workflow/code fallback explicitly.
   const workflowPgBoss = input(integerOrNull(workflowDefaults.PGBOSS_POOL_MAX), 'workflow-default');
   const runtimePgBoss = live ? input(integerOrNull(liveEnv.PGBOSS_POOL_MAX), 'live') : workflowPgBoss;
   const apiPgBossPoolMax = runtimePgBoss.value !== null
@@ -313,23 +321,26 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
       value: backgroundProcessing.value ? DEFAULT_PGBOSS_POOL_MAX_PROCESSING : DEFAULT_PGBOSS_POOL_MAX_PRODUCER,
       source: 'code-default',
     };
-  const workerPgBossPoolMax = workflowPgBoss.value !== null
-    ? workflowPgBoss
+  const workerPgBoss = pick(integerOrNull(workerEnv.PGBOSS_POOL_MAX), workflowPgBoss.value);
+  const workerPgBossPoolMax = workerPgBoss.value !== null
+    ? workerPgBoss
     : { value: DEFAULT_PGBOSS_POOL_MAX_PROCESSING, source: 'code-default' };
 
   const inputs = {
     apiMaxInstances,
     dbPoolMax,
+    workerDbPoolMax,
     backgroundProcessing,
     apiPgBossPoolMax,
     workerPgBossPoolMax,
     reserve,
   };
-  const complete = [apiMaxInstances, dbPoolMax, reserve].every((entry) => entry.value !== null);
+  const complete = [apiMaxInstances, dbPoolMax, workerDbPoolMax, reserve].every((entry) => entry.value !== null);
   const demand = complete
     ? estimateConnectionDemand({
       apiMaxInstances: apiMaxInstances.value,
       dbPoolMax: dbPoolMax.value,
+      workerDbPoolMax: workerDbPoolMax.value,
       apiPgBossPoolMax: apiPgBossPoolMax.value,
       workerPgBossPoolMax: workerPgBossPoolMax.value,
       reserve: reserve.value,
@@ -418,6 +429,27 @@ async function collectCloudRun(args) {
   }
 
   return services;
+}
+
+async function collectCloudRunWorker(args) {
+  const result = gcloudJson([
+    'run', 'jobs', 'describe', BACKGROUND_WORKER_JOB,
+    `--project=${args.project}`, `--region=${args.region}`,
+  ]);
+  if (!result.ok) {
+    return { job: BACKGROUND_WORKER_JOB, state: STATES.BLOCKED, command: result.shape, error: result.error };
+  }
+  const task = result.data?.spec?.template?.spec ?? {};
+  const container = task.template?.spec?.containers?.[0] ?? {};
+  return {
+    job: BACKGROUND_WORKER_JOB,
+    state: STATES.CONFIG_READY_NOT_DRILLED,
+    command: result.shape,
+    image: redact(container.image ?? ''),
+    env: compactEnv(container.env ?? []),
+    taskCount: task.taskCount ?? null,
+    parallelism: task.parallelism ?? null,
+  };
 }
 
 async function collectCloudSql(args) {
@@ -641,14 +673,16 @@ async function main() {
     readText('apps/api/src/database/drizzle.provider.ts'),
   ]);
 
-  const [cloudRun, cloudSql, valkeySmoke] = await Promise.all([
+  const [cloudRun, cloudWorker, cloudSql, valkeySmoke] = await Promise.all([
     collectCloudRun(args),
+    collectCloudRunWorker(args),
     collectCloudSql(args),
     collectValkeySmoke(args),
   ]);
 
   const poolEvidence = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
     liveApi: cloudRun.find((service) => service.service === API_SERVICE) ?? null,
+    liveWorker: cloudWorker,
   });
   const approval = approvalMetadata();
   const classifications = buildClassifications({
@@ -669,7 +703,7 @@ async function main() {
     allowedStates: Object.values(STATES),
     approval,
     classifications,
-    cloudRun: { services: cloudRun },
+    cloudRun: { services: cloudRun, jobs: [cloudWorker] },
     cloudSql,
     poolEvidence,
     valkeySmoke,
