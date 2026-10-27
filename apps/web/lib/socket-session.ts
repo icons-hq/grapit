@@ -21,8 +21,11 @@ export function attachSocketSessionRecovery(socket: Socket): () => void {
       const current = useAuthStore.getState();
       if (disposed || current.user?.id !== before.user.id || current.accessToken !== before.accessToken) return;
       if (result.status === 'refreshed') {
+        const changed = result.accessToken !== current.accessToken;
         current.setAuth(result.accessToken, current.user!);
-        if (!socket.connected) socket.connect();
+        // A changed token reconnects through the subscription below. Tokens
+        // issued in the same second may be identical but renew the cookie.
+        if (!changed && !socket.connected) socket.connect();
       }
     } catch {
       // A transport outage must not clear the buyer's session or selection.
@@ -35,7 +38,7 @@ export function attachSocketSessionRecovery(socket: Socket): () => void {
   const unsubscribe = useAuthStore.subscribe((current, previous) => {
     if (!current.user || current.user.id !== previous.user?.id) {
       socket.disconnect();
-    } else if (current.accessToken && current.accessToken !== previous.accessToken && !socket.connected && !refreshing) {
+    } else if (current.accessToken && current.accessToken !== previous.accessToken && !socket.connected) {
       // Also recover after Socket.IO exhausted its automatic retry attempts.
       socket.connect();
     }

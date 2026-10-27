@@ -49,6 +49,19 @@ describe('socket session recovery', () => {
     detach();
   });
 
+  it('reconnects when an overlapping HTTP request stores the shared refresh result first', async () => {
+    let finish!: (value: { status: 'refreshed'; accessToken: string }) => void;
+    vi.mocked(refreshAccessToken).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { socket, detach } = setup();
+    socket.emit('connect_error');
+    useAuthStore.getState().setAuth('renewed-by-http', user);
+    finish({ status: 'refreshed', accessToken: 'renewed-by-http' });
+    await Promise.resolve();
+    expect(socket.connect).toHaveBeenCalledOnce();
+    expect(useAuthStore.getState().accessToken).toBe('renewed-by-http');
+    detach();
+  });
+
   it('keeps a session on temporary failure and throttles refresh storms', async () => {
     vi.mocked(refreshAccessToken).mockResolvedValue({ status: 'unavailable' });
     const { socket, detach } = setup();
