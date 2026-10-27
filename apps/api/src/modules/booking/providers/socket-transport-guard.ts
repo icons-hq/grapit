@@ -6,7 +6,7 @@ import { isAllowedFrontendOrigin } from '../../../config/frontend-origins.js';
 type Transport = {
   request: IncomingMessage;
   once(event: 'close', listener: () => void): unknown;
-  close(): unknown;
+  close(discard?: boolean): unknown;
 };
 type Lease = { release: () => void; timer: ReturnType<typeof setTimeout>; expiresAt: number };
 
@@ -69,9 +69,11 @@ export class SocketTransportGuard {
 
   readonly connected = (transport: Transport): void => {
     const lease = this.leases.get(transport.request);
-    if (!lease) { transport.close(); return; }
+    if (!lease) { transport.close(true); return; }
     clearTimeout(lease.timer);
-    lease.timer = setTimeout(() => transport.close(), Math.max(1, lease.expiresAt - Date.now()));
+    // Discard pending polling packets: a client that stops polling must not
+    // postpone expiry (and quota release) by withholding a drain event.
+    lease.timer = setTimeout(() => transport.close(true), Math.max(1, lease.expiresAt - Date.now()));
     lease.timer.unref();
     transport.once('close', lease.release);
   };

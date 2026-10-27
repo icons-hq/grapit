@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
+import { attachSocketSessionRecovery } from '@/lib/socket-session';
 import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
 import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 
@@ -815,6 +816,7 @@ export function useQueue({
     }
 
     const socket = createQueueSocket();
+    const detachSessionRecovery = attachSocketSessionRecovery(socket);
     socketRef.current = socket;
 
     const handleConnect = () => {
@@ -845,6 +847,7 @@ export function useQueue({
     socket.connect();
 
     return () => {
+      detachSessionRecovery();
       socket.emit('leave-queue-session', snapshot.queueSessionId);
       socket.off('connect', handleConnect);
       socket.off('queue:position', handlePosition);

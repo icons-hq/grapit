@@ -68,4 +68,15 @@ describe('Socket.IO transport admission', () => {
     expect(responses.filter((response) => response.status === 200)).toHaveLength(2);
     expect(server.engine.clientsCount).toBe(2);
   });
+
+  it('closes a connected transport at token expiry and accepts a renewed token', async () => {
+    const { server, handshake } = await start(2, 1);
+    const sub = randomUUID();
+    const expiring = jwt.sign({ sub, role: 'user', exp: Math.floor(Date.now() / 1000) + 2 });
+    expect((await handshake({ Authorization: `Bearer ${expiring}` })).status).toBe(200);
+    const transport = Object.values(server.engine.clients)[0]!;
+    await new Promise<void>((resolve) => transport.once('close', resolve));
+    expect(server.engine.clientsCount).toBe(0);
+    expect((await handshake({ Authorization: `Bearer ${token(sub)}` })).status).toBe(200);
+  });
 });

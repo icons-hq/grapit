@@ -28,6 +28,8 @@ API unit tests: 2672 passed. API database/Valkey integration tests: 406 passed. 
 
 The local measurements above precede the transport-authentication follow-up. The harness now sends authenticated socket handshakes; actual-cloud measurements must use that final source. The transport regression suite uses a real Engine.IO server to check anonymous/forged/expired access rejection, browser origin and cookie handling, concurrent account/total limits, and slot reuse after disconnect.
 
+Queue and seat sockets share the existing deduplicated refresh path on connection failure, with a 20-second refresh cooldown. A later successful HTTP refresh also reconnects a stopped socket. Recovery preserves the session on transient failures and ignores late responses after logout, account replacement or screen disposal. This is necessary because public seat-status polling alone does not renew access tokens.
+
 ## Operational validation
 
 Before retiring a database, preserve a fresh export in two regions, verify object and downloaded checksums, restore into an isolated Postgres16 target with customer applications disabled, and compare every COPY table count, index validity and constraint validation. Keep customer backup files and detailed production aggregates out of this public repository.
