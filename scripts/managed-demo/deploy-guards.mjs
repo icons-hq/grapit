@@ -224,6 +224,7 @@ export function validateDeployConfig(env) {
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     apiNodeHeapMaxMb: parseInteger(env.API_NODE_HEAP_MAX_MB ?? '256', 'API_NODE_HEAP_MAX_MB', { min: 128, max: 384 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),
+    workerDbPoolMax: parseInteger(env.WORKER_DB_POOL_MAX ?? env.DB_POOL_MAX, 'WORKER_DB_POOL_MAX', { min: 1 }),
     queueMaxActiveAdmissions: parseInteger(env.QUEUE_MAX_ACTIVE_ADMISSIONS ?? '200', 'QUEUE_MAX_ACTIVE_ADMISSIONS', { min: 1, max: 1_000 }),
     apiPgBossPoolMax,
     apiPgBossPoolMaxFromVariable,
@@ -583,13 +584,14 @@ export function evaluateMigrationFreeze({ freeze, pending }) {
 export function estimateConnectionDemand({
   apiMaxInstances,
   dbPoolMax,
+  workerDbPoolMax = dbPoolMax,
   apiPgBossPoolMax,
   workerPgBossPoolMax,
   workerTasks = 1,
   reserve,
 }) {
   const api = apiMaxInstances * (dbPoolMax + apiPgBossPoolMax);
-  const worker = workerTasks * (dbPoolMax + workerPgBossPoolMax);
+  const worker = workerTasks * (workerDbPoolMax + workerPgBossPoolMax);
   return {
     api,
     worker,
@@ -597,7 +599,7 @@ export function estimateConnectionDemand({
     required: api + worker + reserve,
     formula:
       `API ${apiMaxInstances} x (${dbPoolMax} app + ${apiPgBossPoolMax} pg-boss) = ${api}, ` +
-      `worker ${workerTasks} x (${dbPoolMax} app + ${workerPgBossPoolMax} pg-boss) = ${worker}, ` +
+      `worker ${workerTasks} x (${workerDbPoolMax} app + ${workerPgBossPoolMax} pg-boss) = ${worker}, ` +
       `reserve ${reserve}`,
   };
 }
@@ -607,6 +609,7 @@ export function evaluateConnectionBudget({
   reservedConnections,
   apiMaxInstances,
   dbPoolMax,
+  workerDbPoolMax = dbPoolMax,
   apiPgBossPoolMax,
   workerPgBossPoolMax,
   workerTasks = 1,
@@ -616,6 +619,7 @@ export function evaluateConnectionBudget({
   const demand = estimateConnectionDemand({
     apiMaxInstances,
     dbPoolMax,
+    workerDbPoolMax,
     apiPgBossPoolMax,
     workerPgBossPoolMax,
     workerTasks,
@@ -764,6 +768,7 @@ export function evaluateDbPreflight({ config, settings, journal, lastAppliedMill
     reservedConnections: Number(settings.superuser_reserved) + Number(settings.reserved),
     apiMaxInstances: config.apiMaxInstances,
     dbPoolMax: config.dbPoolMax,
+    workerDbPoolMax: config.workerDbPoolMax,
     apiPgBossPoolMax: apiPgBossPoolCap?.apiPgBossPoolMax ?? config.apiPgBossPoolMax,
     workerPgBossPoolMax: config.workerPgBossPoolMax,
     reserve: config.dbConnectionReserve,

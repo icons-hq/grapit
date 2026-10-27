@@ -24,8 +24,10 @@ env:
   BACKGROUND_WORKER_JOB: grabit-background-worker
   VALKEY_MODE: ${{ vars.VALKEY_MODE || 'standalone' }}
   DB_POOL_MAX: ${{ vars.DB_POOL_MAX || '2' }}
+  # The bounded worker keeps its own small pool when the API pool is tuned.
+  WORKER_DB_POOL_MAX: ${{ vars.WORKER_DB_POOL_MAX || '2' }}
   # The 600-seat capacity profile bounds expensive seat/checkout work while
-  # additional visitors stay in the queue. This does not raise DB pool sizes.
+  # additional visitors stay in the queue. Pool limits are configured separately.
   QUEUE_MAX_ACTIVE_ADMISSIONS: ${{ vars.QUEUE_MAX_ACTIVE_ADMISSIONS || '200' }}
   API_MIN_INSTANCES: ${{ vars.API_MIN_INSTANCES || '0' }}
   API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '2' }}
