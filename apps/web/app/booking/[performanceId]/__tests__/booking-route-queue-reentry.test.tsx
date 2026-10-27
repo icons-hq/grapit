@@ -39,7 +39,11 @@ const {
     unlockAllMock: vi.fn(),
     bookingPageRenders: { count: 0 },
     useBookingAvailabilityMock: vi.fn(),
-    useAuthStoreMock: vi.fn(),
+    useAuthStoreMock: Object.assign(vi.fn(), {
+      // This route fixture has a fixed authenticated account. Session renewal
+      // and subscription notifications are exercised by socket-session tests.
+      subscribe: vi.fn(() => () => {}),
+    }),
   };
 });
 
