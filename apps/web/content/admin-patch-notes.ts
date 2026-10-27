@@ -14,6 +14,24 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-238-queue-sellout-admission',
+    prNumber: 238,
+    title: '매진 후 대기열 추가 입장 오류 수정',
+    summary: '마지막 좌석이 판매된 뒤 오래된 좌석 수를 기준으로 다음 구매자를 입장시키던 문제를 수정했습니다.',
+    highlights: [
+      '매진 후 남은 구매자의 대기 상태 유지',
+      '동시에 구매가 완료되어도 대기 순서와 입장 200명 제한 유지',
+      '기존 결제 확정·좌석별 티켓·QR 발급 흐름 유지',
+    ],
+    category: 'patch',
+    date: '2026-10-27',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/238',
+    evidence: [
+      '매진 경계 회귀 4건·실제 Valkey 19건·API 단위 테스트 2,682건 통과',
+      '동일 사양의 격리 GCP 1,500명·600석 검증: 대기 900명·추가 입장 0명',
+    ],
+  },
+  {
     id: 'pr-235-open-audit-remediation',
     prNumber: 235,
     title: '오픈 전 점검의 결제·예매·운영 안전장치 보강',
