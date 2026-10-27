@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import IORedis, { Cluster } from 'ioredis';
+import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../src/modules/queue/queue.service.js';
 import {
   COUNT_VALID_LOCKED_SEATS_LUA,
@@ -12,6 +13,14 @@ import { reservations } from '../src/database/schema/reservations.js';
 import { seatInventories } from '../src/database/schema/seat-inventories.js';
 import { seatMaps } from '../src/database/schema/seat-maps.js';
 import { showtimes } from '../src/database/schema/showtimes.js';
+
+// Pin randomness only for arrival-order cases: equal timestamps must not make
+// a buyer's position depend on a randomly generated session identifier.
+const orderedSessionIds = vi.hoisted(() => [] as string[]);
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return { ...actual, randomUUID: () => orderedSessionIds.shift() ?? actual.randomUUID() };
+});
 
 /**
  * Audit #4/#6/#26/#89: queue session transitions are Lua scripts on the
@@ -176,6 +185,120 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
       createQueueDb(dbState) as never,
       gateway as never,
     );
+  });
+
+  afterEach(() => {
+    orderedSessionIds.length = 0;
+    vi.useRealTimers();
+  });
+
+  it('keeps registration order when buyers enter in the same millisecond', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
+    orderedSessionIds.push(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      '00000000-0000-4000-8000-000000000000',
+    );
+    const first = await service.ensureQueueSession({ performanceId, identity: browserA });
+    const second = await service.ensureQueueSession({ performanceId, identity: browserB });
+
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: first.queueSessionId, identity: browserA, admissionToken: first.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 1 });
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: second.queueSessionId, identity: browserB, admissionToken: second.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 2 });
+  });
+
+  it('keeps the next API instance behind earlier buyers even when its clock is behind', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = Date.now();
+    vi.setSystemTime(now);
+    const first = await service.ensureQueueSession({ performanceId, identity: browserA });
+    const secondInstance = new QueueService(cluster as unknown as IORedis,
+      createQueueDb(dbState) as never, gateway as never);
+    vi.setSystemTime(now - 60_000);
+    const second = await secondInstance.ensureQueueSession({ performanceId, identity: browserB });
+
+    await expect(secondInstance.getQueueSessionStatus({
+      queueSessionId: second.queueSessionId, identity: browserB, admissionToken: second.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 2 });
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: first.queueSessionId, identity: browserA, admissionToken: first.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 1 });
+  });
+
+  it('restores a waiting buyer in the same position after its queue index is lost', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
+    orderedSessionIds.push(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      '00000000-0000-4000-8000-000000000000',
+    );
+    const first = await service.ensureQueueSession({ performanceId, identity: browserA });
+    const second = await service.ensureQueueSession({ performanceId, identity: browserB });
+    // Simulate a lost index write at the storage boundary, then recover through
+    // the same public re-entry and heartbeat APIs as a returning browser.
+    await cluster.zrem(waitingKey, second.queueSessionId);
+    await service.ensureQueueSession({ performanceId, identity: browserB,
+      presentedAdmissionToken: second.admissionToken });
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: second.queueSessionId, identity: browserB, admissionToken: second.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 2 });
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: first.queueSessionId, identity: browserA, admissionToken: first.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 1 });
+  });
+
+  it('keeps waiting buyers ahead when the idle order counter expires', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const now = Date.now();
+    vi.setSystemTime(now);
+    await service.ensureQueueSession({ performanceId, identity: browserA });
+    await cluster.del(`{queue:${performanceId}}:last-order`);
+    vi.setSystemTime(now - 60_000);
+    const next = await service.ensureQueueSession({ performanceId, identity: browserB });
+    await expect(service.getQueueSessionStatus({
+      queueSessionId: next.queueSessionId, identity: browserB, admissionToken: next.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', position: 2 });
+  });
+
+  it('gives 200 concurrent buyers distinct contiguous positions across API instances', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date());
+    const secondInstance = new QueueService(cluster as unknown as IORedis,
+      createQueueDb(dbState) as never, gateway as never);
+    const identities = Array.from({ length: 200 }, (_, n) => ({
+      userId: `burst-${n}`, refreshTokenFamilyId: `family-${n}`, deviceSlotId: `family-${n}`,
+    }));
+    const leases = await Promise.all(identities.map((identity, n) =>
+      (n % 2 ? service : secondInstance).ensureQueueSession({ performanceId, identity })));
+    const snapshots = await Promise.all(leases.map((lease, n) => service.getQueueSessionStatus({
+      queueSessionId: lease.queueSessionId, identity: identities[n]!, admissionToken: lease.admissionToken,
+    })));
+    expect(snapshots.every((snapshot) => snapshot.state === 'WAITING')).toBe(true);
+    expect(snapshots.map((snapshot) => snapshot.position).sort((a, b) => a - b))
+      .toEqual(Array.from({ length: 200 }, (_, n) => n + 1));
+  });
+
+  it('caps a 600-seat opening at the configured 200 active buyers across API instances', async () => {
+    dbState.totalSeats = 600;
+    const config = new ConfigService({ QUEUE_MAX_ACTIVE_ADMISSIONS: '200' });
+    const instances = [0, 1].map(() => new QueueService(
+      cluster as unknown as IORedis, createQueueDb(dbState) as never, gateway as never, config,
+    ));
+    const identities = Array.from({ length: 240 }, (_, n) => ({
+      userId: `bounded-${n}`, refreshTokenFamilyId: `bounded-family-${n}`, deviceSlotId: `bounded-family-${n}`,
+    }));
+    const leases = await Promise.all(identities.map((identity, n) =>
+      instances[n % instances.length]!.enterPerformanceQueue({ performanceId, identity })));
+    const snapshots = await Promise.all(leases.map((lease, n) => instances[n % 2]!.getQueueSessionStatus({
+      queueSessionId: lease.queueSessionId, identity: identities[n]!, admissionToken: lease.admissionToken,
+    })));
+    expect(await cluster.scard(activeKey)).toBe(200);
+    expect(snapshots.filter((snapshot) => snapshot.state === 'ADMITTED')).toHaveLength(200);
+    expect(snapshots.filter((snapshot) => snapshot.state === 'WAITING').map((snapshot) => snapshot.position).sort((a, b) => a - b))
+      .toEqual(Array.from({ length: 40 }, (_, n) => n + 1));
   });
 
   it('keeps every queue script key on one cluster slot', async () => {

@@ -11,6 +11,7 @@ import {
   type SeatUpdateEvent,
 } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
+import { attachSocketSessionRecovery } from '@/lib/socket-session';
 import { refetchAfterInFlight, SEAT_STATUS_RECONNECT_JITTER_MS } from '@/lib/booking/seat-resync';
 import { clearSeatUpdateEvents, recordSeatUpdateEvent } from '@/lib/booking/seat-event-overlay';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
@@ -55,6 +56,7 @@ export function useBookingSocket(showtimeId: string | null): void {
     if (!showtimeId) return;
 
     const socket = createBookingSocket();
+    const detachSessionRecovery = attachSocketSessionRecovery(socket);
     socketRef.current = socket;
     const seatStatusKey = ['seat-status', showtimeId] as const;
     let disposed = false;
@@ -251,6 +253,7 @@ export function useBookingSocket(showtimeId: string | null): void {
     socket.connect();
 
     return () => {
+      detachSessionRecovery();
       disposed = true;
       // Buffered updates belong to the showtime being left: drop them.
       cancelScheduledFlush();

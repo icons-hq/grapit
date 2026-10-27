@@ -248,8 +248,9 @@ class InMemoryRedis {
     return this.sortedSets.get(key)?.size ?? 0;
   }
 
-  async zrange(key: string, start: number, stop: number): Promise<string[]> {
-    const members = this.getSortedSetEntries(key).map(([member]) => member);
+  async zrange(key: string, start: number, stop: number, withScores?: 'WITHSCORES'): Promise<string[]> {
+    const entries = this.getSortedSetEntries(key);
+    const members = entries.map(([member]) => member);
     if (members.length === 0) return [];
 
     const normalizedStart = start < 0 ? Math.max(members.length + start, 0) : start;
@@ -260,7 +261,10 @@ class InMemoryRedis {
       return [];
     }
 
-    return members.slice(normalizedStart, inclusiveStop);
+    const selected = entries.slice(normalizedStart, inclusiveStop);
+    return withScores === 'WITHSCORES'
+      ? selected.flatMap(([member, score]) => [member, String(score)])
+      : selected.map(([member]) => member);
   }
 
   async ttl(key: string): Promise<number> {

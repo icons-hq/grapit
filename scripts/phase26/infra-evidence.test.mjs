@@ -16,39 +16,39 @@ test('reads the templated deploy.yml values instead of the literal ${{ text', ()
   // `${{ env.API_MAX_INSTANCES }}` and DB_POOL_MAX captured "${{", so the estimate was always null.
   const evidence = extractDeployPoolEvidence(deployYaml, drizzleProvider);
   assert.deepEqual(evidence.deployValues, {
-    DB_POOL_MAX: '4',
+    DB_POOL_MAX: '2',
     DB_POOL_IDLE_TIMEOUT_MS: '30000',
     DB_POOL_CONNECTION_TIMEOUT_MS: '5000',
   });
   assert.deepEqual(evidence.workflowDefaults, {
-    API_MAX_INSTANCES: '40',
-    DB_POOL_MAX: '4',
+    API_MAX_INSTANCES: '2',
+    DB_POOL_MAX: '2',
     PGBOSS_POOL_MAX: null,
     DB_CONNECTION_RESERVE: '5',
-    BACKGROUND_PROCESSING_ENABLED: 'true',
+    BACKGROUND_PROCESSING_ENABLED: 'false',
   });
-  assert.equal(evidence.apiMaxInstances, 40);
+  assert.equal(evidence.apiMaxInstances, 2);
   assert.notEqual(evidence.estimatedApiDbConnections, null);
   assert.equal(evidence.drizzleProviderUsesPoolEnv, true);
 });
 
 test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
-  // No live service: the warm workflow defaults, with each process's pg-boss code default.
+  // No live service: the bounded 600-seat profile, with each process's pg-boss default.
   const warm = extractDeployPoolEvidence(deployYaml, drizzleProvider).connectionEstimate;
   assert.deepEqual(warm.inputs, {
-    apiMaxInstances: { value: 40, source: 'workflow-default' },
-    dbPoolMax: { value: 4, source: 'workflow-default' },
-    backgroundProcessing: { value: true, source: 'workflow-default' },
-    apiPgBossPoolMax: { value: 3, source: 'code-default' },
+    apiMaxInstances: { value: 2, source: 'workflow-default' },
+    dbPoolMax: { value: 2, source: 'workflow-default' },
+    backgroundProcessing: { value: false, source: 'workflow-default' },
+    apiPgBossPoolMax: { value: 1, source: 'code-default' },
     workerPgBossPoolMax: { value: 3, source: 'code-default' },
     reserve: { value: 5, source: 'workflow-default' },
   });
-  assert.equal(warm.api, 40 * (4 + 3));
-  assert.equal(warm.worker, 4 + 3);
-  assert.equal(warm.required, 280 + 7 + 5);
+  assert.equal(warm.api, 2 * (2 + 1));
+  assert.equal(warm.worker, 2 + 3);
+  assert.equal(warm.required, 16);
   assert.equal(
     warm.required,
-    estimateConnectionDemand({ apiMaxInstances: 40, dbPoolMax: 4, apiPgBossPoolMax: 3, workerPgBossPoolMax: 3, reserve: 5 })
+    estimateConnectionDemand({ apiMaxInstances: 2, dbPoolMax: 2, apiPgBossPoolMax: 1, workerPgBossPoolMax: 3, reserve: 5 })
       .required,
   );
 
@@ -129,8 +129,8 @@ test('falls back to workflow defaults for unreadable live values and reports mis
   const secretBound = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
     liveApi: liveApi({ maxScale: null, env: { DB_POOL_MAX: '<secret-bound>' } }),
   });
-  assert.deepEqual(secretBound.connectionEstimate.inputs.apiMaxInstances, { value: 40, source: 'workflow-default' });
-  assert.deepEqual(secretBound.connectionEstimate.inputs.dbPoolMax, { value: 4, source: 'workflow-default' });
+  assert.deepEqual(secretBound.connectionEstimate.inputs.apiMaxInstances, { value: 2, source: 'workflow-default' });
+  assert.deepEqual(secretBound.connectionEstimate.inputs.dbPoolMax, { value: 2, source: 'workflow-default' });
 
   const bare = [
     'env:',

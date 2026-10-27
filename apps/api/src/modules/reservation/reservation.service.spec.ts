@@ -20,15 +20,9 @@ import { TICKET_SERVICE_FEE_KRW, type ConsentCaptureItem, type SeatSelection } f
 import type { ConsentService } from '../consent/consent.service.js';
 import type { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
 import {
-  payments,
-  reservations,
-  reservationSeats,
-  performanceSeatTiers,
   seatInventories,
   ticketBenefitConfigurations,
-  ticketBenefitEntitlements,
   ticketItems,
-  users,
 } from '../../database/schema/index.js';
 
 // Prepare fixtures need a showtime that has not started (sales close at its start time).
@@ -531,6 +525,8 @@ describe('ReservationService', () => {
     reservationId: string;
     userId: string;
     amount: number;
+    showtimeId?: string;
+    repeat?: boolean;
     status?: string;
     paymentStatus?: string;
     seats?: string[];
@@ -556,75 +552,37 @@ describe('ReservationService', () => {
       seats,
       amount: args.amount,
     });
-    mockDb.select
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            innerJoin: vi.fn().mockReturnValue({
-              leftJoin: vi.fn().mockReturnValue({
-                leftJoin: vi.fn().mockReturnValue({
-                  leftJoin: vi.fn().mockReturnValue({
-                  leftJoin: vi.fn().mockReturnThis(),
-                  where: vi.fn().mockResolvedValue([{
-                    reservation: {
-                      id: args.reservationId,
-                      userId: args.userId,
-                      reservationNumber: 'GRP-20260429-LOCKS',
-                      status: args.status ?? 'CONFIRMED',
-                      totalAmount: args.amount,
-                      showtimeId: 'showtime-1',
-                      ...(args.storedAdmissionToken ? { admissionToken: args.storedAdmissionToken } : {}),
-                      paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
-                      cancelDeadline: new Date(),
-                      cancelledAt: null,
-                      cancelReason: null,
-                      createdAt: new Date(),
-                    },
-                    showtime: { dateTime: new Date() },
-                    performance: {
-                      id: 'performance-1',
-                      title: '락 테스트 공연',
-                      posterUrl: null,
-                    },
-                    venue: { name: '락 테스트 극장' },
-                    diagnostic: args.diagnostic ?? null,
-                  }]),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      })
-      .mockReturnValueOnce(chainResult(seats.map((seatId) => ({
-        seatId,
-        tierName: 'VIP',
-        price: 50000,
-        row: 'A',
-        number: seatId.split('-')[1] ?? '1',
-      }))))
-      .mockReturnValueOnce(chainResult([{
-        paymentKey: 'pk_test_123',
-        method: '카드',
-        id: 'payment-1',
-        amount: args.amount,
-        status: args.paymentStatus ?? 'DONE',
-        paidAt: new Date(),
-        provider: 'CARD',
-        currency: 'KRW',
-      }]))
-      .mockReturnValueOnce(chainResult(ticketItemRows));
-
-    if (ticketItemRows.length > 0) {
-      mockDb.select.mockReturnValueOnce(chainResult(args.benefitEntitlements ?? []));
-    }
-
-    mockDb.select.mockReturnValueOnce(chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]));
-
-    mockDb.select.mockReturnValueOnce(chainResult([{
-      email: args.userEmail ?? 'buyer@example.com',
-      isEmailVerified: args.isEmailVerified ?? true,
-    }]));
+    const joined = chainResult([{
+      reservation: {
+        id: args.reservationId,
+        userId: args.userId,
+        reservationNumber: 'GRP-20260429-LOCKS',
+        status: args.status ?? 'CONFIRMED',
+        totalAmount: args.amount,
+        showtimeId: args.showtimeId ?? 'showtime-1',
+        ...(args.storedAdmissionToken ? { admissionToken: args.storedAdmissionToken } : {}),
+        paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
+        cancelDeadline: new Date(),
+        cancelledAt: null,
+        cancelReason: null,
+        createdAt: new Date(),
+      },
+      showtime: { dateTime: new Date() },
+      performance: { id: 'performance-1', title: '락 테스트 공연', posterUrl: null },
+      venue: { name: '락 테스트 극장' },
+      diagnostic: args.diagnostic ?? null,
+      seats: seats.map((seatId) => ({ seatId, tierName: 'VIP', price: 50000, row: 'A', number: seatId.split('-')[1] ?? '1' })),
+      payment: {
+        paymentKey: 'pk_test_123', method: '카드', id: 'payment-1', amount: args.amount,
+        status: args.paymentStatus ?? 'DONE', paidAt: new Date(), provider: 'CARD', currency: 'KRW',
+      },
+      ticketItemRows,
+      benefitEntitlementRows: args.benefitEntitlements ?? [],
+      tierColors: [{ tierName: 'VIP', color: '#6C3CE0' }],
+      ticketEmailUser: { email: args.userEmail ?? 'buyer@example.com', isEmailVerified: args.isEmailVerified ?? true },
+    }]);
+    if (args.repeat) mockDb.select.mockReturnValue(joined);
+    else mockDb.select.mockReturnValueOnce(joined);
   }
 
   function setupReservationDetailBenefitMocks(args: {
@@ -634,88 +592,7 @@ describe('ReservationService', () => {
     ticketItems: Array<Record<string, unknown>>;
     benefitEntitlements: Array<Record<string, unknown>>;
   }) {
-    const benefitWhereCalls: unknown[] = [];
-    mockDb.select.mockImplementation(() => ({
-      from: vi.fn((table: unknown) => {
-        if (table === reservations) {
-          return {
-            innerJoin: vi.fn().mockReturnValue({
-              innerJoin: vi.fn().mockReturnValue({
-                leftJoin: vi.fn().mockReturnValue({
-                  leftJoin: vi.fn().mockReturnValue({
-                    leftJoin: vi.fn().mockReturnValue({
-                    leftJoin: vi.fn().mockReturnThis(),
-                    where: vi.fn().mockResolvedValue([{
-                      reservation: {
-                        id: args.reservationId,
-                        userId: args.userId,
-                        reservationNumber: 'GRP-20260429-BENEFIT',
-                        status: 'CONFIRMED',
-                        totalAmount: args.amount,
-                        showtimeId: '11111111-1111-4111-8111-111111111111',
-                        paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
-                        cancelDeadline: new Date(),
-                        cancelledAt: null,
-                        cancelReason: null,
-                        createdAt: new Date('2026-05-01T01:00:00.000Z'),
-                      },
-                      showtime: { dateTime: new Date('2026-07-10T09:00:00.000Z') },
-                      performance: {
-                        id: 'performance-1',
-                        title: '혜택 테스트 공연',
-                        posterUrl: null,
-                      },
-                      venue: { name: '혜택 테스트 극장' },
-                      diagnostic: null,
-                    }]),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          };
-        }
-        if (table === reservationSeats) {
-          return chainResult(reservationSeatRowsForAmount(['A-1', 'A-2'], args.amount));
-        }
-        if (table === payments) {
-          return chainResult([{
-            id: 'payment-1',
-            paymentKey: 'pk_test_123',
-            method: '카드',
-            amount: args.amount,
-            status: 'DONE',
-            paidAt: new Date('2026-05-01T01:01:00.000Z'),
-            provider: 'CARD',
-            currency: 'KRW',
-          }]);
-        }
-        if (table === ticketItems) {
-          return chainResult(args.ticketItems);
-        }
-        if (table === performanceSeatTiers) {
-          return chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]);
-        }
-        if (table === ticketBenefitEntitlements) {
-          return {
-            where: vi.fn((predicate: unknown) => {
-              benefitWhereCalls.push(predicate);
-              return chainResult(args.benefitEntitlements);
-            }),
-          };
-        }
-        if (table === users) {
-          return chainResult([{
-            email: 'buyer@example.com',
-            isEmailVerified: true,
-          }]);
-        }
-
-        return chainResult([]);
-      }),
-    }));
-
-    return { benefitWhereCalls };
+    setupReservationDetailMocks({ ...args, showtimeId: '11111111-1111-4111-8111-111111111111', repeat: true });
   }
 
   function mockRootUpdateChain() {
@@ -2799,70 +2676,7 @@ describe('ReservationService', () => {
         return cb(mockTx);
       });
 
-      // getReservationDetail mocks (called at the end of confirm)
-      // select reservation join
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            innerJoin: vi.fn().mockReturnValue({
-              leftJoin: vi.fn().mockReturnValue({
-                leftJoin: vi.fn().mockReturnValue({
-                  leftJoin: vi.fn().mockReturnValue({
-                  leftJoin: vi.fn().mockReturnThis(),
-                  where: vi.fn().mockResolvedValue([{
-                    reservation: {
-                      id: reservationId,
-                      userId,
-                      reservationNumber: 'GRP-20260407-ABCDE',
-                      status: 'CONFIRMED',
-                      totalAmount: 150000,
-                      cancelDeadline: new Date(),
-                      cancelledAt: null,
-                      cancelReason: null,
-                      createdAt: new Date(),
-                    },
-                    showtime: { dateTime: new Date() },
-                    performance: { id: 'performance-1', title: '테스트 공연', posterUrl: null },
-                    venue: { name: '테스트 극장' },
-                    diagnostic: null,
-                  }]),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      });
-
-      // select reservation seats
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue(reservationSeatRowsForAmount(['A-1', 'A-2'], 150000)),
-        }),
-      });
-
-      // select payment
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{
-            paymentKey: 'pk_test_123',
-            method: '카드',
-            paidAt: new Date(),
-          }]),
-        }),
-      });
-
-      // select ticket items for reservation detail
-      mockDb.select.mockReturnValueOnce(chainResult([]));
-
-      // select performance seat tier colors
-      mockDb.select.mockReturnValueOnce(chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]));
-
-      // select user email delivery context
-      mockDb.select.mockReturnValueOnce(chainResult([{
-        email: 'buyer@example.com',
-        isEmailVerified: true,
-      }]));
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000, ticketItems: [] });
 
       return { mockTx, txOps };
     }
@@ -3753,7 +3567,7 @@ describe('ReservationService', () => {
         amount: 150000,
       });
 
-      const { benefitWhereCalls } = setupReservationDetailBenefitMocks({
+      setupReservationDetailBenefitMocks({
         reservationId,
         userId,
         amount: 150000,
@@ -3803,16 +3617,11 @@ describe('ReservationService', () => {
 
       const detail = await service.getReservationDetail(reservationId, userId);
 
-      expect(benefitWhereCalls).toHaveLength(1);
-      expect(sqlPredicateHasParamValue(benefitWhereCalls[0], showtimeId)).toBe(true);
-      expect(sqlPredicateHasParamValue(
-        benefitWhereCalls[0],
-        '00000000-0000-4000-8000-000000000101',
-      )).toBe(true);
-      expect(sqlPredicateHasParamValue(
-        benefitWhereCalls[0],
-        '00000000-0000-4000-8000-000000000102',
-      )).toBe(true);
+      const selection = mockDb.select.mock.calls.at(-1)![0] as { benefitEntitlementRows: SQL };
+      const benefitSql = new PgDialect().sqlToQuery(selection.benefitEntitlementRows).sql;
+      expect(benefitSql).toContain('"ticket_benefit_entitlements"."showtime_id" = "reservations"."showtime_id"');
+      expect(benefitSql).toContain('"ticket_benefit_entitlements"."ticket_item_id" in');
+      expect(benefitSql).toContain('"ticket_items"."reservation_id" = "reservations"."id"');
       expect(detail.ticketItems[0]?.benefitEntitlements).toEqual([
         expect.objectContaining({
           id: '33333333-3333-4333-8333-333333333331',

@@ -25,46 +25,25 @@ type ReminderHandler = {
   handleReminderEmailJob(payload: { ticketId: string; reservationId: string }, jobId?: string): Promise<void>;
 };
 
-/**
- * Holds the Nth `db.select(...)` query until released, so a test can commit a
- * concurrent transaction exactly between two unlocked reads of the service.
- */
-function holdNthSelect(db: DrizzleDB, heldCall: number) {
-  let calls = 0;
+/** Hold issuance after the unlocked snapshot but before its transaction. */
+function holdNextTransaction(db: DrizzleDB) {
   let markReached!: () => void;
   let releaseHeld!: () => void;
   const reached = new Promise<void>((resolve) => { markReached = resolve; });
   const released = new Promise<void>((resolve) => { releaseHeld = resolve; });
-  const hold = <T extends object>(value: T): T => new Proxy(value, {
-    get(target, property) {
-      const member = Reflect.get(target, property, target) as unknown;
-      if (typeof member !== 'function') return member;
-      if (property === 'then') {
-        return (onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => {
-          markReached();
-          return released.then(() => (member as (...args: unknown[]) => unknown).call(target, onFulfilled, onRejected));
-        };
-      }
-      return (...args: unknown[]) => {
-        const result = (member as (...args: unknown[]) => unknown).apply(target, args);
-        return result && typeof result === 'object' ? hold(result) : result;
-      };
-    },
-  });
   const proxied = new Proxy(db, {
     get(target, property) {
       const member = Reflect.get(target, property, target) as unknown;
-      if (property === 'select' && typeof member === 'function') {
-        return (...args: unknown[]) => {
-          calls += 1;
-          const builder = (member as (...args: unknown[]) => object).apply(target, args);
-          return calls === heldCall ? hold(builder) : builder;
+      if (property === 'transaction' && typeof member === 'function') {
+        return async (...args: unknown[]) => {
+          markReached();
+          await released;
+          return (member as (...args: unknown[]) => unknown).apply(target, args);
         };
       }
       return typeof member === 'function' ? (member as (...args: unknown[]) => unknown).bind(target) : member;
     },
   });
-
   return { db: proxied as DrizzleDB, reached, release: () => releaseHeld() };
 }
 
@@ -74,6 +53,7 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
   let closePool: (() => Promise<void>) | undefined;
   let db: DrizzleDB;
   let actorId: string;
+  let observedQueries: string[] | undefined;
 
   function config(overrides: Record<string, string> = {}) {
     return new ConfigService({
@@ -104,7 +84,7 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
     container = postgres.container;
     pool = new Pool({ host: postgres.host, port: postgres.port, user: 'postgres', password: 'test', database: 'qr_ticket_test', max: 8 });
     closePool = createPostgresPoolCleanup(pool);
-    db = drizzle(pool, { schema });
+    db = drizzle(pool, { schema, logger: { logQuery: (query) => { observedQueries?.push(query); } } });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
     actorId = randomUUID();
     await db.insert(schema.users).values({ id: actorId, email: `${actorId}@example.test`, name: 'Scanner', role: 'admin',
@@ -186,14 +166,34 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
   }
 
   describe('self-healing issuance vs. cancellation prepare (audit #110)', () => {
-    it('does not reissue a seat whose cancellation commits between the unlocked reads, so the restore path stays valid', async () => {
+    it('bounds database round trips for first issuance and subsequent QR reads', async () => {
+      const f = await fixture(3);
+      const service = createService();
+      observedQueries = [];
+      const first = await service.ensureIssuedTicketsForReservation(issueInput(f));
+      const firstQueries = observedQueries;
+      observedQueries = [];
+      const repeated = await service.ensureIssuedTicketsForReservation(issueInput(f));
+      const repeatedQueries = observedQueries;
+      observedQueries = undefined;
+      expect(first).toHaveLength(3);
+      expect(repeated).toEqual(first);
+      // Includes BEGIN/COMMIT; reminder scheduling is disabled in this fixture.
+      expect(firstQueries.length).toBeLessThanOrEqual(6);
+      expect(repeatedQueries.length).toBe(1);
+    });
+
+    it('rechecks all seats when cancellation commits after the unlocked snapshot, so the restore path stays valid', async () => {
       const f = await fixture();
       const issuer = createService();
       const [originalA1] = await issuer.ensureIssuedTicketsForReservation(issueInput(f));
-      const held = holdNthSelect(db, 2);
+      // A missing A-2 credential triggers issuance after the shared snapshot.
+      await db.update(schema.tickets).set({ status: 'revoked' })
+        .where(eq(schema.tickets.ticketItemId, f.items[1]!.id));
+      const held = holdNextTransaction(db);
       const racingReader = createService({ database: held.db });
 
-      // (1) reads A-1 as active, then (2) the credential read is held.
+      // The snapshot contains active A-1; pause before its locked re-read.
       const read = racingReader.ensureIssuedTicketsForReservation(issueInput(f));
       await held.reached;
       const preparedAt = new Date(Date.UTC(2026, 6, 10, 9, 0, 0));

@@ -22,14 +22,17 @@ env:
   WEB_SERVICE: grabit-web
   API_SERVICE: grabit-api
   BACKGROUND_WORKER_JOB: grabit-background-worker
-  VALKEY_MODE: ${{ vars.VALKEY_MODE || 'cluster' }}
-  DB_POOL_MAX: ${{ vars.DB_POOL_MAX || '4' }}
-  API_MIN_INSTANCES: ${{ vars.API_MIN_INSTANCES || '1' }}
-  API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '40' }}
-  WEB_MIN_INSTANCES: ${{ vars.WEB_MIN_INSTANCES || '1' }}
-  WEB_MAX_INSTANCES: ${{ vars.WEB_MAX_INSTANCES || '50' }}
-  API_CPU_ALLOCATION_FLAG: ${{ vars.API_CPU_ALLOCATION_FLAG || '--no-cpu-throttling' }}
-  BACKGROUND_PROCESSING_ENABLED: ${{ vars.BACKGROUND_PROCESSING_ENABLED || 'true' }}
+  VALKEY_MODE: ${{ vars.VALKEY_MODE || 'standalone' }}
+  DB_POOL_MAX: ${{ vars.DB_POOL_MAX || '2' }}
+  # The 600-seat capacity profile bounds expensive seat/checkout work while
+  # additional visitors stay in the queue. This does not raise DB pool sizes.
+  QUEUE_MAX_ACTIVE_ADMISSIONS: ${{ vars.QUEUE_MAX_ACTIVE_ADMISSIONS || '200' }}
+  API_MIN_INSTANCES: ${{ vars.API_MIN_INSTANCES || '0' }}
+  API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '2' }}
+  WEB_MIN_INSTANCES: ${{ vars.WEB_MIN_INSTANCES || '0' }}
+  WEB_MAX_INSTANCES: ${{ vars.WEB_MAX_INSTANCES || '4' }}
+  API_CPU_ALLOCATION_FLAG: ${{ vars.API_CPU_ALLOCATION_FLAG || '--cpu-throttling' }}
+  BACKGROUND_PROCESSING_ENABLED: ${{ vars.BACKGROUND_PROCESSING_ENABLED || 'false' }}
   # Sitewide booking gate shared by API, Web and the background worker. Unset keeps
   # the current production behaviour (open). The kill-switch procedure in
   # docs/runbooks/managed-demo-cost-floor.md changes this variable first. The
@@ -40,7 +43,10 @@ env:
   # Prewarm patches the service-level minimum (no new revision). 'template' is the
   # Phase 24-21 revision-template fallback if the service-level update is refused.
   PREWARM_SCALING_SCOPE: ${{ vars.PREWARM_SCALING_SCOPE || 'service' }}
-  API_CONCURRENCY: ${{ vars.API_CONCURRENCY || '250' }}
+  # Waiting WebSockets occupy request slots without occupying DB connections.
+  # The independent 200-buyer admission cap bounds seat/checkout work.
+  API_CONCURRENCY: ${{ vars.API_CONCURRENCY || '1000' }}
+  API_NODE_HEAP_MAX_MB: ${{ vars.API_NODE_HEAP_MAX_MB || '256' }}
   # Migration sessions fail fast instead of queueing hot-table traffic behind an
   # ACCESS EXCLUSIVE lock request inside drizzle's single migration transaction.
   MIGRATION_LOCK_TIMEOUT: ${{ vars.MIGRATION_LOCK_TIMEOUT || '5s' }}
@@ -51,7 +57,7 @@ env:
   # real pg-boss cap: RUNTIME_PGBOSS_POOL_MAX when set, otherwise the code default
   # (3 with background processing, 1 for a producer-only API; the worker Job is 3).
   DB_CONNECTION_RESERVE: ${{ vars.DB_CONNECTION_RESERVE || '5' }}
-  DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'false' }}
+  DB_CONNECTION_BUDGET_ENFORCE: ${{ vars.DB_CONNECTION_BUDGET_ENFORCE || 'true' }}
   # Optional runtime settings, passed to the API and worker only when the repository
   # variable is set (deploy-guards.mjs runtime-env); unset keeps each process's code
   # default. RUNTIME_PGBOSS_POOL_MAX has no default on purpose: the producer-only API
@@ -366,6 +372,8 @@ jobs:
             PREWARM_MAX_MIN_INSTANCES=${{ env.API_MAX_INSTANCES }}
             PREWARM_SCALING_SCOPE=${{ env.PREWARM_SCALING_SCOPE }}
             DB_POOL_MAX=${{ env.DB_POOL_MAX }}
+            QUEUE_MAX_ACTIVE_ADMISSIONS=${{ env.QUEUE_MAX_ACTIVE_ADMISSIONS }}
+            NODE_OPTIONS=--max-old-space-size=${{ env.API_NODE_HEAP_MAX_MB }}
             DB_POOL_IDLE_TIMEOUT_MS=30000
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
             BACKGROUND_PROCESSING_ENABLED=${{ env.BACKGROUND_PROCESSING_ENABLED }}

@@ -1,6 +1,12 @@
-# Always-available managed demo cost floor
+# Managed cost floor and bounded 600-seat operation
 
-## Outcome and budget
+## 2026-10-27 release profile
+
+The bounded 600-seat release keeps the API at 1 vCPU/512 MiB, Web at 1 vCPU/1 GiB and Cloud SQL at `db-f1-micro`/10 GB. API maximum is two, application pool two, active admission cap 200 and request concurrency 1000 for waiting sockets. The proposed Valkey replacement uses two `CUSTOM_PICO` nodes (primary plus one replica), standalone protocol, multi-zone placement and `noeviction`. A single-zone instance cannot be changed in place to multi-zone: provision, validate, cut over, then retire the unbound instance. The legacy DB is retired only after a fresh export is restored and verified in isolation; preserve both regional backup copies. The external load balancer is outside this retirement scope. See [release evidence and validation limits](../research/girl-rules-600-capacity-2026-10-27.md).
+
+Seoul list-price planning at 730 hours/month: active micro plus 10 GiB SSD about $12.21; two pico nodes about $57.56; retained HTTPS forwarding rule about $18.25. These known fixed items total about $88.02 before Cloud Run, backup/log/network/registry costs, discounts and tax. The five-minute worker is about $11.98 before free allowances if each execution fits the one-minute minimum. A running Cloud SQL instance does not incur the stopped-instance idle IPv4 reservation fee. These are estimates, not a bill. [Official pricing](https://cloud.google.com/memorystore/valkey/pricing), [SQL public IP rule](https://docs.cloud.google.com/sql/docs/postgres/configure-ip#introduction), [Cloud Run billing](https://cloud.google.com/run/pricing).
+
+## Historical managed-demo outcome and budget
 
 The target is a fully functional, randomly accessible production demo at approximately USD 45–55 per month during periods with no scheduled ticket opening. The following remain real, not mocked: signup/login, payment and refund, SMS/email, queue and seat locks, QR ticket/check-in, and production admin writes.
 
@@ -25,7 +31,7 @@ This is an estimate, not a billing guarantee. A `$45` early-warning and `$55` ha
 flowchart LR
   Browser --> CF[Cloudflare Worker Route]
   CF --> Web[Cloud Run Web\nmin 0 / max 4]
-  CF --> API[Cloud Run API\nmin 0 / max 4]
+  CF --> API[Cloud Run API\nmin 0 / max 2]
   Scheduler[Cloud Scheduler\nevery 5 minutes] --> Job[Cloud Run Job\n30-second worker window]
   API --> SQL[Cloud SQL PostgreSQL\ndb-f1-micro / 10GB]
   Job --> SQL
@@ -172,24 +178,26 @@ After the new endpoint is active:
 
 ## Phase 3 — Cloud Run services and bounded worker
 
-Set these GitHub Actions repository variables immediately before the managed-demo cutover:
+The original managed-demo cutover used maximum `4` API instances. The 2026-10-26 [600-seat capacity profile](../research/girl-rules-600-capacity-2026-10-27.md) prepares these lower-cost deployment values:
 
-- `API_MIN_INSTANCES=0`, `API_MAX_INSTANCES=4`;
+- `API_MIN_INSTANCES=0`, `API_MAX_INSTANCES=2`;
 - `WEB_MIN_INSTANCES=0`, `WEB_MAX_INSTANCES=4`;
 - `API_CPU_ALLOCATION_FLAG=--cpu-throttling`;
 - `DB_POOL_MAX=2`;
+- `QUEUE_MAX_ACTIVE_ADMISSIONS=200`, `API_CONCURRENCY=1000`, `API_NODE_HEAP_MAX_MB=256`;
+- `DB_CONNECTION_BUDGET_ENFORCE=true`;
 - `BACKGROUND_PROCESSING_ENABLED=false`;
 - `VALKEY_MODE=standalone` after the Valkey secret cutover.
 
 `BOOKING_ENABLED` is a separate repository variable shared by API, Web and the bounded worker; when it is unset the workflow deploys `true`, which preserves the current production behaviour. See [Sitewide booking kill switch](#sitewide-booking-kill-switch).
 
-Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, continuous background processing, cluster Valkey). In managed-demo mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The one exception is the in-process view-count flush timer (every 10 seconds, in every API instance). While throttled it can fire late, when the next request arrives. Each flush is a single PostgreSQL message that commits before replying, so a throttled instance never holds a `performances` row lock idle in transaction. Unflushed views of an instance that is scaled in without a graceful shutdown are lost; they only affect popularity ordering. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
+These are also the new workflow fallbacks: `0/2` API, `0/4` Web, request-based API CPU, pool size `2`, producer-only background processing and standalone Valkey. Repository variables override fallbacks: the read-only 2026-10-26 check still found `API_MAX_INSTANCES=4`, so applying this candidate requires changing it to `2` during an approved rollout. No live setting was changed by the capacity work. In this mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The one exception is the in-process view-count flush timer (every 10 seconds, in every API instance). While throttled it can fire late, when the next request arrives. Each flush is a single PostgreSQL message that commits before replying, so a throttled instance never holds a `performances` row lock idle in transaction. Unflushed views of an instance that is scaled in without a graceful shutdown are lost; they only affect popularity ordering. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
 
 API deploy uses `--set-cloudsql-instances`, not `--add-cloudsql-instances`, so the Secret-selected connection is the only mounted Cloud SQL instance after a cutover or rollback. Change `CLOUD_SQL_CONNECTION_NAME` before deployment and verify the resulting revision annotation contains exactly the intended instance.
 
 The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI, together with the deploy guards and Valkey posture check under `scripts/managed-demo/*.test.mjs`.
 
-Safe rollout order is two-stage: first deploy with warm defaults to create/smoke the Job, then run the Scheduler script, set the managed-demo variables, and manually dispatch the deploy workflow again. Do not set `API_MIN_INSTANCES=0` before the Scheduler job exists.
+For a new environment without the Scheduler, bootstrap in two stages: explicitly set `API_MIN_INSTANCES=1`, create/smoke the Job, then run the Scheduler script, set `API_MIN_INSTANCES=0`, and manually dispatch the deploy workflow again. The fallback is now `0`, so an unset variable cannot perform the bootstrap. The existing production Scheduler was verified `ENABLED` on 2026-10-26.
 
 Provision the schedule with the guarded script, then use these commands to execute and inspect the Job during an operator rehearsal:
 
@@ -389,7 +397,9 @@ records, and do not use `wrangler delete` as the first rollback action.
 
 ## Immediate infrastructure rollback
 
-Use this path during the retention window:
+For the 2026-10-27 retirement, close the booking gate first and redeploy the recorded pre-cutover application image against the **current** micro DB and validated HA Valkey, retaining standalone protocol and bounded pools. Recheck the serving revision, worker and health before reopening. The application-only rollback must not point at a retired DB or Valkey. A DB restore is a separate incident procedure: restore a retained export into a new isolated instance, reconcile subsequent writes against the current source of truth, validate it, then perform an explicitly approved connection cutover.
+
+The following is the **historical August retention-window procedure**. It is not executable after its legacy resources are retired:
 
 1. start `grapit-db` if it was stopped;
 2. add a new `database-url` version containing the same value as preserved version `2`, or explicitly bind version `2` during an emergency deploy;
@@ -399,9 +409,26 @@ Use this path during the retention window:
 6. if the serving API revision has `EDGE_PROXY_SHARED_SECRET` bound, remove the binding and deploy the API first (the load balancer path sends no edge secret); then rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
 7. run the full smoke checklist and reconcile any writes made after the cutover. Database rollback is not a blind pointer flip if both databases accepted writes; choose a source of truth and reconcile first.
 
-## Restore for an actual ticket opening
+## Bounded 600-seat opening preparation
 
-Begin this process at least 14 days before sales open. The old baseline is a restoration reference, not proof that it is sale-ready.
+The [2026-10-26 Girl Rules report](../research/girl-rules-600-capacity-2026-10-27.md) prepares a budget-constrained candidate using the existing Cloud SQL tier and Valkey instance: maximum two API instances, application pool two, producer pg-boss pool one, and at most 200 buyers choosing seats or checking out. Additional visitors wait. It passed local finite-inventory tests with 600/1,000/1,500 arrivals and queue WebSockets; real Cloud Run routing, micro-instance database throughput, provider latency and node-failure availability remain unverified.
+
+For an approved rollout:
+
+1. Use the existing booking-gate and CI/CD procedures in a quiet window. Update repository variable `API_MAX_INSTANCES` from `4` to `2`; explicitly record the Phase 3 values. Keep `PGBOSS_POOL_MAX` unset so the API uses one and the worker uses three; remove a stale live override if present. Apply the same admission cap to every API revision, after active queue/payment sessions drain.
+2. Read the target DB limits and enforce the connection budget: `2 × (2 + 1) + (2 + 3) + 5 = 16`, compared with the measured `25 − 3 = 22`. Include any extra worker execution, manual session and overlapping revision separately. Keep the five-minute worker Scheduler enabled.
+3. Deploy the reviewed code and verify the effective API maximum, concurrency `1000`, heap `256 MiB`, admission cap `200`, pool `2`, worker and booking-gate values on the serving revision. Web remains maximum four instances. Service-level limits and all traffic-serving revisions must also be checked; a revision maximum is not a hard billing ceiling during rollout.
+4. Rehearse on the actual deployment before the public sale, including two warm API instances, waiting sockets plus HTTP, queue refill, payment/QR correctness and provider test-mode flow. The local benchmark ran warm processes; scale-to-zero cold starts were not measured. If using prewarm, follow its verification procedure below and return the minimum to zero after traffic drains.
+5. Plan around 600–1,000 arrivals; treat 1,500 as the tested local burst case. The web closes its queue socket once the seat screen is ready, but handoff/reconnect overlap and uneven routing still consume capacity. Two instances at concurrency 1000 provide 2,000 request slots, not 2,000 parallel DB operations. The 1,500-arrival case has less headroom than the general 1.5× rule below and requires live routing evidence; do not claim it as a certified production limit.
+6. Check API latency/5xx/429, instance memory, DB CPU/pool waits and Valkey memory/evictions during rehearsal. A pool acquisition timeout, confirm p95 above two seconds, lost queue events or an oversell fails the gate. Tune the admission cap downward within the existing budget when needed and remeasure; increasing Cloud Run concurrency alone does not add CPU or database capacity.
+
+Socket transports require a valid access token before upgrade, through the Secure/HttpOnly `/socket.io/` cookie issued at login/refresh or a Bearer header for tooling. The per-process cap is 850 transports and four per signed account, including unfinished handshakes; closed transports release their slots. Browser origins must match `FRONTEND_URL`. Rejected or disconnected clients use existing reconnect and HTTP polling fallback. Verify a fresh login/refresh cookie and an authenticated reconnect after deployment, as older sessions may not yet carry the cookie. This reduces unauthenticated slot exhaustion but does not replace upstream volumetric protection.
+
+The current single-zone micro DB and single-node Valkey remain an availability risk: a node restart can interrupt the sale and lose transient locks/queue positions. The local capacity result does not waive maintenance/eviction checks, backup recovery, reconciliation, monitoring or an explicit operational decision about that risk. This profile schedules no resource purchase and makes no claim of zero usage charges. In particular, open WebSockets keep Cloud Run instances active and billable ([official behavior](https://docs.cloud.google.com/run/docs/triggering/websockets)).
+
+## Restore the previous higher-availability ticket-opening posture
+
+This separate path restores the earlier larger infrastructure posture. For the budget-constrained 600-seat candidate, use the preceding section and its live verification gates; do not infer a mandatory DB/server purchase from the historical settings below. Begin a larger restoration at least 14 days before sales open. The old baseline is a restoration reference, not proof that it is sale-ready.
 
 1. Close the sitewide gate with the [kill-switch procedure](#sitewide-booking-kill-switch): set repository variable `BOOKING_ENABLED=false` first, then update the live API/Web/worker. Keep it closed while capacity changes and verification are in progress. Every deploy reads the same variable, so merges during preparation cannot reopen it.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
@@ -434,7 +461,7 @@ Begin this process at least 14 days before sales open. The old baseline is a res
    ```
 
    Do not reuse the retained `grapit-valkey` or `grabit-valkey-managed-demo` names in the smoke after a cutover; the smoke fails when `redis-url` does not point at the named instance.
-5. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings). Confirm `API_MAX_INSTANCES`/`API_MIN_INSTANCES` are not the managed-demo `4`/`0`.
+5. Set Web/API minimum instances `1`, API instance-based CPU and `BACKGROUND_PROCESSING_ENABLED=true` explicitly, and select maximums supported by the new load evidence (`40` API / `50` Web were historical ceilings). These values are no longer workflow defaults. Recalculate the DB budget for continuous workers and the selected maxima before deployment.
 6. Size API capacity for WebSockets, not only HTTP. Every waiting buyer holds one `/queue` Socket.IO connection, and an admitted buyer can also hold a `/booking` connection. Each one occupies a Cloud Run concurrency slot next to lock, prepare and confirm requests. Require `API_MAX_INSTANCES × API_CONCURRENCY ≥ 1.5 × (expected waiting + 2 × expected admitted + peak in-flight HTTP)`, adjusting `API_MAX_INSTANCES` or `API_CONCURRENCY`. The workflow pins the API request timeout to `3600s`, so sockets are not cut at the 300s default.
 7. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
 8. Prewarm is optional. If used, keep `grabit-prewarm-scale-up` and `grabit-prewarm-step-down` paused until the opening day. Schedule scale-up at least 15 minutes before the sale, and step-down only after the queue drains and traffic falls. Prewarm changes the service-level minimum, so it creates no new revision. Requests above the live API maximum are rejected. HTTP 200 means the service read back settled (not reconciling, Ready) with the requested minimum. `202` with `state: pending` means Cloud Run accepted the update but it had not settled within `PREWARM_OPERATION_WAIT_MS` (default 45 seconds); read the service-level minimum back from the Cloud Run Admin API v2 as in [prewarm live verification](#prewarm-live-verification), because `gcloud run services describe` prints the v1 resource without `scaling.minInstanceCount`. The API confirms completion through `run.services.get`, which the runtime service account already holds on `grabit-api`. It never polls the operation, which would need a project-level `run.operations.get`. If prewarm is not used, keep both jobs paused. See [prewarm live verification](#prewarm-live-verification) before relying on it.
@@ -491,8 +518,10 @@ The Deploy workflow validates these repository variables before any job changes 
 | `MIGRATION_LOCK_TIMEOUT` | `5s` | `lock_timeout` for every migration-job session, applied through `PGOPTIONS`. |
 | `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
 | `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
-| `API_CONCURRENCY` | `250` | API Cloud Run concurrency. |
-| `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `5`, `false` | Connection budget inputs. The budget counts each process's real pg-boss pool cap: the `PGBOSS_POOL_MAX` runtime variable when it is set (see [Optional runtime settings](#optional-runtime-settings)), otherwise `3` for the worker Job and an API with background processing, and `1` for a producer-only API (`BACKGROUND_PROCESSING_ENABLED=false`). With the variable unset, the preflight also reads the live API service: a `PGBOSS_POOL_MAX` an earlier deploy left there is counted (the larger of it and the code default) with a removal warning. `true` makes an over-budget posture fail the deploy. |
+| `API_CONCURRENCY` | `1000` | API Cloud Run request slots, including waiting WebSockets. This is separate from the admission cap and does not enlarge DB pools. |
+| `QUEUE_MAX_ACTIVE_ADMISSIONS` | `200` | Per-performance active admission cap, integer 1–1000. Direct API startup without this setting retains the legacy 1000 default. Wait estimates use the configured cap. |
+| `API_NODE_HEAP_MAX_MB` | `256` | API Node old-space cap via `NODE_OPTIONS`; guard accepts 128–384. RSS also includes native memory, buffers and other heaps; this is not a 256 MiB total-memory cap. |
+| `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `5`, `true` | Connection budget inputs. The budget counts each process's real pg-boss pool cap: the `PGBOSS_POOL_MAX` runtime variable when it is set (see [Optional runtime settings](#optional-runtime-settings)), otherwise `3` for the worker Job and an API with background processing, and `1` for a producer-only API (`BACKGROUND_PROCESSING_ENABLED=false`). With the variable unset, the preflight also reads the live API service: a `PGBOSS_POOL_MAX` an earlier deploy left there is counted (the larger of it and the code default) with a removal warning. Enforcement makes an over-budget posture fail the deploy. |
 | `CUTOVER_GATE_LEDGER_PATH`, `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` | packaged phase26 ledger, `30` | Runtime-replaceable Gate Ledger and its freshness limit. |
 | `PREWARM_SCALING_SCOPE` | `service` | `service` patches the service-level minimum. `template` is the revision-template fallback; see [prewarm live verification](#prewarm-live-verification). |
 | `PGBOSS_START_MAX_ATTEMPTS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`, `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | unset (code defaults) | Runtime settings passed to the API and worker only when set. See [Optional runtime settings](#optional-runtime-settings). |
@@ -556,7 +585,7 @@ For `PGBOSS_POOL_MAX` the Deploy workflow's database preflight catches this case
 
 ### PostgreSQL connection budget
 
-Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow default `4`, managed-demo `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API; a set repository variable of the same name becomes the runtime pool of the API and the worker Job). The Deploy workflow's database preflight counts each process's cap the same way. With the variable unset it also counts a `PGBOSS_POOL_MAX` an earlier deploy left on the API service (the larger of that value and the code default, with a warning to remove it). A leftover `3` on the managed demo makes the preflight require `4 × (2 + 3) + (2 + 3) + 5 = 30` of 22 and report over budget until the value is removed. Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, `BACKGROUND_PROCESSING_ENABLED`, or the Cloud SQL tier, verify:
+Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow and managed-demo default `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API; a set repository variable of the same name becomes the runtime pool of the API and the worker Job). The Deploy workflow's database preflight counts each process's cap the same way. With the variable unset it also counts a `PGBOSS_POOL_MAX` an earlier deploy left on the API service (the larger of that value and the code default, with a warning to remove it). A leftover `3` on the currently deployed four-instance managed demo makes the preflight require `4 × (2 + 3) + (2 + 3) + 5 = 30` of 22 and report over budget until the value is removed. Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, `BACKGROUND_PROCESSING_ENABLED`, or the Cloud SQL tier, verify:
 
 ```text
 API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)
@@ -566,9 +595,10 @@ API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)
 < max_connections − superuser_reserved_connections
 ```
 
-- Workflow defaults at ticket opening: `40 × (4 + 3) = 280` for the API. Read the real limits with `SHOW max_connections;` and `SHOW superuser_reserved_connections;` on the target instance; do not assume a tier default.
+- The new 600-seat workflow defaults require `2 × (2 + 1) = 6` for the API, `2 + 3 = 5` for one worker, and reserve `5`: total `16`. The 2026-10-26 read-only measurement found `max_connections=25` and `superuser_reserved_connections=3`, leaving `22` usable and `6` beyond this budget. These are reusable connections, not purchased servers. Read the limits on the bound target again before deployment; do not assume a tier default.
 - Do not deploy during a sale window. If a deploy cannot be avoided, budget a second API term for the overlapping revision.
 - Managed demo (`db-f1-micro`): `4 × (2 + 1) + (2 + 3) = 17` before rollout overlap and operator sessions. With the default reserve `5` the preflight requires 22, which fits `max_connections` 25 minus 3 superuser-reserved connections exactly: no over-budget warning, but no headroom either. This holds only while `grabit-api` has no `PGBOSS_POOL_MAX` (`gcloud run services describe grabit-api --format=yaml | grep -A1 PGBOSS_POOL_MAX` prints nothing). Keep manual sessions short and avoid parallel deploys.
+- The earlier [1,000-admission confirm test](../research/girl-rules-600-capacity-2026-10-27.md) needed 27 usable connections with four API processes/pool three, or 34 with two/pool eight. Those are preserved comparisons, superseded for this 600-seat event by the [200-admission result](../research/girl-rules-600-capacity-2026-10-27.md): two APIs/pool two met confirm p95 under two seconds at 600/1,000/1,500 arrivals while selling all 600 seats through successive cohorts. This fits the existing connection limit. The benchmark used a 300 ms simulated approval and local DB/Valkey; actual Cloud SQL throughput, real-provider latency, routing and field-operation SLO remain separate gates. No production change was made.
 - During the load test, record pool usage per process and pool. Expected `application_name` values are `grabit-api`, `grabit-api-pgboss`, `grabit-background-worker`, and `grabit-background-worker-pgboss` (a value embedded in `DATABASE_URL` overrides them):
 
   ```sql

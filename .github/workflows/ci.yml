@@ -6,7 +6,8 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Playwright 1.59 supports Ubuntu 24.04; ubuntu-latest now selects 26.04.
+    runs-on: ubuntu-24.04
     # Postgres service container for E2E runs (Phase 09-tech-debt DEBT-05).
     # Unit tests (pnpm test) do not hit the DB — they mock it — but migrate/seed
     # + Playwright E2E do, and the API server launched by Playwright webServer

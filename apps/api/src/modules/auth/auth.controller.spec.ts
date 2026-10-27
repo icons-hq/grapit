@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller.js';
 import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import { SOCIAL_REGISTRATION_BINDING_COOKIE } from './social-oauth-state.js';
+import { SOCKET_ACCESS_COOKIE } from '../../common/socket-access.js';
 
 const authModuleSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'auth.module.ts'),
@@ -128,6 +129,9 @@ describe('AuthController', () => {
         expect.any(Object),
       );
       expect(result).toEqual({ accessToken: 'new-access-token' });
+      expect(mockResponse.cookie).toHaveBeenCalledWith(SOCKET_ACCESS_COOKIE, 'new-access-token', {
+        httpOnly: true, secure: true, sameSite: 'none', path: '/socket.io/', maxAge: 900000,
+      });
     });
   });
 
@@ -339,7 +343,7 @@ describe('AuthController', () => {
         process.env['NODE_ENV'] = originalNodeEnv;
       }
 
-      expect(mockResponse.cookie).toHaveBeenCalledOnce();
+      expect(mockResponse.cookie).toHaveBeenCalledTimes(2);
       const cookieOptions = mockResponse.cookie.mock.calls[0]![2] as Record<string, unknown>;
       expect(cookieOptions['sameSite']).toBe('none');
     });
@@ -359,7 +363,7 @@ describe('AuthController', () => {
         mockResponse as unknown as Response,
       );
 
-      expect(mockResponse.cookie).toHaveBeenCalledOnce();
+      expect(mockResponse.cookie).toHaveBeenCalledTimes(2);
       const cookieOptions = mockResponse.cookie.mock.calls[0]![2] as Record<string, unknown>;
       expect(cookieOptions['sameSite']).toBe('none');
     });

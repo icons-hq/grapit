@@ -28,8 +28,8 @@
  *                       script runs (direct entry and reconcile batches alike).
  * touch    ARGV[3]    = replacement admission token hash ('' = keep)
  *          ARGV[4..5] = sliding WAITING expiresAt, ttlMs ('' = keep the current TTL)
- *          ARGV[6]    = original enteredAt score used to restore a WAITING
- *                       session that lost its waiting-line membership
+ *          ARGV[6]    = original order (legacy enteredAt fallback) used to
+ *                       restore a WAITING session that lost its membership
  *          ARGV[7]    = '1' also rotates the token of a retained EXPIRED
  *                       session (payment recovery of a pending order); its
  *                       state, windows and TTL stay unchanged
@@ -134,7 +134,7 @@ if op == 'touch' then
       ttlMs = ARGV[5]
     end
     redis.call('SREM', activeKey, id)
-    redis.call('ZADD', waitingKey, 'NX', ARGV[6], id)
+    redis.call('ZADD', waitingKey, 'NX', record.queueOrder or ARGV[6], id)
   end
   if ttlMs == nil then
     ttlMs = currentTtlMs()
@@ -186,8 +186,16 @@ return redis.error_reply('UNKNOWN_QUEUE_SESSION_TRANSITION')
  * Creates a WAITING session only when the identity has no session yet (SET NX
  * semantics on the identity key), so concurrent tabs share one queue position.
  *
- * KEYS[1] = identity key, KEYS[2] = session key, KEYS[3] = waiting zset
- * ARGV[1] = queueSessionId, ARGV[2] = record JSON, ARGV[3] = ttlMs, ARGV[4] = score
+ * KEYS[1] = identity key, KEYS[2] = session key, KEYS[3] = waiting zset,
+ * KEYS[4] = last assigned order (same performance hash slot)
+ * ARGV[1] = queueSessionId, ARGV[2] = record JSON, ARGV[3] = ttlMs,
+ * ARGV[4] = legacy-compatible initial score floor (entry milliseconds)
+ *
+ * The script assigns a strictly increasing order at registration, independent
+ * of UUID sorting, equal timestamps and clock skew between API instances.
+ * The tail seeds the counter after idle expiry and preserves existing waiters
+ * during an upgrade from timestamp-only scores. enteredAt remains wall time;
+ * queueOrder is stored separately so renewal never changes a buyer's place.
  * Returns {1, queueSessionId} or {0, existingQueueSessionId}.
  */
 export const CREATE_QUEUE_SESSION_LUA = `
@@ -197,9 +205,17 @@ if owner then
   return {0, owner}
 end
 local ttl = math.max(1, math.floor(tonumber(ARGV[3]) or 1000))
-redis.call('SET', KEYS[2], ARGV[2], 'PX', ttl)
+local tail = redis.call('ZRANGE', KEYS[3], -1, -1, 'WITHSCORES')
+local previous = tonumber(redis.call('GET', KEYS[4])) or 0
+local tailOrder = tonumber(tail[2]) or 0
+local order = math.max(tonumber(ARGV[4]) or 0, previous + 1, tailOrder + 1)
+local orderText = string.format('%.0f', order)
+local record = cjson.decode(ARGV[2])
+record.queueOrder = orderText
+redis.call('SET', KEYS[4], orderText, 'PX', ttl)
+redis.call('SET', KEYS[2], cjson.encode(record), 'PX', ttl)
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
-redis.call('ZADD', KEYS[3], ARGV[4], ARGV[1])
+redis.call('ZADD', KEYS[3], orderText, ARGV[1])
 return {1, ARGV[1]}
 `;
 
@@ -271,6 +287,7 @@ export interface QueueScriptStore {
   zadd(key: string, score: number | string, member: string): Promise<number>;
   zrem(key: string, ...members: string[]): Promise<number>;
   zrank(key: string, member: string): Promise<number | null>;
+  zrange(key: string, start: number, stop: number, withScores?: 'WITHSCORES'): Promise<string[]>;
   sadd(key: string, ...members: string[]): Promise<number>;
   srem(key: string, ...members: string[]): Promise<number>;
   smembers(key: string): Promise<string[]>;
@@ -340,16 +357,22 @@ async function runQueueScriptInMemory(
   }
 
   if (script.includes('CREATE_QUEUE_SESSION_LUA')) {
-    const [identityKey, sessionKey, waitingKey] = keys as [string, string, string];
+    const [identityKey, sessionKey, waitingKey, orderKey] = keys as [string, string, string, string];
     const [queueSessionId, recordJson, ttlMs, score] = args as [string, string, string, string];
     const owner = await store.get(identityKey);
     if (owner) {
       return [0, owner];
     }
     const ttl = Math.max(1, Math.floor(Number(ttlMs) || 1000));
-    await store.set(sessionKey, recordJson, 'PX', ttl);
+    const tail = await store.zrange(waitingKey, -1, -1, 'WITHSCORES');
+    const order = Math.max(Number(score) || 0, Number(await store.get(orderKey) ?? 0) + 1,
+      Number(tail[1] ?? 0) + 1);
+    const record = JSON.parse(recordJson) as JsonRecord;
+    record['queueOrder'] = String(order);
+    await store.set(orderKey, String(order), 'PX', ttl);
+    await store.set(sessionKey, JSON.stringify(record), 'PX', ttl);
     await store.set(identityKey, queueSessionId, 'PX', ttl);
-    await store.zadd(waitingKey, score, queueSessionId);
+    await store.zadd(waitingKey, order, queueSessionId);
     return [1, queueSessionId];
   }
 
@@ -463,7 +486,7 @@ async function evalTransitionInMemory(
       }
       await store.srem(activeKey, id);
       if ((await store.zrank(waitingKey, id)) === null) {
-        await store.zadd(waitingKey, arg(6), id);
+        await store.zadd(waitingKey, text(record['queueOrder']) || arg(6), id);
       }
     }
     if (ttlMs === null) {

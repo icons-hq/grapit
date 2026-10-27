@@ -86,6 +86,7 @@ type ReservationIssueContext = {
 
 type ReservationIssueContextWithTicketItems = ReservationIssueContext & {
   ticketItems: TicketItemIssueRecord[];
+  activeTickets: TicketWithSeatRecord[];
 };
 
 type QrTicketEmailJobPayload = {
@@ -169,6 +170,7 @@ export interface QrTicketScannerContract {
 @Injectable()
 export class QrTicketService implements OnModuleInit {
   private readonly logger = new Logger(QrTicketService.name);
+  private issueContextQuery?: ReturnType<QrTicketService['createIssueContextQuery']>;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -304,13 +306,11 @@ export class QrTicketService implements OnModuleInit {
   }): Promise<QrTicket[]> {
     const issueContext = await this.getReservationIssueContextWithTicketItems(input);
     let ticketItemsInOrder = issueContext.ticketItems;
-    let activeTickets = await this.findActiveTicketsByTicketItemIds(
-      ticketItemsInOrder.map((ticketItem) => ticketItem.id),
-    );
+    let activeTickets = issueContext.activeTickets;
     const issuedTicketItemIds = new Set(activeTickets.map((ticket) => ticket.ticketItemId));
 
     // Fast path stays lock-free. Only a missing credential takes the reservation
-    // lock, because the unlocked reads above may straddle a cancellation commit.
+    // lock and a fresh snapshot in case cancellation committed after this read.
     if (ticketItemsInOrder.some((ticketItem) => !issuedTicketItemIds.has(ticketItem.id))) {
       const issued = await this.issueMissingTicketsUnderReservationLock(input);
       ticketItemsInOrder = issued.ticketItems;
@@ -370,8 +370,7 @@ export class QrTicketService implements OnModuleInit {
       }
 
       const ticketItemsInOrder = rows.map((row) => row.ticketItem);
-      const ticketItemIds = ticketItemsInOrder.map((ticketItem) => ticketItem.id);
-      const existingTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds, tx);
+      const existingTickets = this.issueContextTickets(rows);
       const existingTicketItemIds = new Set(
         existingTickets.map((ticket) => ticket.ticketItemId),
       );
@@ -388,7 +387,7 @@ export class QrTicketService implements OnModuleInit {
       const secretVersion = this.getCurrentSecretVersion();
       // Concurrent readers share the lock; idx_tickets_ticket_item_active makes the
       // loser a no-op instead of aborting the transaction.
-      await tx
+      const inserted = await tx
         .insert(tickets)
         .values(missingTicketItems.map((ticketItem) => ({
           reservationId: first.reservationId,
@@ -402,11 +401,27 @@ export class QrTicketService implements OnModuleInit {
           emailScheduledAt,
           updatedAt: issuedAt,
         })))
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning(this.ticketRecordFields());
+
+      const itemById = new Map(missingTicketItems.map((item) => [item.id, item]));
+      const insertedTickets = inserted.map((ticket) => this.toTicketWithSeatRecord({
+        ...itemById.get(ticket.ticketItemId!)!,
+        ...ticket,
+      }));
+      const insertedItemIds = new Set(inserted.map((ticket) => ticket.ticketItemId));
+      const conflictedItemIds = missingTicketItems
+        .filter((item) => !insertedItemIds.has(item.id))
+        .map((item) => item.id);
+      // A concurrent issuer may win ON CONFLICT. Read only those credentials
+      // in a new statement snapshot after its insert has committed.
+      const concurrentTickets = conflictedItemIds.length > 0
+        ? await this.findActiveTicketsByTicketItemIds(conflictedItemIds, tx)
+        : [];
 
       return {
         ticketItems: ticketItemsInOrder,
-        activeTickets: await this.findActiveTicketsByTicketItemIds(ticketItemIds, tx),
+        activeTickets: [...existingTickets, ...insertedTickets, ...concurrentTickets],
       };
     });
   }
@@ -770,16 +785,31 @@ export class QrTicketService implements OnModuleInit {
       showtimeId: first.showtimeId,
       showtimeAt: first.showtimeAt,
       ticketItems: rows.map((row) => row.ticketItem),
+      activeTickets: this.issueContextTickets(rows),
     };
+  }
+
+  private issueContextTickets(
+    rows: Array<{ ticketItem: TicketItemIssueRecord; ticket: TicketRecord | null }>,
+  ): TicketWithSeatRecord[] {
+    return rows.flatMap((row) => row.ticket
+      ? [this.toTicketWithSeatRecord({ ...row.ticketItem, ...row.ticket })]
+      : []);
   }
 
   private async selectIssueContextRows(
     db: TicketReadDb,
-    input: {
-      reservationId: string;
-      paymentId: string;
-    },
-  ): Promise<Array<ReservationIssueContext & { ticketItem: TicketItemIssueRecord }>> {
+    input: { reservationId: string; paymentId: string },
+  ): Promise<Array<ReservationIssueContext & { ticketItem: TicketItemIssueRecord; ticket: TicketRecord | null }>> {
+    // The pooled fast path reuses compiled SQL. A locked re-read must stay on
+    // its transaction's connection, with a new snapshot after acquiring SHARE.
+    const query = db === this.db
+      ? (this.issueContextQuery ??= this.createIssueContextQuery(db))
+      : this.createIssueContextQuery(db);
+    return query.execute(input);
+  }
+
+  private createIssueContextQuery(db: TicketReadDb) {
     return db
       .select({
         reservationId: reservations.id,
@@ -797,6 +827,7 @@ export class QrTicketService implements OnModuleInit {
           number: ticketItems.number,
           tierName: ticketItems.tierName,
         },
+        ticket: this.ticketRecordFields(),
       })
       .from(reservations)
       .innerJoin(payments, eq(payments.reservationId, reservations.id))
@@ -810,15 +841,17 @@ export class QrTicketService implements OnModuleInit {
           eq(ticketItems.status, 'active'),
         ),
       )
+      .leftJoin(tickets, and(eq(tickets.ticketItemId, ticketItems.id), eq(tickets.status, 'active')))
       .where(
         and(
-          eq(reservations.id, input.reservationId),
-          eq(payments.id, input.paymentId),
+          eq(reservations.id, sql.placeholder('reservationId')),
+          eq(payments.id, sql.placeholder('paymentId')),
           eq(reservations.status, 'CONFIRMED'),
           eq(payments.status, 'DONE'),
         ),
       )
-      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id))
+      .prepare('qr-issue-context-v1');
   }
 
   private async findActiveTicketsByTicketItemIds(
