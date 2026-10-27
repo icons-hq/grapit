@@ -5,8 +5,10 @@ import IORedis, { Cluster } from 'ioredis';
 import { ConfigService } from '@nestjs/config';
 import { QueueService } from '../src/modules/queue/queue.service.js';
 import {
+  CACHE_QUEUE_CAPACITY_LUA,
   COUNT_VALID_LOCKED_SEATS_LUA,
   QUEUE_SESSION_TRANSITION_LUA,
+  READ_QUEUE_CAPACITY_LUA,
 } from '../src/modules/queue/queue-redis-scripts.js';
 import { performances } from '../src/database/schema/performances.js';
 import { reservations } from '../src/database/schema/reservations.js';
@@ -62,6 +64,7 @@ type DbState = {
   totalSeats: number;
   showtimeIds: string[];
   soldCount: number;
+  afterSoldCountRead?: () => Promise<void>;
 };
 
 function createQueueDb(state: DbState) {
@@ -91,7 +94,11 @@ function createQueueDb(state: DbState) {
           return [];
         };
         const chain = {
-          where: async () => rows(),
+          where: async () => {
+            const result = rows();
+            if (table === seatInventories) await state.afterSoldCountRead?.();
+            return result;
+          },
           innerJoin: () => chain,
           leftJoin: () => chain,
         };
@@ -120,6 +127,8 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
   const browserB = { userId: 'user-b', refreshTokenFamilyId: 'family-b', deviceSlotId: 'family-b' };
   const waitingKey = `{queue:${performanceId}}:waiting`;
   const activeKey = `{queue:${performanceId}}:active`;
+  const capacityVersionKey = `{queue:${performanceId}}:capacity-version`;
+  const remainingSeatsKey = `{queue:${performanceId}}:remaining-seats`;
   const sessionKey = (id: string) => `{queue:${performanceId}}:session:${id}`;
   const readRecord = async (id: string) =>
     JSON.parse((await cluster.get(sessionKey(id))) ?? 'null') as Record<string, unknown> | null;
@@ -370,11 +379,12 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
     const record = await readRecord(second.queueSessionId);
     const admit = (capacity: string) => cluster.eval(
       QUEUE_SESSION_TRANSITION_LUA,
-      4,
+      5,
       sessionKey(second.queueSessionId),
       waitingKey,
       activeKey,
       `{queue:${performanceId}}:identity:user-b:family-b:family-b`,
+      capacityVersionKey,
       second.queueSessionId,
       'admit',
       new Date().toISOString(),
@@ -383,6 +393,7 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
       new Date(Date.now() + 1_080_000).toISOString(),
       '1080000',
       capacity,
+      '0',
     ) as Promise<[number, string]>;
 
     await expect(admit('1')).resolves.toEqual(expect.arrayContaining([0, 'NO_CAPACITY']));
@@ -441,6 +452,86 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
       identity: browserB,
       admissionToken: next.admissionToken,
     })).resolves.toMatchObject({ state: 'ADMITTED' });
+  });
+
+  it('keeps another API instance from admitting a buyer after the last seat sells', async () => {
+    dbState.totalSeats = 1;
+    const config = new ConfigService({ QUEUE_MAX_ACTIVE_ADMISSIONS: '200' });
+    service = new QueueService(cluster, createQueueDb(dbState) as never, gateway as never, config);
+    const other = new QueueService(cluster, createQueueDb(dbState) as never, gateway as never, config);
+    const buyer = await service.enterPerformanceQueue({ performanceId, identity: browserA });
+    const next = await other.enterPerformanceQueue({ performanceId, identity: browserB });
+    expect([buyer.state, next.state]).toEqual(['ADMITTED', 'WAITING']);
+    gateway.emitAdmitted.mockClear();
+
+    dbState.soldCount = 1;
+    await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+    await clearReconcileThrottle();
+    await expect(other.getQueueSessionStatus({
+      queueSessionId: next.queueSessionId, identity: browserB, admissionToken: next.admissionToken,
+    })).resolves.toMatchObject({ state: 'WAITING', remainingSeats: 0 });
+    expect(await cluster.scard(activeKey)).toBe(0);
+    expect(await cluster.zcard(waitingKey)).toBe(1);
+    expect(gateway.emitAdmitted).not.toHaveBeenCalled();
+  });
+
+  it('discards a sold-count read that overlaps the final sale and Redis lock removal', async () => {
+    dbState.totalSeats = 1;
+    const buyer = await service.enterPerformanceQueue({ performanceId, identity: browserA });
+    const next = await service.enterPerformanceQueue({ performanceId, identity: browserB });
+    await cluster.set(`{${showtimeId}}:seat:A-1`, browserA.userId, 'EX', 600);
+    await cluster.sadd(`{${showtimeId}}:locked-seats`, 'A-1');
+    await cluster.del(remainingSeatsKey);
+    await clearReconcileThrottle();
+    gateway.emitAdmitted.mockClear();
+
+    let countRead!: () => void;
+    let resumeCount!: () => void;
+    const read = new Promise<void>((resolve) => { countRead = resolve; });
+    const resume = new Promise<void>((resolve) => { resumeCount = resolve; });
+    dbState.afterSoldCountRead = async () => {
+      dbState.afterSoldCountRead = undefined;
+      countRead();
+      await resume;
+    };
+    const polling = service.getQueueSessionStatus({
+      queueSessionId: next.queueSessionId, identity: browserB, admissionToken: next.admissionToken,
+    });
+    await read;
+    dbState.soldCount = 1;
+    await cluster.del(`{${showtimeId}}:seat:A-1`);
+    await cluster.srem(`{${showtimeId}}:locked-seats`, 'A-1');
+    await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+    resumeCount();
+
+    await expect(polling).resolves.toMatchObject({ state: 'WAITING', remainingSeats: 0 });
+    expect(await cluster.get(remainingSeatsKey)).toBe('0');
+    expect(await cluster.scard(activeKey)).toBe(0);
+    expect(gateway.emitAdmitted).not.toHaveBeenCalled();
+  });
+
+  it('rejects both a stale cache write and a stale admission after the purchase version changes', async () => {
+    dbState.totalSeats = 1;
+    const buyer = await service.enterPerformanceQueue({ performanceId, identity: browserA });
+    const next = await service.enterPerformanceQueue({ performanceId, identity: browserB });
+    const [remaining, version] = await cluster.eval(READ_QUEUE_CAPACITY_LUA, 2, remainingSeatsKey, capacityVersionKey) as [string, string];
+    expect(remaining).toBe('1');
+
+    dbState.soldCount = 1;
+    await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+    expect(await cluster.eval(CACHE_QUEUE_CAPACITY_LUA, 2, remainingSeatsKey, capacityVersionKey, version, remaining, '2')).toBe(0);
+    const admission = await cluster.eval(
+      QUEUE_SESSION_TRANSITION_LUA, 5,
+      sessionKey(next.queueSessionId), waitingKey, activeKey,
+      `{queue:${performanceId}}:identity:user-b:family-b:family-b`, capacityVersionKey,
+      next.queueSessionId, 'admit', new Date().toISOString(),
+      new Date(Date.now() + 600_000).toISOString(), new Date(Date.now() + 780_000).toISOString(),
+      new Date(Date.now() + 1_080_000).toISOString(), '1080000', remaining, version,
+    ) as [number, string];
+    expect(admission.slice(0, 2)).toEqual([0, 'STALE_CAPACITY']);
+    expect(await cluster.get(remainingSeatsKey)).toBeNull();
+    expect(await readRecord(next.queueSessionId)).toMatchObject({ state: 'WAITING' });
+    expect(await cluster.scard(activeKey)).toBe(0);
   });
 
   it('counts only live seat locks and removes expired locked-seats members (#6)', async () => {

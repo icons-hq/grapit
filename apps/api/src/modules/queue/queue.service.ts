@@ -30,10 +30,13 @@ import {
 } from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
 import {
+  CACHE_QUEUE_CAPACITY_LUA,
   COUNT_VALID_LOCKED_SEATS_LUA,
   CREATE_QUEUE_SESSION_LUA,
+  INVALIDATE_QUEUE_CAPACITY_LUA,
   PURGE_QUEUE_SESSION_LUA,
   QUEUE_SESSION_TRANSITION_LUA,
+  READ_QUEUE_CAPACITY_LUA,
 } from './queue-redis-scripts.js';
 
 export const QUEUE_ADMISSION_COOKIE_NAME = 'grabit_queue_admission';
@@ -300,6 +303,8 @@ type RemainingSeatsState = {
   hasBookableShowtime: boolean;
 };
 
+type RemainingSeatsSnapshot = RemainingSeatsState & { capacityVersion: string };
+
 type OrderAdmissionBinding = {
   status: string;
   queueSessionId: string | null;
@@ -318,7 +323,7 @@ export class QueueService {
   private readonly reconcileInFlight = new Set<string>();
   // One fresh remaining-seat computation per performance per instance at a
   // time; concurrent cache misses share it.
-  private readonly remainingSeatsInFlight = new Map<string, Promise<RemainingSeatsState>>();
+  private readonly remainingSeatsInFlight = new Map<string, Promise<RemainingSeatsSnapshot>>();
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
@@ -660,10 +665,8 @@ export class QueueService {
       return;
     }
 
-    const capacity = Math.min(
-      await this.calculateRemainingSeats(performanceId),
-      this.maxActiveAdmissions,
-    );
+    const seats = await this.readRemainingSeatsState(performanceId);
+    const capacity = Math.min(seats.remainingSeats, this.maxActiveAdmissions);
     if (capacity <= 0) {
       return;
     }
@@ -671,6 +674,7 @@ export class QueueService {
     const result = await this.transitionQueueSession(record, 'admit', [
       ...this.buildAdmissionArgs(new Date()),
       String(capacity),
+      seats.capacityVersion,
     ]);
     if (result.applied) {
       await this.syncQueueSessionIndexes(result);
@@ -1024,6 +1028,17 @@ export class QueueService {
         return false;
       }
 
+      // The order is committed already. Invalidate cached and in-flight seat
+      // counts before returning this slot, including a missing session record.
+      // A new unique version also fences admission batches on other instances.
+      await this.redis.eval(
+        INVALIDATE_QUEUE_CAPACITY_LUA,
+        2,
+        this.remainingSeatsCacheKey(performanceId),
+        this.capacityVersionKey(performanceId),
+        randomUUID(),
+      );
+
       const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
       if (!record) {
         await this.redis.srem(this.activeAdmissionsKey(performanceId), queueSessionId);
@@ -1123,7 +1138,7 @@ export class QueueService {
     await this.expireStaleSessions(performanceId);
 
     // No showtime on sale (C1) reads as 0 remaining seats: nobody is admitted.
-    const remainingSeats = await this.calculateRemainingSeats(performanceId);
+    const { remainingSeats, capacityVersion } = await this.readRemainingSeatsState(performanceId);
     if (remainingSeats <= 0) {
       return;
     }
@@ -1136,7 +1151,7 @@ export class QueueService {
       return;
     }
 
-    const admittedRecords = await this.admitWaitingSessions(performanceId, slotsToFill, capacity);
+    const admittedRecords = await this.admitWaitingSessions(performanceId, slotsToFill, capacity, capacityVersion);
     if (admittedRecords.length === 0) {
       return;
     }
@@ -1167,6 +1182,7 @@ export class QueueService {
     performanceId: string,
     slotsToFill: number,
     capacity: number,
+    capacityVersion: string,
   ): Promise<QueueSessionRecord[]> {
     const admitted: QueueSessionRecord[] = [];
     let remainingSlots = slotsToFill;
@@ -1186,7 +1202,7 @@ export class QueueService {
       }
 
       const records = await this.readQueueSessionRecords(performanceId, waitingIds);
-      const admissionArgs = [...this.buildAdmissionArgs(new Date()), String(capacity)];
+      const admissionArgs = [...this.buildAdmissionArgs(new Date()), String(capacity), capacityVersion];
       const results = await Promise.all(
         waitingIds.map((queueSessionId, index) => {
           const record = records[index];
@@ -1207,8 +1223,8 @@ export class QueueService {
       admitted.push(...applied.map((result) => result.record));
       remainingSlots -= applied.length;
 
-      if (results.some((result) => result?.status === 'NO_CAPACITY')) {
-        // The active set is full: another instance admitted in the meantime.
+      if (results.some((result) => result?.status === 'NO_CAPACITY' || result?.status === 'STALE_CAPACITY')) {
+        // Another instance filled the active set or completed a purchase.
         break;
       }
     }
@@ -1556,11 +1572,12 @@ export class QueueService {
   ): Promise<QueueTransitionResult> {
     const reply = (await this.redis.eval(
       QUEUE_SESSION_TRANSITION_LUA,
-      4,
+      5,
       this.sessionKey(record.performanceId, record.queueSessionId),
       this.waitingQueueKey(record.performanceId),
       this.activeAdmissionsKey(record.performanceId),
       this.identityKey(record.performanceId, record),
+      this.capacityVersionKey(record.performanceId),
       record.queueSessionId,
       op,
       ...args,
@@ -1709,37 +1726,44 @@ export class QueueService {
   }
 
   /**
-   * Remaining seats with a 2-second cache. A cache miss is computed once per
-   * performance per instance: status polls, entries, broadcasts and reconcile
-   * that miss at the same time share the in-flight computation.
+   * Remaining seats with a 2-second cache and purchase version. Readers share
+   * one computation per instance. A sale can commit between the SQL sold count
+   * and Redis lock count; discard that mixed snapshot instead of publishing it.
    */
-  private async readRemainingSeatsState(performanceId: string): Promise<RemainingSeatsState> {
+  private async readRemainingSeatsState(performanceId: string): Promise<RemainingSeatsSnapshot> {
     const inFlight = this.remainingSeatsInFlight.get(performanceId);
     if (inFlight) {
       return inFlight;
     }
 
-    const cached = await this.redis.get(this.remainingSeatsCacheKey(performanceId));
-    if (cached !== null) {
-      return this.parseRemainingSeatsCache(cached);
-    }
-
-    const joined = this.remainingSeatsInFlight.get(performanceId);
-    if (joined) {
-      return joined;
-    }
-
-    const computation = (async (): Promise<RemainingSeatsState> => {
-      const state = await this.calculateRemainingSeatsFresh(performanceId);
-      await this.redis.set(
-        this.remainingSeatsCacheKey(performanceId),
-        state.hasBookableShowtime
-          ? String(state.remainingSeats)
-          : QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME,
-        'EX',
-        QUEUE_REMAINING_SEATS_CACHE_SECONDS,
-      );
-      return state;
+    const computation = (async (): Promise<RemainingSeatsSnapshot> => {
+      let latest: RemainingSeatsSnapshot = { remainingSeats: 0, hasBookableShowtime: true, capacityVersion: '0' };
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const [cached, capacityVersion] = await this.redis.eval(
+          READ_QUEUE_CAPACITY_LUA,
+          2,
+          this.remainingSeatsCacheKey(performanceId),
+          this.capacityVersionKey(performanceId),
+        ) as [string, string];
+        if (cached !== '') {
+          return { ...this.parseRemainingSeatsCache(cached), capacityVersion };
+        }
+        const state = await this.calculateRemainingSeatsFresh(performanceId);
+        latest = { ...state, capacityVersion };
+        const cachedCurrent = await this.redis.eval(
+          CACHE_QUEUE_CAPACITY_LUA,
+          2,
+          this.remainingSeatsCacheKey(performanceId),
+          this.capacityVersionKey(performanceId),
+          capacityVersion,
+          state.hasBookableShowtime ? String(state.remainingSeats) : QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME,
+          String(QUEUE_REMAINING_SEATS_CACHE_SECONDS),
+        );
+        if (Number(cachedCurrent) === 1) return latest;
+      }
+      // Continuous purchases can invalidate every attempt. Keep buyers waiting
+      // until the next poll; never turn an unverified count into admission.
+      return { ...latest, remainingSeats: 0 };
     })().finally(() => {
       this.remainingSeatsInFlight.delete(performanceId);
     });
@@ -1839,6 +1863,10 @@ export class QueueService {
 
   private remainingSeatsCacheKey(performanceId: string): string {
     return `${this.queuePrefix(performanceId)}:remaining-seats`;
+  }
+
+  private capacityVersionKey(performanceId: string): string {
+    return `${this.queuePrefix(performanceId)}:capacity-version`;
   }
 
   private sessionKey(performanceId: string, queueSessionId: string): string {
