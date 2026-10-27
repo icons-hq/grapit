@@ -30,8 +30,9 @@ import { showtimes } from '../../database/schema/showtimes.js';
 import { redisProvider } from '../booking/providers/redis.provider.js';
 
 function createMockRedis() {
+  const get = vi.fn();
   return {
-    get: vi.fn(),
+    get,
     set: vi.fn().mockResolvedValue('OK'),
     del: vi.fn(),
     expire: vi.fn().mockResolvedValue(1),
@@ -44,7 +45,12 @@ function createMockRedis() {
     srem: vi.fn().mockResolvedValue(0),
     smembers: vi.fn().mockResolvedValue([]),
     scard: vi.fn().mockResolvedValue(0),
-    eval: vi.fn().mockResolvedValue(1),
+    eval: vi.fn(async (script: string, _numKeys: number, ...keysAndArgs: (string | number)[]) => {
+      if (script.includes('READ_QUEUE_CAPACITY_LUA')) {
+        return [await get(keysAndArgs[0]) ?? '', await get(keysAndArgs[1]) ?? '0'];
+      }
+      return 1;
+    }),
   };
 }
 
@@ -286,6 +292,7 @@ type QueueDbState = {
   // (default: soldCount for the whole performance).
   showtimeStartsAt?: Record<string, Date>;
   soldByShowtime?: Record<string, number>;
+  afterSoldCountRead?: () => Promise<void>;
   // When set, every reservations query is recorded here. The double returns
   // `orderBinding` whatever the WHERE says, so a test reads the filter from it.
   reservationQueries?: Array<{ selection: Record<string, unknown>; where: SQL | undefined }>;
@@ -347,7 +354,11 @@ function createQueueDb(state: QueueDbState) {
           return [];
         };
         const chain = {
-          where: async (where?: SQL) => rows(where),
+          where: async (where?: SQL) => {
+            const result = rows(where);
+            if (table === seatInventories) await state.afterSoldCountRead?.();
+            return result;
+          },
           innerJoin: () => chain,
           leftJoin: () => chain,
         };
@@ -698,7 +709,7 @@ describe('QueueService', () => {
         await fakeRedis.set(`{queue:${performanceId}}:remaining-seats`, String(seats));
         const simulated = new QueueService(
           fakeRedis as never,
-          mockDb as never,
+          createQueueDb({ performanceId, totalSeats: seats, showtimeIds: ['showtime-on-sale'], soldCount: 0, orderBinding: null }) as never,
           mockGateway as unknown as QueueGateway,
         );
         const internals = simulated as unknown as QueueSimulationAccess;
@@ -1300,6 +1311,98 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   });
 
   describe('slot return after purchase (#4)', () => {
+    it.each(['same', 'another'])('keeps the next buyer waiting after the last seat sells on %s API instance', async (instance) => {
+      dbState.totalSeats = 1;
+      const config = { get: () => '200' };
+      service = new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never);
+      const otherInstance = new QueueService(
+        redis as never,
+        createQueueDb(dbState) as never,
+        gateway as never,
+        config as never,
+      );
+      const buyer = await enter(browserA);
+      const next = await enter(browserB);
+      expect(buyer.state).toBe('ADMITTED');
+      expect(next.state).toBe('WAITING');
+      gateway.emitAdmitted.mockClear();
+
+      // Commit the last sale and return the completed buyer's queue slot.
+      dbState.soldCount = 1;
+      await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+      setNow(1_100);
+
+      const snapshot = await (instance === 'same' ? service : otherInstance).getQueueSessionStatus({
+        queueSessionId: next.queueSessionId,
+        identity: browserB,
+        admissionToken: next.admissionToken,
+      });
+      expect(snapshot.state).toBe('WAITING');
+      expect(await redis.scard(activeKey)).toBe(0);
+      expect(await redis.zcard(waitingKey)).toBe(1);
+      expect(gateway.emitAdmitted).not.toHaveBeenCalled();
+    });
+
+    it('keeps the next buyer waiting when the last sale commits during a remaining-seat calculation', async () => {
+      dbState.totalSeats = 1;
+      const buyer = await enter(browserA);
+      const next = await enter(browserB);
+      await redis.set(`{${showtimeId}}:seat:A-1`, browserA.userId, 'PX', minutes(10));
+      await redis.sadd(lockedSeatsKey, 'A-1');
+      await redis.del(`{queue:${performanceId}}:remaining-seats`);
+      gateway.emitAdmitted.mockClear();
+      setNow(1_100);
+
+      let countRead!: () => void;
+      let resumeCount!: () => void;
+      const read = new Promise<void>((resolve) => { countRead = resolve; });
+      const resume = new Promise<void>((resolve) => { resumeCount = resolve; });
+      dbState.afterSoldCountRead = async () => {
+        dbState.afterSoldCountRead = undefined;
+        countRead();
+        await resume;
+      };
+      const polling = status(next.queueSessionId, browserB, next.admissionToken);
+      await read;
+      // PostgreSQL's sold count was read before commit, but the lock count is
+      // read after the same seat became sold and its Redis lock was removed.
+      dbState.soldCount = 1;
+      await redis.del(`{${showtimeId}}:seat:A-1`);
+      await redis.srem(lockedSeatsKey, 'A-1');
+      await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+      resumeCount();
+
+      expect((await polling).state).toBe('WAITING');
+      expect(await redis.scard(activeKey)).toBe(0);
+      expect(gateway.emitAdmitted).not.toHaveBeenCalled();
+    });
+
+    it('keeps the next buyer waiting when the last sale commits after admission capacity was read', async () => {
+      dbState.totalSeats = 1;
+      const buyer = await enter(browserA);
+      const next = await enter(browserB);
+      gateway.emitAdmitted.mockClear();
+      setNow(1_100);
+
+      const scard = redis.scard.bind(redis);
+      let interleaved = false;
+      redis.scard = async (key: string) => {
+        if (!interleaved && key === activeKey) {
+          interleaved = true;
+          dbState.soldCount = 1;
+          await service.releaseAdmissionAfterPurchase(buyer.queueSessionId);
+        }
+        return scard(key);
+      };
+      const snapshot = await status(next.queueSessionId, browserB, next.admissionToken);
+      redis.scard = scard;
+
+      expect(interleaved).toBe(true);
+      expect(snapshot.state).toBe('WAITING');
+      expect(await redis.scard(activeKey)).toBe(0);
+      expect(gateway.emitAdmitted).not.toHaveBeenCalled();
+    });
+
     async function admitBuyerAndQueueNext() {
       dbState.totalSeats = 2;
       const buyer = await enter(browserA);

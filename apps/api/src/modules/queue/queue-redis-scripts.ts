@@ -17,6 +17,7 @@
  * KEYS[2] = {queue:<performanceId>}:waiting
  * KEYS[3] = {queue:<performanceId>}:active
  * KEYS[4] = {queue:<performanceId>}:identity:<userId>:<familyId>:<deviceSlotId>
+ * KEYS[5] = {queue:<performanceId>}:capacity-version
  * ARGV[1] = queueSessionId
  * ARGV[2] = op: admit | touch | recovery | expire | release
  *
@@ -26,6 +27,8 @@
  *                       admitted only when every waiting session ahead of it
  *                       also fits into the free active slots, counted when the
  *                       script runs (direct entry and reconcile batches alike).
+ *          ARGV[9]    = version used to calculate that capacity. A completed
+ *                       purchase changes it before returning its active slot.
  * touch    ARGV[3]    = replacement admission token hash ('' = keep)
  *          ARGV[4..5] = sliding WAITING expiresAt, ttlMs ('' = keep the current TTL)
  *          ARGV[6]    = original order (legacy enteredAt fallback) used to
@@ -92,6 +95,9 @@ if op == 'admit' then
     return {0, text(record.state), raw, tokenHash, 0}
   end
   if ARGV[8] ~= '' then
+    if (redis.call('GET', KEYS[5]) or '0') ~= ARGV[9] then
+      return {0, 'STALE_CAPACITY', raw, tokenHash, 0}
+    end
     local rank = redis.call('ZRANK', waitingKey, id)
     if not rank then
       return {0, 'NOT_QUEUED', raw, tokenHash, 0}
@@ -182,6 +188,30 @@ end
 return redis.error_reply('UNKNOWN_QUEUE_SESSION_TRANSITION')
 `;
 
+/** Both keys use the performance hash slot: cached remaining seats, version. */
+export const READ_QUEUE_CAPACITY_LUA = `
+-- READ_QUEUE_CAPACITY_LUA
+return {redis.call('GET', KEYS[1]) or '', redis.call('GET', KEYS[2]) or '0'}
+`;
+
+/** Never publish a calculation that overlapped a completed purchase. */
+export const CACHE_QUEUE_CAPACITY_LUA = `
+-- CACHE_QUEUE_CAPACITY_LUA
+if (redis.call('GET', KEYS[2]) or '0') ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+`;
+
+/** Called after sale commit and before releasing any of its active slots. */
+export const INVALIDATE_QUEUE_CAPACITY_LUA = `
+-- INVALIDATE_QUEUE_CAPACITY_LUA
+redis.call('SET', KEYS[2], ARGV[1])
+redis.call('DEL', KEYS[1])
+return 1
+`;
+
 /**
  * Creates a WAITING session only when the identity has no session yet (SET NX
  * semantics on the identity key), so concurrent tabs share one queue position.
@@ -269,6 +299,9 @@ return alive
 `;
 
 const QUEUE_SCRIPT_MARKERS = [
+  'READ_QUEUE_CAPACITY_LUA',
+  'CACHE_QUEUE_CAPACITY_LUA',
+  'INVALIDATE_QUEUE_CAPACITY_LUA',
   'QUEUE_SESSION_TRANSITION_LUA',
   'CREATE_QUEUE_SESSION_LUA',
   'PURGE_QUEUE_SESSION_LUA',
@@ -332,6 +365,22 @@ async function runQueueScriptInMemory(
   keys: string[],
   args: string[],
 ): Promise<unknown> {
+  if (script.includes('READ_QUEUE_CAPACITY_LUA')) {
+    return [await store.get(keys[0]!) ?? '', await store.get(keys[1]!) ?? '0'];
+  }
+
+  if (script.includes('CACHE_QUEUE_CAPACITY_LUA')) {
+    if ((await store.get(keys[1]!) ?? '0') !== args[0]) return 0;
+    await store.set(keys[0]!, args[1]!, 'EX', args[2]!);
+    return 1;
+  }
+
+  if (script.includes('INVALIDATE_QUEUE_CAPACITY_LUA')) {
+    await store.set(keys[1]!, args[0]!);
+    await store.del(keys[0]!);
+    return 1;
+  }
+
   if (script.includes('COUNT_VALID_LOCKED_SEATS_LUA')) {
     const [lockedSeatsKey] = keys as [string];
     const [lockPrefix] = args as [string];
@@ -411,7 +460,7 @@ async function evalTransitionInMemory(
   keys: string[],
   args: string[],
 ): Promise<unknown> {
-  const [sessionKey, waitingKey, activeKey, identityKey] = keys as [string, string, string, string];
+  const [sessionKey, waitingKey, activeKey, identityKey, capacityVersionKey] = keys as [string, string, string, string, string];
   const [id, op] = args as [string, string];
   const arg = (index: number): string => args[index - 1] ?? '';
 
@@ -442,6 +491,9 @@ async function evalTransitionInMemory(
       return [0, text(record['state']), raw, tokenHash, 0];
     }
     if (arg(8) !== '') {
+      if ((await store.get(capacityVersionKey) ?? '0') !== arg(9)) {
+        return [0, 'STALE_CAPACITY', raw, tokenHash, 0];
+      }
       const rank = await store.zrank(waitingKey, id);
       if (rank === null) {
         return [0, 'NOT_QUEUED', raw, tokenHash, 0];
