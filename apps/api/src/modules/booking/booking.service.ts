@@ -23,6 +23,7 @@ import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
 import { assertShowtimeSalesOpen } from './showtime-sales-cutoff.js';
+import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   decodeSeatRuntimeId,
@@ -451,6 +452,12 @@ return 0
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
+  private readonly seatLockPolicies = coalesceFreshReads((showtimeId: string) => this.loadSeatLockPolicy(showtimeId));
+  private readonly showtimeSaleSnapshots = coalesceFreshReads((showtimeId: string) => this.loadShowtimeSaleSnapshot(showtimeId));
+  private readonly seatMapSnapshots = coalesceFreshReads((key: string) => {
+    const [showtimeId, floorKey] = JSON.parse(key) as [string, string];
+    return this.loadShowtimeSeatMap(showtimeId, floorKey);
+  });
   private readonly seatStatusLocalCache = new Map<
     string,
     { expiresAt: number; snapshot: SeatStatusSnapshot }
@@ -485,6 +492,10 @@ export class BookingService {
     maxTicketsPerUser: number;
     lockTtlSeconds: number;
   }> {
+    return this.seatLockPolicies(showtimeId);
+  }
+
+  private async loadSeatLockPolicy(showtimeId: string) {
     const [row] = await this.db
       .select({
         performanceId: showtimes.performanceId,
@@ -518,6 +529,13 @@ export class BookingService {
     showtimeId: string,
     seatIdentity: RuntimeSeatIdentity,
   ): Promise<void> {
+    const seatMap = await this.seatMapSnapshots(JSON.stringify([showtimeId, seatIdentity.floorKey]));
+    if (!seatMapHasSeatId(seatMap?.seatConfig, seatIdentity.seatId)) {
+      throw new BadRequestException('유효하지 않은 좌석입니다');
+    }
+  }
+
+  private async loadShowtimeSeatMap(showtimeId: string, floorKey: string) {
     const [seatMap] = await this.db
       .select({ seatConfig: seatMaps.seatConfig })
       .from(showtimes)
@@ -525,15 +543,13 @@ export class BookingService {
         seatMaps,
         and(
           eq(seatMaps.performanceId, showtimes.performanceId),
-          eq(seatMaps.floorKey, seatIdentity.floorKey),
+          eq(seatMaps.floorKey, floorKey),
         ),
       )
       .where(eq(showtimes.id, showtimeId))
       .limit(1);
 
-    if (!seatMapHasSeatId(seatMap?.seatConfig, seatIdentity.seatId)) {
-      throw new BadRequestException('유효하지 않은 좌석입니다');
-    }
+    return seatMap;
   }
 
   /**
@@ -656,23 +672,13 @@ export class BookingService {
     showtimeId: string,
     actor: BookingActor,
   ): Promise<void> {
-    const [row] = await this.db
-      .select({
-        performanceStatus: performances.status,
-        performancePublishState: performances.publishState,
-        bookingStartsAt: bookingPolicies.bookingStartsAt,
-        showtimeDateTime: showtimes.dateTime,
-      })
-      .from(showtimes)
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
-      .where(eq(showtimes.id, showtimeId));
+    const row = await this.showtimeSaleSnapshots(showtimeId);
 
     if (row?.performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
     if (row) {
-      // Sales cutoff applies to every actor, including Admin Booking Bypass.
+      // Evaluate time and actor policy per caller, after the shared DB read.
       assertShowtimeSalesOpen(row.showtimeDateTime);
     }
     if (canUseAdminBookingBypass(actor)) {
@@ -687,6 +693,22 @@ export class BookingService {
     if (row?.performanceStatus === 'upcoming' && !isBookingStartReached(row.bookingStartsAt)) {
       throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
+  }
+
+  private async loadShowtimeSaleSnapshot(showtimeId: string) {
+    const [row] = await this.db
+      .select({
+        performanceStatus: performances.status,
+        performancePublishState: performances.publishState,
+        bookingStartsAt: bookingPolicies.bookingStartsAt,
+        showtimeDateTime: showtimes.dateTime,
+      })
+      .from(showtimes)
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
+      .where(eq(showtimes.id, showtimeId));
+
+    return row;
   }
 
   /**

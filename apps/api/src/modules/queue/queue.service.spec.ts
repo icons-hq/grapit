@@ -76,6 +76,7 @@ function mockPerformanceGate(
     row
       ? [
           {
+            id: '550e8400-e29b-41d4-a716-446655440000',
             publishState: 'published',
             bookingStartsAt: null,
             showtimeCount: 1,
@@ -339,6 +340,7 @@ function createQueueDb(state: QueueDbState) {
             // Queue entry gate row: a published, selling performance with a
             // showtime that has not started yet.
             return [{
+              id: state.performanceId,
               status: 'selling',
               publishState: 'published',
               bookingStartsAt: null,
@@ -422,7 +424,7 @@ describe('QueueService', () => {
   });
 
   it('blocks public queue entry before a scheduled booking start even when status is selling', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2026-06-04T09:59:00.000Z'));
       mockPerformanceGate(mockDb, {
@@ -444,7 +446,7 @@ describe('QueueService', () => {
   });
 
   it('allows public queue entry at a scheduled booking start even when stored status is upcoming', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
       mockPerformanceGate(mockDb, {
@@ -466,7 +468,7 @@ describe('QueueService', () => {
   });
 
   it('returns an identifiable not-open rejection with the booking start and server time', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2026-06-04T09:59:00.000Z'));
       mockPerformanceGate(mockDb, {
@@ -699,7 +701,7 @@ describe('QueueService', () => {
      * a full admission window.
      */
     it('contains the actual admission time in every waiting snapshot through opening burst and waves', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       try {
         const openAt = Date.parse('2026-06-04T10:00:00.000Z');
         vi.setSystemTime(openAt);
@@ -855,7 +857,7 @@ describe('QueueService', () => {
      * so that it covers the wait again.
      */
     it('widens the range when remaining seats shrink while waiting', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       try {
         const openAt = Date.parse('2026-06-04T10:00:00.000Z');
         vi.setSystemTime(openAt);
@@ -1132,7 +1134,7 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   ) => service.getQueueSessionStatus({ queueSessionId, identity, admissionToken });
 
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     setNow(0);
     redis = new FakeRedis();
     dbState = {
@@ -2300,7 +2302,7 @@ describe('QueueService on the local-development InMemoryRedis', () => {
   });
 
   it('releases the reconcile lock so the next reconcile runs after the throttle interval (#89)', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     try {
       process.env['NODE_ENV'] = 'development';
       vi.spyOn(console, 'warn').mockImplementation(() => {});

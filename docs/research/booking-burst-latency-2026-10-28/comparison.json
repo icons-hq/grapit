@@ -1,0 +1,97 @@
+{
+  "baseline": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:ee6568bea2ea9b595c27006e0ba5d2d5c90d9f11217f3d4f0a6477f041deea86",
+  "optimized": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:4da72084a540b7c3708112c1adb25fffda5986b9c4f56e0a44e1239790c3993b",
+  "metrics": [
+    {
+      "metric": "queue.enter",
+      "baselineP95Ms": 8664,
+      "optimizedP95Ms": 5412,
+      "changePercent": -37.5,
+      "targetMs": 2000,
+      "targetPassed": false
+    },
+    {
+      "metric": "seat.lock",
+      "baselineP95Ms": 3520,
+      "optimizedP95Ms": 2541,
+      "changePercent": -27.8,
+      "targetMs": 1000,
+      "targetPassed": false
+    },
+    {
+      "metric": "checkout.prepare",
+      "baselineP95Ms": 8069,
+      "optimizedP95Ms": 4277,
+      "changePercent": -47.0,
+      "targetMs": 2000,
+      "targetPassed": false
+    },
+    {
+      "metric": "checkout.confirm",
+      "baselineP95Ms": 665,
+      "optimizedP95Ms": 588,
+      "changePercent": -11.6,
+      "targetMs": 2000,
+      "targetPassed": true
+    },
+    {
+      "metric": "queue.status",
+      "baselineP95Ms": 433,
+      "optimizedP95Ms": 224,
+      "changePercent": -48.3,
+      "targetMs": 2000,
+      "targetPassed": true
+    },
+    {
+      "metric": "performance.detail",
+      "baselineP95Ms": 2858,
+      "optimizedP95Ms": 2805,
+      "changePercent": -1.9,
+      "targetMs": 2000,
+      "targetPassed": false
+    },
+    {
+      "metric": "seat.read",
+      "baselineP95Ms": 2109,
+      "optimizedP95Ms": 2384,
+      "changePercent": 13.0,
+      "targetMs": 2000,
+      "targetPassed": false
+    },
+    {
+      "metric": "socket.seat-update",
+      "baselineP95Ms": 3521,
+      "optimizedP95Ms": 2526,
+      "changePercent": -28.3,
+      "targetMs": 1000,
+      "targetPassed": false
+    },
+    {
+      "metric": "queue.status.final",
+      "baselineP95Ms": 460,
+      "optimizedP95Ms": 158,
+      "changePercent": -65.7,
+      "targetMs": 2000,
+      "targetPassed": true
+    },
+    {
+      "metric": "checkout.duplicate-inflight",
+      "baselineP95Ms": 650,
+      "optimizedP95Ms": 979,
+      "changePercent": 50.6,
+      "targetMs": 2000,
+      "targetPassed": true
+    },
+    {
+      "metric": "checkout.duplicate-replay",
+      "baselineP95Ms": 131,
+      "optimizedP95Ms": 63,
+      "changePercent": -51.9,
+      "targetMs": 2000,
+      "targetPassed": true
+    }
+  ],
+  "baselineUnexpectedErrors": 24,
+  "optimizedUnexpectedErrors": 0,
+  "singlePairedFullRun": true
+}

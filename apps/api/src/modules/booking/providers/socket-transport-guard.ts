@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { JwtService } from '@nestjs/jwt';
 import { SOCKET_ACCESS_COOKIE } from '../../../common/socket-access.js';
 import { isAllowedFrontendOrigin } from '../../../config/frontend-origins.js';
+import { prepareJwtVerificationKey } from '../../../common/jwt-verification-key.js';
 
 type Transport = {
   request: IncomingMessage;
@@ -26,7 +27,8 @@ export class SocketTransportGuard {
     private readonly maximum = 850,
     private readonly perUser = 4,
   ) {
-    this.jwt = new JwtService({ secret });
+    // Missing config still rejects every handshake in allowRequest.
+    this.jwt = new JwtService(secret ? { secret: prepareJwtVerificationKey(secret) } : {});
   }
 
   readonly allowRequest = (request: IncomingMessage, done: (message: string | null, allowed: boolean) => void): void => {

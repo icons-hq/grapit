@@ -1,0 +1,5 @@
+{
+  "requests": 1500,
+  "p95Ms": 9044.374757,
+  "measurement": "Cloud Run request log latency, queue entry, separate instrumented diagnostic"
+}

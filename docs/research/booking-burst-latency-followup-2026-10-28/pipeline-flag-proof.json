@@ -1,0 +1,18 @@
+[
+  {
+    "timestamp": "2026-10-28T05:50:59.483867Z",
+    "revision": "grabit-rehearsal-burst2-20261028-00009-dzk",
+    "proof": {
+      "automaticPipelining": true,
+      "rehearsalOnly": true
+    }
+  },
+  {
+    "timestamp": "2026-10-28T05:50:59.159193Z",
+    "revision": "grabit-rehearsal-burst2-20261028-00009-dzk",
+    "proof": {
+      "automaticPipelining": true,
+      "rehearsalOnly": true
+    }
+  }
+]

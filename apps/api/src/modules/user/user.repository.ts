@@ -1,8 +1,21 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
+import { FreshReadBatcher } from '../../common/fresh-read-batcher.js';
+
+const principalColumns = {
+  id: schema.users.id,
+  email: schema.users.email,
+  role: schema.users.role,
+  adminCapabilityBundle: schema.users.adminCapabilityBundle,
+  adminCapabilities: schema.users.adminCapabilities,
+  accountStatus: schema.users.accountStatus,
+  isEmailVerified: schema.users.isEmailVerified,
+  isPhoneVerified: schema.users.isPhoneVerified,
+};
+type AuthPrincipal = Pick<typeof schema.users.$inferSelect, keyof typeof principalColumns>;
 
 export interface NewUser {
   email: string;
@@ -20,7 +33,22 @@ export interface NewUser {
 
 @Injectable()
 export class UserRepository {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  private readonly principals: FreshReadBatcher<string, AuthPrincipal>;
+
+  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {
+    this.principals = new FreshReadBatcher(async (ids) => {
+      const rows = await this.db.select(principalColumns).from(schema.users)
+        .where(inArray(schema.users.id, [...ids]));
+      return new Map(rows.map((row) => [row.id, row]));
+    });
+  }
+
+  /** JWT authority is always read anew; concurrent readers share a query only. */
+  async findAuthPrincipalById(id: string): Promise<AuthPrincipal | null> {
+    // A malformed signed claim must not poison the other UUIDs in its batch.
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)) return null;
+    return await this.principals.read(id.toLowerCase()) ?? null;
+  }
 
   /**
    * Case-insensitive account lookup (served by idx_users_email_lower).

@@ -1,0 +1,54 @@
+[
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:000845b66cf7231d639c65c9cbaf265dfaf815f1ba713afc5bc9b805fde2c10e",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:03eb3ab25950fbc6a9aadeee8d8b84fa1c339f6ab9fcf7d69d922a70824a47ee",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:3aa5ebf7f7f69be7a8df702b88e443a18d82bbd5e67a2674a1971a829476c6fa",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:50027c0a20d9881c5397500f110cba26d17be1c42229eacbaa7b617e7902ed72",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:66e9e1e84eae12599ccd14f821d47fe9693d2561849081d3f3cb1c60d1d6aea2",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:82b19ad980c362c40aed3b5738a41d682dc36160cde7255337fd5d1fabd00711",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:9412da570b7d9744d1d114cf2dafc7ce22ce2389f1283874b93012d77f42fae4",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:c5a327c4d2301f661f616814d891fd59288ede81ac53226ffc59b5c3d5aee7ca",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:cbae795ffb6df6a1e49aa878786c44675ff381623df5791aef65f3f612dbc295",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:fda140c669276d5b7ea14d31edfd55c340649d1ab5954a348e8ae423705a4f99",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:4da72084a540b7c3708112c1adb25fffda5986b9c4f56e0a44e1239790c3993b",
+    "deleted": true
+  },
+  {
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:d72b38da4c75a24962fd949c2c9041cf8a98a48b0c8ab5ecf8508d7f58fdf6c8",
+    "deleted": true
+  }
+]

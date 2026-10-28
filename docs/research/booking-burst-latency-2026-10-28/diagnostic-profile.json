@@ -1,0 +1,442 @@
+{
+  "diagnosticOnly": true,
+  "notComparableToPacedFullRun": true,
+  "profiles": [
+    {
+      "byRoute": {
+        "checkout.confirm": {
+          "dbPoolWaitMs": {
+            "count": 114,
+            "max": 6572.48,
+            "mean": 5800.63,
+            "p50": 6251.69,
+            "p95": 6489.86
+          },
+          "dbQueries": {
+            "count": 114,
+            "max": 31,
+            "mean": 30.12,
+            "p50": 31,
+            "p95": 31
+          },
+          "dbQueryMs": {
+            "count": 114,
+            "max": 768.61,
+            "mean": 335.5,
+            "p50": 322.53,
+            "p95": 548.72
+          },
+          "elapsedMs": {
+            "count": 114,
+            "max": 7190.65,
+            "mean": 6570.01,
+            "p50": 7104.67,
+            "p95": 7177.82
+          },
+          "redisMs": {
+            "count": 114,
+            "max": 382.34,
+            "mean": 110.07,
+            "p50": 99.72,
+            "p95": 230.07
+          },
+          "requests": 114
+        },
+        "checkout.prepare": {
+          "dbPoolWaitMs": {
+            "count": 110,
+            "max": 5191.69,
+            "mean": 4679.23,
+            "p50": 4695.57,
+            "p95": 5128.21
+          },
+          "dbQueries": {
+            "count": 110,
+            "max": 19,
+            "mean": 19,
+            "p50": 19,
+            "p95": 19
+          },
+          "dbQueryMs": {
+            "count": 110,
+            "max": 472.29,
+            "mean": 208.03,
+            "p50": 188.72,
+            "p95": 397.88
+          },
+          "elapsedMs": {
+            "count": 110,
+            "max": 4964.92,
+            "mean": 4523.25,
+            "p50": 4570.94,
+            "p95": 4933.07
+          },
+          "redisMs": {
+            "count": 110,
+            "max": 283.49,
+            "mean": 75.66,
+            "p50": 74.44,
+            "p95": 152.51
+          },
+          "requests": 110
+        },
+        "queue.enter": {
+          "dbPoolWaitMs": {
+            "count": 743,
+            "max": 849.45,
+            "mean": 387.31,
+            "p50": 392.4,
+            "p95": 594.04
+          },
+          "dbQueries": {
+            "count": 743,
+            "max": 6,
+            "mean": 3.02,
+            "p50": 3,
+            "p95": 3
+          },
+          "dbQueryMs": {
+            "count": 743,
+            "max": 214.82,
+            "mean": 59.04,
+            "p50": 47.63,
+            "p95": 142.5
+          },
+          "elapsedMs": {
+            "count": 743,
+            "max": 1399.82,
+            "mean": 708.84,
+            "p50": 690.54,
+            "p95": 1175.05
+          },
+          "redisMs": {
+            "count": 743,
+            "max": 10102.66,
+            "mean": 196.56,
+            "p50": 145.24,
+            "p95": 416.33
+          },
+          "requests": 743
+        },
+        "queue.status": {
+          "dbPoolWaitMs": {
+            "count": 1378,
+            "max": 5010.97,
+            "mean": 499.59,
+            "p50": 38.96,
+            "p95": 1563.18
+          },
+          "dbQueries": {
+            "count": 1378,
+            "max": 17,
+            "mean": 2.03,
+            "p50": 2,
+            "p95": 2
+          },
+          "dbQueryMs": {
+            "count": 1378,
+            "max": 221.96,
+            "mean": 26.52,
+            "p50": 13.86,
+            "p95": 85.38
+          },
+          "elapsedMs": {
+            "count": 1378,
+            "max": 5332.17,
+            "mean": 796.65,
+            "p50": 138,
+            "p95": 2577.65
+          },
+          "redisMs": {
+            "count": 1378,
+            "max": 138717.21,
+            "mean": 159.67,
+            "p50": 23.49,
+            "p95": 132.81
+          },
+          "requests": 1378
+        },
+        "seat.lock": {
+          "dbPoolWaitMs": {
+            "count": 110,
+            "max": 4597.84,
+            "mean": 3333.81,
+            "p50": 3988.11,
+            "p95": 4531.31
+          },
+          "dbQueries": {
+            "count": 110,
+            "max": 8,
+            "mean": 8,
+            "p50": 8,
+            "p95": 8
+          },
+          "dbQueryMs": {
+            "count": 110,
+            "max": 400.23,
+            "mean": 173.93,
+            "p50": 168.92,
+            "p95": 307.32
+          },
+          "elapsedMs": {
+            "count": 110,
+            "max": 4818.4,
+            "mean": 3612.51,
+            "p50": 4288.84,
+            "p95": 4790.56
+          },
+          "redisMs": {
+            "count": 110,
+            "max": 264.64,
+            "mean": 75.95,
+            "p50": 73.88,
+            "p95": 167.81
+          },
+          "requests": 110
+        }
+      },
+      "eventLoopMs": {
+        "max": 1201.668095,
+        "mean": 17.766914065013246,
+        "p95": 61.800447
+      },
+      "cpuCores": {
+        "count": 143,
+        "max": 1.25,
+        "mean": 0.44,
+        "p50": 0.28,
+        "p95": 1.09
+      },
+      "poolSizes": {
+        "grabit-api": {
+          "max": 5,
+          "peakTotal": 5,
+          "peakWaiting": 250
+        },
+        "grabit-api-pgboss": {
+          "max": 1,
+          "peakTotal": 1,
+          "peakWaiting": 10
+        }
+      }
+    },
+    {
+      "byRoute": {
+        "checkout.confirm": {
+          "dbPoolWaitMs": {
+            "count": 90,
+            "max": 5895.8,
+            "mean": 5102.87,
+            "p50": 5453.87,
+            "p95": 5819.63
+          },
+          "dbQueries": {
+            "count": 90,
+            "max": 31,
+            "mean": 31,
+            "p50": 31,
+            "p95": 31
+          },
+          "dbQueryMs": {
+            "count": 90,
+            "max": 727.06,
+            "mean": 382.06,
+            "p50": 367.03,
+            "p95": 579.44
+          },
+          "elapsedMs": {
+            "count": 90,
+            "max": 6519.18,
+            "mean": 5982.65,
+            "p50": 6298.01,
+            "p95": 6500.85
+          },
+          "redisMs": {
+            "count": 90,
+            "max": 355.62,
+            "mean": 147.84,
+            "p50": 132,
+            "p95": 328.13
+          },
+          "requests": 90
+        },
+        "checkout.prepare": {
+          "dbPoolWaitMs": {
+            "count": 90,
+            "max": 5804.38,
+            "mean": 4713.52,
+            "p50": 4935.55,
+            "p95": 5631.44
+          },
+          "dbQueries": {
+            "count": 90,
+            "max": 19,
+            "mean": 19,
+            "p50": 19,
+            "p95": 19
+          },
+          "dbQueryMs": {
+            "count": 90,
+            "max": 509.72,
+            "mean": 237.17,
+            "p50": 222.66,
+            "p95": 427.62
+          },
+          "elapsedMs": {
+            "count": 90,
+            "max": 5099.82,
+            "mean": 4604.11,
+            "p50": 4832.38,
+            "p95": 5085.9
+          },
+          "redisMs": {
+            "count": 90,
+            "max": 486.99,
+            "mean": 114.01,
+            "p50": 90.69,
+            "p95": 247.9
+          },
+          "requests": 90
+        },
+        "queue.enter": {
+          "dbPoolWaitMs": {
+            "count": 757,
+            "max": 1743.16,
+            "mean": 606.63,
+            "p50": 662.64,
+            "p95": 1023.74
+          },
+          "dbQueries": {
+            "count": 757,
+            "max": 6,
+            "mean": 3.02,
+            "p50": 3,
+            "p95": 3
+          },
+          "dbQueryMs": {
+            "count": 757,
+            "max": 254.35,
+            "mean": 61.8,
+            "p50": 53.65,
+            "p95": 136.2
+          },
+          "elapsedMs": {
+            "count": 757,
+            "max": 2099.11,
+            "mean": 972.94,
+            "p50": 937.22,
+            "p95": 1733.7
+          },
+          "redisMs": {
+            "count": 757,
+            "max": 13361.69,
+            "mean": 213.64,
+            "p50": 159.52,
+            "p95": 378.04
+          },
+          "requests": 757
+        },
+        "queue.status": {
+          "dbPoolWaitMs": {
+            "count": 1653,
+            "max": 4402.06,
+            "mean": 251.69,
+            "p50": 0.91,
+            "p95": 1468.12
+          },
+          "dbQueries": {
+            "count": 1653,
+            "max": 11,
+            "mean": 2.04,
+            "p50": 2,
+            "p95": 2
+          },
+          "dbQueryMs": {
+            "count": 1653,
+            "max": 156.17,
+            "mean": 22.78,
+            "p50": 12.41,
+            "p95": 76.16
+          },
+          "elapsedMs": {
+            "count": 1653,
+            "max": 4616.31,
+            "mean": 425.77,
+            "p50": 66.67,
+            "p95": 2323.27
+          },
+          "redisMs": {
+            "count": 1653,
+            "max": 3211.29,
+            "mean": 46.72,
+            "p50": 20.12,
+            "p95": 111.41
+          },
+          "requests": 1653
+        },
+        "seat.lock": {
+          "dbPoolWaitMs": {
+            "count": 90,
+            "max": 2754.21,
+            "mean": 1937.01,
+            "p50": 2280.21,
+            "p95": 2725.39
+          },
+          "dbQueries": {
+            "count": 90,
+            "max": 8,
+            "mean": 8,
+            "p50": 8,
+            "p95": 8
+          },
+          "dbQueryMs": {
+            "count": 90,
+            "max": 323.02,
+            "mean": 147.43,
+            "p50": 139.6,
+            "p95": 254.21
+          },
+          "elapsedMs": {
+            "count": 90,
+            "max": 2888.57,
+            "mean": 2165.73,
+            "p50": 2507.03,
+            "p95": 2842.56
+          },
+          "redisMs": {
+            "count": 90,
+            "max": 127.33,
+            "mean": 50.13,
+            "p50": 39.32,
+            "p95": 108.42
+          },
+          "requests": 90
+        }
+      },
+      "eventLoopMs": {
+        "max": 999.817215,
+        "mean": 17.441612818160323,
+        "p95": 60.981247
+      },
+      "cpuCores": {
+        "count": 145,
+        "max": 1.32,
+        "mean": 0.44,
+        "p50": 0.27,
+        "p95": 1.15
+      },
+      "poolSizes": {
+        "grabit-api": {
+          "max": 5,
+          "peakTotal": 5,
+          "peakWaiting": 225
+        },
+        "grabit-api-pgboss": {
+          "max": 1,
+          "peakTotal": 1,
+          "peakWaiting": 7
+        }
+      }
+    }
+  ]
+}

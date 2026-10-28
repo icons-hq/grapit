@@ -1,0 +1,1892 @@
+[
+  {
+    "byRoute": {
+      "checkout.prepare": {
+        "dbPoolWaitMs": {
+          "count": 81,
+          "max": 1437.43,
+          "mean": 905.62,
+          "p50": 1016.77,
+          "p95": 1392.65
+        },
+        "dbQueries": {
+          "count": 81,
+          "max": 29,
+          "mean": 14.02,
+          "p50": 13,
+          "p95": 22
+        },
+        "dbQueryMs": {
+          "count": 81,
+          "max": 692.17,
+          "mean": 178.7,
+          "p50": 149.68,
+          "p95": 346.4
+        },
+        "elapsedMs": {
+          "count": 81,
+          "max": 2574.95,
+          "mean": 1856.92,
+          "p50": 2105.58,
+          "p95": 2492.19
+        },
+        "redisMs": {
+          "count": 81,
+          "max": 312.37,
+          "mean": 119.08,
+          "p50": 125.77,
+          "p95": 265.9
+        },
+        "requests": 81
+      },
+      "performance.detail": {
+        "dbPoolWaitMs": {
+          "count": 733,
+          "max": 0,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueries": {
+          "count": 733,
+          "max": 0,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueryMs": {
+          "count": 733,
+          "max": 0,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "elapsedMs": {
+          "count": 733,
+          "max": 98.33,
+          "mean": 8.26,
+          "p50": 3.24,
+          "p95": 41.04
+        },
+        "redisMs": {
+          "count": 733,
+          "max": 62.54,
+          "mean": 1.89,
+          "p50": 0,
+          "p95": 4.08
+        },
+        "requests": 733
+      },
+      "queue.enter": {
+        "dbPoolWaitMs": {
+          "count": 733,
+          "max": 220.31,
+          "mean": 0.77,
+          "p50": 0,
+          "p95": 0.13
+        },
+        "dbQueries": {
+          "count": 733,
+          "max": 18,
+          "mean": 0.44,
+          "p50": 0,
+          "p95": 3
+        },
+        "dbQueryMs": {
+          "count": 733,
+          "max": 540.55,
+          "mean": 8.54,
+          "p50": 0,
+          "p95": 36.54
+        },
+        "elapsedMs": {
+          "count": 733,
+          "max": 680.88,
+          "mean": 269.03,
+          "p50": 228.63,
+          "p95": 514.67
+        },
+        "redisMs": {
+          "count": 733,
+          "max": 2117.73,
+          "mean": 151.17,
+          "p50": 125.01,
+          "p95": 303.59
+        },
+        "requests": 733
+      },
+      "queue.status": {
+        "dbPoolWaitMs": {
+          "count": 408,
+          "max": 207.43,
+          "mean": 1.71,
+          "p50": 0,
+          "p95": 0.21
+        },
+        "dbQueries": {
+          "count": 408,
+          "max": 6,
+          "mean": 0.4,
+          "p50": 0,
+          "p95": 3
+        },
+        "dbQueryMs": {
+          "count": 408,
+          "max": 55.8,
+          "mean": 1.61,
+          "p50": 0,
+          "p95": 12.72
+        },
+        "elapsedMs": {
+          "count": 408,
+          "max": 864.56,
+          "mean": 243.73,
+          "p50": 59.3,
+          "p95": 768.72
+        },
+        "redisMs": {
+          "count": 408,
+          "max": 3178.09,
+          "mean": 39.3,
+          "p50": 19.12,
+          "p95": 109.55
+        },
+        "requests": 408
+      },
+      "seat.lock": {
+        "dbPoolWaitMs": {
+          "count": 81,
+          "max": 644.67,
+          "mean": 161.5,
+          "p50": 146.57,
+          "p95": 397.48
+        },
+        "dbQueries": {
+          "count": 81,
+          "max": 25,
+          "mean": 3.74,
+          "p50": 3,
+          "p95": 6
+        },
+        "dbQueryMs": {
+          "count": 81,
+          "max": 351.14,
+          "mean": 86.67,
+          "p50": 80.24,
+          "p95": 178.75
+        },
+        "elapsedMs": {
+          "count": 81,
+          "max": 989.36,
+          "mean": 738.19,
+          "p50": 809.75,
+          "p95": 927.97
+        },
+        "redisMs": {
+          "count": 81,
+          "max": 273.45,
+          "mean": 82.94,
+          "p50": 83.92,
+          "p95": 176.36
+        },
+        "requests": 81
+      },
+      "seat.read": {
+        "dbPoolWaitMs": {
+          "count": 733,
+          "max": 42.91,
+          "mean": 0.06,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueries": {
+          "count": 733,
+          "max": 1,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueryMs": {
+          "count": 733,
+          "max": 12.01,
+          "mean": 0.03,
+          "p50": 0,
+          "p95": 0
+        },
+        "elapsedMs": {
+          "count": 733,
+          "max": 84.86,
+          "mean": 8.68,
+          "p50": 3.32,
+          "p95": 40.71
+        },
+        "redisMs": {
+          "count": 733,
+          "max": 82.13,
+          "mean": 5.12,
+          "p50": 2.08,
+          "p95": 30.69
+        },
+        "requests": 733
+      }
+    },
+    "cpuCores": {
+      "count": 63,
+      "max": 1.28,
+      "mean": 0.49,
+      "p50": 0.36,
+      "p95": 1.09
+    },
+    "dbPoolWaitMs": {
+      "count": 2769,
+      "max": 1437.43,
+      "mean": 31.69,
+      "p50": 0,
+      "p95": 109.44
+    },
+    "dbQueries": {
+      "count": 2769,
+      "max": 29,
+      "mean": 0.7,
+      "p50": 0,
+      "p95": 4
+    },
+    "dbQueryMs": {
+      "count": 2769,
+      "max": 692.17,
+      "mean": 10.27,
+      "p50": 0,
+      "p95": 77.28
+    },
+    "elapsedMs": {
+      "count": 2769,
+      "max": 2574.95,
+      "mean": 187.52,
+      "p50": 21,
+      "p95": 783.79
+    },
+    "eventLoopMs": {
+      "max": 1101.004799,
+      "mean": 20.07512884763359,
+      "p95": 61.669375
+    },
+    "instance": "b72cb820-2011-411b-b692-157a22c3f0d1",
+    "kind": "after-profile-summary",
+    "pid": 1,
+    "poolSizes": {
+      "grabit-api": {
+        "max": 5,
+        "peakTotal": 5,
+        "peakWaiting": 50
+      },
+      "grabit-api-pgboss": {
+        "max": 1,
+        "peakTotal": 1,
+        "peakWaiting": 2
+      }
+    },
+    "poolWaits": {
+      "checkout.prepare | grabit-api": {
+        "count": 695,
+        "max": 481.99,
+        "mean": 111.87,
+        "p50": 85.39,
+        "p95": 390.75
+      },
+      "queue.enter | grabit-api": {
+        "count": 733,
+        "max": 219.86,
+        "mean": 0.79,
+        "p50": 0.03,
+        "p95": 0.08
+      },
+      "queue.status | grabit-api": {
+        "count": 242,
+        "max": 343.17,
+        "mean": 7.87,
+        "p50": 0.03,
+        "p95": 38.7
+      },
+      "seat.lock | grabit-api": {
+        "count": 353,
+        "max": 162.82,
+        "mean": 41.92,
+        "p50": 17.16,
+        "p95": 155.5
+      },
+      "seat.read | grabit-api": {
+        "count": 3,
+        "max": 42.92,
+        "mean": 14.92,
+        "p50": 1.49,
+        "p95": 42.92
+      }
+    },
+    "redisCommands": {
+      "checkout.prepare | eval": {
+        "count": 405,
+        "max": 107.5,
+        "mean": 9.06,
+        "p50": 4.82,
+        "p95": 46.36
+      },
+      "checkout.prepare | expire": {
+        "count": 81,
+        "max": 82.84,
+        "mean": 18.16,
+        "p50": 6.45,
+        "p95": 67.39
+      },
+      "checkout.prepare | get": {
+        "count": 243,
+        "max": 83.01,
+        "mean": 12.48,
+        "p50": 5.23,
+        "p95": 67.64
+      },
+      "checkout.prepare | set": {
+        "count": 81,
+        "max": 82.89,
+        "mean": 18.2,
+        "p50": 6.46,
+        "p95": 67.4
+      },
+      "performance.detail | get": {
+        "count": 355,
+        "max": 62.54,
+        "mean": 3.91,
+        "p50": 1.83,
+        "p95": 13.44
+      },
+      "queue.enter | eval": {
+        "count": 3390,
+        "max": 100.28,
+        "mean": 10.99,
+        "p50": 4.65,
+        "p95": 52.73
+      },
+      "queue.enter | expire": {
+        "count": 87,
+        "max": 61.8,
+        "mean": 12.39,
+        "p50": 7.72,
+        "p95": 60.02
+      },
+      "queue.enter | get": {
+        "count": 3349,
+        "max": 99.91,
+        "mean": 9.8,
+        "p50": 5.15,
+        "p95": 47.2
+      },
+      "queue.enter | publish": {
+        "count": 16,
+        "max": 5.96,
+        "mean": 3.96,
+        "p50": 3.78,
+        "p95": 5.96
+      },
+      "queue.enter | scard": {
+        "count": 3,
+        "max": 66.01,
+        "mean": 26.43,
+        "p50": 10.16,
+        "p95": 66.01
+      },
+      "queue.enter | set": {
+        "count": 1848,
+        "max": 100.37,
+        "mean": 11.06,
+        "p50": 6.12,
+        "p95": 50.38
+      },
+      "queue.enter | smembers": {
+        "count": 3,
+        "max": 4.44,
+        "mean": 3.01,
+        "p50": 3.35,
+        "p95": 4.44
+      },
+      "queue.enter | zcard": {
+        "count": 735,
+        "max": 87.76,
+        "mean": 12.95,
+        "p50": 4.84,
+        "p95": 56.8
+      },
+      "queue.enter | zrange": {
+        "count": 3,
+        "max": 65.58,
+        "mean": 23.5,
+        "p50": 2.58,
+        "p95": 65.58
+      },
+      "queue.enter | zrank": {
+        "count": 733,
+        "max": 87.7,
+        "mean": 12.92,
+        "p50": 4.78,
+        "p95": 56.78
+      },
+      "queue.status | eval": {
+        "count": 622,
+        "max": 66.09,
+        "mean": 4.15,
+        "p50": 2.32,
+        "p95": 15.74
+      },
+      "queue.status | get": {
+        "count": 1216,
+        "max": 108.5,
+        "mean": 6.87,
+        "p50": 3.31,
+        "p95": 16.99
+      },
+      "queue.status | scard": {
+        "count": 2,
+        "max": 4.53,
+        "mean": 2.63,
+        "p50": 0.72,
+        "p95": 4.53
+      },
+      "queue.status | set": {
+        "count": 128,
+        "max": 74.64,
+        "mean": 5.62,
+        "p50": 1.79,
+        "p95": 28.59
+      },
+      "queue.status | smembers": {
+        "count": 2,
+        "max": 20.24,
+        "mean": 10.56,
+        "p50": 0.89,
+        "p95": 20.24
+      },
+      "queue.status | zcard": {
+        "count": 408,
+        "max": 74.51,
+        "mean": 5.34,
+        "p50": 2.81,
+        "p95": 18.72
+      },
+      "queue.status | zrank": {
+        "count": 408,
+        "max": 74.51,
+        "mean": 5.33,
+        "p50": 2.82,
+        "p95": 18.71
+      },
+      "seat.lock | eval": {
+        "count": 243,
+        "max": 72.44,
+        "mean": 13.58,
+        "p50": 5.07,
+        "p95": 61.31
+      },
+      "seat.lock | get": {
+        "count": 243,
+        "max": 99.33,
+        "mean": 14.06,
+        "p50": 6.04,
+        "p95": 67.9
+      },
+      "seat.lock | publish": {
+        "count": 81,
+        "max": 84.76,
+        "mean": 20.17,
+        "p50": 8.23,
+        "p95": 68.24
+      },
+      "seat.read | eval": {
+        "count": 737,
+        "max": 82.13,
+        "mean": 5.06,
+        "p50": 2.06,
+        "p95": 30.69
+      },
+      "seat.read | get": {
+        "count": 5,
+        "max": 1.99,
+        "mean": 1.13,
+        "p50": 0.95,
+        "p95": 1.99
+      },
+      "seat.read | set": {
+        "count": 6,
+        "max": 10.05,
+        "mean": 3.34,
+        "p50": 1.98,
+        "p95": 10.05
+      }
+    },
+    "requests": 2769,
+    "stages": {
+      "checkout.prepare | JwtStrategy.validate": {
+        "count": 81,
+        "max": 157.66,
+        "mean": 67.1,
+        "p50": 80.12,
+        "p95": 110.84
+      },
+      "checkout.prepare | QueueService.assertAdmissionForPerformance": {
+        "count": 81,
+        "max": 190.96,
+        "mean": 69.95,
+        "p50": 67.12,
+        "p95": 165.47
+      },
+      "checkout.prepare | QueueService.assertAdmissionForShowtime": {
+        "count": 81,
+        "max": 355.86,
+        "mean": 141.41,
+        "p50": 122.08,
+        "p95": 301.39
+      },
+      "checkout.prepare | QueueService.resolveBrowserIdentity": {
+        "count": 81,
+        "max": 187.2,
+        "mean": 98.89,
+        "p50": 101.16,
+        "p95": 187.16
+      },
+      "checkout.prepare | ReservationService.assertBookingConsent": {
+        "count": 81,
+        "max": 414.14,
+        "mean": 186.81,
+        "p50": 163.12,
+        "p95": 407.81
+      },
+      "checkout.prepare | ReservationService.assertUserTicketLimitAvailable": {
+        "count": 81,
+        "max": 495.08,
+        "mean": 246.43,
+        "p50": 168.89,
+        "p95": 487.96
+      },
+      "checkout.prepare | ReservationService.getCanonicalSeatSelections": {
+        "count": 81,
+        "max": 399.26,
+        "mean": 204.49,
+        "p50": 237.53,
+        "p95": 399.22
+      },
+      "checkout.prepare | ReservationService.getShowtimeBookingContext": {
+        "count": 81,
+        "max": 291.37,
+        "mean": 125.07,
+        "p50": 125.26,
+        "p95": 282.79
+      },
+      "checkout.prepare | ReservationService.getUserBirthDate": {
+        "count": 81,
+        "max": 405.57,
+        "mean": 124.01,
+        "p50": 98.76,
+        "p95": 393.41
+      },
+      "checkout.prepare | ReservationService.prepareReservation": {
+        "count": 81,
+        "max": 2071.18,
+        "mean": 1523.05,
+        "p50": 1775.47,
+        "p95": 2039.61
+      },
+      "checkout.prepare | ReservationService.prepareReservationOrder": {
+        "count": 81,
+        "max": 1793.69,
+        "mean": 1335.89,
+        "p50": 1542.28,
+        "p95": 1750.9
+      },
+      "checkout.prepare | ThrottlerGuard.canActivate": {
+        "count": 81,
+        "max": 84.66,
+        "mean": 21.57,
+        "p50": 14.72,
+        "p95": 84.01
+      },
+      "checkout.prepare | ThrottlerGuard.handleRequest": {
+        "count": 162,
+        "max": 74.1,
+        "mean": 10.05,
+        "p50": 7.05,
+        "p95": 39
+      },
+      "checkout.prepare | UserRepository.findAuthPrincipalById": {
+        "count": 81,
+        "max": 157.6,
+        "mean": 67.05,
+        "p50": 80.1,
+        "p95": 110.82
+      },
+      "performance.detail | CacheService.get": {
+        "count": 344,
+        "max": 72.99,
+        "mean": 4.34,
+        "p50": 1.95,
+        "p95": 20.85
+      },
+      "performance.detail | CacheService.getGeneration": {
+        "count": 733,
+        "max": 9.84,
+        "mean": 0.13,
+        "p50": 0.01,
+        "p95": 0.04
+      },
+      "performance.detail | CacheService.getOrLoad": {
+        "count": 733,
+        "max": 73.02,
+        "mean": 3.74,
+        "p50": 1.36,
+        "p95": 13.73
+      },
+      "performance.detail | PerformanceService.findById": {
+        "count": 733,
+        "max": 73.06,
+        "mean": 3.9,
+        "p50": 1.39,
+        "p95": 20.79
+      },
+      "performance.detail | ThrottlerGuard.canActivate": {
+        "count": 733,
+        "max": 40.97,
+        "mean": 0.17,
+        "p50": 0.08,
+        "p95": 0.25
+      },
+      "queue.enter | JwtStrategy.validate": {
+        "count": 733,
+        "max": 259.63,
+        "mean": 35.16,
+        "p50": 19.97,
+        "p95": 91.23
+      },
+      "queue.enter | QueueService.admitQueueSessionWithinCapacity": {
+        "count": 733,
+        "max": 210.74,
+        "mean": 41.18,
+        "p50": 30.66,
+        "p95": 97.78
+      },
+      "queue.enter | QueueService.assertPerformanceBookingOpen": {
+        "count": 733,
+        "max": 168.76,
+        "mean": 28.75,
+        "p50": 16.83,
+        "p95": 83.89
+      },
+      "queue.enter | QueueService.calculateRemainingSeatsFresh": {
+        "count": 3,
+        "max": 186.22,
+        "mean": 125.81,
+        "p50": 162.15,
+        "p95": 186.22
+      },
+      "queue.enter | QueueService.createQueueSession": {
+        "count": 733,
+        "max": 162.06,
+        "mean": 25.47,
+        "p50": 14.65,
+        "p95": 71.21
+      },
+      "queue.enter | QueueService.ensureQueueSession": {
+        "count": 733,
+        "max": 173.63,
+        "mean": 34.65,
+        "p50": 19.79,
+        "p95": 79.47
+      },
+      "queue.enter | QueueService.enterPerformanceQueue": {
+        "count": 733,
+        "max": 560.2,
+        "mean": 163.84,
+        "p50": 151.02,
+        "p95": 336.85
+      },
+      "queue.enter | QueueService.getQueueSessionStatus": {
+        "count": 733,
+        "max": 281.57,
+        "mean": 57.02,
+        "p50": 51.35,
+        "p95": 163.41
+      },
+      "queue.enter | QueueService.readRemainingSeatsState": {
+        "count": 1469,
+        "max": 196.02,
+        "mean": 14.45,
+        "p50": 6.29,
+        "p95": 55.57
+      },
+      "queue.enter | QueueService.reconcilePerformanceQueueIfDue": {
+        "count": 1466,
+        "max": 312.6,
+        "mean": 3,
+        "p50": 0.19,
+        "p95": 9.95
+      },
+      "queue.enter | QueueService.resolveBrowserIdentity": {
+        "count": 733,
+        "max": 292.37,
+        "mean": 33.46,
+        "p50": 17.01,
+        "p95": 90.89
+      },
+      "queue.enter | ThrottlerGuard.canActivate": {
+        "count": 733,
+        "max": 117.31,
+        "mean": 26.16,
+        "p50": 11.67,
+        "p95": 75.83
+      },
+      "queue.enter | ThrottlerGuard.handleRequest": {
+        "count": 1466,
+        "max": 105.95,
+        "mean": 12.17,
+        "p50": 4.75,
+        "p95": 58.21
+      },
+      "queue.enter | UserRepository.findAuthPrincipalById": {
+        "count": 733,
+        "max": 259.6,
+        "mean": 35.12,
+        "p50": 19.93,
+        "p95": 91.16
+      },
+      "queue.status | JwtStrategy.validate": {
+        "count": 408,
+        "max": 471.55,
+        "mean": 103.15,
+        "p50": 12.06,
+        "p95": 368.94
+      },
+      "queue.status | QueueService.calculateRemainingSeatsFresh": {
+        "count": 3,
+        "max": 236.14,
+        "mean": 88.17,
+        "p50": 18.72,
+        "p95": 236.14
+      },
+      "queue.status | QueueService.getQueueSessionStatus": {
+        "count": 408,
+        "max": 295.99,
+        "mean": 46.21,
+        "p50": 16.3,
+        "p95": 200.63
+      },
+      "queue.status | QueueService.readRemainingSeatsState": {
+        "count": 410,
+        "max": 244.05,
+        "mean": 21.44,
+        "p50": 2.75,
+        "p95": 148.11
+      },
+      "queue.status | QueueService.reconcilePerformanceQueueIfDue": {
+        "count": 408,
+        "max": 163.59,
+        "mean": 2.11,
+        "p50": 0.07,
+        "p95": 4.97
+      },
+      "queue.status | QueueService.resolveBrowserIdentity": {
+        "count": 408,
+        "max": 520.39,
+        "mean": 78.36,
+        "p50": 7.75,
+        "p95": 264.5
+      },
+      "queue.status | ThrottlerGuard.canActivate": {
+        "count": 408,
+        "max": 41.2,
+        "mean": 5.35,
+        "p50": 3.6,
+        "p95": 16.96
+      },
+      "queue.status | ThrottlerGuard.handleRequest": {
+        "count": 408,
+        "max": 40.79,
+        "mean": 4.79,
+        "p50": 3.16,
+        "p95": 16.81
+      },
+      "queue.status | UserRepository.findAuthPrincipalById": {
+        "count": 408,
+        "max": 471.53,
+        "mean": 103.12,
+        "p50": 12.04,
+        "p95": 368.9
+      },
+      "seat.lock | BookingService.assertSeatExistsInShowtimeSeatMap": {
+        "count": 81,
+        "max": 190.85,
+        "mean": 86.26,
+        "p50": 80.42,
+        "p95": 180.77
+      },
+      "seat.lock | BookingService.assertShowtimeBookingOpen": {
+        "count": 81,
+        "max": 283.63,
+        "mean": 103.23,
+        "p50": 92.24,
+        "p95": 186.61
+      },
+      "seat.lock | BookingService.countUserActiveTicketsForPerformance": {
+        "count": 81,
+        "max": 184.87,
+        "mean": 73,
+        "p50": 81.23,
+        "p95": 124.89
+      },
+      "seat.lock | BookingService.getSeatLockPolicy": {
+        "count": 81,
+        "max": 197.75,
+        "mean": 72.77,
+        "p50": 73.92,
+        "p95": 188.87
+      },
+      "seat.lock | BookingService.lockSeat": {
+        "count": 81,
+        "max": 614.27,
+        "mean": 422.68,
+        "p50": 422.75,
+        "p95": 592.98
+      },
+      "seat.lock | JwtStrategy.validate": {
+        "count": 81,
+        "max": 284.37,
+        "mean": 76.23,
+        "p50": 81.7,
+        "p95": 141.25
+      },
+      "seat.lock | QueueService.assertAdmissionForPerformance": {
+        "count": 81,
+        "max": 188.79,
+        "mean": 43.43,
+        "p50": 25.75,
+        "p95": 102.97
+      },
+      "seat.lock | QueueService.assertAdmissionForShowtime": {
+        "count": 81,
+        "max": 243.56,
+        "mean": 115.54,
+        "p50": 107.33,
+        "p95": 196.43
+      },
+      "seat.lock | QueueService.resolveBrowserIdentity": {
+        "count": 81,
+        "max": 264.25,
+        "mean": 77.16,
+        "p50": 90.68,
+        "p95": 113.59
+      },
+      "seat.lock | ThrottlerGuard.canActivate": {
+        "count": 81,
+        "max": 88.15,
+        "mean": 39.06,
+        "p50": 30.1,
+        "p95": 87.92
+      },
+      "seat.lock | ThrottlerGuard.handleRequest": {
+        "count": 162,
+        "max": 76.55,
+        "mean": 18.57,
+        "p50": 7.81,
+        "p95": 64.75
+      },
+      "seat.lock | UserRepository.findAuthPrincipalById": {
+        "count": 81,
+        "max": 284.35,
+        "mean": 76.21,
+        "p50": 81.69,
+        "p95": 141.19
+      },
+      "seat.read | BookingService.computeSeatStatus": {
+        "count": 3,
+        "max": 56.4,
+        "mean": 25.72,
+        "p50": 14.5,
+        "p95": 56.4
+      },
+      "seat.read | BookingService.getSeatStatus": {
+        "count": 733,
+        "max": 60.29,
+        "mean": 0.81,
+        "p50": 0.01,
+        "p95": 2.23
+      },
+      "seat.read | BookingService.getSeatStatusSnapshot": {
+        "count": 733,
+        "max": 59.86,
+        "mean": 0.78,
+        "p50": 0.01,
+        "p95": 2.16
+      },
+      "seat.read | BookingService.loadSeatStatus": {
+        "count": 5,
+        "max": 59.67,
+        "mean": 17.48,
+        "p50": 8.19,
+        "p95": 59.67
+      },
+      "seat.read | ThrottlerGuard.canActivate": {
+        "count": 733,
+        "max": 82.63,
+        "mean": 5.65,
+        "p50": 2.44,
+        "p95": 33.81
+      },
+      "seat.read | ThrottlerGuard.handleRequest": {
+        "count": 733,
+        "max": 82.36,
+        "mean": 5.39,
+        "p50": 2.29,
+        "p95": 31.61
+      }
+    }
+  },
+  {
+    "byRoute": {
+      "checkout.prepare": {
+        "dbPoolWaitMs": {
+          "count": 119,
+          "max": 3210.42,
+          "mean": 1399.86,
+          "p50": 1474.36,
+          "p95": 2043.37
+        },
+        "dbQueries": {
+          "count": 119,
+          "max": 42,
+          "mean": 13.59,
+          "p50": 13,
+          "p95": 13
+        },
+        "dbQueryMs": {
+          "count": 119,
+          "max": 711.79,
+          "mean": 192.55,
+          "p50": 172.14,
+          "p95": 395.84
+        },
+        "elapsedMs": {
+          "count": 119,
+          "max": 4076.17,
+          "mean": 2838.23,
+          "p50": 3181.51,
+          "p95": 3897.67
+        },
+        "redisMs": {
+          "count": 119,
+          "max": 396.06,
+          "mean": 105.04,
+          "p50": 98.01,
+          "p95": 225.02
+        },
+        "requests": 119
+      },
+      "performance.detail": {
+        "dbPoolWaitMs": {
+          "count": 768,
+          "max": 205.47,
+          "mean": 0.27,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueries": {
+          "count": 768,
+          "max": 6,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueryMs": {
+          "count": 768,
+          "max": 37.36,
+          "mean": 0.05,
+          "p50": 0,
+          "p95": 0
+        },
+        "elapsedMs": {
+          "count": 768,
+          "max": 100.87,
+          "mean": 8.19,
+          "p50": 3.51,
+          "p95": 39.26
+        },
+        "redisMs": {
+          "count": 768,
+          "max": 71.2,
+          "mean": 1.64,
+          "p50": 0,
+          "p95": 3.43
+        },
+        "requests": 768
+      },
+      "queue.enter": {
+        "dbPoolWaitMs": {
+          "count": 767,
+          "max": 1.76,
+          "mean": 0.02,
+          "p50": 0,
+          "p95": 0.13
+        },
+        "dbQueries": {
+          "count": 767,
+          "max": 11,
+          "mean": 0.4,
+          "p50": 0,
+          "p95": 4
+        },
+        "dbQueryMs": {
+          "count": 767,
+          "max": 439.72,
+          "mean": 9.06,
+          "p50": 0,
+          "p95": 86.3
+        },
+        "elapsedMs": {
+          "count": 767,
+          "max": 593.99,
+          "mean": 287.19,
+          "p50": 289.16,
+          "p95": 464.21
+        },
+        "redisMs": {
+          "count": 767,
+          "max": 9365.8,
+          "mean": 166.73,
+          "p50": 129.23,
+          "p95": 282.57
+        },
+        "requests": 767
+      },
+      "queue.status": {
+        "dbPoolWaitMs": {
+          "count": 382,
+          "max": 399.91,
+          "mean": 4.27,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueries": {
+          "count": 382,
+          "max": 4,
+          "mean": 0.05,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueryMs": {
+          "count": 382,
+          "max": 144.49,
+          "mean": 1.08,
+          "p50": 0,
+          "p95": 0
+        },
+        "elapsedMs": {
+          "count": 382,
+          "max": 1281.38,
+          "mean": 680.6,
+          "p50": 731.92,
+          "p95": 1170.44
+        },
+        "redisMs": {
+          "count": 382,
+          "max": 2942.48,
+          "mean": 75.78,
+          "p50": 39.2,
+          "p95": 136.6
+        },
+        "requests": 382
+      },
+      "seat.lock": {
+        "dbPoolWaitMs": {
+          "count": 119,
+          "max": 474.29,
+          "mean": 267.59,
+          "p50": 290.19,
+          "p95": 425.35
+        },
+        "dbQueries": {
+          "count": 119,
+          "max": 29,
+          "mean": 3.32,
+          "p50": 3,
+          "p95": 4
+        },
+        "dbQueryMs": {
+          "count": 119,
+          "max": 644.32,
+          "mean": 84.64,
+          "p50": 61.38,
+          "p95": 206.78
+        },
+        "elapsedMs": {
+          "count": 119,
+          "max": 1696.8,
+          "mean": 1272.75,
+          "p50": 1226.13,
+          "p95": 1621.79
+        },
+        "redisMs": {
+          "count": 119,
+          "max": 332.99,
+          "mean": 105.93,
+          "p50": 101.61,
+          "p95": 249.2
+        },
+        "requests": 119
+      },
+      "seat.read": {
+        "dbPoolWaitMs": {
+          "count": 767,
+          "max": 0.2,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueries": {
+          "count": 767,
+          "max": 1,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "dbQueryMs": {
+          "count": 767,
+          "max": 14.4,
+          "mean": 0.03,
+          "p50": 0,
+          "p95": 0
+        },
+        "elapsedMs": {
+          "count": 767,
+          "max": 81.22,
+          "mean": 6.54,
+          "p50": 3.14,
+          "p95": 34.65
+        },
+        "redisMs": {
+          "count": 767,
+          "max": 78.03,
+          "mean": 4.1,
+          "p50": 2.12,
+          "p95": 10.29
+        },
+        "requests": 767
+      }
+    },
+    "cpuCores": {
+      "count": 63,
+      "max": 1.2,
+      "mean": 0.5,
+      "p50": 0.36,
+      "p95": 1.14
+    },
+    "dbPoolWaitMs": {
+      "count": 2922,
+      "max": 3210.42,
+      "mean": 68.54,
+      "p50": 0,
+      "p95": 345.54
+    },
+    "dbQueries": {
+      "count": 2922,
+      "max": 42,
+      "mean": 0.8,
+      "p50": 0,
+      "p95": 6
+    },
+    "dbQueryMs": {
+      "count": 2922,
+      "max": 711.79,
+      "mean": 13.83,
+      "p50": 0,
+      "p95": 116.88
+    },
+    "elapsedMs": {
+      "count": 2922,
+      "max": 4076.17,
+      "mean": 335.65,
+      "p50": 37.69,
+      "p95": 1446
+    },
+    "eventLoopMs": {
+      "max": 1700.790271,
+      "mean": 20.406006451294697,
+      "p95": 63.209471
+    },
+    "instance": "c82da0cc-aa1e-4b7d-8658-f3c03c63e2ca",
+    "kind": "after-profile-summary",
+    "pid": 1,
+    "poolSizes": {
+      "grabit-api": {
+        "max": 5,
+        "peakTotal": 5,
+        "peakWaiting": 71
+      },
+      "grabit-api-pgboss": {
+        "max": 1,
+        "peakTotal": 1,
+        "peakWaiting": 2
+      }
+    },
+    "poolWaits": {
+      "checkout.prepare | grabit-api": {
+        "count": 959,
+        "max": 585.59,
+        "mean": 185.26,
+        "p50": 179.08,
+        "p95": 397.84
+      },
+      "performance.detail | grabit-api": {
+        "count": 6,
+        "max": 60.38,
+        "mean": 34.25,
+        "p50": 36.5,
+        "p95": 60.38
+      },
+      "queue.enter | grabit-api": {
+        "count": 690,
+        "max": 1.6,
+        "mean": 0.05,
+        "p50": 0.03,
+        "p95": 0.08
+      },
+      "queue.status | grabit-api": {
+        "count": 30,
+        "max": 529.83,
+        "mean": 74.97,
+        "p50": 0.05,
+        "p95": 399.92
+      },
+      "seat.lock | grabit-api": {
+        "count": 438,
+        "max": 382.11,
+        "mean": 82.66,
+        "p50": 86.17,
+        "p95": 189.83
+      },
+      "seat.read | grabit-api": {
+        "count": 3,
+        "max": 0.2,
+        "mean": 0.11,
+        "p50": 0.1,
+        "p95": 0.2
+      }
+    },
+    "redisCommands": {
+      "checkout.prepare | eval": {
+        "count": 595,
+        "max": 89.99,
+        "mean": 10.05,
+        "p50": 5.08,
+        "p95": 51.78
+      },
+      "checkout.prepare | expire": {
+        "count": 119,
+        "max": 75.22,
+        "mean": 12.67,
+        "p50": 7.1,
+        "p95": 58.86
+      },
+      "checkout.prepare | get": {
+        "count": 357,
+        "max": 69.65,
+        "mean": 9.8,
+        "p50": 4.48,
+        "p95": 50.09
+      },
+      "checkout.prepare | set": {
+        "count": 119,
+        "max": 75.27,
+        "mean": 12.73,
+        "p50": 7.15,
+        "p95": 58.92
+      },
+      "performance.detail | get": {
+        "count": 348,
+        "max": 66.9,
+        "mean": 3.62,
+        "p50": 1.84,
+        "p95": 12.21
+      },
+      "performance.detail | set": {
+        "count": 1,
+        "max": 1.55,
+        "mean": 1.55,
+        "p50": 1.55,
+        "p95": 1.55
+      },
+      "queue.enter | eval": {
+        "count": 3515,
+        "max": 94.6,
+        "mean": 11.17,
+        "p50": 4.8,
+        "p95": 54.5
+      },
+      "queue.enter | expire": {
+        "count": 113,
+        "max": 69.75,
+        "mean": 10.48,
+        "p50": 7.04,
+        "p95": 49.09
+      },
+      "queue.enter | get": {
+        "count": 3868,
+        "max": 94.27,
+        "mean": 12.29,
+        "p50": 5.73,
+        "p95": 49.52
+      },
+      "queue.enter | scard": {
+        "count": 4,
+        "max": 8.56,
+        "mean": 6.75,
+        "p50": 6.95,
+        "p95": 8.56
+      },
+      "queue.enter | set": {
+        "count": 1941,
+        "max": 127.08,
+        "mean": 10.82,
+        "p50": 5.67,
+        "p95": 50.43
+      },
+      "queue.enter | smembers": {
+        "count": 4,
+        "max": 8.69,
+        "mean": 6.69,
+        "p50": 5.09,
+        "p95": 8.69
+      },
+      "queue.enter | zcard": {
+        "count": 767,
+        "max": 90.42,
+        "mean": 12.3,
+        "p50": 4.94,
+        "p95": 55.04
+      },
+      "queue.enter | zrank": {
+        "count": 767,
+        "max": 90.38,
+        "mean": 12.27,
+        "p50": 4.92,
+        "p95": 55.02
+      },
+      "queue.status | eval": {
+        "count": 431,
+        "max": 60.23,
+        "mean": 5.86,
+        "p50": 5.02,
+        "p95": 10.23
+      },
+      "queue.status | get": {
+        "count": 1564,
+        "max": 55.56,
+        "mean": 10.9,
+        "p50": 9.39,
+        "p95": 19.26
+      },
+      "queue.status | scard": {
+        "count": 4,
+        "max": 51.93,
+        "mean": 14.63,
+        "p50": 2.46,
+        "p95": 51.93
+      },
+      "queue.status | set": {
+        "count": 27,
+        "max": 55.95,
+        "mean": 10.85,
+        "p50": 5.08,
+        "p95": 54.92
+      },
+      "queue.status | smembers": {
+        "count": 4,
+        "max": 6.97,
+        "mean": 3.79,
+        "p50": 2.28,
+        "p95": 6.97
+      },
+      "queue.status | zcard": {
+        "count": 382,
+        "max": 88.33,
+        "mean": 11.78,
+        "p50": 5.27,
+        "p95": 57.59
+      },
+      "queue.status | zrank": {
+        "count": 382,
+        "max": 88.28,
+        "mean": 11.78,
+        "p50": 5.34,
+        "p95": 57.58
+      },
+      "seat.lock | eval": {
+        "count": 357,
+        "max": 105.42,
+        "mean": 16.36,
+        "p50": 9.36,
+        "p95": 70.54
+      },
+      "seat.lock | get": {
+        "count": 357,
+        "max": 104.93,
+        "mean": 18.96,
+        "p50": 5.68,
+        "p95": 76.77
+      },
+      "seat.lock | publish": {
+        "count": 119,
+        "max": 80.33,
+        "mean": 12.65,
+        "p50": 7.89,
+        "p95": 52.38
+      },
+      "seat.read | eval": {
+        "count": 770,
+        "max": 78.03,
+        "mean": 4.05,
+        "p50": 2.11,
+        "p95": 10.16
+      },
+      "seat.read | get": {
+        "count": 5,
+        "max": 3.15,
+        "mean": 1.73,
+        "p50": 1.41,
+        "p95": 3.15
+      },
+      "seat.read | set": {
+        "count": 6,
+        "max": 5.08,
+        "mean": 2.57,
+        "p50": 1.93,
+        "p95": 5.08
+      }
+    },
+    "requests": 2922,
+    "stages": {
+      "checkout.prepare | JwtStrategy.validate": {
+        "count": 119,
+        "max": 471.87,
+        "mean": 167.93,
+        "p50": 124.21,
+        "p95": 425.72
+      },
+      "checkout.prepare | QueueService.assertAdmissionForPerformance": {
+        "count": 119,
+        "max": 179.05,
+        "mean": 60.42,
+        "p50": 54,
+        "p95": 114.5
+      },
+      "checkout.prepare | QueueService.assertAdmissionForShowtime": {
+        "count": 119,
+        "max": 394.04,
+        "mean": 198.7,
+        "p50": 198.78,
+        "p95": 391.2
+      },
+      "checkout.prepare | QueueService.resolveBrowserIdentity": {
+        "count": 119,
+        "max": 470.93,
+        "mean": 200.31,
+        "p50": 157.34,
+        "p95": 440.19
+      },
+      "checkout.prepare | ReservationService.assertBookingConsent": {
+        "count": 119,
+        "max": 491.02,
+        "mean": 262.88,
+        "p50": 298.97,
+        "p95": 479.93
+      },
+      "checkout.prepare | ReservationService.assertUserTicketLimitAvailable": {
+        "count": 119,
+        "max": 413.93,
+        "mean": 236.89,
+        "p50": 224.59,
+        "p95": 405.7
+      },
+      "checkout.prepare | ReservationService.getCanonicalSeatSelections": {
+        "count": 119,
+        "max": 501.99,
+        "mean": 236.27,
+        "p50": 209.56,
+        "p95": 402.97
+      },
+      "checkout.prepare | ReservationService.getShowtimeBookingContext": {
+        "count": 119,
+        "max": 614.81,
+        "mean": 286.36,
+        "p50": 236.16,
+        "p95": 609.73
+      },
+      "checkout.prepare | ReservationService.getUserBirthDate": {
+        "count": 119,
+        "max": 410.9,
+        "mean": 239.28,
+        "p50": 228.12,
+        "p95": 407.34
+      },
+      "checkout.prepare | ReservationService.prepareReservation": {
+        "count": 119,
+        "max": 3081.48,
+        "mean": 2233.73,
+        "p50": 2451.75,
+        "p95": 3027.82
+      },
+      "checkout.prepare | ReservationService.prepareReservationOrder": {
+        "count": 119,
+        "max": 2816.94,
+        "mean": 1970.54,
+        "p50": 2030.56,
+        "p95": 2765.64
+      },
+      "checkout.prepare | ThrottlerGuard.canActivate": {
+        "count": 119,
+        "max": 155.21,
+        "mean": 20.92,
+        "p50": 15.35,
+        "p95": 101.06
+      },
+      "checkout.prepare | ThrottlerGuard.handleRequest": {
+        "count": 238,
+        "max": 85.14,
+        "mean": 9.41,
+        "p50": 7.02,
+        "p95": 17.43
+      },
+      "checkout.prepare | UserRepository.findAuthPrincipalById": {
+        "count": 119,
+        "max": 471.81,
+        "mean": 165.38,
+        "p50": 124.18,
+        "p95": 425.67
+      },
+      "performance.detail | CacheService.get": {
+        "count": 336,
+        "max": 67.05,
+        "mean": 4.07,
+        "p50": 1.97,
+        "p95": 15.19
+      },
+      "performance.detail | CacheService.getGeneration": {
+        "count": 768,
+        "max": 12.34,
+        "mean": 0.08,
+        "p50": 0.01,
+        "p95": 0.04
+      },
+      "performance.detail | CacheService.getOrLoad": {
+        "count": 768,
+        "max": 86.79,
+        "mean": 4.08,
+        "p50": 1.37,
+        "p95": 27.57
+      },
+      "performance.detail | PerformanceService.findById": {
+        "count": 768,
+        "max": 90.01,
+        "mean": 4.27,
+        "p50": 1.39,
+        "p95": 28.76
+      },
+      "performance.detail | PerformanceService.loadPerformanceDetail": {
+        "count": 1,
+        "max": 82.95,
+        "mean": 82.95,
+        "p50": 82.95,
+        "p95": 82.95
+      },
+      "performance.detail | ThrottlerGuard.canActivate": {
+        "count": 768,
+        "max": 49.09,
+        "mean": 0.2,
+        "p50": 0.07,
+        "p95": 0.31
+      },
+      "queue.enter | JwtStrategy.validate": {
+        "count": 767,
+        "max": 159.25,
+        "mean": 37.28,
+        "p50": 22.52,
+        "p95": 100.94
+      },
+      "queue.enter | QueueService.admitQueueSessionWithinCapacity": {
+        "count": 767,
+        "max": 189.03,
+        "mean": 46.6,
+        "p50": 38.35,
+        "p95": 103.86
+      },
+      "queue.enter | QueueService.assertPerformanceBookingOpen": {
+        "count": 767,
+        "max": 158.4,
+        "mean": 29.2,
+        "p50": 14.42,
+        "p95": 84.05
+      },
+      "queue.enter | QueueService.calculateRemainingSeatsFresh": {
+        "count": 2,
+        "max": 94.51,
+        "mean": 63.1,
+        "p50": 31.68,
+        "p95": 94.51
+      },
+      "queue.enter | QueueService.createQueueSession": {
+        "count": 767,
+        "max": 137.39,
+        "mean": 24.57,
+        "p50": 13.87,
+        "p95": 80.02
+      },
+      "queue.enter | QueueService.ensureQueueSession": {
+        "count": 767,
+        "max": 160.69,
+        "mean": 35.23,
+        "p50": 19.83,
+        "p95": 90.51
+      },
+      "queue.enter | QueueService.enterPerformanceQueue": {
+        "count": 767,
+        "max": 452.05,
+        "mean": 174.03,
+        "p50": 174.47,
+        "p95": 302.44
+      },
+      "queue.enter | QueueService.getQueueSessionStatus": {
+        "count": 767,
+        "max": 276.83,
+        "mean": 58.06,
+        "p50": 43.33,
+        "p95": 174.44
+      },
+      "queue.enter | QueueService.readRemainingSeatsState": {
+        "count": 1537,
+        "max": 111.22,
+        "mean": 13.98,
+        "p50": 6.68,
+        "p95": 57.07
+      },
+      "queue.enter | QueueService.reconcilePerformanceQueueIfDue": {
+        "count": 1534,
+        "max": 175.48,
+        "mean": 3.27,
+        "p50": 0.19,
+        "p95": 10.85
+      },
+      "queue.enter | QueueService.resolveBrowserIdentity": {
+        "count": 767,
+        "max": 188.52,
+        "mean": 38.1,
+        "p50": 21.73,
+        "p95": 92.64
+      },
+      "queue.enter | ThrottlerGuard.canActivate": {
+        "count": 767,
+        "max": 100.09,
+        "mean": 28.65,
+        "p50": 14.43,
+        "p95": 91.45
+      },
+      "queue.enter | ThrottlerGuard.handleRequest": {
+        "count": 1534,
+        "max": 79.16,
+        "mean": 12.18,
+        "p50": 5.12,
+        "p95": 55.9
+      },
+      "queue.enter | UserRepository.findAuthPrincipalById": {
+        "count": 767,
+        "max": 159.24,
+        "mean": 37.24,
+        "p50": 22.44,
+        "p95": 100.84
+      },
+      "queue.status | JwtStrategy.validate": {
+        "count": 382,
+        "max": 690.46,
+        "mean": 317.42,
+        "p50": 320.11,
+        "p95": 568.01
+      },
+      "queue.status | QueueService.getQueueSessionStatus": {
+        "count": 382,
+        "max": 176.8,
+        "mean": 51.09,
+        "p50": 36.92,
+        "p95": 101.47
+      },
+      "queue.status | QueueService.readRemainingSeatsState": {
+        "count": 386,
+        "max": 60.46,
+        "mean": 9.4,
+        "p50": 4.64,
+        "p95": 30.18
+      },
+      "queue.status | QueueService.reconcilePerformanceQueueIfDue": {
+        "count": 382,
+        "max": 156.86,
+        "mean": 1.5,
+        "p50": 0.09,
+        "p95": 2.39
+      },
+      "queue.status | QueueService.resolveBrowserIdentity": {
+        "count": 382,
+        "max": 541.64,
+        "mean": 266.53,
+        "p50": 289.85,
+        "p95": 541.51
+      },
+      "queue.status | ThrottlerGuard.canActivate": {
+        "count": 382,
+        "max": 59.78,
+        "mean": 19.11,
+        "p50": 9.15,
+        "p95": 59.78
+      },
+      "queue.status | ThrottlerGuard.handleRequest": {
+        "count": 382,
+        "max": 46.32,
+        "mean": 11.78,
+        "p50": 7.28,
+        "p95": 46.3
+      },
+      "queue.status | UserRepository.findAuthPrincipalById": {
+        "count": 382,
+        "max": 690.43,
+        "mean": 317.32,
+        "p50": 320.03,
+        "p95": 567.93
+      },
+      "seat.lock | BookingService.assertSeatExistsInShowtimeSeatMap": {
+        "count": 119,
+        "max": 498.24,
+        "mean": 145.13,
+        "p50": 175.45,
+        "p95": 289.29
+      },
+      "seat.lock | BookingService.assertShowtimeBookingOpen": {
+        "count": 119,
+        "max": 484.58,
+        "mean": 177.06,
+        "p50": 179.22,
+        "p95": 471.14
+      },
+      "seat.lock | BookingService.countUserActiveTicketsForPerformance": {
+        "count": 119,
+        "max": 204.29,
+        "mean": 87.48,
+        "p50": 87.72,
+        "p95": 176.88
+      },
+      "seat.lock | BookingService.getSeatLockPolicy": {
+        "count": 119,
+        "max": 455.13,
+        "mean": 124.66,
+        "p50": 93.23,
+        "p95": 321.65
+      },
+      "seat.lock | BookingService.lockSeat": {
+        "count": 119,
+        "max": 1199.52,
+        "mean": 682.69,
+        "p50": 677.68,
+        "p95": 1166.45
+      },
+      "seat.lock | JwtStrategy.validate": {
+        "count": 119,
+        "max": 469.9,
+        "mean": 156.42,
+        "p50": 121.38,
+        "p95": 407.93
+      },
+      "seat.lock | QueueService.assertAdmissionForPerformance": {
+        "count": 119,
+        "max": 286.95,
+        "mean": 58.92,
+        "p50": 35.37,
+        "p95": 185.16
+      },
+      "seat.lock | QueueService.assertAdmissionForShowtime": {
+        "count": 119,
+        "max": 497.88,
+        "mean": 184.05,
+        "p50": 151.93,
+        "p95": 401.28
+      },
+      "seat.lock | QueueService.resolveBrowserIdentity": {
+        "count": 119,
+        "max": 470.65,
+        "mean": 194.06,
+        "p50": 185.46,
+        "p95": 414.07
+      },
+      "seat.lock | ThrottlerGuard.canActivate": {
+        "count": 119,
+        "max": 92.26,
+        "mean": 44.15,
+        "p50": 23.16,
+        "p95": 92.25
+      },
+      "seat.lock | ThrottlerGuard.handleRequest": {
+        "count": 238,
+        "max": 74.52,
+        "mean": 21.22,
+        "p50": 11.76,
+        "p95": 72.14
+      },
+      "seat.lock | UserRepository.findAuthPrincipalById": {
+        "count": 119,
+        "max": 469.86,
+        "mean": 156.36,
+        "p50": 121.36,
+        "p95": 407.91
+      },
+      "seat.read | BookingService.computeSeatStatus": {
+        "count": 3,
+        "max": 16.7,
+        "mean": 11.68,
+        "p50": 10.88,
+        "p95": 16.7
+      },
+      "seat.read | BookingService.getSeatStatus": {
+        "count": 767,
+        "max": 23.04,
+        "mean": 0.29,
+        "p50": 0.01,
+        "p95": 0.14
+      },
+      "seat.read | BookingService.getSeatStatusSnapshot": {
+        "count": 767,
+        "max": 22.98,
+        "mean": 0.28,
+        "p50": 0.01,
+        "p95": 0.04
+      },
+      "seat.read | BookingService.loadSeatStatus": {
+        "count": 5,
+        "max": 22.94,
+        "mean": 10.35,
+        "p50": 9.89,
+        "p95": 22.94
+      },
+      "seat.read | ThrottlerGuard.canActivate": {
+        "count": 767,
+        "max": 78.71,
+        "mean": 4.6,
+        "p50": 2.44,
+        "p95": 13.13
+      },
+      "seat.read | ThrottlerGuard.handleRequest": {
+        "count": 767,
+        "max": 78.35,
+        "mean": 4.29,
+        "p50": 2.32,
+        "p95": 10.42
+      }
+    }
+  }
+]

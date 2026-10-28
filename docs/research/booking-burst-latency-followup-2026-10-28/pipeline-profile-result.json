@@ -1,0 +1,153 @@
+{
+  "apiResources": {
+    "cpu": 1,
+    "heapMiB": 256,
+    "maxInstances": 2,
+    "memoryMiB": 512,
+    "minInstances": 2
+  },
+  "apiService": "grabit-rehearsal-burst2-20261028",
+  "completedAt": "2026-10-28T05:52:04.029Z",
+  "database": "grabit_rehearsal_burst2_20261028",
+  "diagnosticOnly": true,
+  "environment": "private-cloud-run-rehearsal",
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "profileInstances": 2,
+  "provider": "simulated-300ms-no-provider-network",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "startedAt": "2026-10-28T05:51:28.850Z",
+  "status": "diagnostic_limited",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 200,
+    "apiInstances": 2,
+    "dbPoolMax": 5,
+    "saleSeats": 600,
+    "socketClients": 100
+  },
+  "waves": [
+    {
+      "admitted": 200,
+      "apiInstancesObserved": 2,
+      "diagnostic": "prepare-only",
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "metrics": {
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 4082,
+          "outcomes": {
+            "none": 200
+          },
+          "p50Ms": 2923,
+          "p95Ms": 3913,
+          "requests": 200,
+          "statuses": {
+            "201": 200
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 3007,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1443,
+          "p95Ms": 2697,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 6255,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 3791,
+          "p95Ms": 6117,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status": {
+          "errorRate": 0,
+          "maxMs": 1391,
+          "outcomes": {
+            "none": 231
+          },
+          "p50Ms": 466,
+          "p95Ms": 852,
+          "requests": 231,
+          "statuses": {
+            "200": 231
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 2277,
+          "outcomes": {
+            "none": 200
+          },
+          "p50Ms": 1600,
+          "p95Ms": 2192,
+          "requests": 200,
+          "statuses": {
+            "201": 200
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 2611,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1352,
+          "p95Ms": 2371,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 2276,
+          "outcomes": {
+            "none": 20000
+          },
+          "p50Ms": 1601,
+          "p95Ms": 2192,
+          "requests": 20000,
+          "statuses": {
+            "delivered": 20000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "peakActiveAdmissions": 200,
+      "prepared": 200,
+      "sessions": 1500,
+      "sloPassed": false
+    }
+  ],
+  "workload": {
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "profilingEnabled": true
+  }
+}

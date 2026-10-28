@@ -21,6 +21,7 @@ import {
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { consentAuditLogs, consentItems, users } from '../../database/schema/index.js';
+import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 
 export const UNDER_14_BLOCK_MESSAGE = '만 14세 미만은 가입할 수 없습니다';
 /**
@@ -75,6 +76,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class ConsentService {
+  private readonly activeItemPrechecks = coalesceFreshReads((_key: 'active') => this.readActiveItems(this.db));
+
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
   async getActiveConsentItems(locale: string): Promise<ConsentItemRow[]> {
@@ -314,6 +317,11 @@ export class ConsentService {
   }
 
   private async loadActiveItems(db: Pick<DrizzleDB, 'select'>): Promise<ConsentItemRow[]> {
+    // Capture inside a transaction must use that exact executor/snapshot.
+    return db === this.db ? this.activeItemPrechecks('active') : this.readActiveItems(db);
+  }
+
+  private async readActiveItems(db: Pick<DrizzleDB, 'select'>): Promise<ConsentItemRow[]> {
     return db
       .select()
       .from(consentItems)
