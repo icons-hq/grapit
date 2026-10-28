@@ -1,0 +1,26 @@
+{
+  "checkedAt": "2026-10-28T09:45:11.806362+00:00",
+  "execution": "grabit-load-releaseab-20261028-zw7hd",
+  "completedResultAvailable": true,
+  "applicationRevisionChanged": false,
+  "diagnosticOnly": true,
+  "probeGroups": 128,
+  "statuses": {
+    "withCookies": {
+      "200": 128
+    },
+    "withoutAffinity": {
+      "200": 128
+    },
+    "noCookies": {
+      "200": 128
+    }
+  },
+  "observedCookieNames": [
+    "GAESA",
+    "grabit_queue_admission",
+    "refreshToken"
+  ],
+  "cookieCaveat": "The column named withoutAffinity strips only names containing GCLB. The observed cookie was GAESA, so this column did not remove the observed platform cookie. Only noCookies is a valid all-cookie removal condition.",
+  "interpretation": "A successful diagnostic cannot erase previous failures or establish a fix; it used the same already-aged API revision and additional fresh-TCP health probes."
+}

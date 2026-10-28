@@ -1,0 +1,131 @@
+[
+  {
+    "httpRequest": {
+      "latency": "0.074896366s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:33:08.854985Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.071593469s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:33:08.855001Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.020776876s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:36:35.603760Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.022030062s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:36:35.604726Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.021265622s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:40:02.258891Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.022681647s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/payments/confirm",
+      "status": 503
+    },
+    "timestamp": "2026-10-28T09:40:02.259571Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "1.301024813s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/51689f8c-f2b8-4ce8-97b4-95d4ecd1476e",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.304993Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "1.201792131s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/2a82eb24-1376-4fd8-b8c3-555690476027",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.404197Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.808924440s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/558dff2b-2058-47e9-8d18-7d9c02fe46a9",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.504748Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "1.002354372s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/7cd64eb1-e6ec-48ba-a3d6-aead9af58337",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.603616Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.801507758s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/81ca2152-c1f4-4494-8af4-4b0f829cc75d",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.804416Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.600052994s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/a3921b0d-1566-4da0-9f62-30ae632f9cb8",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:11.804446Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.199955773s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/931859fa-7dad-4e22-844a-79bba76d0bed",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:12.204592Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.601382391s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/5a342154-8802-4e7d-9922-99f002ddecb3",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:12.305149Z"
+  },
+  {
+    "httpRequest": {
+      "latency": "0.601274976s",
+      "requestUrl": "https://grabit-rehearsal-releaseab-20261028-d3c6wrfdbq-du.a.run.app/api/v1/queue/sessions/ad0b1dca-521b-4099-b0b8-44054404dab7",
+      "status": 503
+    },
+    "textPayload": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error",
+    "timestamp": "2026-10-28T09:41:12.305267Z"
+  }
+]

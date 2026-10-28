@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-10-28T09:48:48.565165+00:00",
+  "purpose": "Existing production read-only smoke; not a deployment or performance benchmark",
+  "checks": [
+    {
+      "url": "https://api.heygrabit.com/api/v1/health",
+      "status": 200,
+      "durationMs": 759,
+      "bytes": 231,
+      "healthStatus": "ok"
+    },
+    {
+      "url": "https://heygrabit.com/api/runtime-flags",
+      "status": 200,
+      "durationMs": 617,
+      "bytes": 49,
+      "bookingEnabled": true
+    },
+    {
+      "url": "https://heygrabit.com/",
+      "status": 200,
+      "durationMs": 932,
+      "bytes": 104377
+    },
+    {
+      "url": "https://api.heygrabit.com/api/v1/users/me",
+      "status": 401,
+      "durationMs": 880,
+      "bytes": 82
+    }
+  ],
+  "pass": true
+}

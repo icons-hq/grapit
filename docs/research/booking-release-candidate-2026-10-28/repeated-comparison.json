@@ -1,0 +1,552 @@
+{
+  "status": "complete",
+  "replicationUnit": "one execution; summaries are medians of run p95, not pooled request p95",
+  "rows": [
+    {
+      "label": "a1",
+      "variant": "a",
+      "startedAt": "2026-10-28T06:44:07.101Z",
+      "completedAt": "2026-10-28T06:51:38.071Z",
+      "execution": "grabit-load-releaseab-20261028-q7x7j",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00003-qfr",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": false,
+      "status": "failed",
+      "p95Ms": {
+        "checkout.prepare": 6346,
+        "seat.lock": 3119,
+        "queue.enter": 5961,
+        "seat.read": 2512,
+        "performance.detail": 3023,
+        "checkout.confirm": 1131,
+        "queue.status": 826,
+        "socket.seat-update": 3112
+      },
+      "errors": {
+        "checkout.confirm": {
+          "unexpected": 1,
+          "requests": 398,
+          "rate": 0.002512562814070352
+        },
+        "queue.status": {
+          "unexpected": 22,
+          "requests": 26397,
+          "rate": 0.0008334280410652726
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 400,
+      "prepareSuccessfulResponses": 400,
+      "full600PrepareMeasurement": false,
+      "partialMetricsOnly": true
+    },
+    {
+      "label": "b1",
+      "variant": "b",
+      "startedAt": "2026-10-28T07:00:47.904Z",
+      "completedAt": "2026-10-28T07:11:47.120Z",
+      "execution": "grabit-load-releaseab-20261028-wf5th",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00005-tcx",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": true,
+      "status": "capacity_limited",
+      "p95Ms": {
+        "checkout.prepare": 4406,
+        "seat.lock": 2392,
+        "queue.enter": 5388,
+        "seat.read": 2099,
+        "performance.detail": 2518,
+        "checkout.confirm": 659,
+        "queue.status": 501,
+        "socket.seat-update": 2395
+      },
+      "errors": {
+        "queue.status": {
+          "unexpected": 16,
+          "requests": 36933,
+          "rate": 0.00043321690628976794
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 600,
+      "full600PrepareMeasurement": true,
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "peakAdmissions": 200,
+      "remainingWaiting": 900,
+      "paymentConfirmTargetPassed": true,
+      "allLatencyTargetsPassed": false,
+      "existingPerRouteErrorRateTargetPassed": true,
+      "allSloPassed": false,
+      "durationMs": 656262
+    },
+    {
+      "label": "b2",
+      "variant": "b",
+      "startedAt": "2026-10-28T07:16:17.355Z",
+      "completedAt": "2026-10-28T07:27:14.941Z",
+      "execution": "grabit-load-releaseab-20261028-9wqsq",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00007-sh7",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": true,
+      "status": "capacity_limited",
+      "p95Ms": {
+        "checkout.prepare": 3681,
+        "seat.lock": 2286,
+        "queue.enter": 5573,
+        "seat.read": 2252,
+        "performance.detail": 2418,
+        "checkout.confirm": 631,
+        "queue.status": 144,
+        "socket.seat-update": 2276
+      },
+      "errors": {},
+      "allRequestsErrorFree": true,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 600,
+      "full600PrepareMeasurement": true,
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "peakAdmissions": 200,
+      "remainingWaiting": 900,
+      "paymentConfirmTargetPassed": true,
+      "allLatencyTargetsPassed": false,
+      "existingPerRouteErrorRateTargetPassed": true,
+      "allSloPassed": false,
+      "durationMs": 654360
+    },
+    {
+      "label": "a2",
+      "variant": "a",
+      "startedAt": "2026-10-28T07:32:33.648Z",
+      "completedAt": "2026-10-28T07:43:32.365Z",
+      "execution": "grabit-load-releaseab-20261028-9h74c",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00009-zvk",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": true,
+      "status": "capacity_limited",
+      "p95Ms": {
+        "checkout.prepare": 5546,
+        "seat.lock": 2628,
+        "queue.enter": 5868,
+        "seat.read": 2315,
+        "performance.detail": 2792,
+        "checkout.confirm": 640,
+        "queue.status": 222,
+        "socket.seat-update": 2625
+      },
+      "errors": {},
+      "allRequestsErrorFree": true,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 600,
+      "full600PrepareMeasurement": true,
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "peakAdmissions": 200,
+      "remainingWaiting": 900,
+      "paymentConfirmTargetPassed": true,
+      "allLatencyTargetsPassed": false,
+      "existingPerRouteErrorRateTargetPassed": true,
+      "allSloPassed": false,
+      "durationMs": 655625
+    },
+    {
+      "label": "a3",
+      "variant": "a",
+      "startedAt": "2026-10-28T07:48:32.577Z",
+      "completedAt": "2026-10-28T07:59:27.963Z",
+      "execution": "grabit-load-releaseab-20261028-wpl5t",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00011-wc9",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": false,
+      "status": "failed",
+      "p95Ms": {
+        "checkout.prepare": 5504,
+        "seat.lock": 2353,
+        "queue.enter": 5445,
+        "seat.read": 2194,
+        "performance.detail": 2736,
+        "checkout.confirm": 758,
+        "queue.status": 727,
+        "socket.seat-update": 2449
+      },
+      "errors": {
+        "checkout.confirm": {
+          "unexpected": 1,
+          "requests": 597,
+          "rate": 0.0016750418760469012
+        },
+        "queue.status": {
+          "unexpected": 17,
+          "requests": 36878,
+          "rate": 0.0004609794457400076
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 600,
+      "full600PrepareMeasurement": true,
+      "partialMetricsOnly": true
+    },
+    {
+      "label": "b3",
+      "variant": "b",
+      "startedAt": "2026-10-28T08:13:39.760Z",
+      "completedAt": "2026-10-28T08:25:01.792Z",
+      "execution": "grabit-load-releaseab-20261028-d2kwb",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00013-8rh",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": false,
+      "status": "failed",
+      "p95Ms": {
+        "checkout.prepare": 5422,
+        "seat.lock": 4034,
+        "queue.enter": 5548,
+        "seat.read": 2106,
+        "performance.detail": 2481,
+        "checkout.confirm": 688,
+        "queue.status": 572,
+        "socket.seat-update": 4029
+      },
+      "errors": {
+        "checkout.prepare": {
+          "unexpected": 2,
+          "requests": 600,
+          "rate": 0.0033333333333333335
+        },
+        "queue.status": {
+          "unexpected": 22,
+          "requests": 38273,
+          "rate": 0.0005748177566430643
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 598,
+      "full600PrepareMeasurement": true,
+      "partialMetricsOnly": true
+    },
+    {
+      "label": "a4",
+      "variant": "a",
+      "startedAt": "2026-10-28T08:29:03.921Z",
+      "completedAt": "2026-10-28T08:29:30.445Z",
+      "execution": "grabit-load-releaseab-20261028-lvzd2",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": false,
+      "status": "failed",
+      "p95Ms": {
+        "queue.enter": 10195,
+        "seat.read": 2174,
+        "performance.detail": 2699
+      },
+      "errors": {
+        "queue.enter": {
+          "unexpected": 114,
+          "requests": 1017,
+          "rate": 0.11209439528023599
+        },
+        "seat.read": {
+          "unexpected": 2,
+          "requests": 1500,
+          "rate": 0.0013333333333333333
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 0,
+      "prepareSuccessfulResponses": 0,
+      "full600PrepareMeasurement": false,
+      "partialMetricsOnly": true
+    },
+    {
+      "label": "b4",
+      "variant": "b",
+      "startedAt": "2026-10-28T08:39:11.046Z",
+      "completedAt": "2026-10-28T08:50:09.475Z",
+      "execution": "grabit-load-releaseab-20261028-pck2d",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+      "frozenImageAndConfigurationVerified": true,
+      "full600SaleRun": false,
+      "status": "failed",
+      "p95Ms": {
+        "checkout.prepare": 2857,
+        "seat.lock": 2028,
+        "queue.enter": 5029,
+        "seat.read": 1942,
+        "performance.detail": 2342,
+        "checkout.confirm": 10042,
+        "queue.status": 1239,
+        "socket.seat-update": 1998
+      },
+      "errors": {
+        "checkout.confirm": {
+          "unexpected": 127,
+          "requests": 597,
+          "rate": 0.21273031825795644
+        },
+        "checkout.duplicate-replay": {
+          "unexpected": 2,
+          "requests": 6,
+          "rate": 0.3333333333333333
+        },
+        "queue.status": {
+          "unexpected": 5991,
+          "requests": 35795,
+          "rate": 0.16736974437770638
+        }
+      },
+      "allRequestsErrorFree": false,
+      "prepareRequests": 600,
+      "prepareSuccessfulResponses": 600,
+      "full600PrepareMeasurement": true,
+      "partialMetricsOnly": true
+    }
+  ],
+  "completeRunCounts": {
+    "a": 1,
+    "b": 2
+  },
+  "primaryPrepareComparison": {
+    "metric": "checkout.prepare p95",
+    "qualification": "all three cohorts / 600 client prepare attempts using the original metrics algorithm, including errors and 30-second client timeouts; successful response count and failed sales are reported separately",
+    "a": {
+      "n": 2,
+      "median": 5525.0,
+      "values": [
+        5546,
+        5504
+      ],
+      "labels": [
+        "a2",
+        "a3"
+      ]
+    },
+    "b": {
+      "n": 4,
+      "median": 4043.5,
+      "values": [
+        4406,
+        3681,
+        5422,
+        2857
+      ],
+      "labels": [
+        "b1",
+        "b2",
+        "b3",
+        "b4"
+      ]
+    },
+    "observedChangePercent": -26.81,
+    "observedChangeMs": -1481.5
+  },
+  "fullSaleRunSecondarySummary": {
+    "checkout.prepare": {
+      "a": {
+        "n": 1,
+        "median": 5546,
+        "min": 5546,
+        "max": 5546,
+        "values": [
+          5546
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 4043.5,
+        "min": 3681,
+        "max": 4406,
+        "values": [
+          4406,
+          3681
+        ]
+      },
+      "observedChangePercent": -27.09,
+      "observedChangeMs": -1502.5
+    },
+    "seat.lock": {
+      "a": {
+        "n": 1,
+        "median": 2628,
+        "min": 2628,
+        "max": 2628,
+        "values": [
+          2628
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 2339.0,
+        "min": 2286,
+        "max": 2392,
+        "values": [
+          2392,
+          2286
+        ]
+      },
+      "observedChangePercent": -11.0,
+      "observedChangeMs": -289.0
+    },
+    "queue.enter": {
+      "a": {
+        "n": 1,
+        "median": 5868,
+        "min": 5868,
+        "max": 5868,
+        "values": [
+          5868
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 5480.5,
+        "min": 5388,
+        "max": 5573,
+        "values": [
+          5388,
+          5573
+        ]
+      },
+      "observedChangePercent": -6.6,
+      "observedChangeMs": -387.5
+    },
+    "seat.read": {
+      "a": {
+        "n": 1,
+        "median": 2315,
+        "min": 2315,
+        "max": 2315,
+        "values": [
+          2315
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 2175.5,
+        "min": 2099,
+        "max": 2252,
+        "values": [
+          2099,
+          2252
+        ]
+      },
+      "observedChangePercent": -6.03,
+      "observedChangeMs": -139.5
+    },
+    "performance.detail": {
+      "a": {
+        "n": 1,
+        "median": 2792,
+        "min": 2792,
+        "max": 2792,
+        "values": [
+          2792
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 2468.0,
+        "min": 2418,
+        "max": 2518,
+        "values": [
+          2518,
+          2418
+        ]
+      },
+      "observedChangePercent": -11.6,
+      "observedChangeMs": -324.0
+    },
+    "checkout.confirm": {
+      "a": {
+        "n": 1,
+        "median": 640,
+        "min": 640,
+        "max": 640,
+        "values": [
+          640
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 645.0,
+        "min": 631,
+        "max": 659,
+        "values": [
+          659,
+          631
+        ]
+      },
+      "observedChangePercent": 0.78,
+      "observedChangeMs": 5.0
+    },
+    "queue.status": {
+      "a": {
+        "n": 1,
+        "median": 222,
+        "min": 222,
+        "max": 222,
+        "values": [
+          222
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 322.5,
+        "min": 144,
+        "max": 501,
+        "values": [
+          501,
+          144
+        ]
+      },
+      "observedChangePercent": 45.27,
+      "observedChangeMs": 100.5
+    },
+    "socket.seat-update": {
+      "a": {
+        "n": 1,
+        "median": 2625,
+        "min": 2625,
+        "max": 2625,
+        "values": [
+          2625
+        ]
+      },
+      "b": {
+        "n": 2,
+        "median": 2335.5,
+        "min": 2276,
+        "max": 2395,
+        "values": [
+          2395,
+          2276
+        ]
+      },
+      "observedChangePercent": -11.03,
+      "observedChangeMs": -289.5
+    }
+  },
+  "statisticalSignificanceClaimed": false,
+  "notes": [
+    "Incomplete prepare measurements are excluded from the primary prepare comparison.",
+    "A3 completed all 600 prepare responses before a later confirmation failed; B3 recorded 600 prepare attempts including two client timeouts. Neither is relabeled a completed 600-sale run.",
+    "Partial failed sales are excluded from full-sale-run secondary latency medians.",
+    "A completed run with transient request errors remains a completed run; its errors are reported separately and are not relabeled as zero.",
+    "The original load harness requires each route error rate below 1%; zero-error achievement and absolute latency SLO are reported separately.",
+    "The orchestration helper originally labeled only error-free runs eligible; analysis derives completion from the original result instead of that overly broad label."
+  ]
+}

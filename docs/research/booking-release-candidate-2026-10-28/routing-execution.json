@@ -1,0 +1,7 @@
+{
+  "execution": "grabit-load-releaseab-20261028-zw7hd",
+  "apiRevision": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+  "applicationRevisionChanged": false,
+  "startedAt": "2026-10-28T09:32:25.919978+00:00",
+  "purpose": "same revision, fresh HTTP health probes with/without existing affinity cookies; original failure metrics retained"
+}

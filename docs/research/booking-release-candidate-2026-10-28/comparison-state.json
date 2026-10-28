@@ -1,0 +1,357 @@
+{
+  "startedAt": "2026-10-28T06:36:22.802658+00:00",
+  "stage": "comparison-complete",
+  "runs": [
+    {
+      "label": "a1",
+      "variant": "a",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00003-qfr",
+      "execution": "grabit-load-releaseab-20261028-q7x7j",
+      "executionStatus": {
+        "completionTime": "2026-10-28T06:51:42.195625Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T06:51:42.195625Z",
+            "message": "Task grabit-load-releaseab-20261028-q7x7j-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T06:43:58.965445Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T06:44:04.710273Z",
+            "message": "Started deployed execution in 5.74s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T06:43:58.516927Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "failed",
+      "p95": {}
+    },
+    {
+      "label": "b1",
+      "variant": "b",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00005-tcx",
+      "execution": "grabit-load-releaseab-20261028-wf5th",
+      "executionStatus": {
+        "completionTime": "2026-10-28T07:11:50.331288Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T07:11:50.331288Z",
+            "message": "Task grabit-load-releaseab-20261028-wf5th-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:00:41.598949Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:00:45.670639Z",
+            "message": "Started deployed execution in 4.07s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:00:41.172675Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "capacity_limited",
+      "p95": {
+        "checkout.confirm": 659,
+        "checkout.duplicate-inflight": 1215,
+        "checkout.duplicate-replay": 74,
+        "checkout.prepare": 4406,
+        "performance.detail": 2518,
+        "queue.enter": 5388,
+        "queue.status": 501,
+        "queue.status.final": 356,
+        "seat.lock": 2392,
+        "seat.read": 2099,
+        "socket.seat-update": 2395
+      },
+      "eligibleForFullRunLatencyComparison": false,
+      "failureRecorded": true
+    },
+    {
+      "label": "b2",
+      "variant": "b",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00007-sh7",
+      "execution": "grabit-load-releaseab-20261028-9wqsq",
+      "executionStatus": {
+        "completionTime": "2026-10-28T07:27:19.591063Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T07:27:19.591063Z",
+            "message": "Task grabit-load-releaseab-20261028-9wqsq-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:16:10.155982Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:16:15.054673Z",
+            "message": "Started deployed execution in 4.89s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:16:09.730556Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "capacity_limited",
+      "p95": {
+        "checkout.confirm": 631,
+        "checkout.duplicate-inflight": 1054,
+        "checkout.duplicate-replay": 208,
+        "checkout.prepare": 3681,
+        "performance.detail": 2418,
+        "queue.enter": 5573,
+        "queue.status": 144,
+        "queue.status.final": 209,
+        "seat.lock": 2286,
+        "seat.read": 2252,
+        "socket.seat-update": 2276
+      },
+      "eligibleForFullRunLatencyComparison": true,
+      "auditPassed": true,
+      "finishedAt": "2026-10-28T07:28:48.136716+00:00"
+    },
+    {
+      "label": "a2",
+      "variant": "a",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00009-zvk",
+      "execution": "grabit-load-releaseab-20261028-9h74c",
+      "executionStatus": {
+        "completionTime": "2026-10-28T07:43:35.357195Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T07:43:35.357195Z",
+            "message": "Task grabit-load-releaseab-20261028-9h74c-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:32:26.689934Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:32:31.764072Z",
+            "message": "Started deployed execution in 5.07s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T07:32:26.223944Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "capacity_limited",
+      "p95": {
+        "checkout.confirm": 640,
+        "checkout.duplicate-inflight": 1135,
+        "checkout.duplicate-replay": 47,
+        "checkout.prepare": 5546,
+        "performance.detail": 2792,
+        "queue.enter": 5868,
+        "queue.status": 222,
+        "queue.status.final": 139,
+        "seat.lock": 2628,
+        "seat.read": 2315,
+        "socket.seat-update": 2625
+      },
+      "eligibleForFullRunLatencyComparison": true,
+      "auditPassed": true,
+      "finishedAt": "2026-10-28T07:45:03.705244+00:00"
+    },
+    {
+      "label": "a3",
+      "variant": "a",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00011-wc9",
+      "execution": "grabit-load-releaseab-20261028-wpl5t",
+      "executionStatus": {
+        "completionTime": "2026-10-28T07:59:31.161014Z",
+        "succeededCount": null,
+        "failedCount": 1
+      },
+      "resultStatus": "failed",
+      "failureRecorded": true,
+      "eligibleForFullRunLatencyComparison": false
+    },
+    {
+      "label": "b3",
+      "variant": "b",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00013-8rh",
+      "execution": "grabit-load-releaseab-20261028-d2kwb",
+      "executionStatus": {
+        "completionTime": "2026-10-28T08:25:04.969739Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T08:25:04.969739Z",
+            "message": "Task grabit-load-releaseab-20261028-d2kwb-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:13:32.538239Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:13:37.433152Z",
+            "message": "Started deployed execution in 4.89s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:13:32.078409Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "failed",
+      "p95": {},
+      "eligibleForFullRunLatencyComparison": false,
+      "failureRecorded": true
+    },
+    {
+      "label": "a4",
+      "variant": "a",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+      "execution": "grabit-load-releaseab-20261028-lvzd2",
+      "executionStatus": {
+        "completionTime": "2026-10-28T08:29:32.768665Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T08:29:32.768665Z",
+            "message": "Task grabit-load-releaseab-20261028-lvzd2-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:28:58.537902Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:29:01.735446Z",
+            "message": "Started deployed execution in 3.19s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:28:58.083420Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "failed",
+      "p95": {},
+      "eligibleForFullRunLatencyComparison": false,
+      "failureRecorded": true
+    },
+    {
+      "label": "b4",
+      "variant": "b",
+      "apiRevision": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+      "execution": "grabit-load-releaseab-20261028-pck2d",
+      "executionStatus": {
+        "completionTime": "2026-10-28T08:50:12.958815Z",
+        "succeededCount": 0,
+        "failedCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-28T08:50:12.958815Z",
+            "message": "Task grabit-load-releaseab-20261028-pck2d-task0 failed with exit code: 1 and message: The container exited with an error.",
+            "reason": "NonZeroExitCode",
+            "status": "False",
+            "type": "Completed"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:39:05.492753Z",
+            "message": "Provisioned imported containers.",
+            "status": "True",
+            "type": "ResourcesAvailable"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:39:09.027536Z",
+            "message": "Started deployed execution in 3.53s.",
+            "status": "True",
+            "type": "Started"
+          },
+          {
+            "lastTransitionTime": "2026-10-28T08:39:05.041677Z",
+            "message": "Imported container image.",
+            "status": "True",
+            "type": "ContainerReady"
+          }
+        ]
+      },
+      "resultStatus": "failed",
+      "p95": {},
+      "eligibleForFullRunLatencyComparison": false,
+      "failureRecorded": true
+    }
+  ],
+  "updatedAt": "2026-10-28T08:50:47.100941+00:00",
+  "pollingReadFailure": {
+    "recordedAt": "2026-10-28T07:53:20.248512+00:00",
+    "type": "CalledProcessError",
+    "readSucceededOnManualRetry": true,
+    "loadExecutionWasNotInterrupted": true
+  }
+}

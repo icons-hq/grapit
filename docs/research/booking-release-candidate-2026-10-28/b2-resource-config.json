@@ -1,0 +1,114 @@
+{
+  "isolatedApi": {
+    "name": "grabit-rehearsal-releaseab-20261028",
+    "readyRevision": "grabit-rehearsal-releaseab-20261028-00007-sh7",
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:34833f134aafe65c90710ede697e2695287e9ef5386fba3d23e7690db078077c",
+    "traffic": [
+      {
+        "latestRevision": true,
+        "percent": 100,
+        "revisionName": "grabit-rehearsal-releaseab-20261028-00007-sh7"
+      }
+    ],
+    "resources": {
+      "limits": {
+        "cpu": "1",
+        "memory": "512Mi"
+      }
+    },
+    "concurrency": 1000,
+    "autoscaling": {
+      "run.googleapis.com/maxScale": "2",
+      "run.googleapis.com/minScale": "2",
+      "autoscaling.knative.dev/maxScale": "2"
+    },
+    "settings": {
+      "DB_POOL_MAX": "5",
+      "QUEUE_MAX_ACTIVE_ADMISSIONS": "200",
+      "BOOKING_ENABLED": "true",
+      "BACKGROUND_PROCESSING_ENABLED": "false",
+      "NODE_OPTIONS": "--max-old-space-size=256"
+    },
+    "cloudSqlInstances": "grapit-491806:asia-northeast3:grabit-db-releaseab-20261028",
+    "databaseBindingKind": "literal-test-binding"
+  },
+  "productionApi": {
+    "name": "grabit-api",
+    "readyRevision": "grabit-api-00268-2sd",
+    "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:7ff9d8b5655ca7a34648b9311bc15a2c0984391f",
+    "traffic": [
+      {
+        "latestRevision": true,
+        "percent": 100,
+        "revisionName": "grabit-api-00268-2sd"
+      }
+    ],
+    "resources": {
+      "limits": {
+        "cpu": "1",
+        "memory": "512Mi"
+      }
+    },
+    "concurrency": 1000,
+    "autoscaling": {
+      "run.googleapis.com/maxScale": "2",
+      "autoscaling.knative.dev/maxScale": "2"
+    },
+    "settings": {
+      "DB_POOL_MAX": "5",
+      "QUEUE_MAX_ACTIVE_ADMISSIONS": "200",
+      "BOOKING_ENABLED": "true",
+      "BACKGROUND_PROCESSING_ENABLED": "false",
+      "NODE_OPTIONS": "--max-old-space-size=256"
+    },
+    "cloudSqlInstances": "grapit-491806:asia-northeast3:grabit-db-managed-demo",
+    "databaseBindingKind": "secret-reference"
+  },
+  "isolatedSql": {
+    "name": "grabit-db-releaseab-20261028",
+    "state": "RUNNABLE",
+    "databaseVersion": "POSTGRES_16",
+    "tier": "db-f1-micro",
+    "diskGiB": "10",
+    "availability": "ZONAL",
+    "flags": []
+  },
+  "productionSql": {
+    "name": "grabit-db-managed-demo",
+    "state": "RUNNABLE",
+    "databaseVersion": "POSTGRES_16",
+    "tier": "db-f1-micro",
+    "diskGiB": "10",
+    "availability": "ZONAL",
+    "flags": []
+  },
+  "isolatedValkey": {
+    "name": "projects/grapit-491806/locations/asia-northeast3/instances/grabit-valkey-releaseab-20261028",
+    "state": "ACTIVE",
+    "nodeType": "CUSTOM_PICO",
+    "replicaCount": 1,
+    "mode": "CLUSTER_DISABLED",
+    "engineVersion": "VALKEY_8_0",
+    "zoneDistributionConfig": {
+      "mode": "MULTI_ZONE"
+    },
+    "engineConfigs": {
+      "maxmemory-policy": "noeviction"
+    }
+  },
+  "productionValkey": {
+    "name": "projects/grapit-491806/locations/asia-northeast3/instances/grabit-valkey-600-ha",
+    "state": "ACTIVE",
+    "nodeType": "CUSTOM_PICO",
+    "replicaCount": 1,
+    "mode": "CLUSTER_DISABLED",
+    "engineVersion": "VALKEY_8_0",
+    "zoneDistributionConfig": {
+      "mode": "MULTI_ZONE"
+    },
+    "engineConfigs": {
+      "maxmemory-policy": "noeviction"
+    }
+  },
+  "readAt": "2026-10-28T07:16:08.232398+00:00"
+}

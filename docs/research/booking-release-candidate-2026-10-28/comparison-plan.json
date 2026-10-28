@@ -1,0 +1,32 @@
+{
+  "writtenAt": "2026-10-28T06:33:31.958049+00:00",
+  "purpose": "Choose release candidate; no further micro optimization",
+  "variants": {
+    "a": "previous completed source, prepare p95 4277ms",
+    "b": "last candidate, prepare p95 5949ms"
+  },
+  "sequence": [
+    "a1",
+    "b1",
+    "b2",
+    "a2",
+    "a3",
+    "b3"
+  ],
+  "resources": "same physical isolated PostgreSQL/Valkey; API1vCPU512MiB max2; pool5; admission200",
+  "perRun": "fresh API revision, same warmup, empty migrated synthetic DB and Valkey, 1500 visitors/600 seats; no profiler; simulated PG300ms paced1/s",
+  "primaryMetric": "checkout.prepare per-run p95, median/range and paired differences; a run is the replication unit",
+  "releaseDecision": {
+    "correctness": "all600 seats/reservations/tickets/QR and cap200 invariants; no unexpected errors",
+    "materialRegression": "candidate median p95 more than 10% AND 250ms slower than baseline, supported by pairwise pattern; this is a practical decision margin, not a statistical noise interval",
+    "uncertain": "one additional AB/BA pair if decision ambiguous, otherwise choose prior candidate and preserve unselected source",
+    "slo": "existing unmet overall latency targets remain explicitly unmet; no threshold relaxation"
+  },
+  "scopeExcludes": [
+    "production data in load test",
+    "real provider charge/refund",
+    "cap increase",
+    "hardware increase",
+    "new application optimization"
+  ]
+}

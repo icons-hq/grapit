@@ -1,0 +1,3380 @@
+{
+  "apiResources": {
+    "cpu": 1,
+    "heapMiB": 256,
+    "maxInstances": 2,
+    "memoryMiB": 512,
+    "minInstances": 2
+  },
+  "apiService": "grabit-rehearsal-releaseab-20261028",
+  "completedAt": "2026-10-28T09:43:28.006Z",
+  "database": "grabit_rehearsal_releaseab_20261028",
+  "diagnosticOnly": true,
+  "environment": "private-cloud-run-rehearsal",
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "provider": "simulated-300ms-no-provider-network",
+  "routingDiagnostic": true,
+  "routingProbes": [
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 288,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:32:48.498Z",
+      "withCookies": {
+        "elapsedMs": 289,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 288,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 1160,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:32:53.497Z",
+      "withCookies": {
+        "elapsedMs": 1455,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 1453,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 146,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:32:58.519Z",
+      "withCookies": {
+        "elapsedMs": 255,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 254,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 106,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:03.519Z",
+      "withCookies": {
+        "elapsedMs": 108,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 108,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:08.519Z",
+      "withCookies": {
+        "elapsedMs": 273,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 287,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 147,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:13.519Z",
+      "withCookies": {
+        "elapsedMs": 135,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 203,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:18.520Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 55,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:23.520Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:28.521Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:33.521Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:38.521Z",
+      "withCookies": {
+        "elapsedMs": 58,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:43.521Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:48.521Z",
+      "withCookies": {
+        "elapsedMs": 71,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 67,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:53.522Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 62,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 191,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:33:58.522Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 198,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:03.523Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:08.523Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:13.522Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:18.523Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:23.523Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 57,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:28.523Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:33.523Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 59,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:38.523Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 60,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:43.523Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:48.523Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:53.523Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:34:58.523Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:03.523Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:08.523Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:13.523Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:18.525Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 97,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:23.525Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:28.526Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:33.526Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:38.526Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:43.526Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:48.526Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:53.526Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:35:58.526Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:03.526Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:08.526Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:13.526Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:18.527Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:23.527Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:28.527Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:33.527Z",
+      "withCookies": {
+        "elapsedMs": 57,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 92,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:38.528Z",
+      "withCookies": {
+        "elapsedMs": 58,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:43.529Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:48.529Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:53.529Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:36:58.529Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:03.529Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:08.530Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:13.530Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:18.530Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:23.530Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:28.530Z",
+      "withCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 239,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:33.530Z",
+      "withCookies": {
+        "elapsedMs": 236,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 250,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 82,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:38.530Z",
+      "withCookies": {
+        "elapsedMs": 82,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 91,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:43.530Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:48.530Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:53.530Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:37:58.530Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 46,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:03.530Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:08.530Z",
+      "withCookies": {
+        "elapsedMs": 62,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 58,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 45,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:13.530Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:18.530Z",
+      "withCookies": {
+        "elapsedMs": 64,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:23.530Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 65,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:28.530Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:33.530Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:38.530Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 57,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:43.530Z",
+      "withCookies": {
+        "elapsedMs": 57,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:48.530Z",
+      "withCookies": {
+        "elapsedMs": 58,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:53.530Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:38:58.530Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:03.530Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:08.530Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:13.530Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:18.530Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:23.531Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:28.531Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 56,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:33.531Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:38.531Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:43.531Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:48.531Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 65,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:53.531Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 310,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:39:58.534Z",
+      "withCookies": {
+        "elapsedMs": 234,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 329,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:03.534Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:08.534Z",
+      "withCookies": {
+        "elapsedMs": 67,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:13.534Z",
+      "withCookies": {
+        "elapsedMs": 2792,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 84,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:18.534Z",
+      "withCookies": {
+        "elapsedMs": 1187,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 585,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:23.534Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:28.534Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:33.534Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 343,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 145,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:38.534Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 58,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:43.534Z",
+      "withCookies": {
+        "elapsedMs": 1057,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 220,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:48.534Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:53.534Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 435,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:40:58.535Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 263,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:03.535Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 73,
+        "instance": "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:08.535Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:13.535Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:18.535Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:23.535Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:28.535Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:33.535Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:38.535Z",
+      "withCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 47,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:43.536Z",
+      "withCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 59,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:48.536Z",
+      "withCookies": {
+        "elapsedMs": 65,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 67,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:53.536Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:41:58.536Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:03.536Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:08.537Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:13.537Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:18.537Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:23.537Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:28.537Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:33.537Z",
+      "withCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:38.537Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 84,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:43.537Z",
+      "withCookies": {
+        "elapsedMs": 91,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 85,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:48.537Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:53.537Z",
+      "withCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:42:58.537Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 60,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:43:03.537Z",
+      "withCookies": {
+        "elapsedMs": 51,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 54,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:43:08.537Z",
+      "withCookies": {
+        "elapsedMs": 55,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:43:13.537Z",
+      "withCookies": {
+        "elapsedMs": 56,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 48,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:43:18.538Z",
+      "withCookies": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 49,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    },
+    {
+      "cookieNames": [
+        "refreshToken",
+        "GAESA",
+        "grabit_queue_admission"
+      ],
+      "kind": "routing-health-probe",
+      "noCookies": {
+        "elapsedMs": 53,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "startedAt": "2026-10-28T09:43:23.538Z",
+      "withCookies": {
+        "elapsedMs": 52,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      },
+      "withoutAffinity": {
+        "elapsedMs": 50,
+        "instance": "a592672f-118e-4eec-84af-5cb6c3cad688",
+        "status": 200
+      }
+    }
+  ],
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:9fee353d7e65e95f8921434abe8b5d7db9850ac74b512d30b44d0b3f38309dd3",
+  "startedAt": "2026-10-28T09:32:33.594Z",
+  "status": "capacity_limited",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 200,
+    "apiInstances": 2,
+    "dbPoolMax": 5,
+    "saleSeats": 600,
+    "socketClients": 100
+  },
+  "waves": [
+    {
+      "activeAdmissionLimit": 200,
+      "admitted": 200,
+      "apiInstancesObserved": 2,
+      "apiRssMiBObservedMax": [
+        215,
+        217
+      ],
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "cohorts": [
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061": 114,
+            "a592672f-118e-4eec-84af-5cb6c3cad688": 86
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        },
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061": 117,
+            "a592672f-118e-4eec-84af-5cb6c3cad688": 83
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        },
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "1e08e541-b2b8-47b0-9f3d-fc6ca4c4f061": 8,
+            "a592672f-118e-4eec-84af-5cb6c3cad688": 192
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        }
+      ],
+      "durationMs": 651317,
+      "finalWaiting": 900,
+      "initialWaiting": 1300,
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "maxConcurrentPolls": 124,
+      "memoryBudgetPassed": true,
+      "metrics": {
+        "checkout.confirm": {
+          "errorRate": 0,
+          "maxMs": 1326,
+          "outcomes": {
+            "none": 597
+          },
+          "p50Ms": 440,
+          "p95Ms": 597,
+          "requests": 597,
+          "statuses": {
+            "201": 597
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-inflight": {
+          "errorRate": 0,
+          "maxMs": 588,
+          "outcomes": {
+            "none": 9
+          },
+          "p50Ms": 124,
+          "p95Ms": 588,
+          "requests": 9,
+          "statuses": {
+            "201": 3,
+            "503": 6
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-replay": {
+          "errorRate": 0,
+          "maxMs": 131,
+          "outcomes": {
+            "none": 6
+          },
+          "p50Ms": 54,
+          "p95Ms": 131,
+          "requests": 6,
+          "statuses": {
+            "201": 6
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 4075,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 1937,
+          "p95Ms": 3460,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 2716,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1392,
+          "p95Ms": 2479,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 6369,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 3459,
+          "p95Ms": 5967,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status": {
+          "errorRate": 0.0002455795677799607,
+          "maxMs": 3359,
+          "outcomes": {
+            "none": 36648
+          },
+          "p50Ms": 28,
+          "p95Ms": 226,
+          "requests": 36648,
+          "statuses": {
+            "200": 36639,
+            "503": 9
+          },
+          "unexpectedErrors": 9
+        },
+        "queue.status.final": {
+          "errorRate": 0,
+          "maxMs": 387,
+          "outcomes": {
+            "none": 900
+          },
+          "p50Ms": 110,
+          "p95Ms": 283,
+          "requests": 900,
+          "statuses": {
+            "200": 900
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 2055,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 1061,
+          "p95Ms": 1853,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 2269,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1209,
+          "p95Ms": 2080,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 2101,
+          "outcomes": {
+            "none": 60000
+          },
+          "p50Ms": 1204,
+          "p95Ms": 1852,
+          "requests": 60000,
+          "statuses": {
+            "delivered": 60000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "paymentConfirmTargetPassed": true,
+      "peakActiveAdmissions": 200,
+      "queueSockets": {
+        "admissionEventsReceived": 400,
+        "connected": 1300,
+        "expectedAdmissionEvents": 400,
+        "positionMessages": 190000
+      },
+      "seats": 600,
+      "sessions": 1500,
+      "sloPassed": false,
+      "socketFanout": {
+        "clients": 100,
+        "delivered": 60000,
+        "duplicateDeliveries": 0,
+        "expectedDeliveries": 60000
+      }
+    }
+  ],
+  "workload": {
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "profilingEnabled": false
+  }
+}

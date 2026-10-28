@@ -1,0 +1,989 @@
+{
+  "timeSeries": [
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Adaptive Concurrency Tuning"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "location": "asia-northeast3",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "project_id": "grapit-491806",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "CPU Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+          "project_id": "grapit-491806",
+          "location": "asia-northeast3",
+          "service_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Concurrency Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+          "location": "asia-northeast3",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "project_id": "grapit-491806"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "System"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00015-2q2",
+          "project_id": "grapit-491806",
+          "location": "asia-northeast3",
+          "service_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Adaptive Concurrency Tuning"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "project_id": "grapit-491806",
+          "location": "asia-northeast3",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00016-fbg",
+          "service_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "CPU Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00016-fbg",
+          "location": "asia-northeast3",
+          "project_id": "grapit-491806"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Concurrency Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "location": "asia-northeast3",
+          "project_id": "grapit-491806",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00016-fbg",
+          "service_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "System"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "project_id": "grapit-491806",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00016-fbg",
+          "location": "asia-northeast3"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Adaptive Concurrency Tuning"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "project_id": "grapit-491806",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "location": "asia-northeast3",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00017-xt4"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:50:00Z",
+            "endTime": "2026-10-28T08:50:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:49:00Z",
+            "endTime": "2026-10-28T08:49:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:48:00Z",
+            "endTime": "2026-10-28T08:48:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:47:00Z",
+            "endTime": "2026-10-28T08:47:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:46:00Z",
+            "endTime": "2026-10-28T08:46:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:45:00Z",
+            "endTime": "2026-10-28T08:45:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "CPU Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "project_id": "grapit-491806",
+          "location": "asia-northeast3"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:50:00Z",
+            "endTime": "2026-10-28T08:50:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:49:00Z",
+            "endTime": "2026-10-28T08:49:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:48:00Z",
+            "endTime": "2026-10-28T08:48:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:47:00Z",
+            "endTime": "2026-10-28T08:47:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:46:00Z",
+            "endTime": "2026-10-28T08:46:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:45:00Z",
+            "endTime": "2026-10-28T08:45:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "Concurrency Utilization"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "project_id": "grapit-491806",
+          "location": "asia-northeast3",
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:50:00Z",
+            "endTime": "2026-10-28T08:50:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:49:00Z",
+            "endTime": "2026-10-28T08:49:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:48:00Z",
+            "endTime": "2026-10-28T08:48:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:47:00Z",
+            "endTime": "2026-10-28T08:47:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:46:00Z",
+            "endTime": "2026-10-28T08:46:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:45:00Z",
+            "endTime": "2026-10-28T08:45:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "metric": {
+        "labels": {
+          "scaling_driver": "System"
+        },
+        "type": "run.googleapis.com/scaling/recommended_instances"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "revision_name": "grabit-rehearsal-releaseab-20261028-00017-xt4",
+          "configuration_name": "grabit-rehearsal-releaseab-20261028",
+          "service_name": "grabit-rehearsal-releaseab-20261028",
+          "location": "asia-northeast3",
+          "project_id": "grapit-491806"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "INT64",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:50:00Z",
+            "endTime": "2026-10-28T08:50:00Z"
+          },
+          "value": {
+            "int64Value": "1"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:49:00Z",
+            "endTime": "2026-10-28T08:49:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:48:00Z",
+            "endTime": "2026-10-28T08:48:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:47:00Z",
+            "endTime": "2026-10-28T08:47:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:46:00Z",
+            "endTime": "2026-10-28T08:46:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:45:00Z",
+            "endTime": "2026-10-28T08:45:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:44:00Z",
+            "endTime": "2026-10-28T08:44:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:43:00Z",
+            "endTime": "2026-10-28T08:43:00Z"
+          },
+          "value": {
+            "int64Value": "2"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:42:00Z",
+            "endTime": "2026-10-28T08:42:00Z"
+          },
+          "value": {
+            "int64Value": "5"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:41:00Z",
+            "endTime": "2026-10-28T08:41:00Z"
+          },
+          "value": {
+            "int64Value": "7"
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-10-28T08:40:00Z",
+            "endTime": "2026-10-28T08:40:00Z"
+          },
+          "value": {
+            "int64Value": "0"
+          }
+        }
+      ]
+    }
+  ],
+  "unit": "1"
+}

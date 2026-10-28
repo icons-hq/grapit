@@ -1,0 +1,49 @@
+{
+  "apiRevision": "grabit-rehearsal-releaseab-20261028-00013-8rh",
+  "windowStart": "2026-10-28T08:13:39.760Z",
+  "windowEnd": "2026-10-28T08:25:01.792Z",
+  "serverRequestLogCount": 600,
+  "statuses": {
+    "201": 600
+  },
+  "maxServerLatencySeconds": 38.911692874,
+  "clientPrepare": {
+    "errorRate": 0.0033333333333333335,
+    "maxMs": 30002,
+    "outcomes": {
+      "ABORT_ERR": 2,
+      "none": 598
+    },
+    "p50Ms": 3295,
+    "p95Ms": 5422,
+    "requests": 600,
+    "statuses": {
+      "201": 598,
+      "transport_error": 2
+    },
+    "unexpectedErrors": 2
+  },
+  "slowOrFailed": [
+    {
+      "httpRequest": {
+        "latency": "22.507058018s",
+        "status": 201
+      },
+      "timestamp": "2026-10-28T08:21:13.731700Z"
+    },
+    {
+      "httpRequest": {
+        "latency": "38.911692874s",
+        "status": 201
+      },
+      "timestamp": "2026-10-28T08:21:13.736417Z"
+    },
+    {
+      "httpRequest": {
+        "latency": "37.523553863s",
+        "status": 201
+      },
+      "timestamp": "2026-10-28T08:21:13.736472Z"
+    }
+  ]
+}

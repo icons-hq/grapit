@@ -1,0 +1,156 @@
+[
+  {
+    "time": "2026-10-28T07:01:26.394784Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.136762846s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:01:26.635953Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.039902476s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:04:53.721544Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.025742005s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:04:53.721602Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.029627256s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:08:21.203779Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.024304444s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:08:21.215847Z",
+    "status": 503,
+    "path": "payments",
+    "latency": "0.024869146s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T07:09:24.455364Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "5.252319495s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:24.455620Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "1.324318685s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:24.555119Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "5.152419311s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:24.956552Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "4.751246216s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.056971Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "0.722759958s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.057805Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "0.722232163s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.057901Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "4.649979831s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.258103Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "0.521900374s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.258436Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "4.449436045s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.258532Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "4.449377962s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.358777Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "0.421553813s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.456580Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "5.752221709s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.656451Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "4.051447085s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.656670Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "0.123271108s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.657329Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "5.551531623s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T07:09:25.757504Z",
+    "status": 503,
+    "path": "queue",
+    "latency": "5.451471768s",
+    "platformConnectionError": true
+  }
+]

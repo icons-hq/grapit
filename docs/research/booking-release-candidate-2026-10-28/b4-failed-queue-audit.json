@@ -1,0 +1,19 @@
+{
+  "checkout": {
+    "confirmed": 473,
+    "credentials": 473,
+    "items": 473,
+    "sold": 473
+  },
+  "kind": "final-queue-audit",
+  "pass": false,
+  "readOnly": true,
+  "remainingActiveAdmissions": 127,
+  "remainingWaiting": 900,
+  "syntheticOnly": true,
+  "waitingSessionStates": {
+    "MISSING": 900
+  },
+  "observedAt": "2026-10-28T09:24:16.273465Z",
+  "timingCaveat": "Audit ran about 34 minutes after the failed load; WAITING records may already have expired. This is not an immediate end-of-load waiting-state proof."
+}

@@ -1,0 +1,23 @@
+{
+  "checkedAt": "2026-10-28T09:49:38.951994+00:00",
+  "resources": {
+    "grabit-rehearsal-releaseab-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-load-releaseab-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-db-releaseab-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-valkey-releaseab-20261028": {
+      "httpStatus": 200,
+      "state": "DELETING",
+      "absent": false
+    }
+  },
+  "allAbsent": false
+}

@@ -1,0 +1,184 @@
+[
+  {
+    "time": "2026-10-28T08:14:18.850113Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.043528787s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:14:18.851667Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.046973031s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:17:48.633312Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.027523002s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:17:48.639443Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.024882472s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:21:22.596201Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "51.133142533s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:28.930429Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "44.799331742s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:43.888417Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.100160059s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:21:43.888424Z",
+    "status": 503,
+    "route": "payments",
+    "latency": "0.201581507s",
+    "platformConnectionError": false
+  },
+  {
+    "time": "2026-10-28T08:21:51.168155Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "22.569497281s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:51.168195Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "22.564469772s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:52.568302Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "21.164399095s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:56.770605Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "16.962584696s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:21:57.771336Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "15.961792664s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:00.372644Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "13.360752547s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:05.499806Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "8.236873523s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:06.799516Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "6.938881075s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:08.204172Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "5.532435091s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:09.615591Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "4.120874623s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.016785Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "0.251202395s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.118753Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "0.149813614s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.118895Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "2.619243943s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.118934Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "0.149553701s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.119016Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "2.617772772s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.123055Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "1.448823036s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.216903Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "0.051289697s",
+    "platformConnectionError": true
+  },
+  {
+    "time": "2026-10-28T08:22:11.217538Z",
+    "status": 503,
+    "route": "queue",
+    "latency": "0.652936544s",
+    "platformConnectionError": true
+  }
+]

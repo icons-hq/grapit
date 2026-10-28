@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-10-28T09:48:47.624091+00:00",
+  "configurationMatchesBefore": {
+    "productionApi": true,
+    "productionSql": true,
+    "productionValkey": true
+  },
+  "allMatch": true,
+  "productionDeploymentPerformed": false,
+  "servingRevision": "grabit-api-00268-2sd",
+  "admissionCap": "200"
+}

@@ -1,0 +1,17 @@
+{
+  "readOnly": true,
+  "ledgerCount": 50,
+  "journalEntries": 51,
+  "latestApplied": "1792989568714",
+  "latestSource": {
+    "idx": 50,
+    "version": "7",
+    "when": 1792989568714,
+    "tag": "0050_venue_layout_templates",
+    "breakpoints": true
+  },
+  "pending": [],
+  "initialCountExpectation": 51,
+  "correctedCountExpectation": 50,
+  "note": "Fresh isolated migration row count is not the historical production ledger count; deployment pending detection uses the migration timestamp. No schema or ledger change requested."
+}
