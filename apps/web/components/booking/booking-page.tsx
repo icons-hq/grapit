@@ -464,7 +464,7 @@ export function BookingPage({
       for (const tier of seatConfig.tiers) {
         const priceTier = performance.priceTiers.find((item) => item.tierName === tier.tierName);
         for (const seatId of tier.seatIds) {
-          tierMap.set(seatId, {
+          tierMap.set(normalizeSeatIdentity({ seatId, floorKey: seatMap.floorKey }).seatId, {
             tierName: tier.tierName,
             color: tier.color,
             price: priceTier?.price ?? 0,
@@ -832,8 +832,18 @@ export function BookingPage({
         releaseShowtimeHolds(previousShowtimeId);
       }
       setShowtime(nextShowtimeId);
+      // Browser back from checkout must restore the buyer's latest choice,
+      // rather than reapply the detail page's original showtime and release it.
+      const url = new URL(window.location.href);
+      if (url.pathname.endsWith(`/booking/${performanceId}`)) {
+        if (nextShowtimeId) url.searchParams.set('showtimeId', nextShowtimeId);
+        else url.searchParams.delete('showtimeId');
+        // Next's history patch ignores state with __NA; null lets it update
+        // useSearchParams and the auth/queue return URL along with the address bar.
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      }
     },
-    [releaseShowtimeHolds, setShowtime],
+    [performanceId, releaseShowtimeHolds, setShowtime],
   );
 
   /** Sales close at the showtime start (`now >= date_time`): drop it and its seats. */

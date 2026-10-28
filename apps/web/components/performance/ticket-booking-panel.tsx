@@ -31,6 +31,9 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
   },[showtimes]);
   const bookingHref = getLocalizedPathname(`/booking/${performance.id}`,locale) + (selected ? `?showtimeId=${selected.id}` : '');
   const ended = performance.showtimes.length > 0 && showtimes.length === 0;
+  // A selected day's last show can close while another day is still on sale.
+  // Keep the mobile calendar reachable so the buyer can choose that other day.
+  const canChooseSchedule = available && !ended;
   const canContinue = available && !ended && (selected !== null || performance.showtimes.length === 0);
   const label = verificationRequired ? legacy.performance.verifyCta : legacy.performance.bookCta;
   const cta = canContinue ? <Link className="ticket-book-cta" href={bookingHref}>{label}</Link>
@@ -55,7 +58,7 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
         {schedule}
         {cta}
       </DialogContent>
-      <div className="ticket-mobile-booking">{canContinue
+      <div className="ticket-mobile-booking">{canChooseSchedule
         ? <DialogTrigger asChild><button type="button" className="ticket-book-cta">{label}</button></DialogTrigger>
         : cta}</div>
     </Dialog>

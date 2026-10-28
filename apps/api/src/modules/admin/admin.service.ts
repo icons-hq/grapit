@@ -1130,7 +1130,12 @@ export class AdminService {
         }
       }
 
-      if (input.seatMaps) {
+      // Partial API updates may change only the venue. Retained seat maps still
+      // need the same source-venue validation as a full form submission.
+      const nextSeatMaps = input.seatMaps ?? (venueId !== undefined
+        ? await tx.select().from(seatMaps).where(eq(seatMaps.performanceId, id)) as PerformanceSeatMapInput[]
+        : undefined);
+      if (nextSeatMaps) {
         validTierNames ??= await this.performanceIntakeService.loadPriceTierNames(
           tx as unknown as DrizzleDB,
           id,
@@ -1143,7 +1148,7 @@ export class AdminService {
           tx as unknown as DrizzleDB,
           id,
           perf.venueId,
-          input.seatMaps,
+          nextSeatMaps,
           validTierNames,
           priceTierSnapshots,
           protectedStructure,

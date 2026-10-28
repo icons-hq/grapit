@@ -145,6 +145,36 @@ describe('Venue layout versions — public admin HTTP and PostgreSQL', () => {
     })).expect(422);
   });
 
+  it.each(['same source', 'omitted source', 'omitted floors'])('rejects a venue-only change with %s and rolls back the performance', async (mode) => {
+    const layout = (await request(app.getHttpServer()).post('/admin/venue-layouts').send(template()).expect(201)).body;
+    const event = (await request(app.getHttpServer()).post('/admin/performances').send(performance(layout)).expect(201)).body;
+    const before = (await request(app.getHttpServer()).get(`/admin/performances/${event.id}`).expect(200)).body;
+    const floors = mode === 'omitted source'
+      ? layout.seatMaps.map((floor: Record<string, unknown>) => ({ ...floor, venueLayoutId: undefined }))
+      : layout.seatMaps;
+    await request(app.getHttpServer()).put(`/admin/performances/${event.id}`).send({
+      venueName: `Another ${randomUUID()}`,
+      ...(mode === 'omitted floors' ? {} : { seatMaps: floors }),
+    }).expect(422);
+    const after = (await request(app.getHttpServer()).get(`/admin/performances/${event.id}`).expect(200)).body;
+    expect(after.venue).toEqual(before.venue);
+    expect(after.seatMaps).toEqual(before.seatMaps);
+  });
+
+  it('allows an explicit detached copy at another venue without changing the shared template', async () => {
+    const layout = (await request(app.getHttpServer()).post('/admin/venue-layouts').send(template()).expect(201)).body;
+    const event = (await request(app.getHttpServer()).post('/admin/performances').send(performance(layout)).expect(201)).body;
+    const venueName = `Detached ${randomUUID()}`;
+    await request(app.getHttpServer()).put(`/admin/performances/${event.id}`).send({
+      venueName,
+      seatMaps: layout.seatMaps.map((floor: Record<string, unknown>) => ({ ...floor, venueLayoutId: null })),
+    }).expect(200);
+    const after = (await request(app.getHttpServer()).get(`/admin/performances/${event.id}`).expect(200)).body;
+    expect(after.venue.name).toBe(venueName);
+    expect(after.seatMaps[0].venueLayoutId).not.toBe(layout.id);
+    expect((await request(app.getHttpServer()).get(`/admin/venue-layouts/${layout.id}`).expect(200)).body).toEqual(layout);
+  });
+
   it('blocks seat-layout replacement once sales are open', async () => {
     const layout = (await request(app.getHttpServer()).post('/admin/venue-layouts').send(template()).expect(201)).body;
     const event = await request(app.getHttpServer()).post('/admin/performances').send(performance(layout, { status: 'selling' })).expect(201);

@@ -14,6 +14,25 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-239-ticket-storefront-venue-layouts',
+    prNumber: 239,
+    title: '티켓 탐색·예매 화면과 공연장 좌석도 템플릿 개선',
+    summary: '공연 탐색과 날짜·좌석 선택을 정리하고, 공연장 좌석도를 버전별로 저장해 다른 공연에서 재사용할 수 있습니다.',
+    highlights: [
+      '장르·지역·날짜 검색, 오픈 예정, 찜한 공연과 최근 본 공연 제공',
+      '상세에서 선택한 회차 유지, 층·구역별 좌석 선택과 모바일 선택 요약 개선',
+      '공연장 좌석 템플릿 새 버전 저장·불러오기, 기존 공연의 좌석도·가격 유지',
+      '입장 200명 제한과 매진 후 추가 입장 방지, 기존 결제·좌석별 QR 유지',
+    ],
+    category: 'feature',
+    date: '2026-10-28',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/239',
+    evidence: [
+      '전체 단위 검사 4,492건, PostgreSQL·Valkey 통합 423건, 브라우저 E2E 26건 통과',
+      '데스크톱·모바일 실제 화면과 템플릿 버전 고정·기존 데이터 보존 업그레이드 검증',
+    ],
+  },
+  {
     id: 'pr-238-queue-sellout-admission',
     prNumber: 238,
     title: '매진 후 대기열 추가 입장 오류 수정',

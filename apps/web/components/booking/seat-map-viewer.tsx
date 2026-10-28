@@ -107,15 +107,16 @@ function getSeatIdentity(element: Element | null, floorKey?: string): SeatIdenti
   }
 
   const seatKey = element.getAttribute(SEAT_KEY_ATTR);
-  const seatId = element.getAttribute(SEAT_ID_ATTR) ?? (seatKey ? getLocalSeatId(seatKey) : null);
+  const sourceSeatId = element.getAttribute(SEAT_ID_ATTR) ?? seatKey;
 
-  if (!seatId) {
+  if (!sourceSeatId) {
     return null;
   }
 
+  const seatId = getLocalSeatId(sourceSeatId);
   const runtimeSeatId = floorKey
     ? toRuntimeSeatId(seatId, floorKey)
-    : seatKey ?? seatId;
+    : seatKey ?? sourceSeatId;
 
   return { runtimeSeatId, seatId };
 }

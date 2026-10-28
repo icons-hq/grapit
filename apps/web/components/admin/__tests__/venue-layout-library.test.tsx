@@ -53,4 +53,12 @@ describe('VenueLayoutLibrary', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '템플릿 불러오기' }).hasAttribute('disabled')).toBe(false));
     expect(apply).not.toHaveBeenCalled();
   });
+
+  it('lets the operator detach the old source after changing the venue', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue([]);
+    const apply = vi.fn();
+    render(<VenueLayoutLibrary venueName="다른 공연장" seatMaps={layout.seatMaps} onApply={apply} />, { wrapper: wrapper() });
+    await userEvent.setup().click(screen.getByRole('button', { name: '이 공연에서만 편집' }));
+    expect(apply).toHaveBeenCalledWith(layout.seatMaps.map((floor) => ({ ...floor, venueLayoutId: null })));
+  });
 });

@@ -69,8 +69,8 @@ export function VenueLayoutLibrary({ venueName, seatMaps, onApply, disabled = fa
       <Button type="button" variant="outline" disabled={disabled || busy || !selected} onClick={apply}>
         {loading ? <Loader2 className="size-4 animate-spin" /> : null}템플릿 불러오기</Button>
     </div>
-    {linked ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-3 text-sm">
-      <span>사용 중: <strong>{linked.layoutName} v{linked.version}</strong></span>
+    {sourceId ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-3 text-sm">
+      <span>사용 중: <strong>{linked ? `${linked.layoutName} v${linked.version}` : '연결된 좌석도'}</strong></span>
       <Button type="button" size="sm" variant="ghost" disabled={disabled || busy}
         onClick={() => onApply(seatMaps.map((floor) => ({ ...floor, venueLayoutId: null })))}>이 공연에서만 편집</Button>
     </div> : null}

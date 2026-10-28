@@ -323,6 +323,23 @@ export class PerformanceIntakeService {
     // detach) is a structure change even when its SVG happens to be identical.
     const sameSources = floors.every((floor) => floor.venueLayoutId === undefined
       || floor.venueLayoutId === previous.find((row) => row.floorKey === floor.floorKey)?.venueLayoutId);
+    if (sameSources) {
+      // Copy edits can keep exactly the same geometry while moving the event
+      // to another venue. Validate inherited source IDs before either no-op.
+      const ids = [...new Set(floors.flatMap((floor) => {
+        const id = floor.venueLayoutId ?? previous.find((row) => row.floorKey === floor.floorKey)?.venueLayoutId;
+        return id ? [id] : [];
+      }))];
+      if (ids.length) {
+        const sources = await tx.select({ id: venueLayouts.id, venueId: venueLayouts.venueId })
+          .from(venueLayouts).where(inArray(venueLayouts.id, ids));
+        if (sources.length !== ids.length || sources.some((source) => source.venueId !== venueId)) {
+          throw new UnprocessableEntityException({ message: 'Validation failed', errors: {
+            seatMaps: ['공연장과 연결된 좌석도 템플릿의 장소가 다릅니다. 템플릿을 다시 불러오거나 연결을 해제해주세요.'],
+          } });
+        }
+      }
+    }
     if (sameSources && stableJson(comparable(previous)) === stableJson(comparable(floors))) return;
     const structureProtected = protectedStructure ?? await this.lockAndCheckStructureProtection(tx, performanceId);
     // Seat maps saved before tier names were trimmed at the API boundary come back
