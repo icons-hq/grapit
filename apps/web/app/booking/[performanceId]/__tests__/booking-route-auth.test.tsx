@@ -21,6 +21,7 @@ const {
 }));
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({
     replace: routerReplaceMock,
     push: routerPushMock,

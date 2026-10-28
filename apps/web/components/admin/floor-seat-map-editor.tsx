@@ -103,6 +103,7 @@ function syncFloorTierStructure(
   return {
     ...floor,
     seatConfig: {
+      ...floor.seatConfig,
       tiers: sharedTiers.map((sharedTier, index) => ({
         tierName: sharedTier.tierName,
         color: sharedTier.color,
@@ -209,6 +210,7 @@ export function FloorSeatMapEditor({
         return {
           ...floor,
           seatConfig: {
+            ...floor.seatConfig,
             tiers: nextSharedTiers.map((sharedTier, tierIndex) => ({
               tierName: sharedTier.tierName,
               color: sharedTier.color,

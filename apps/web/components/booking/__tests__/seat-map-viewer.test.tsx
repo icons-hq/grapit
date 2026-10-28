@@ -126,6 +126,21 @@ describe('SeatMapViewer', () => {
     });
   });
 
+  it.each(['A-1', '1F:A-1'])('uses one floor prefix for a template SVG seat %s', async (svgSeatId) => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: true,
+      text: async () => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect data-seat-id="${svgSeatId}" x="10" y="10" width="30" height="30" /></svg>`,
+    } as Response);
+    const onSeatClick = vi.fn();
+    const { container } = render(<SeatMapViewer svgUrl="https://example.test/template.svg" floorKey="1F" floorLabel="1층"
+      seatConfig={{ tiers: [{ tierName: 'VIP', color: '#6C3CE0', seatIds: ['1F:A-1'] }] }}
+      seatStates={new Map()} selectedSeatIds={new Set()} onSeatClick={onSeatClick} maxSelect={2} />);
+    await waitFor(() => expect(container.querySelector('[data-seat-key="1F:A-1"]')).toBeTruthy());
+    fireEvent.click(container.querySelector('[data-seat-key="1F:A-1"]')!);
+    expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
+    expect(container.querySelector('[data-seat-key="1F:1F:A-1"]')).toBeNull();
+  });
+
   it('offers a keyboard seat list that keeps sold seats unavailable and calls the same selection boundary', async () => {
     window.history.replaceState({}, '', '/en/booking/test');
     const onSeatClick = vi.fn();
@@ -139,6 +154,29 @@ describe('SeatMapViewer', () => {
     fireEvent.change(select, { target: { value: '1F:A-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Select seat' }));
     expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
+  });
+
+  it('filters the keyboard list by section without rebuilding the SVG or losing selections', async () => {
+    const config = { ...mockSeatConfig, sections: [
+      { sectionKey: 'front', label: 'Front', seatIds: ['A-1', 'A-2'] },
+      { sectionKey: 'rear', label: 'Rear', seatIds: ['1F:B-1'] },
+    ] };
+    const props = { svgUrl: 'https://example.com/sections.svg', floorKey: '1F', seatConfig: config,
+      seatStates: new Map<string, SeatState>([['B-1', 'sold']]), selectedSeatIds: new Set(['1F:A-1']),
+      onSeatClick: vi.fn(), maxSelect: 4 };
+    const view = render(<SeatMapViewer {...props} focusedSectionKey="front" />);
+    const canvas = await screen.findByTestId('seat-map-canvas');
+    const firstSeat = canvas.querySelector('[data-seat-id="A-1"]');
+    fireEvent.click(screen.getByText('목록에서 좌석 선택'));
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3));
+    view.rerender(<SeatMapViewer {...props} focusedSectionKey="rear" />);
+    expect((await screen.findByRole('option', { name: /B.*1/ }) as HTMLOptionElement).disabled).toBe(true);
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(canvas.querySelector('[data-seat-id="A-1"]')).toBe(firstSeat);
+    expect(firstSeat?.getAttribute('fill')).toBe('#6C3CE0');
+    view.rerender(<SeatMapViewer {...props} focusedSectionKey={null} />);
+    expect(screen.getAllByRole('option')).toHaveLength(4);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('renders available seats with tier color fill', async () => {
@@ -201,12 +239,10 @@ describe('SeatMapViewer', () => {
       }),
     );
     const props = transformComponentSpy.mock.lastCall?.[0];
-    expect(props.wrapperClass).toEqual(expect.stringContaining('min-h-[300px]'));
-    expect(props.wrapperClass).toEqual(expect.stringContaining('lg:min-h-[500px]'));
+    expect(props.wrapperStyle.height).toBe('clamp(300px, calc(100dvh - 420px), 600px)');
     expect(props.wrapperClass).toEqual(expect.stringContaining('items-center'));
     expect(props.wrapperClass).toEqual(expect.stringContaining('justify-center'));
-    expect(props.contentClass).toEqual(expect.stringContaining('min-h-[300px]'));
-    expect(props.contentClass).toEqual(expect.stringContaining('lg:min-h-[500px]'));
+    expect(props.contentStyle.height).toBe('100%');
     expect(props.contentClass).toEqual(expect.stringContaining('items-center'));
     expect(props.contentClass).toEqual(expect.stringContaining('justify-center'));
   });
@@ -982,8 +1018,8 @@ describe('SeatMapViewer', () => {
     expect(mobileContainer.querySelector('[data-testid="minimap"]')).toBeFalsy();
   });
 
-  // 신규 케이스 5: 모바일 initialScale=1.4 (UX-06)
-  it('isMobile=true 시 TransformWrapper에 initialScale=1.4 전달 (UX-06)', async () => {
+  // Mobile opens the whole floor; section focus and explicit zoom enlarge seats.
+  it('opens the whole floor at 1x on mobile before an explicit section or zoom selection', async () => {
     mockUseIsMobile.mockReturnValue(true);
     render(
       <SeatMapViewer
@@ -997,7 +1033,7 @@ describe('SeatMapViewer', () => {
     );
     await waitFor(() => {
       expect(transformWrapperSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ initialScale: 1.4 }),
+        expect.objectContaining({ initialScale: 1 }),
       );
     });
   });

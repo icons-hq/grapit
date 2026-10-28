@@ -72,17 +72,27 @@ describe('locale switcher shell wiring', () => {
 
     render(<GNB />);
 
-    expect(screen.getByRole('link', { name: 'Find events' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Tickets' })).toBeDefined();
     expect(screen.queryByRole('link', { name: 'IP Popup' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     expect(screen.getByRole('searchbox', { name: 'Search shows' })).toHaveAttribute(
       'placeholder',
-      'Search shows or artists',
+      'Find your next show',
     );
     expect(screen.getByRole('link', { name: 'Login / Sign up' })).toHaveAttribute(
       'href',
       '/en/auth',
     );
+  });
+
+  it('opens localized categories from the mobile genre heading', async () => {
+    mockPathname.mockReturnValue('/en/genre/concert');
+    mockAuthState.activeLocale = 'en';
+    render(<GNB />);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Concert: All categories' }));
+    expect(screen.getByRole('dialog', { name: 'All categories' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Musical' })).toHaveAttribute('href', '/en/genre/musical');
   });
 
   it('opens a mobile bottom sheet from the GNB globe and preserves search params on selection', async () => {

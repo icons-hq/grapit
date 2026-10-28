@@ -1,3 +1,4 @@
+vi.mock('@/components/home/banner-carousel', () => ({ BannerCarousel: () => null }));
 import { Suspense } from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
@@ -20,7 +21,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/hooks/use-performances', () => ({
-  usePerformances: () => ({
+  useCatalogPerformances: () => ({
     data: {
       data: [],
       total: 30,
@@ -50,7 +51,7 @@ describe('GenrePage pagination i18n', () => {
     expect(
       await screen.findByRole('navigation', { name: 'Search results pages' }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Previous page')).toBeInTheDocument();
-    expect(screen.getByLabelText('Next page')).toBeInTheDocument();
+    expect(screen.getByLabelText('Previous')).toBeInTheDocument();
+    expect(screen.getByLabelText('Next')).toBeInTheDocument();
   });
 });

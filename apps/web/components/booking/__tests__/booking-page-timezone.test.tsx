@@ -212,7 +212,32 @@ describe('BookingPage timezone handling', () => {
 
     expect(screen.getByText('seat map ready')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: '7/18 - 회차 선택완료' }),
+      screen.getByRole('button', { name: /19:00.*일정 변경/ }),
     ).toBeInTheDocument();
+  });
+
+  it('opens the detail-selected showtime without acquiring a seat lock', () => {
+    renderWithQuery(<BookingPage performanceId="performance-kst" initialShowtimeId="showtime-kst" />);
+
+    expect(screen.getByRole('button', { name: /19:00.*일정 변경/ })).toBeInTheDocument();
+    expect(useBookingStore.getState().selectedShowtimeId).toBe('showtime-kst');
+    expect(lockSeatMutateMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a preferred showtime that does not belong to the performance', () => {
+    renderWithQuery(<BookingPage performanceId="performance-kst" initialShowtimeId="another-performance-showtime" />);
+
+    expect(useBookingStore.getState().selectedShowtimeId).toBeNull();
+    expect(screen.getByRole('button', { name: '2026년 7월 18일 토요일' })).toBeInTheDocument();
+    expect(lockSeatMutateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not select a preferred showtime at or after its sales cutoff', () => {
+    vi.setSystemTime(new Date('2026-07-18T19:00:00.000+09:00'));
+    renderWithQuery(<BookingPage performanceId="performance-kst" initialShowtimeId="showtime-kst" />);
+
+    expect(useBookingStore.getState().selectedShowtimeId).toBeNull();
+    expect(screen.queryByText('seat map ready')).not.toBeInTheDocument();
+    expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });
 });

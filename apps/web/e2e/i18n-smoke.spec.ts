@@ -1,13 +1,4 @@
-import { readFileSync } from 'node:fs';
 import { expect, test, type Page, type Response } from '@playwright/test';
-
-const koMessages = JSON.parse(
-  readFileSync(new URL('../messages/ko.json', import.meta.url), 'utf8'),
-) as {
-  home: {
-    browse: string;
-  };
-};
 
 const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
   process.env['PHASE23_I18N_SMOKE_PERFORMANCE_ID'] ??
@@ -26,8 +17,8 @@ const localeCases = [
     prefix: '',
     nativeName: '한국어',
     searchQuery: '걸룰스',
-    homeCopy: koMessages.home.browse,
-    searchCopy: "'걸룰스' 검색 결과",
+    homeCopy: 'Grabit 티켓',
+    searchCopy: "“걸룰스” 검색",
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
     detailCopy: '상세정보',
@@ -40,8 +31,8 @@ const localeCases = [
     prefix: '/en',
     nativeName: 'English',
     searchQuery: 'girl',
-    homeCopy: 'Browse events',
-    searchCopy: "Results for 'girl'",
+    homeCopy: 'Grabit Tickets',
+    searchCopy: "“girl” Search",
     resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
     detailCopy: 'Details',
@@ -54,8 +45,8 @@ const localeCases = [
     prefix: '/th',
     nativeName: 'ไทย',
     searchQuery: 'girl',
-    homeCopy: 'สำรวจการแสดง',
-    searchCopy: "ผลการค้นหา 'girl'",
+    homeCopy: 'Grabit บัตร',
+    searchCopy: "“girl” ค้นหา",
     resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
     detailCopy: 'รายละเอียด',
@@ -68,8 +59,8 @@ const localeCases = [
     prefix: '/zh-CN',
     nativeName: '简体中文',
     searchQuery: 'girl',
-    homeCopy: '浏览演出',
-    searchCopy: "'girl' 的搜索结果",
+    homeCopy: 'Grabit 门票',
+    searchCopy: "“girl” 搜索",
     resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
     detailCopy: '详细信息',
@@ -123,7 +114,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
         ),
       );
       assertKoreanRewriteHeader(localeCase.prefix, searchResponse);
-      await expect(page.getByText(localeCase.searchCopy)).toBeVisible();
+      await expect(page.getByRole('heading', { name: localeCase.searchCopy })).toBeVisible();
       await expect(page.getByText(localeCase.resultTitle).first()).toBeVisible();
 
       const supportResponse = await gotoSmokeRoute(
@@ -148,7 +139,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
         ),
       );
       assertKoreanRewriteHeader(localeCase.prefix, performanceResponse);
-      await expect(page.getByText(localeCase.detailCopy)).toBeVisible();
+      await expect(page.getByRole('heading', { name: localeCase.detailCopy, exact: true })).toBeVisible();
       if (localeCase.expectsTranslationLabel) {
         await expect(
           page.getByText('Reviewed machine translation').first(),
@@ -208,6 +199,9 @@ function assertKoreanRewriteHeader(prefix: string, response: Response | null) {
 }
 
 async function mockI18nPublicApis(page: Page) {
+  await page.route('**/api/v1/venues**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  );
   await page.route('**/api/v1/home/banners', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );

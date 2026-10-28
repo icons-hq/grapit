@@ -72,8 +72,8 @@
     "musical": "뮤지컬",
     "concert": "콘서트",
     "play": "연극",
-    "exhibition": "전시",
-    "classic": "클래식",
+    "exhibition": "전시/행사",
+    "classic": "클래식/무용",
     "sports": "스포츠",
     "kids_family": "아동/가족",
     "leisure_camping": "레저/캠핑"
@@ -351,7 +351,11 @@
       "selectionConflict": "좌석 상태와 1인 예매 한도를 확인한 뒤 다시 시도해 주세요.",
       "showtimeClosed": "이미 시작된 회차는 예매할 수 없습니다.",
       "selectionResynced": "점유 상태가 바뀐 좌석이 있어 선택 목록을 갱신했습니다. 선택 좌석을 확인해 주세요.",
-      "selectionVerifyFailed": "선택 좌석의 점유 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."
+      "selectionVerifyFailed": "선택 좌석의 점유 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      "chooseSection": "구역 선택",
+      "allSections": "전체 보기",
+      "remainingSeats": "잔여 {count}석",
+      "changeSchedule": "일정 변경"
     }
   },
   "locale": {

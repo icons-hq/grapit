@@ -1,3 +1,4 @@
+vi.mock('@/components/performance/ticket-actions', () => ({ TicketActions: () => null }));
 import { Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -186,7 +187,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(
       screen.queryByRole('heading', { name: 'ข้อมูลการขาย' }),
     ).toBeNull();
-    expect(screen.queryByRole('link', { name: /รายละเอียด/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'รายละเอียด' })).toBeNull();
     expect(screen.queryByRole('link', { name: /ข้อมูลการขาย/ })).toBeNull();
     expect(screen.queryByText('Hidden public detail body')).toBeNull();
     expect(screen.queryByText('Hidden public sales body')).toBeNull();

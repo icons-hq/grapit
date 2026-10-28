@@ -1,4 +1,8 @@
-export const GENRES = ['artist_celebrity', 'ip_popup'] as const;
+/** Public ticket catalog order. Existing stored genre values remain unchanged. */
+export const GENRES = [
+  'musical', 'concert', 'sports', 'exhibition', 'classic', 'kids_family', 'play',
+  'artist_celebrity', 'ip_popup', 'leisure_camping',
+] as const;
 export type EventCategory = typeof GENRES[number];
 
 export const LEGACY_GENRES = [
@@ -7,7 +11,7 @@ export const LEGACY_GENRES = [
 ] as const;
 export type LegacyGenre = typeof LEGACY_GENRES[number];
 
-export const PERFORMANCE_GENRES = [...LEGACY_GENRES, ...GENRES] as const;
+export const PERFORMANCE_GENRES = GENRES;
 export type Genre = typeof PERFORMANCE_GENRES[number];
 
 export const GENRE_LABELS: Record<Genre, string> = {
@@ -16,8 +20,8 @@ export const GENRE_LABELS: Record<Genre, string> = {
   musical: '뮤지컬',
   concert: '콘서트',
   play: '연극',
-  exhibition: '전시',
-  classic: '클래식',
+  exhibition: '전시/행사',
+  classic: '클래식/무용',
   sports: '스포츠',
   kids_family: '아동/가족',
   leisure_camping: '레저/캠핑',
@@ -170,6 +174,11 @@ export interface SeatMapConfig {
   tiers: Array<{
     tierName: string;
     color: string;
+    seatIds: string[];
+  }>;
+  sections?: Array<{
+    sectionKey: string;
+    label: string;
     seatIds: string[];
   }>;
 }

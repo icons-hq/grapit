@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { Banner } from '@grabit/shared';
 import { BannerCarousel } from '../banner-carousel';
@@ -34,6 +34,8 @@ vi.mock('swiper/react', () => ({
 
 vi.mock('swiper/modules', () => ({
   Autoplay: {},
+  A11y: {},
+  Keyboard: {},
   Pagination: {},
 }));
 
@@ -53,6 +55,9 @@ function banner(): Banner {
 }
 
 describe('BannerCarousel', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
+  });
   it.each(['en', 'th', 'zh-CN'] as const)('keeps %s when following a stored absolute Grabit promotion link', (locale) => {
     render(<BannerCarousel locale={locale} banners={[{...banner(), linkUrl: 'https://heygrabit.com/performance/event?campaign=fall#detail-copy'}]} />);
     expect(screen.getByRole('link').getAttribute('href')).toBe(`/${locale}/performance/event?campaign=fall#detail-copy`);
@@ -75,12 +80,14 @@ describe('BannerCarousel', () => {
     },
   );
 
-  it('uses the 1290 x 600 mobile ratio and preserves desktop height', () => {
-    const { container } = render(<BannerCarousel banners={[banner()]} />);
-
-    const carousel = container.querySelector('.aspect-\\[1290\\/600\\]');
-    expect(carousel?.className).toContain('aspect-[1290/600]');
-    expect(carousel?.className).toContain('md:h-[400px]');
+  it('renders the source artwork with a labelled promotion region', () => {
+    render(<BannerCarousel banners={[banner()]} />);
+    expect(screen.getByRole('region', { name: '공연 소식' })).toBeDefined();
     expect(screen.getByRole('img', { name: '공연 소식' })).toBeDefined();
+  });
+
+  it('does not turn an unsafe banner URL into an actionable link', () => {
+    render(<BannerCarousel banners={[{ ...banner(), linkUrl: 'javascript:alert(1)' }]} />);
+    expect(screen.queryByRole('link')).toBeNull();
   });
 });

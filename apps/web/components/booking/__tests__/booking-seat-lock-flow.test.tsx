@@ -412,11 +412,11 @@ function createQueryClient() {
   });
 }
 
-function renderBookingPage(options: { performanceId?: string; queryClient?: QueryClient } = {}) {
-  const { performanceId = 'performance-a', queryClient = createQueryClient() } = options;
+function renderBookingPage(options: { performanceId?: string; queryClient?: QueryClient; initialShowtimeId?: string | null } = {}) {
+  const { performanceId = 'performance-a', queryClient = createQueryClient(), initialShowtimeId } = options;
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <BookingPage performanceId={performanceId} />
+      <BookingPage performanceId={performanceId} initialShowtimeId={initialShowtimeId} />
     </QueryClientProvider>,
   );
   return { ...view, queryClient };
@@ -437,6 +437,7 @@ async function settle() {
 
 describe('BookingPage seat lock flow', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/');
     hoisted.getMock.mockReset();
     hoisted.postMock.mockReset();
     hoisted.deleteMock.mockReset();
@@ -461,6 +462,51 @@ describe('BookingPage seat lock flow', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    window.history.replaceState({}, '', '/');
+  });
+
+  it.each(['click', 'restore'])('selects a floor-prefixed template seat through %s', async (mode) => {
+    const performance = createPerformance();
+    performance.seatMap.seatConfig.tiers[0].seatIds = ['1F:A-1'];
+    hoisted.performanceRef.current = performance;
+    selectShowtimeInStore(SHOWTIME_A);
+    if (mode === 'restore') heldFor(SHOWTIME_A).set('1F:A-1', Date.now() + server.holdMs);
+    renderBookingPage();
+    if (mode === 'click') {
+      await userEvent.setup().click(await screen.findByRole('button', { name: '좌석 1F:A-1' }));
+    }
+    await waitFor(() => expect(selectedTag('A-1')).toBeInTheDocument());
+    expect(useBookingStore.getState().selectedSeats[0]).toMatchObject({
+      seatKey: '1F:A-1', seatId: 'A-1', tierName: 'VIP', price: 110000,
+    });
+    expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true);
+  });
+
+  it('keeps the changed showtime and its hold when returning from checkout', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({ retained: true }, '', `/booking/performance-a?showtimeId=${SHOWTIME_A}&keep=1#seats`);
+    const view = renderBookingPage({ initialShowtimeId: SHOWTIME_A });
+    await user.click(screen.getByRole('button', { name: /일정 변경/ }));
+    const performance = hoisted.performanceRef.current as ReturnType<typeof createPerformance>;
+    const date = getKstCalendarDate(performance.showtimes[1].dateTime);
+    await user.click(screen.getByRole('button', { name: `날짜 ${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}` }));
+    await user.click(screen.getByRole('button', { name: /^\d{2}:\d{2} KST$/ }));
+    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+    await waitFor(() => expect(selectedTag('A-1')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^다음$/ }));
+    await waitFor(() => expect(hoisted.routerPushMock).toHaveBeenCalled());
+    view.unmount();
+
+    // Browser back restores the URL of the seat page, then mounts it again.
+    const restoredPreference = new URL(window.location.href).searchParams.get('showtimeId');
+    renderBookingPage({ initialShowtimeId: restoredPreference });
+    await settle();
+    expect(useBookingStore.getState().selectedShowtimeId).toBe(SHOWTIME_B);
+    expect(heldFor(SHOWTIME_B).has('1F:A-1')).toBe(true);
+    expect(selectedTag('A-1')).toBeInTheDocument();
+    expect(window.location.search).toContain('keep=1');
+    expect(window.location.hash).toBe('#seats');
+    expect(window.history.state).toBeNull();
   });
 
   it('#10 rolls back a seat whose lock failed even when another seat was clicked meanwhile', async () => {
@@ -613,6 +659,7 @@ describe('BookingPage seat lock flow', () => {
     await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
     await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
 
+    await user.click(screen.getByRole('button', { name: /일정 변경/ }));
     await user.click(screen.getByRole('button', { name: chipLabel(showtimeA!.dateTime) }));
     await settle();
 
@@ -620,6 +667,7 @@ describe('BookingPage seat lock flow', () => {
     expect(useBookingStore.getState().timerExpiresAt).not.toBeNull();
     expect(lockAllCalls(SHOWTIME_A)).toBe(0);
 
+    await user.click(screen.getByRole('button', { name: /일정 변경/ }));
     await user.click(screen.getByRole('button', { name: dateLabel(showtimeB!.dateTime) }));
 
     await waitFor(() => expect(lockAllCalls(SHOWTIME_A)).toBe(1));

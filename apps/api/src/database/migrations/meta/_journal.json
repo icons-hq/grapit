@@ -344,6 +344,20 @@
       "when": 1790071200000,
       "tag": "0047_support_thread_audit_actions",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792977050161,
+      "tag": "0049_performance_favorites",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792989568714,
+      "tag": "0050_venue_layout_templates",
+      "breakpoints": true
     }
   ]
 }

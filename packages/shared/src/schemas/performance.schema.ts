@@ -47,6 +47,24 @@ export const PERFORMANCE_QUERY_MAX_PAGE = 1000;
 /** Matches `performances.subcategory` varchar(100); longer input never matches. */
 export const PERFORMANCE_QUERY_SUB_MAX_LENGTH = 100;
 
+export const PERFORMANCE_REGIONS = [
+  '서울', '경기', '인천', '부산', '대구', '대전', '광주', '울산', '세종',
+  '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주',
+] as const;
+
+const catalogDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(
+  (value) => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, '올바른 날짜를 입력해주세요',
+);
+const catalogFilters = {
+  region: z.enum(PERFORMANCE_REGIONS).optional(),
+  venueId: z.string().uuid().optional(),
+  dateFrom: catalogDate.optional(),
+  dateTo: catalogDate.optional(),
+};
+
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
@@ -58,19 +76,27 @@ export const performanceQuerySchema = z.object({
   ),
   page: z.coerce.number().int().min(1).max(PERFORMANCE_QUERY_MAX_PAGE).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  sort: z.enum(['latest', 'popular']).default('latest'),
+  sort: z.enum(['latest', 'popular', 'opening', 'date']).default('latest'),
   ended: booleanQueryParam,
   status: z.enum(['all', 'selling', 'upcoming', 'ended']).optional(),
+  ...catalogFilters,
+  ids: z.preprocess(
+    (value) => typeof value === 'string' ? value.split(',') : value,
+    z.array(z.string().uuid()).min(1).max(50).optional(),
+  ),
 });
 export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;
 
 export const searchQuerySchema = z.object({
-  q: z.string().min(1),
+  q: z.string().trim().min(1).max(200),
   genre: z.enum(GENRES).optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
   ended: booleanQueryParam,
-  page: z.coerce.number().int().min(1).default(1),
+  page: z.coerce.number().int().min(1).max(PERFORMANCE_QUERY_MAX_PAGE).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
+  sort: z.enum(['relevance', 'latest', 'popular', 'date']).optional(),
+  status: z.enum(['all', 'selling', 'upcoming', 'ended']).optional(),
+  ...catalogFilters,
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 
@@ -117,10 +143,30 @@ export const seatMapConfigSchema = z.object({
     color: z.string().min(1),
     seatIds: z.array(z.string()),
   })),
+  sections: z.array(z.object({
+    sectionKey: z.string().trim().min(1).max(80),
+    label: z.string().trim().min(1).max(100),
+    seatIds: z.array(z.string().min(1).max(120)).min(1).max(50000),
+  })).max(200).optional(),
+}).superRefine((config, ctx) => {
+  const seats = new Set(config.tiers.flatMap((tier) => tier.seatIds));
+  const keys = new Set<string>();
+  const assigned = new Set<string>();
+  config.sections?.forEach((section, index) => {
+    if (keys.has(section.sectionKey)) ctx.addIssue({ code: z.ZodIssueCode.custom,
+      path: ['sections', index, 'sectionKey'], message: '구역 키는 층 안에서 고유해야 합니다' });
+    keys.add(section.sectionKey);
+    for (const seatId of section.seatIds) {
+      if (!seats.has(seatId) || assigned.has(seatId)) ctx.addIssue({ code: z.ZodIssueCode.custom,
+        path: ['sections', index, 'seatIds'], message: '등록된 좌석을 하나의 구역에만 배정해주세요' });
+      assigned.add(seatId);
+    }
+  });
 });
 export type SeatMapConfigInput = z.infer<typeof seatMapConfigSchema>;
 
 export const performanceSeatMapSchema = z.object({
+  venueLayoutId: z.string().uuid().nullable().optional(),
   floorKey: z.string().min(1, '층 키를 입력해주세요').max(20),
   floorLabel: z.string().min(1, '층 라벨을 입력해주세요').max(100),
   sortOrder: z.number().int().min(0).default(0),

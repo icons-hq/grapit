@@ -6,7 +6,7 @@ Grabit is a live-entertainment ticketing and event-operations platform. The prod
 
 `discover -> authenticate -> select seats -> pay -> receive QR ticket -> venue entry -> refund or settlement operations`
 
-The current product is focused on fanmeet and live-event operations, not a broad marketplace. Current source-of-truth code lives in:
+Grabit retains its fanmeet and live-event booking operations, with a multi-genre ticket discovery storefront. Current source-of-truth code lives in:
 
 - `apps/web`: Next.js public, booking, mypage, field, legal, and admin surfaces
 - `apps/api`: NestJS API modules and Drizzle schema
@@ -18,7 +18,7 @@ Historical planning artifacts in `.planning/` are useful for context, but curren
 
 | User | Primary job | Current product support |
 | --- | --- | --- |
-| Buyer | Find an event, verify account, reserve seats, pay, view QR ticket, cancel or request refund when allowed | Public home, genre/search/detail, auth, booking, payment, My Page reservation detail, QR display |
+| Buyer | Find and save an event, verify account, reserve seats, pay, view QR ticket, cancel or request refund when allowed | Home, categories, genre, ranking, opening-soon, venue, search/detail, favorites/recent, auth, booking, payment, My Page reservation detail, QR display |
 | Overseas buyer | Use localized UI and phone verification, understand payment/refund caveats | `ko`, `en`, `th`, `zh-CN` UI, country/phone inputs, localized booking copy |
 | Field scanner staff | Open QR ticket URLs, verify ticket context, manually complete entry, sync offline attempts | `/field/check-in`, scanner capability bundle, field check-in APIs, offline sync |
 | Operator | Create events, manage seat maps, monitor bookings, handle support, manage banners and notices | Admin event, booking, support, banner, seat operation, operations inbox surfaces |
@@ -29,12 +29,14 @@ Historical planning artifacts in `.planning/` are useful for context, but curren
 
 ### 3.1 Public Discovery
 
-The public surface supports a focused catalog rather than a large category marketplace.
+The ticket storefront follows the NOL ticket reference's discovery layout while retaining the Grabit brand, catalog and booking contracts. See [capture and implementation evidence](research/nol-ticket-redesign-2026-10-26.md).
 
-- Event categories are `artist_celebrity` and `ip_popup` in shared contracts.
-- The public genre route currently exposes `artist_celebrity` as the visible public category.
-- Home surfaces include banners, hot events, new events, genre entry points, and localized shell navigation.
-- Search supports keyword search with genre, locale, ended-state, page, and limit query contracts.
+- Shared and admin contracts accept all ten existing database genres: `musical`, `concert`, `sports`, `exhibition`, `classic`, `kids_family`, `play`, `artist_celebrity`, `ip_popup`, and `leisure_camping`. Existing genre values and performance IDs are retained; this change does not create or publish performances.
+- `/` and `/ticket` show the same home: device-targeted banners, genre entry points, opening-soon shows, genre rankings, the catalog, conditional genre curation, and published-performance venues. `/categories`, `/ranking`, `/upcoming`, and `/venues` are dedicated discovery routes.
+- Rankings use cumulative views, including ended shows, and explicitly label that basis. Sales share, daily/weekly sales rankings, reviews, discounts, memberships and non-ticket travel products are not inferred from missing data.
+- Listing and search support genre, venue, Korean region, inclusive KST calendar-date overlap, public sale status, locale and bounded pagination. Lists support latest/view/opening/performance-date ordering; search supports relevance/latest/views/performance-date. Omitted list genre means all genres. Browser discovery defaults to including ended shows; API callers retain the explicit `ended` contract.
+- `/wishlist` stores at most 200 favorites per authenticated Buyer Account. `/recent` stores at most 24 public performance IDs and view timestamps on the device for 30 days and provides a clear action. Neither is a reservation or a seat hold.
+- Mobile root navigation provides categories, search, home, favorites and My Page. Genre, ranking and opening-soon pages use a compact context header and hide the root tab bar. Detail replaces it with a fixed booking CTA and an expandable date/showtime picker; desktop detail has a sticky calendar panel. Korean, English, Thai and Simplified Chinese navigation remain available.
 - Performance detail surfaces show title, venue, schedule, price tiers, castings, detail images, sales information, booking availability, and localized fallback indicators.
 - Buyer-facing sale status on list, search, and detail is judged against the booking start time: a booking start still in the future reads as upcoming even when the operator status is selling or closing soon, and an upcoming performance whose booking start has passed reads as on sale. The API list/search cards, catalog status filters, hot list, and the public detail API use the same rule; the admin detail read is a separate endpoint and does not apply it. Open pages switch the badge and schedule at the booking start without a reload. List rows, cards and the detail page judge the start on the same server-corrected clock as the booking button, so a skewed device clock cannot show "on sale" in the list and "coming soon" on the detail page. While the sitewide booking flag is still loading or failing with no known value, booking stays closed but badges keep the catalog status instead of reading as upcoming. A closing-soon performance whose booking start is still in the future therefore reads as upcoming and, right after its start, as on sale until the page fetches it again. The upcoming home filter refetches once, 5–60 seconds (per-client jitter, server clock) after the nearest booking start among its rows that was pending when the page was fetched, also in a background tab. The on-sale filter only holds rows whose start has passed and does not poll, so a newly opened performance appears there the next time the list is loaded (a revisit or filter change after the 60-second client stale time); the unfiltered list relies on the client-side switch. The hot list cache expires at the next booking start of any published performance, since a newly opened performance can enter it. A performance whose showtimes have all started reads as ended on list, search, home and detail even while its operator status is still selling or closing soon, so it never shows an on-sale badge or an active booking button; lists that hide ended performances hide it, and a performance without showtimes keeps the rules above. Before the booking start, the detail page keeps the performance period on its schedule card and adds the booking open time in KST, the same line the home list shows.
 
@@ -62,7 +64,9 @@ Booking is gated by runtime feature flags and queue admission.
 - Queue entry is refused for unknown, unpublished, or ended performances and when every showtime has already started; a buyer already waiting is told the same once the last showtime starts. Before the booking start, the booking route shows a countdown and joins the queue automatically at the open time; when the open time is not announced it re-checks about every 15 seconds.
 - The waiting screen shows the position and an estimated maximum wait ("up to about N minutes") computed from the admission cycles (remaining seats of the showtimes still on sale and the longest admission window); because a confirmed purchase returns its slot early, it promises no minimum wait. The maximum holds only while the remaining seats stay as they are: when seats sell during the wait, the next estimate grows, and the screen says so. It does not show a per-position fixed estimate and shows "not available" instead of a misleading number when no estimate is possible.
 - Queue admission is carried through the booking flow and checked again during reservation prepare and payment confirm.
+- A date/showtime selected on detail is carried in `showtimeId` through login and verification to `/booking/[performanceId]`. It is applied only when it belongs to that performance and has not reached its sales cutoff. This preference does not acquire a seat lock or bypass queue admission; changing it uses the existing hold-release transition.
 - An admission ends when its active window ends. Joining the queue again after that gives a new waiting position, unless an order prepared during that admission is still awaiting payment while its queue session is still retained (until 5 minutes after the payment-recovery grace or after the session expired): then the buyer can only complete (or cancel) that payment and is not admitted to choose seats again. After that retention, joining again gives a new waiting position even if the order is still payable.
+- Same-millisecond queue entries are ordered by atomic admission order, with a stable sort value across heartbeats, re-entry and index recovery.
 - Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, allowed payment methods, and manual open rules.
 - The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Seat lock and reservation prepare also count seats another account of the same phone holds in an unexpired pending payment. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
 - Sales for a showtime close at its scheduled start time. Seat lock and reservation prepare reject a started showtime for every actor.
@@ -73,6 +77,8 @@ Booking is gated by runtime feature flags and queue admission.
 Seat selection is SVG-based and floor-aware.
 
 - Admin event setup can store one or more seat map floors per performance.
+- Operators can save immutable venue layout versions and reuse up to seven floors with sections across performances. A performance pins a version and sets its own tier prices; geometry edits detach its copy and never change older versions. Existing sales/history locks still prevent structural changes.
+- Booking uses a compact schedule picker, floor/section remaining counts, actual seat-bound zoom, a desktop selection sidebar and mobile expandable summary. The keyboard seat list follows the chosen section; selections survive floor changes and are revalidated before checkout.
 - Seat tier, color, price, and sale status are represented by shared contracts and Drizzle tables.
 - Public booking groups seat selection by floor and seat key, not only by visible row/number labels.
 - Seat locks are temporary, per user/showtime, and must be owned by the buyer before reservation prepare.

@@ -7,92 +7,55 @@ import { Ticket } from 'lucide-react';
 import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
 import { cn } from '@/lib/cn';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
-import {
-  getVisibleCopy,
-  resolveVisibleCopyLocale,
-} from '@/lib/i18n/visible-copy';
+import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getTicketCopy } from '@/lib/i18n/ticket-copy';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
-import {
-  parseBookingStartMs,
-  resolveBookingStartPerformanceStatus,
-} from './performance-display-status';
+import { parseBookingStartMs, resolveBookingStartPerformanceStatus, formatBookingOpensAtKst } from './performance-display-status';
 import type { PerformanceCardData } from '@grabit/shared';
 
 interface PerformanceCardProps {
   performance: PerformanceCardData;
   className?: string;
   priority?: boolean;
+  variant?: 'poster' | 'opening' | 'ranking';
+  rank?: number;
+  rankPlacement?: 'poster' | 'body';
 }
 
-export function PerformanceCard({
-  performance,
-  className,
-  priority = false,
-}: PerformanceCardProps) {
-  const activeLocale = resolveVisibleCopyLocale(useLocale());
-  const copy = getVisibleCopy(activeLocale);
+export function PerformanceCard({ performance, className, priority = false, variant = 'poster', rank, rankPlacement = 'poster' }: PerformanceCardProps) {
+  const locale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(locale);
+  const ticket = getTicketCopy(locale);
   const { bookingEnabled, isResolved: flagsResolved } = useRuntimeFlags();
-  // Server-corrected clock, the same verdict the detail page and its booking CTA use.
-  const bookingStartReached = useServerTimeReached(
-    parseBookingStartMs(performance.bookingStartsAt),
-  );
-  const saleStatus = resolveBookingStartPerformanceStatus(
-    performance.status,
-    performance.bookingStartsAt,
-    !bookingStartReached,
-  );
+  const reached = useServerTimeReached(parseBookingStartMs(performance.bookingStartsAt));
+  const saleStatus = resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !reached);
   const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
-
-  return (
-    <Link
-      href={getLocalizedPathname(`/performance/${performance.id}`, activeLocale)}
-      className={cn(
-        'group block overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm transition-shadow duration-150 hover:shadow-md',
-        className,
-      )}
-    >
-      {/* Poster */}
-      <div className="relative aspect-[2/3] overflow-hidden rounded-t-lg bg-gray-200">
-        {performance.posterUrl ? (
-          <Image
-            src={performance.posterUrl}
-            alt={`${performance.title} ${copy.performance.posterAltSuffix}`}
-            fill
-            className="object-cover transition-transform duration-150 group-hover:scale-[1.02]"
-            sizes="(max-width: 768px) 50vw, 25vw"
-            quality={75}
-            priority={priority}
-            loading={priority ? 'eager' : undefined}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <Ticket className="h-12 w-12 text-gray-400" />
-          </div>
-        )}
-        <StatusBadge
-          status={displayStatus}
-          locale={activeLocale}
-          className="absolute left-2 top-2"
-        />
-      </div>
-
-      {/* Info */}
-      <div className="min-h-[104px] p-3 md:min-h-[116px] md:p-4">
-        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-gray-950 md:text-base">
-          {performance.title}
-        </h3>
-        {performance.venueName && (
-          <p className="mt-1.5 line-clamp-1 text-xs font-medium text-gray-600 md:text-sm">
-            {performance.venueName}
-          </p>
-        )}
-        <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
-          {saleStatus === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
-        </p>
-        {performance.minPrice != null && <p className="mt-2 text-sm font-semibold text-foreground">{copy.home.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(activeLocale).format(performance.minPrice)}`)}<span className="ml-1 text-xs font-normal text-muted-foreground">{copy.home.feeSeparate}</span></p>}
-      </div>
-    </Link>
-  );
+  const opening = formatBookingOpensAtKst(performance.bookingStartsAt, locale);
+  return <Link href={getLocalizedPathname(`/performance/${performance.id}`, locale)}
+    className={cn('ticket-card', variant === 'opening' && 'ticket-card-opening', variant === 'ranking' && 'ticket-card-ranking', className)}>
+    <div className="ticket-card-art">
+      {performance.posterUrl ? <>
+        {variant === 'opening' && <Image src={performance.posterUrl} alt="" fill sizes="250px" className="ticket-card-backdrop" aria-hidden="true" />}
+        <Image src={performance.posterUrl} alt={`${performance.title} ${copy.performance.posterAltSuffix}`} fill
+          className="ticket-card-poster" sizes="(max-width: 767px) 45vw, (max-width: 1024px) 30vw, 240px" priority={priority} />
+      </> : <div className="ticket-poster-missing"><Ticket size={32} aria-hidden="true" /><span>{ticket.untitledPoster}</span></div>}
+      {rank !== undefined && rankPlacement === 'poster' && <span className="ticket-card-rank" aria-label={`${rank}`}>{rank}</span>}
+    </div>
+    <div className="ticket-card-body">
+      {rank !== undefined && rankPlacement === 'body' && <strong className="ticket-card-body-rank">{rank}</strong>}
+      {variant === 'opening' && <p className="ticket-opening-date">{opening ?? ticket.openingTbd}</p>}
+      <h3>{performance.title}</h3>
+      {variant !== 'opening' && <>
+        {performance.venueName && <p className="ticket-card-venue">{performance.venueName}</p>}
+        <p className="ticket-card-date">{formatCatalogDateRange(performance.startDate, performance.endDate, locale) ?? copy.home.dateUnknown}</p>
+      </>}
+      <div className="ticket-card-meta"><StatusBadge status={displayStatus} locale={locale} /></div>
+      {variant === 'poster' && performance.minPrice != null && <p className="ticket-card-price">
+        {copy.home.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(locale).format(performance.minPrice)}`)}
+        <span>{copy.home.feeSeparate}</span>
+      </p>}
+    </div>
+  </Link>;
 }

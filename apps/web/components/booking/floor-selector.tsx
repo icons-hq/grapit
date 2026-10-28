@@ -11,6 +11,7 @@ interface FloorOption {
   selectedCount: number;
   isSoldOut: boolean;
   totalSeats?: number;
+  availableSeats?: number;
 }
 
 interface FloorSelectorProps {
@@ -30,12 +31,12 @@ export function FloorSelector({
   }
 
   return (
-    <div className="sticky top-12 z-30 -mx-4 border-y border-border bg-white/95 px-4 py-3 backdrop-blur lg:top-14 lg:-mx-0 lg:rounded-xl lg:border lg:px-4">
-      <div className="flex items-center justify-between gap-3">
+    <div className="border-b border-border bg-white px-4 py-3">
+      <div className="hidden items-center justify-between gap-3 lg:flex">
         <p className="text-sm font-semibold text-gray-900">{seatCopy.chooseFloor}</p>
         <p className="text-xs text-gray-500">{seatCopy.floorKeep}</p>
       </div>
-      <div className="mt-3 overflow-x-auto pb-1">
+      <div className="overflow-x-auto pb-1 lg:mt-3">
         <ToggleGroup
           type="single"
           value={selectedFloorKey ?? undefined}
@@ -46,7 +47,7 @@ export function FloorSelector({
           }}
           variant="outline"
           spacing={1}
-          className="grid min-w-max grid-flow-col auto-cols-[minmax(160px,1fr)] gap-2 lg:flex lg:w-full"
+          className="flex min-w-max gap-2"
           aria-label={seatCopy.chooseFloor}
         >
           {floors.map((floor) => (
@@ -60,7 +61,7 @@ export function FloorSelector({
                 {floor.floorLabel}
                 {typeof floor.totalSeats === 'number' ? (
                   <span className="ml-1 text-xs opacity-80">
-                    ({formatCopy(seatCopy.seatCount, { count: floor.totalSeats })})
+                    ({formatCopy(floor.availableSeats === undefined ? seatCopy.seatCount : seatCopy.remainingSeats, { count: floor.availableSeats ?? floor.totalSeats })})
                   </span>
                 ) : null}
               </span>

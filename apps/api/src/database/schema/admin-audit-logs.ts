@@ -15,6 +15,7 @@ export const adminAuditActionEnum = pgEnum('admin_audit_action', [
   'event.publish',
   'event.update',
   'event.delete',
+  'venue.layout.create',
   'refund.admin_refund',
   'support.escalate',
   'support.assign',

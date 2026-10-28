@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
 import { CreditCard } from 'lucide-react';
@@ -103,7 +103,9 @@ export default function BookingRoute({
   const router = useRouter();
   const locale = resolveVisibleCopyLocale(useLocale());
   const { performanceId } = use(params);
-  const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
+  const requestedShowtimeId = useSearchParams().get('showtimeId');
+  const initialShowtimeId = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(requestedShowtimeId ?? '') ? requestedShowtimeId : null;
+  const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale) + (initialShowtimeId ? `?showtimeId=${initialShowtimeId}` : '');
   const authRedirectPath = `${getLocalizedPathname('/auth', locale)}?returnTo=${encodeURIComponent(bookingPath)}`;
   const performancePath = getLocalizedPathname(`/performance/${performanceId}`, locale);
   const homePath = getLocalizedPathname('/', locale);
@@ -280,7 +282,7 @@ export default function BookingRoute({
   if (authInitialized && verificationPath) return null;
 
   if (!queueGated) {
-    return <BookingPage performanceId={performanceId} />;
+    return <BookingPage performanceId={performanceId} initialShowtimeId={initialShowtimeId} />;
   }
 
   if (!authInitialized) {
@@ -339,6 +341,7 @@ export default function BookingRoute({
     return (
       <BookingPage
         performanceId={performanceId}
+        initialShowtimeId={initialShowtimeId}
         queueAccessExpiresAt={queueAccessExpiresAtMs}
         onQueueAccessRejected={recheckQueueAccess}
       />

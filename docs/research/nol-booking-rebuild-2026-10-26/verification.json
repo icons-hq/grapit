@@ -1,0 +1,157 @@
+{
+  "date": "2026-10-26",
+  "environment": "Disposable local PostgreSQL/Valkey, synthetic users and venue SVGs, stubbed provider only",
+  "sourceBaseCommit": "b45352acafaf6902934a8f7e6fd0b237ece2de0f",
+  "tests": {
+    "web": {
+      "fullRunTests": 1590,
+      "failuresCorrected": 1,
+      "targetedRerunPassed": 50
+    },
+    "apiUnit": {
+      "fullRunTests": 2668,
+      "failuresCorrected": 3,
+      "targetedRerunPassed": 16
+    },
+    "shared": {
+      "fullRunPassed": 196,
+      "addedPassed": 4
+    },
+    "apiIntegration": {
+      "initialFullRunPassed": 414,
+      "addedCases": 2,
+      "adminRerunPassed": 31,
+      "finalTemplateMigrationRerunPassed": 8
+    },
+    "harness": {
+      "passed": 4
+    }
+  },
+  "productionBuild": {
+    "framework": "Next.js 16.2.1",
+    "compiler": "webpack",
+    "isolatedCopy": true,
+    "markdownLoaderEquivalent": true,
+    "staticPages": 38,
+    "success": true,
+    "defaultTurbopackProductionBuildRun": false
+  },
+  "typechecks": [
+    "api passed",
+    "web passed"
+  ],
+  "lint": {
+    "changedFilesErrors": 0,
+    "existingWebWarnings": 5
+  },
+  "browser": {
+    "desktopViewport": "1280x720",
+    "mobileViewport": "390x844",
+    "horizontalOverflow": false,
+    "finalConsoleErrors": 0,
+    "templates": "v1 loaded, v3/v4 saved, sections detached on edit, draft applied, API read-back confirmed old v1 and original prices unchanged",
+    "buyer": "Two-floor and studio selection, actual section zoom, selected-seat total, checkout entry and back-to-seat flow; real SDK not configured"
+  },
+  "productionMutation": false,
+  "realPayment": false,
+  "logs": [
+    {
+      "name": "queue-red.log",
+      "sha256": "1b3d96dc3b153a40bd5f371a101aa43fad571144eaf14d329de44ca7cec298c4"
+    },
+    {
+      "name": "queue-recovery.log",
+      "sha256": "50e6ca5469063b335e2feb40339322a99ea07daa6f1ac8abd97c45d50299ac2f"
+    },
+    {
+      "name": "queue-unit.log",
+      "sha256": "5829420ea453aed924c04b2209cb7c37112dbc56562f07514b2c0069ce1939f4"
+    },
+    {
+      "name": "venue-scale-red.log",
+      "sha256": "988999a2e4269fb10d9eb7e67600a289a3e85c81b69aefa8b88c6b8de7958bc9"
+    },
+    {
+      "name": "venue-scale-green2.log",
+      "sha256": "cb8a169ec96207c2058d6fe3ea6adfaad5842eb28d078e1810b9458f66168d2f"
+    },
+    {
+      "name": "api-integration-final.log",
+      "sha256": "62fad57b91175a58ffdc804770f45b060d23a2a9e34c89803c3fd29b4ea10cbe"
+    },
+    {
+      "name": "api-unit-final.log",
+      "sha256": "2fd5fb3e0d0b633d57926e4bbfeaa5ae69642fe3086e81263537a3dfd3ccb0d1"
+    },
+    {
+      "name": "api-contract-retest.log",
+      "sha256": "933a0f40d88542b4c87846a6c4eaf6fe7530d5d86a1640361a7472341a1daf19"
+    },
+    {
+      "name": "shared-final.log",
+      "sha256": "ab3369a828e8963c59e45e2b39663fa839bceb6b9dd7898ef05b485004cf1228"
+    },
+    {
+      "name": "venue-identity-green.log",
+      "sha256": "6cbe6038be2c97ff68aeda98b79685f9febed8b87d390953358aa4b142cc7c8d"
+    },
+    {
+      "name": "web-final.log",
+      "sha256": "3160d524c4f2fe8ff4cb9ec6d0fe0dfca50aad4029482dc5815c53dcfa0fbbce"
+    },
+    {
+      "name": "web-contract-retest.log",
+      "sha256": "87b14d4c6d3b8e21db69f95da3498d56f147adecc62e398c611fe6dca3360eb9"
+    },
+    {
+      "name": "migration-venue-final.log",
+      "sha256": "4bb2484e6c1cbbc5e01ccaca82e9a1bd0be26e195777a3a57e11df9ea479b510"
+    },
+    {
+      "name": "web-production-build.log",
+      "sha256": "f4850ae25f45b36bd0b9840327102d8b0fa06bd89a76962357bc70fc73b99067"
+    },
+    {
+      "name": "harness-tests.log",
+      "sha256": "85070822315b0d3018013160161e94c214d1acb255133ea9421d743e371fab3b"
+    },
+    {
+      "name": "lockfile-check.log",
+      "sha256": "e76cc6f9b08122d9cd669784fd437a823240c8f16ff9229f159912718f50cf30"
+    },
+    {
+      "name": "api-types-last.log",
+      "sha256": "0617b22ddc54289a7cc8d54e7052e38997340a76d00005d494cd15472c88e995"
+    },
+    {
+      "name": "web-types-last.log",
+      "sha256": "19f6a4e8d03fa6631f8645e24232dde8475f2861a18f8c08e583f197eb136a21"
+    },
+    {
+      "name": "capacity-final.log",
+      "sha256": "a354aa6f74999fef149ec5416fddc30bf2b965219a27110efb81772eceaff9d5"
+    }
+  ],
+  "capacity": {
+    "file": "capacity-result.json",
+    "status": "capacity_limited",
+    "runtimeSourceSha256": "f5390a97f7ef34974d3722de3ed61672314d681250dc9c0b60281bd787b304b1",
+    "runtimeSourceFiles": 559,
+    "maximumSessions": 1500,
+    "totalConfirmed": 2600,
+    "uniqueSocketDeliveries": 260000,
+    "duplicateDeliveries": 0,
+    "faultRecoveryPassed": true,
+    "disposableResourcesRemoved": true
+  },
+  "previewCleanup": {
+    "ownedApiAndWebStopped": true,
+    "ownedContainersRemoved": true,
+    "syntheticSessionCredentialsRemoved": true,
+    "temporaryViewportReset": true,
+    "existingUserServersUntouched": [
+      8080,
+      3100
+    ]
+  }
+}

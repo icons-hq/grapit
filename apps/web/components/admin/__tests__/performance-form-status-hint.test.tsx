@@ -1,3 +1,7 @@
+vi.mock('@/hooks/use-venue-layouts', () => ({
+  useVenueLayouts: () => ({ data: [] }), useSaveVenueLayout: () => ({}), loadVenueLayout: vi.fn(),
+}));
+
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';

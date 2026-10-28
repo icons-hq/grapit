@@ -35,8 +35,9 @@ export default function AuthPage() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center px-4 py-12">
+    <main className="ticket-auth flex flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-[400px]">
+        <h1 className="ticket-logo mb-10 text-center">Grabit<span aria-hidden="true">.</span></h1>
         {/* The API could not confirm the session yet. lib/auth keeps retrying it
             and, once restored, the effect above returns to returnTo. */}
         {sessionRestorePending && (

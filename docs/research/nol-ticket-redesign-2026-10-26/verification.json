@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-26",
+  "branch": "ps/feat/nol-ticket-redesign",
+  "baseCommit": "b45352acafaf6902934a8f7e6fd0b237ece2de0f",
+  "webUnit": {
+    "files": 176,
+    "tests": 1587,
+    "result": "passed"
+  },
+  "sharedUnit": {
+    "files": 18,
+    "tests": 196,
+    "result": "passed"
+  },
+  "apiFocused": {
+    "files": 4,
+    "tests": 100,
+    "result": "passed"
+  },
+  "migrationContracts": {
+    "files": 2,
+    "tests": 6,
+    "result": "passed"
+  },
+  "postgresIntegration": {
+    "files": 2,
+    "tests": 8,
+    "result": "passed"
+  },
+  "typecheck": {
+    "web": "passed",
+    "api": "passed"
+  },
+  "build": {
+    "web": "passed",
+    "api": "passed",
+    "sentryUploadEnabled": false
+  },
+  "lint": {
+    "webErrors": 0,
+    "webWarnings": 33,
+    "apiErrors": 0,
+    "apiWarnings": 50
+  },
+  "palette": {
+    "primary": "#6C3CE0",
+    "foreground": "#1A1A2E",
+    "muted": "#F5F5F7",
+    "mutedForeground": "#6B6B7B",
+    "border": "#E4E4E7"
+  },
+  "cleanup": {
+    "database": "grabit_nol_preview_20261026",
+    "removedTestPerformances": 10,
+    "removedTestAccounts": 2,
+    "testReservations": 0,
+    "publishedPerformancesRemaining": 1,
+    "originalDatabaseUntouched": true,
+    "removedColorTestPerformances": 1,
+    "totalRemovedTestPerformances": 11
+  },
+  "productionDeployment": false,
+  "productionDatabaseWrites": false,
+  "realPaymentsOrRefunds": false
+}

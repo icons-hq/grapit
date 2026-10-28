@@ -29,14 +29,12 @@ import {
 import { HOLD_EXPIRY_MARGIN_MS, useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
-import { useServerClockOffsetMs } from '@/hooks/use-server-clock';
+import { useShowtimeSalesClock } from '@/hooks/use-showtime-sales-clock';
 import { ApiClientError } from '@/lib/api-client';
 import { getDefaultErrorMessage, getStatusMessages } from '@/lib/error-messages';
 import { BookingDisabledError } from '@/lib/runtime-flags';
 import { nextSeatSyncSequence } from '@/lib/booking/seat-sync-sequence';
 import {
-  getCutoffTimerDelay,
-  getNextShowtimeCutoffAt,
   isShowtimeSalesClosed,
   isShowtimeSalesClosedError,
 } from '@/lib/booking/showtime-sales';
@@ -65,6 +63,9 @@ import { ShowtimeChips } from './showtime-chips';
 import { SeatLegend } from './seat-legend';
 import { SeatMapViewer } from './seat-map-viewer';
 import { TimerExpiredModal } from './timer-expired-modal';
+import { BookingProgress } from './booking-progress';
+import { SeatSectionSelector } from './seat-section-selector';
+import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 
 type RuntimeSeatState = SeatState | 'disabled';
 type FloorSeatStates = ReadonlyMap<string, RuntimeSeatState>;
@@ -159,39 +160,6 @@ function shareUnchangedFloors(
   return changed ? shared : previous;
 }
 
-/**
- * Server-corrected `now` (lib/server-clock.ts) that advances exactly when the
- * next showtime reaches its sales cutoff (`now >= dateTime`), when the server
- * clock offset is corrected, and when the tab becomes visible again (timers are
- * throttled while hidden or asleep).
- */
-function useShowtimeSalesClock(showtimes: readonly Showtime[]): number {
-  const [deviceNow, setDeviceNow] = useState(() => Date.now());
-  const serverClockOffsetMs = useServerClockOffsetMs();
-  const now = deviceNow + serverClockOffsetMs;
-
-  useEffect(() => {
-    const nextCutoffAt = getNextShowtimeCutoffAt(showtimes, now);
-    if (nextCutoffAt === null) {
-      return undefined;
-    }
-    const timeout = window.setTimeout(() => setDeviceNow(Date.now()), getCutoffTimerDelay(nextCutoffAt));
-    return () => window.clearTimeout(timeout);
-  }, [now, showtimes]);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        setDeviceNow(Date.now());
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  return now;
-}
-
 /** Order-independent identity of a selection, to detect edits. */
 function toSelectionKey(seats: readonly FloorAwareSeatSelection[]): string {
   return seats.map((seat) => seat.seatKey).sort().join('|');
@@ -218,18 +186,17 @@ function SelectionTags({
   }
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid gap-2">
       {seats.map((seat) => (
         <button
           key={seat.seatKey}
           type="button"
           onClick={() => onRemove(seat.seatKey)}
           aria-label={formatCopy(seatCopy.removeSeat, { seat: formatSeatLabel(seat) })}
-          className="inline-flex min-h-8 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          style={{ backgroundColor: seat.tierColor ?? '#6C3CE0' }}
+          className="flex min-h-14 items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 py-2 text-left text-xs font-medium text-gray-800 hover:border-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
         >
-          <span>{seat.tierName}</span>
-          <span>{formatSeatLabel(seat)}</span>
+          <span className="flex items-center gap-2"><span className="size-2 rounded-full" style={{ backgroundColor: seat.tierColor ?? '#6C3CE0' }} />{seat.tierName}</span>
+          <span className="flex-1">{formatSeatLabel(seat)}<span className="mt-1 block text-gray-500">{formatSeatSelectionPrice(seat.price)}</span></span>
           <X className="size-3.5" aria-hidden="true" />
         </button>
       ))}
@@ -239,6 +206,8 @@ function SelectionTags({
 
 function BookingSelectionBar({
   tierSummaries,
+  seats,
+  onRemove,
   selectedSeatCount,
   totalPrice,
   canClear,
@@ -248,6 +217,8 @@ function BookingSelectionBar({
   disabledReason,
 }: {
   tierSummaries: TierSummary[];
+  seats: FloorAwareSeatSelection[];
+  onRemove: (key: string) => void;
   selectedSeatCount: number;
   totalPrice: number;
   canClear: boolean;
@@ -257,15 +228,27 @@ function BookingSelectionBar({
   disabledReason: string | null;
 }) {
   const seatCopy = getSeatSelectionCopy();
+  const [expanded, setExpanded] = useState(false);
   return (
     <aside
       role="complementary"
       aria-label={seatCopy.selectionSummary}
-      className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.06)] backdrop-blur lg:sticky lg:top-20 lg:inset-x-auto lg:self-start lg:rounded-2xl lg:border lg:p-5 lg:shadow-sm"
     >
-      <div className="mx-auto grid w-full max-w-[1280px] gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="mx-auto grid w-full gap-4">
+        <div>
+          <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}
+            className="flex w-full items-center justify-between text-sm font-semibold lg:hidden">
+            <span>{seatCopy.selectedSeats} <span className="ml-1 text-primary">{selectedSeatCount}</span></span>
+            <ChevronDown className={`size-4 lg:hidden ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+          <h2 className="hidden text-sm font-semibold lg:block">{seatCopy.selectedSeats} <span className="ml-1 text-primary">{selectedSeatCount}</span></h2>
+          <div className={`${expanded ? 'block' : 'hidden'} mt-3 max-h-[28dvh] overflow-y-auto lg:block lg:max-h-[38dvh]`}>
+            <SelectionTags seats={seats} onRemove={onRemove} />
+          </div>
+        </div>
+        <div className={disabledReason ? 'min-w-0' : 'hidden min-w-0 lg:block'}>
+          <div className="hidden flex-wrap items-center gap-2 text-sm lg:flex">
             {tierSummaries.length > 0 ? (
               tierSummaries.map((summary) => (
                 <span
@@ -296,14 +279,14 @@ function BookingSelectionBar({
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <div className="flex flex-col gap-3 border-t border-border pt-3">
           <p className="text-right text-2xl font-extrabold text-gray-950">
             <small className="mr-2 text-sm font-medium text-gray-500">
               {seatCopy.orderTotal}
             </small>
             {formatSeatSelectionPrice(totalPrice)}
           </p>
-          <div className="grid grid-cols-[auto_1fr] gap-2 sm:flex">
+          <div className="grid grid-cols-[auto_1fr] gap-2">
             <Button
               type="button"
               variant="secondary"
@@ -334,10 +317,12 @@ function BookingSelectionBar({
 
 export function BookingPage({
   performanceId,
+  initialShowtimeId = null,
   queueAccessExpiresAt = null,
   onQueueAccessRejected,
 }: {
   performanceId: string;
+  initialShowtimeId?: string | null;
   /** Server queue access window end (epoch ms); seat locks need it too. */
   queueAccessExpiresAt?: number | null;
   /**
@@ -368,6 +353,8 @@ export function BookingPage({
     setTimerExpiry,
   } = useBookingStore();
 
+  const initialSelectionRef = useRef('');
+  const [sectionFocus, setSectionFocus] = useState<{ floorKey: string; sectionKey: string } | null>(null);
   const [selectedFloorKey, setSelectedFloorKey] = useState<string | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(true);
   const [isVerifyingSelection, setIsVerifyingSelection] = useState(false);
@@ -477,7 +464,7 @@ export function BookingPage({
       for (const tier of seatConfig.tiers) {
         const priceTier = performance.priceTiers.find((item) => item.tierName === tier.tierName);
         for (const seatId of tier.seatIds) {
-          tierMap.set(seatId, {
+          tierMap.set(normalizeSeatIdentity({ seatId, floorKey: seatMap.floorKey }).seatId, {
             tierName: tier.tierName,
             color: tier.color,
             price: priceTier?.price ?? 0,
@@ -671,19 +658,18 @@ export function BookingPage({
       const selectedCount = selectedSeats.filter((seat) => seat.floorKey === seatMap.floorKey).length;
       const floorStates = seatStatesByFloorKey.get(seatMap.floorKey);
       const seatIds = seatMap.seatConfig?.tiers.flatMap((tier) => tier.seatIds) ?? [];
-      const hasAvailableSeats = seatIds.length === 0
-        ? true
-        : seatIds.some((seatId) => {
+      const availableSeats = seatIds.filter((seatId) => {
           const state = floorStates?.get(seatId) ?? 'available';
           return !isUnavailableSeatState(state);
-        });
+        }).length;
 
       return {
         floorKey: seatMap.floorKey,
         floorLabel: seatMap.floorLabel,
         selectedCount,
-        isSoldOut: !hasAvailableSeats,
+        isSoldOut: seatIds.length > 0 && availableSeats === 0,
         totalSeats: seatMap.totalSeats,
+        availableSeats,
       };
     });
   }, [availableSeatMaps, seatStatesByFloorKey, selectedSeats]);
@@ -846,8 +832,18 @@ export function BookingPage({
         releaseShowtimeHolds(previousShowtimeId);
       }
       setShowtime(nextShowtimeId);
+      // Browser back from checkout must restore the buyer's latest choice,
+      // rather than reapply the detail page's original showtime and release it.
+      const url = new URL(window.location.href);
+      if (url.pathname.endsWith(`/booking/${performanceId}`)) {
+        if (nextShowtimeId) url.searchParams.set('showtimeId', nextShowtimeId);
+        else url.searchParams.delete('showtimeId');
+        // Next's history patch ignores state with __NA; null lets it update
+        // useSearchParams and the auth/queue return URL along with the address bar.
+        window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      }
     },
-    [releaseShowtimeHolds, setShowtime],
+    [performanceId, releaseShowtimeHolds, setShowtime],
   );
 
   /** Sales close at the showtime start (`now >= date_time`): drop it and its seats. */
@@ -1207,6 +1203,21 @@ export function BookingPage({
     [changeShowtime, setDate],
   );
 
+  // A detail-page date choice is a preference, never a seat hold or queue bypass.
+  // Only accept a still-bookable showtime owned by this performance and use the
+  // existing transition, which releases any holds from the previous showtime.
+  useEffect(() => {
+    if (!performance || !initialShowtimeId || !bookingAvailable) return;
+    const key = `${performanceId}:${initialShowtimeId}`;
+    if (initialSelectionRef.current === key) return;
+    initialSelectionRef.current = key;
+    const selected = bookableShowtimes.find((show) => show.id === initialShowtimeId);
+    if (!selected) return;
+    setDate(getKstCalendarDate(selected.dateTime));
+    changeShowtime(selected.id);
+    setIsDatePickerOpen(false);
+  }, [performance, performanceId, initialShowtimeId, bookingAvailable, bookableShowtimes, setDate, changeShowtime]);
+
   if (bookingDisabledReason) {
     const disabledTitle = performance?.title ?? seatCopy.bookingInfo;
     const backLabel = performance?.title ?? seatCopy.backToEvent;
@@ -1292,128 +1303,56 @@ export function BookingPage({
         }}
       />
 
-      <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-48 lg:px-6 lg:py-8 lg:pb-40">
-        <div className="min-w-0 space-y-6">
-            <div className="rounded-lg border border-border p-3 lg:border-0 lg:p-0">
-              <button
-                type="button"
-                className="flex min-h-[44px] w-full items-center justify-between lg:hidden"
-                onClick={() => setIsDatePickerOpen(!isDatePickerOpen)}
-                aria-expanded={isDatePickerOpen}
-              >
-                <span className="text-sm font-semibold text-gray-900">
-                  {selectedDate
-                    ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}${activeShowtimeId ? ` - ${seatCopy.showtimeSelected}` : ''}`
-                    : seatCopy.dateShowtime}
-                </span>
-                <ChevronDown
-                  className={`h-5 w-5 text-gray-500 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`}
-                />
-              </button>
-
-              <div className={`${isDatePickerOpen ? 'block' : 'hidden'} lg:block`}>
-                <div className="mt-3 lg:mt-0">
-                  <h2 className="mb-2 text-sm font-normal text-gray-700">
-                    {seatCopy.chooseDate}
-                  </h2>
-                  <DatePicker
-                    availableDates={availableDates}
-                    selected={selectedDate}
-                    onSelect={handleDateSelect}
-                  />
-                </div>
-
-                {selectedDate ? (
-                  <div className="mt-4 lg:mt-6">
-                    <h2 className="mb-2 text-sm font-normal text-gray-700">
-                      {seatCopy.chooseShowtime}
-                    </h2>
-                    <ShowtimeChips
-                      showtimes={filteredShowtimes}
-                      selected={activeShowtimeId}
-                      onSelect={(id) => {
-                        // Re-selecting the current chip is a no-op; switching
-                        // releases the previous showtime's seats first.
-                        changeShowtime(id);
-                        if (id && window.innerWidth < 1024) {
-                          setIsDatePickerOpen(false);
-                        }
-                      }}
-                    />
-                  </div>
-                ) : null}
+      <main className="mx-auto w-full max-w-[1440px] px-4 py-4 pb-72 lg:px-6 lg:pb-8">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+          <BookingProgress step={0} />
+          <p className="text-xs text-gray-500">{performance.venue?.name}</p>
+        </div>
+        <section className="mb-4 overflow-hidden rounded-xl border border-border bg-white">
+          <button type="button" className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
+            onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} aria-expanded={isDatePickerOpen}>
+            <span className="text-sm font-semibold text-gray-900">{activeShowtime
+              ? formatEventTimeWithKstAnchor(activeShowtime.dateTime, activeLocale, { includeLocalTime: false }).kst
+              : seatCopy.dateShowtime}</span>
+            <span className="flex shrink-0 items-center gap-2 text-xs text-primary">{seatCopy.changeSchedule}<ChevronDown className={`size-4 ${isDatePickerOpen ? 'rotate-180' : ''}`} /></span>
+          </button>
+          {isDatePickerOpen ? <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-[minmax(240px,320px)_1fr]">
+            <div><h2 className="mb-2 text-sm text-gray-700">{seatCopy.chooseDate}</h2>
+              <DatePicker availableDates={availableDates} selected={selectedDate} onSelect={handleDateSelect} /></div>
+            {selectedDate ? <div><h2 className="mb-2 text-sm text-gray-700">{seatCopy.chooseShowtime}</h2>
+              <ShowtimeChips showtimes={filteredShowtimes} selected={activeShowtimeId} onSelect={(id) => {
+                changeShowtime(id);
+                if (id) setIsDatePickerOpen(false);
+              }} /></div> : null}
+          </div> : null}
+        </section>
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-w-0 space-y-3">
+            {activeShowtimeId && currentSeatMap && seatConfig ? <>
+              <div className="overflow-hidden rounded-xl border border-border bg-white">
+                <FloorSelector floors={floorOptions} selectedFloorKey={currentSeatMap.floorKey}
+                  onChange={(key) => { setSelectedFloorKey(key); setSectionFocus(null); }} />
+                <SeatSectionSelector sections={seatConfig.sections ?? []}
+                  selected={sectionFocus && sectionFocus.floorKey === currentSeatMap.floorKey ? sectionFocus.sectionKey : null}
+                  onChange={(key) => setSectionFocus(key ? { floorKey: currentSeatMap.floorKey, sectionKey: key } : null)} seatStates={viewerSeatStates} />
+                <SeatMapViewer svgUrl={currentSeatMap.svgUrl} floorKey={currentSeatMap.floorKey} floorLabel={currentSeatMap.floorLabel}
+                  seatConfig={seatConfig} seatStates={viewerSeatStates} selectedSeatIds={selectedSeatIds} myLockedSeatIds={viewerMyLockedSeatIds}
+                  onSeatClick={handleSeatClick} maxSelect={maxTicketsPerUser}
+                  focusedSectionKey={sectionFocus && sectionFocus.floorKey === currentSeatMap.floorKey ? sectionFocus.sectionKey : null} />
               </div>
-            </div>
-
-            {activeShowtimeId && currentSeatMap && seatConfig ? (
-              <>
-                <FloorSelector
-                  floors={floorOptions}
-                  selectedFloorKey={currentSeatMap.floorKey}
-                  onChange={setSelectedFloorKey}
-                />
-
-                <section className="rounded-2xl border border-border bg-[#F5F5F7] px-4 py-4">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {ticketLimitCopy}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    {seatChangePolicyCopy}
-                  </p>
-                  {currentFloorOption?.isSoldOut ? (
-                    <p className="mt-2 text-sm font-semibold text-amber-800">
-                      {seatCopy.noFloorSeats}
-                    </p>
-                  ) : null}
-                </section>
-
-                <SeatLegend tiers={legendTiers} showExcluded />
-
-                <section className="rounded-xl border border-border bg-white px-4 py-4 shadow-sm">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold text-gray-900">
-                      {seatCopy.selectedSeats}
-                    </h2>
-                    <span className="text-sm font-semibold text-primary">
-                      {formatCopy(seatCopy.seatCount, { count: selectedSeats.length })}
-                    </span>
-                  </div>
-                  <SelectionTags
-                    seats={sortedSelections}
-                    onRemove={handleRemoveSeat}
-                  />
-                </section>
-
-                <SeatMapViewer
-                  svgUrl={currentSeatMap.svgUrl}
-                  floorKey={currentSeatMap.floorKey}
-                  floorLabel={currentSeatMap.floorLabel}
-                  seatConfig={seatConfig}
-                  seatStates={viewerSeatStates}
-                  selectedSeatIds={selectedSeatIds}
-                  myLockedSeatIds={viewerMyLockedSeatIds}
-                  onSeatClick={handleSeatClick}
-                  maxSelect={maxTicketsPerUser}
-                />
-              </>
-            ) : null}
+              <SeatLegend tiers={legendTiers} showExcluded />
+              <section className="rounded-xl bg-gray-50 px-4 py-3 text-xs leading-relaxed text-gray-600">
+                <p className="font-semibold text-gray-800">{ticketLimitCopy}</p><p>{seatChangePolicyCopy}</p>
+                {currentFloorOption?.isSoldOut ? <p className="mt-1 font-semibold text-amber-800">{seatCopy.noFloorSeats}</p> : null}
+              </section>
+            </> : null}
+          </div>
+          {activeShowtimeId ? <BookingSelectionBar tierSummaries={tierSummaries} seats={sortedSelections} onRemove={handleRemoveSeat}
+            selectedSeatCount={selectedSeats.length} totalPrice={totalPrice} canClear={selectedSeats.length > 0}
+            onClear={handleClearSeats} onProceed={() => { void handleProceed(); }}
+            isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection} disabledReason={bookingDisabledReason} /> : null}
         </div>
       </main>
-
-      {activeShowtimeId ? (
-        <BookingSelectionBar
-          tierSummaries={tierSummaries}
-          selectedSeatCount={selectedSeats.length}
-          totalPrice={totalPrice}
-          canClear={selectedSeats.length > 0}
-          onClear={handleClearSeats}
-          onProceed={() => {
-            void handleProceed();
-          }}
-          isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection}
-          disabledReason={bookingDisabledReason}
-        />
-      ) : null}
 
       <TimerExpiredModal open={isTimerExpired} onReset={handleTimerReset} />
     </div>

@@ -14,14 +14,17 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   const isBookingCheckout =
     pathname.startsWith('/booking') && !pathname.endsWith('/complete');
   const isFieldCheckIn = pathname.startsWith('/field/check-in');
+  const isPerformanceDetail = pathname.startsWith('/performance/');
+  const isTicketSubpage = pathname.startsWith('/genre/') || pathname === '/ranking' || pathname === '/upcoming';
   const hideShell = isAdmin || isBookingCheckout || isFieldCheckIn;
+  const showMobileTabs = !hideShell && !isPerformanceDetail && !isTicketSubpage;
 
   return (
-    <>
+    <div className={!isAdmin && !isFieldCheckIn ? 'ticket-storefront flex min-h-screen flex-1 flex-col' : 'flex min-h-screen flex-1 flex-col'}>
       {!hideShell && <LocaleSuggestion />}
       {!hideShell && <GNB />}
       <div
-        className={`flex flex-1 flex-col${!hideShell ? ' pb-[calc(56px+env(safe-area-inset-bottom,0px))] md:pb-0' : ''}`}
+        className={`flex flex-1 flex-col${showMobileTabs ? ' pb-[calc(56px+env(safe-area-inset-bottom,0px))] md:pb-0' : ''}`}
       >
         {children}
       </div>
@@ -30,7 +33,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
           <Footer />
         </div>
       )}
-      {!hideShell && <MobileTabBar />}
-    </>
+      {showMobileTabs && <MobileTabBar />}
+    </div>
   );
 }

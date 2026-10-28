@@ -56,6 +56,8 @@ import {
   FloorSeatMapEditor,
 } from '@/components/admin/floor-seat-map-editor';
 import { SvgPreview } from '@/components/admin/svg-preview';
+import { VenueLayoutLibrary } from '@/components/admin/venue-layout-library';
+import { SeatSectionEditor } from '@/components/admin/seat-section-editor';
 import { KstDateTimeInput } from '@/components/admin/kst-datetime-input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -135,6 +137,7 @@ function mapSeatMapToFormValue(
   seatMap: PerformanceWithDetails['seatMaps'][number],
 ): PerformanceSeatMapInput {
   return {
+    ...(seatMap.venueLayoutId !== undefined ? { venueLayoutId: seatMap.venueLayoutId } : {}),
     floorKey: seatMap.floorKey,
     floorLabel: seatMap.floorLabel,
     sortOrder: seatMap.sortOrder,
@@ -148,6 +151,7 @@ function normalizeSeatMapsForEditor(
   seatMaps: CreatePerformanceFormInput['seatMaps'],
 ): PerformanceSeatMapInput[] {
   return (seatMaps ?? []).map((seatMap, index) => ({
+    ...(seatMap.venueLayoutId !== undefined ? { venueLayoutId: seatMap.venueLayoutId } : {}),
     floorKey: seatMap.floorKey,
     floorLabel: seatMap.floorLabel,
     sortOrder: seatMap.sortOrder ?? index,
@@ -678,9 +682,25 @@ export function PerformanceForm({
 
   function updateSeatMaps(nextSeatMaps: PerformanceSeatMapInput[]) {
     setSeatMapDuplicateError(null);
-    form.setValue('seatMaps', nextSeatMaps, {
+    const geometry = (floors: PerformanceSeatMapInput[]) => JSON.stringify(floors.map((floor) => ({
+      key: floor.floorKey, label: floor.floorLabel, order: floor.sortOrder, svg: floor.svgUrl,
+      seats: floor.seatConfig?.tiers.flatMap((tier) => tier.seatIds).sort(), sections: floor.seatConfig?.sections,
+    })));
+    const detached = seatMaps.some((floor) => floor.venueLayoutId) && geometry(seatMaps) !== geometry(nextSeatMaps);
+    form.setValue('seatMaps', detached ? nextSeatMaps.map((floor) => ({ ...floor, venueLayoutId: null })) : nextSeatMaps, {
       shouldDirty: true,
     });
+    if (detached) toast.info('이 공연의 좌석도로 변경했습니다. 저장된 공연장 템플릿은 유지됩니다.');
+  }
+
+  function applyVenueLayout(floors: PerformanceSeatMapInput[]) {
+    setSeatMapDuplicateError(null);
+    form.setValue('seatMaps', floors, { shouldDirty: true });
+    const names = [...new Set(floors.flatMap((floor) => floor.seatConfig?.tiers.map((tier) => tier.tierName) ?? []))];
+    const prices = form.getValues('priceTiers');
+    form.setValue('priceTiers', names.map((tierName, sortOrder) => ({ tierName, sortOrder,
+      price: prices.find((tier) => tier.tierName.trim() === tierName)?.price ?? 0,
+    })), { shouldDirty: true });
   }
 
   async function onSubmit(data: CreatePerformanceInput) {
@@ -1309,12 +1329,15 @@ export function PerformanceForm({
             </p>
           </div>
 
+          {step === 'seats' ? <VenueLayoutLibrary venueName={watchedValues.venueName ?? ''} seatMaps={seatMaps}
+            onApply={applyVenueLayout} disabled={!canWrite || preparation.data?.structureProtected === true} /> : null}
+
           <FloorSeatMapEditor
             value={seatMaps}
             onChange={updateSeatMaps}
             duplicateFloorError={seatMapDuplicateError}
             renderPreview={({ floor, index, updateFloor }) => (
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <div className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
                 <SvgPreview
                   inputId={`svg-input-${index}`}
                   currentSvgUrl={floor.svgUrl || undefined}
@@ -1332,6 +1355,8 @@ export function PerformanceForm({
                     });
                   }}
                 />
+                <SeatSectionEditor floorKey={floor.floorKey} config={floor.seatConfig}
+                  onChange={(seatConfig) => updateFloor({ ...floor, seatConfig })} />
               </div>
             )}
           />

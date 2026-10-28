@@ -32,6 +32,7 @@ const {
 }));
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ replace: vi.fn() }),
 }));
 

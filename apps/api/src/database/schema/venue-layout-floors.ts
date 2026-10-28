@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  jsonb,
   pgTable,
   timestamp,
   uniqueIndex,
@@ -8,6 +9,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { venueLayouts } from './venue-layouts.js';
+import type { SeatMapConfig } from '@grabit/shared';
 
 export const venueLayoutFloors = pgTable('venue_layout_floors', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -18,6 +20,7 @@ export const venueLayoutFloors = pgTable('venue_layout_floors', {
   floorLabel: varchar('floor_label', { length: 100 }).notNull(),
   sortOrder: integer('sort_order').notNull().default(0),
   svgUrl: varchar('svg_url', { length: 1000 }),
+  seatConfig: jsonb('seat_config').$type<SeatMapConfig>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

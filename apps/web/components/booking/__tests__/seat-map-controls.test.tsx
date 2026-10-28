@@ -56,12 +56,11 @@ describe('SeatMapControls', () => {
     expect(buttons[2].getAttribute('aria-label')).toBe('전체 보기');
   });
 
-  it('uses an inline mobile toolbar and keeps overlay positioning for desktop only', () => {
+  it('overlays the bounded map viewport without taking space from mobile seats', () => {
     render(<SeatMapControls />);
 
     const group = screen.getByLabelText('좌석맵 보기 조절');
-    expect(group).toHaveClass('justify-end');
-    expect(group).toHaveClass('lg:absolute');
-    expect(group).not.toHaveClass('absolute');
+    expect(group).toHaveClass('absolute', 'right-3', 'bottom-3');
+    expect(group).toHaveClass('lg:flex-col');
   });
 });

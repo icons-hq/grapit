@@ -72,8 +72,8 @@
     "musical": "Musical",
     "concert": "Concert",
     "play": "Theater",
-    "exhibition": "Exhibition",
-    "classic": "Classical",
+    "exhibition": "Exhibitions & events",
+    "classic": "Classical & dance",
     "sports": "Sports",
     "kids_family": "Kids/Family",
     "leisure_camping": "Leisure/Camping"
@@ -351,7 +351,11 @@
       "selectionConflict": "Check seat availability and the per-person ticket limit, then try again.",
       "showtimeClosed": "This showtime has already started and can no longer be booked.",
       "selectionResynced": "Some seats changed hold status, so your selection was updated. Please check your selected seats.",
-      "selectionVerifyFailed": "We couldn't confirm the hold on your selected seats. Please try again in a moment."
+      "selectionVerifyFailed": "We couldn't confirm the hold on your selected seats. Please try again in a moment.",
+      "chooseSection": "Section",
+      "allSections": "Full map",
+      "remainingSeats": "{count} left",
+      "changeSchedule": "Change date"
     }
   },
   "locale": {

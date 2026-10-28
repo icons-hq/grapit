@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
-import { TransformWrapper, TransformComponent, MiniMap } from 'react-zoom-pan-pinch';
+import { TransformWrapper, TransformComponent, MiniMap, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { SeatMapConfig, SeatState } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ interface SeatMapViewerProps {
   myLockedSeatIds?: Set<string>;
   onSeatClick: (runtimeSeatId: string) => void;
   maxSelect: number;
+  focusedSectionKey?: string | null;
 }
 
 interface TierInfo {
@@ -106,15 +107,16 @@ function getSeatIdentity(element: Element | null, floorKey?: string): SeatIdenti
   }
 
   const seatKey = element.getAttribute(SEAT_KEY_ATTR);
-  const seatId = element.getAttribute(SEAT_ID_ATTR) ?? (seatKey ? getLocalSeatId(seatKey) : null);
+  const sourceSeatId = element.getAttribute(SEAT_ID_ATTR) ?? seatKey;
 
-  if (!seatId) {
+  if (!sourceSeatId) {
     return null;
   }
 
+  const seatId = getLocalSeatId(sourceSeatId);
   const runtimeSeatId = floorKey
     ? toRuntimeSeatId(seatId, floorKey)
-    : seatKey ?? seatId;
+    : seatKey ?? sourceSeatId;
 
   return { runtimeSeatId, seatId };
 }
@@ -490,7 +492,8 @@ function buildSeatMapBase(
   // Remove fixed dimensions and make responsive
   svgEl.removeAttribute('width');
   svgEl.removeAttribute('height');
-  svgEl.setAttribute('style', 'width:100%;height:auto;display:block;');
+  svgEl.setAttribute('style', 'width:100%;height:100%;display:block;');
+  svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
   return { html: svgEl.outerHTML, listSeats: [...listSeats.values()] };
 }
@@ -553,10 +556,12 @@ function SeatMapViewerComponent({
   myLockedSeatIds = EMPTY_SEAT_ID_SET,
   onSeatClick,
   maxSelect,
+  focusedSectionKey = null,
 }: SeatMapViewerProps) {
   const seatCopy = getSeatSelectionCopy();
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
+  const transformRef = useRef<ReactZoomPanPinchRef>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const seatIndexRef = useRef<SeatIndex | null>(null);
   // 응답을 요청한 svgUrl과 함께 보관해, 층을 빠르게 바꿀 때 이전 층 SVG가 새 층 키로 칠해지지 않게 한다.
@@ -743,7 +748,9 @@ function SeatMapViewerComponent({
   // 다시 그리지 않는다.
   const listOptions = useMemo(() => {
     if (!isListOpen || !seatMapBase) return [];
-    return seatMapBase.listSeats.map((seat) => {
+    const section = seatConfig.sections?.find((entry) => entry.sectionKey === focusedSectionKey);
+    const sectionIds = section ? new Set(section.seatIds.map(getLocalSeatId)) : null;
+    return seatMapBase.listSeats.filter((seat) => !sectionIds || sectionIds.has(seat.localId)).map((seat) => {
       const identity = { runtimeSeatId: seat.id, seatId: seat.localId };
       const selected = hasSeat(selectedSeatIds, identity);
       const ownedLock = hasSeat(myLockedSeatIds, identity);
@@ -751,8 +758,41 @@ function SeatMapViewerComponent({
       return { ...seat, selected: selected || ownedLock,
         disabled: !selected && !ownedLock && (isUnavailableSeatState(state) || selectedSeatIds.size >= maxSelect) };
     });
-  }, [isListOpen, seatMapBase, selectedSeatIds, myLockedSeatIds, seatStates, maxSelect]);
+  }, [isListOpen, seatMapBase, selectedSeatIds, myLockedSeatIds, seatStates, maxSelect, seatConfig.sections, focusedSectionKey]);
   const listSelection = listOptions.find((seat) => seat.id === listSeatId);
+
+  // Focus the union of the actual rendered seat bounds. SVG group transforms,
+  // floor-specific coordinates and seat shapes need no hand-maintained offsets.
+  // Realtime seat updates deliberately do not reset the user's pan/zoom.
+  useEffect(() => {
+    const canvas = containerRef.current;
+    const controls = transformRef.current;
+    if (!canvas || !controls) return;
+    const section = seatConfig.sections?.find((entry) => entry.sectionKey === focusedSectionKey);
+    if (!section) { controls.resetTransform(180); return; }
+    const frame = requestAnimationFrame(() => {
+      const ids = new Set(section.seatIds.map(getLocalSeatId));
+      const rects = [...canvas.querySelectorAll<SVGElement>(SEAT_SELECTOR)]
+        .filter((element) => ids.has(getSeatIdentity(element, floorKey)?.seatId ?? ''))
+        .map((element) => element.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+      if (!rects.length) return;
+      const origin = canvas.getBoundingClientRect();
+      const scale = controls.instance.transformState.scale;
+      const left = Math.min(...rects.map((rect) => rect.left));
+      const top = Math.min(...rects.map((rect) => rect.top));
+      const right = Math.max(...rects.map((rect) => rect.right));
+      const bottom = Math.max(...rects.map((rect) => rect.bottom));
+      const box = document.createElement('div');
+      box.setAttribute('aria-hidden', 'true');
+      Object.assign(box.style, { position: 'absolute', pointerEvents: 'none',
+        left: `${(left - origin.left) / scale - 24}px`, top: `${(top - origin.top) / scale - 24}px`,
+        width: `${(right - left) / scale + 48}px`, height: `${(bottom - top) / scale + 48}px` });
+      canvas.appendChild(box);
+      controls.zoomToElement(box, undefined, 200);
+      box.remove();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [seatMapBase, focusedSectionKey, seatConfig.sections, floorKey, isMobile]);
 
   // Event delegation for seat clicks
   // review WR-02 + IN-01: maxSelect prop을 viewer 내부에서 방어적으로 사용.
@@ -918,9 +958,9 @@ function SeatMapViewerComponent({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-lg bg-gray-50">
+    <div className="relative isolate overflow-hidden rounded-lg bg-gray-50">
       <details
-        className="border-b border-gray-200 bg-white p-4"
+        className="border-b border-gray-200 bg-white px-4 py-2"
         onToggle={(event) => setIsListOpen(event.currentTarget.open)}
       >
         <summary className="cursor-pointer py-2 text-sm font-semibold focus-visible:outline focus-visible:outline-primary">
@@ -941,8 +981,9 @@ function SeatMapViewerComponent({
         </div>
       </details>
       <TransformWrapper
+        ref={transformRef}
         key={isMobile ? 'mobile' : 'desktop'}
-        initialScale={isMobile ? 1.4 : 1}
+        initialScale={1}
         minScale={0.5}
         maxScale={4}
         centerOnInit
@@ -963,15 +1004,17 @@ function SeatMapViewerComponent({
           </MiniMap>
         )}
         <TransformComponent
-          wrapperClass="flex w-full min-h-[300px] items-center justify-center lg:min-h-[500px]"
-          contentClass="flex min-h-[300px] w-full items-center justify-center lg:min-h-[500px]"
-          wrapperStyle={{ width: '100%', maxWidth: '100%' }}
-          contentStyle={{ width: '100%' }}
+          wrapperClass="flex w-full items-center justify-center"
+          contentClass="flex h-full w-full items-center justify-center"
+          wrapperStyle={{ width: '100%', maxWidth: '100%', height: isMobile
+            ? 'clamp(240px, calc(100dvh - 560px), 420px)'
+            : 'clamp(300px, calc(100dvh - 420px), 600px)' }}
+          contentStyle={{ width: '100%', height: '100%' }}
         >
           <div
             ref={containerRef}
             data-testid="seat-map-canvas"
-            className="mx-auto w-full max-w-full"
+            className="relative mx-auto h-full w-full max-w-full"
             role="img"
             aria-label={floorLabel ? `${floorLabel} ${seatCopy.map}` : seatCopy.map}
             onClick={handleClick}

@@ -77,6 +77,7 @@ test.describe('Phase 26 M1 direct deploy smoke', () => {
     const authSession = await mockAuthenticatedSession(page);
     const forbiddenSideEffects = collectForbiddenSideEffects(page);
     await mockPerformanceDetail(page);
+    await page.route('**/api/v1/users/me/favorites', (route) => fulfillJson(route, 200, { ids: [] }));
     await blockDisabledBookingMutations(page);
 
     const flagsResponse = await page.request.get('/api/runtime-flags');
@@ -373,7 +374,7 @@ function createPerformanceDetail() {
       {
         id: PHASE26_M1_SHOWTIME_ID,
         performanceId: PHASE26_M1_PERFORMANCE_ID,
-        startsAt,
+        dateTime: startsAt,
         endsAt,
         sortOrder: 1,
         isActive: true,

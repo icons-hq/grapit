@@ -6,23 +6,19 @@ import { apiClient } from '@/lib/api-client';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { getCatalogListBookingStartRefetchInterval } from '@/components/performance/performance-display-status';
 import {
-  PERFORMANCE_QUERY_MAX_PAGE,
   type PerformanceListResponse,
   type PerformanceWithDetails,
   type PerformanceCardData,
   type Banner,
   type PerformanceQuery,
 } from '@grabit/shared';
+import { clampCatalogPage } from '@/lib/performance/catalog-page';
+export { clampCatalogPage } from '@/lib/performance/catalog-page';
 
 /**
  * The catalog API rejects pages outside 1..PERFORMANCE_QUERY_MAX_PAGE with
  * 400. A hand-edited `?page=` URL shows an empty last page instead.
  */
-export function clampCatalogPage(page: number): number {
-  if (!Number.isFinite(page) || page < 1) return 1;
-  return Math.min(Math.floor(page), PERFORMANCE_QUERY_MAX_PAGE);
-}
-
 export function useBrowsePerformances(status: NonNullable<PerformanceQuery['status']>, page: number) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const requestPage = clampCatalogPage(page);
@@ -32,7 +28,7 @@ export function useBrowsePerformances(status: NonNullable<PerformanceQuery['stat
   return useQuery({
     queryKey: ['performances', 'browse', status, requestPage, locale],
     queryFn: () => apiClient.get<PerformanceListResponse>(`/api/v1/performances?${new URLSearchParams({
-      genre: 'artist_celebrity', status, page: String(requestPage), limit: '12', ended: 'true', locale,
+      status, page: String(requestPage), limit: '12', ended: 'true', locale,
     })}`),
     refetchInterval: refetchAtBookingStart ? getCatalogListBookingStartRefetchInterval : false,
     // The refetch is one-shot and window focus does not refetch (providers.tsx),
@@ -42,6 +38,27 @@ export function useBrowsePerformances(status: NonNullable<PerformanceQuery['stat
 }
 
 type HomeBannerDeviceTarget = 'mobile' | 'desktop';
+
+/** One catalog contract for home shelves, genres, rankings and saved IDs. */
+export function useCatalogPerformances(options: Partial<PerformanceQuery> = {}, enabled = true) {
+  const locale = resolveVisibleCopyLocale(useLocale());
+  const params = new URLSearchParams({ locale, page: String(clampCatalogPage(options.page ?? 1)), limit: String(options.limit ?? 20) });
+  for (const key of ['genre', 'sort', 'status', 'sub', 'region', 'venueId', 'dateFrom', 'dateTo'] as const) {
+    const value = options[key];
+    if (value) params.set(key, value);
+  }
+  if (options.ended) params.set('ended', 'true');
+  if (options.ids?.length) params.set('ids', options.ids.join(','));
+  const query = params.toString();
+  const refreshOpening = options.status === 'upcoming' || options.status === 'selling';
+  return useQuery({
+    queryKey: ['performances', 'catalog', query],
+    queryFn: () => apiClient.get<PerformanceListResponse>(`/api/v1/performances?${query}`),
+    enabled,
+    refetchInterval: refreshOpening ? getCatalogListBookingStartRefetchInterval : false,
+    refetchIntervalInBackground: refreshOpening,
+  });
+}
 
 const DESKTOP_BANNER_QUERY = '(min-width: 768px)';
 

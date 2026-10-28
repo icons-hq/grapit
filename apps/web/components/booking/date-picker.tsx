@@ -49,9 +49,10 @@ export function DatePicker({
         disabled={disabledMatcher}
         startMonth={dateRange.from}
         endMonth={dateRange.to}
+        defaultMonth={selected ?? dateRange.from}
         showOutsideDays={false}
         classNames={{
-          root: 'w-full',
+          root: 'relative w-full',
           months: 'flex flex-col',
           month: 'space-y-2',
           month_caption: 'flex justify-center py-1',

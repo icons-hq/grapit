@@ -781,7 +781,13 @@ export function useQueue({
       return;
     }
 
-    void enterQueue();
+    // Let a synchronous effect cleanup/replay finish before sending entry.
+    // Two initial requests cannot share the admission cookie until the first
+    // response arrives, so the second can be rejected despite a valid admission.
+    const generation = entryGenerationRef.current;
+    void Promise.resolve().then(() => {
+      if (generation === entryGenerationRef.current) void enterQueue();
+    });
 
     return () => {
       entryGenerationRef.current += 1;

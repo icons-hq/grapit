@@ -325,7 +325,7 @@ describe('PerformanceService', () => {
       expect(key).not.toContain(sub);
       expect(key).not.toContain('x'.repeat(20));
       expect((key as string).length).toBeLessThan(200);
-      expect(key).toMatch(/:sub-[A-Za-z0-9_-]{22}:all$/);
+      expect(key).toMatch(/:sub-[A-Za-z0-9_-]{22}:all:[A-Za-z0-9_-]{22}$/);
     });
 
     it('runs one DB rebuild per instance when a hot list key expires under load', async () => {

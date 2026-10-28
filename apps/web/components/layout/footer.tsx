@@ -11,8 +11,8 @@ export function Footer() {
   const copy = getVisibleCopy(activeLocale).footer;
 
   return (
-    <footer className="mt-auto min-h-[120px] bg-gray-100">
-      <div className="mx-auto max-w-[1200px] px-6 py-8">
+    <footer className="ticket-footer mt-auto min-h-[120px]">
+      <div className="ticket-container py-10">
         {/* Legal links */}
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
           <Link

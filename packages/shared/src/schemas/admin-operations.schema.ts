@@ -200,6 +200,7 @@ export const adminAuditActionSchema = z.enum([
   'field.scan.offline_sync',
   'event.update',
   'event.delete',
+  'venue.layout.create',
   'refund.admin_refund',
   'support.assign',
   'support.resolve',

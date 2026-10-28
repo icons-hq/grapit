@@ -38,11 +38,14 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
 import { PerformanceIntakeService } from './performance-intake.service.js';
 import { PerformanceDraftController } from './performance-draft.controller.js';
 import { PerformanceDraftService } from './performance-draft.service.js';
+import { VenueLayoutController } from './venue-layout.controller.js';
+import { VenueLayoutService } from './venue-layout.service.js';
 
 @Module({
   imports: [PerformanceModule, PaymentModule, BookingModule, RefundModule],
   controllers: [
     AdminPerformanceController,
+    VenueLayoutController,
     PerformanceDraftController,
     AdminBannerController,
     AdminBookingController,
@@ -62,6 +65,7 @@ import { PerformanceDraftService } from './performance-draft.service.js';
   ],
   providers: [
     AdminService,
+    VenueLayoutService,
     PerformanceDraftService,
     AdminAuditService,
     AdminCapabilitiesGuard,

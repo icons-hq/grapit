@@ -22,12 +22,14 @@ import { withPublicCatalogStatus } from './catalog-card.js';
 export class PerformanceController {
   constructor(private readonly performanceService: PerformanceService) {}
 
+  @Get('venues')
+  async listVenues() { return this.performanceService.getPublicVenues(); }
+
   @Get('performances')
   async listPerformances(
     @Query(new ZodValidationPipe(performanceQuerySchema)) query: PerformanceQuery,
   ) {
-    const genre = query.genre ?? 'artist_celebrity';
-    return this.performanceService.findByGenre(genre, query);
+    return this.performanceService.findByGenre(query.genre, query);
   }
 
   @Get('performances/:id')

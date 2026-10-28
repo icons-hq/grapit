@@ -23,6 +23,7 @@ export {
   performancePublishStateEnum,
 } from './performances.js';
 export { showtimes } from './showtimes.js';
+export { performanceFavorites } from './performance-favorites.js';
 export { priceTiers } from './price-tiers.js';
 export { castings } from './castings.js';
 export { seatMaps } from './seat-maps.js';

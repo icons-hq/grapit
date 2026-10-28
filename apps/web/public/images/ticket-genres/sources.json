@@ -1,0 +1,46 @@
+{
+  "capturedAt": "2026-10-26",
+  "reference": "https://nol.yanolja.com/ticket",
+  "assets": [
+    {
+      "file": "musical.png",
+      "source": "https://image6.yanolja.com/cx-ydm/yy4gu18wCRKcylbp",
+      "sha256": "65c44a5eab03594646df97eabc3af65a0216be16e9e219657ae0fbe498966466"
+    },
+    {
+      "file": "concert.png",
+      "source": "https://image6.yanolja.com/cx-ydm/yWEzCaXBAjY9zAe8",
+      "sha256": "78c37be323f43ee171eae91dcbda8e00a620525f633104735f405e2fda50396d"
+    },
+    {
+      "file": "sports.png",
+      "source": "https://image6.yanolja.com/cx-ydm/YD5RsNcjFOlprsYM",
+      "sha256": "def0daab557b3c2df8946aef3e6a99d17987d2dd20d7332d4e8d2b755cc2afc5"
+    },
+    {
+      "file": "exhibition.png",
+      "source": "https://image6.yanolja.com/cx-ydm/rq57ISocc5l2rb2G",
+      "sha256": "a76f8575597fca2e77312af0383986aa99101eaf386793d8d43fa422766591a1"
+    },
+    {
+      "file": "classic.png",
+      "source": "https://image6.yanolja.com/cx-ydm/qz5z35yo0VvoUnNz",
+      "sha256": "05cc6c2581eb7a9aaa2ca931f57027095c7cdd0c43fe4007a77b195871950c35"
+    },
+    {
+      "file": "family.png",
+      "source": "https://image6.yanolja.com/cx-ydm/ZPWEyOfEBxRgFNKL",
+      "sha256": "71b37e5c6d5b621f15638a444a468e80c898f1082e2e2d0cb13832ee44927bee"
+    },
+    {
+      "file": "play.png",
+      "source": "https://image6.yanolja.com/cx-ydm/7CZEyQq2OkwPiCsU",
+      "sha256": "eabe81c4e3b788ef60f6bf37aac388c470288599b7d7ace9d4b6fd070e990b9d"
+    },
+    {
+      "file": "venue.png",
+      "source": "https://image6.yanolja.com/cx-ydm/SQflf0GlKjx1rkoK",
+      "sha256": "527460cfcd641f84b6f93c25b9e58ebd0566f94f9c084f0a506595409566885c"
+    }
+  ]
+}

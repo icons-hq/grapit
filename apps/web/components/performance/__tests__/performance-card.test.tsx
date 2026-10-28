@@ -88,7 +88,7 @@ describe('PerformanceCard', () => {
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
   });
 
-  it('shows the upcoming badge for a selling performance until its booking start, then the dates', () => {
+  it('changes the sale badge at the booking start while preserving the real show period', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-01T10:59:00.000Z'));
     render(
@@ -102,7 +102,7 @@ describe('PerformanceCard', () => {
     );
 
     expect(screen.getByLabelText('상태: 오픈예정')).toBeDefined();
-    expect(screen.queryByText('2026. 7. 18. KST')).toBeNull();
+    expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
 
     act(() => {
       vi.advanceTimersByTime(60_000);
@@ -112,7 +112,7 @@ describe('PerformanceCard', () => {
     expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
   });
 
-  it('shows 오픈예정 instead of stored dates for upcoming performances', () => {
+  it('shows the upcoming status beside the stored performance period', () => {
     render(
       <PerformanceCard
         performance={{
@@ -123,7 +123,7 @@ describe('PerformanceCard', () => {
     );
 
     expect(screen.getAllByText('오픈예정')).not.toHaveLength(0);
-    expect(screen.queryByText(/2026\\.07\\.18/)).toBeNull();
+    expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
   });
 
   it('localizes the upcoming date label outside Korean', () => {

@@ -3,15 +3,31 @@ import { describe, expect, it } from 'vitest';
 import { adminPatchNotes, latestAdminPatchNotes } from '../admin-patch-notes';
 
 describe('adminPatchNotes', () => {
-  it('links the sellout admission correction as the latest note', () => {
+  it('links the ticket storefront and venue layout release as the latest note', () => {
     expect(adminPatchNotes[0]).toEqual(expect.objectContaining({
+      prNumber: 239,
+      date: '2026-10-28',
+      category: 'feature',
+      githubUrl: 'https://github.com/icons-hq/grapit/pull/239',
+      title: '티켓 탐색·예매 화면과 공연장 좌석도 템플릿 개선',
+    }));
+    expect(adminPatchNotes[0]?.highlights).toEqual(expect.arrayContaining([
+      expect.stringContaining('템플릿'),
+      expect.stringContaining('기존 공연'),
+      expect.stringContaining('입장 200명'),
+    ]));
+  });
+
+  it('retains the sellout admission correction after the storefront release', () => {
+    const correction = adminPatchNotes.find((note) => note.prNumber === 238);
+    expect(correction).toEqual(expect.objectContaining({
       prNumber: 238,
       date: '2026-10-27',
       category: 'patch',
       githubUrl: 'https://github.com/icons-hq/grapit/pull/238',
       title: '매진 후 대기열 추가 입장 오류 수정',
     }));
-    expect(adminPatchNotes[0]?.highlights).toEqual(
+    expect(correction?.highlights).toEqual(
       expect.arrayContaining([
         expect.stringContaining('매진 후'),
         expect.stringContaining('입장 200명'),

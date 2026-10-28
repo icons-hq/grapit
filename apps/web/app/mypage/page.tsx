@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Bell,
@@ -12,6 +13,9 @@ import {
   Ticket,
   UserRound,
   WalletCards,
+  Heart,
+  History,
+  CircleHelp,
 } from 'lucide-react';
 import {
   COUNTRY_OPTIONS,
@@ -33,6 +37,7 @@ import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { cn } from '@/lib';
+import { getTicketCopy } from '@/lib/i18n/ticket-copy';
 
 type MyPageTab = 'account' | 'wallet' | 'settings';
 type AccountHubUser = UserProfile & {
@@ -124,6 +129,7 @@ function getNextReservation(reservations: ReservationListItem[]) {
 export default function MyPage() {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).mypage;
+  const ticketCopy = getTicketCopy(locale);
   const user = useAuthStore((s) => s.user);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -160,12 +166,11 @@ export default function MyPage() {
 
   return (
     <AuthGuard>
-      <main className="flex flex-1 justify-center bg-[#F7F8FA] px-4 pt-6 pb-16 md:pt-10">
+      <main className="ticket-mypage flex flex-1 justify-center px-5 pt-6 pb-16 md:pt-10">
         <div className="w-full max-w-[960px]">
-          <header className="mb-5 rounded-lg border border-gray-200 bg-white p-5 md:p-6">
+          <header className="ticket-account-header mb-8 bg-white py-5 md:py-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-sm font-semibold text-primary">{copy.titlePrefix}</p>
                 <h1 className="mt-2 text-2xl font-semibold text-gray-950 md:text-3xl">
                   {copy.title.replace('{name}', user?.name ?? copy.fallbackName)}
                 </h1>
@@ -187,9 +192,16 @@ export default function MyPage() {
             </div>
           </header>
 
+          <nav className="ticket-account-shortcuts" aria-label={ticketCopy.accountTitle}>
+            <Link href={`${getLocalizedPathname('/mypage', locale)}?tab=wallet`}><Ticket size={24} /><span>{ticketCopy.myTickets}</span></Link>
+            <Link href={getLocalizedPathname('/wishlist', locale)}><Heart size={24} /><span>{ticketCopy.wishlistTitle}</span></Link>
+            <Link href={getLocalizedPathname('/recent', locale)}><History size={24} /><span>{ticketCopy.recent}</span></Link>
+            <Link href={getLocalizedPathname('/support', locale)}><CircleHelp size={24} /><span>{ticketCopy.ticketGuide}</span></Link>
+          </nav>
+
           {isError && <section role="alert" className="mb-5 rounded-lg border border-destructive/20 p-4"><p>{copy.loadError}</p><Button variant="outline" className="mt-3" onClick={() => void refetch()}>{getVisibleCopy(locale).commonErrors.retry}</Button></section>}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="sticky top-0 z-10 h-auto rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+            <TabsList className="ticket-account-tabs">
               <TabsTrigger
                 value="account"
                 className="h-11 gap-2 rounded-md border-b-0 text-sm data-[state=active]:bg-gray-950 data-[state=active]:text-white data-[state=active]:border-b-0 data-[state=active]:-mb-0"
@@ -239,7 +251,6 @@ export default function MyPage() {
             <TabsContent value="settings" className="mt-5 min-h-0 rounded-none bg-transparent p-0">
               <section className="rounded-lg border border-gray-200 bg-white p-5 md:p-6">
                 <div className="mb-6">
-                  <p className="text-sm font-semibold text-primary">SETTINGS</p>
                   <h2 className="mt-2 text-xl font-semibold text-gray-950">
                     {locale === 'ko' ? '설정 센터' : copy.tabs.settings}
                   </h2>
@@ -290,7 +301,6 @@ function AccountHub({
       <section className="rounded-lg border border-gray-200 bg-white p-5 md:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-primary">ACCOUNT</p>
             <h2 className="mt-2 text-xl font-semibold text-gray-950">
               {locale === 'ko' ? '계정 개요' : copy.tabs.account}
             </h2>
