@@ -809,8 +809,10 @@ export class AdminService {
     const changes = Object.fromEntries(Object.entries(supplied).filter(([key, value]) => value !== undefined
       && (performanceId || (value !== null && value !== '')) && (value ?? '') !== (existing[key as keyof typeof supplied] ?? '')));
     if (!Object.keys(changes).length) return existing;
-    const others = performanceId ? await tx.select({ id: performances.id }).from(performances)
-      .where(and(eq(performances.venueId, existing.id), ne(performances.id, performanceId))).limit(1) : [existing];
+    // A saved layout may create a venue before its first performance. Only an
+    // actual other performance makes its address/arrival information shared.
+    const others = await tx.select({ id: performances.id }).from(performances)
+      .where(and(eq(performances.venueId, existing.id), performanceId ? ne(performances.id, performanceId) : undefined)).limit(1);
     if (others.length) throw new UnprocessableEntityException({ message: 'Validation failed', errors: {
       venueName: ['다른 공연이 사용하는 장소 정보입니다. 등록된 주소·안내를 그대로 사용하거나 다른 장소 이름으로 등록해주세요.'],
     } });

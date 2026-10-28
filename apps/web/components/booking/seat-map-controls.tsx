@@ -12,7 +12,7 @@ export function SeatMapControls() {
   return (
     <div
       aria-label={seatCopy.mapControls}
-      className="z-50 flex justify-end gap-2 bg-gray-50 px-3 pt-3 lg:absolute lg:right-4 lg:bottom-4 lg:flex-col lg:bg-transparent lg:p-0"
+      className="absolute right-3 bottom-3 z-50 flex gap-2 lg:right-4 lg:bottom-4 lg:flex-col"
     >
       <button
         type="button"

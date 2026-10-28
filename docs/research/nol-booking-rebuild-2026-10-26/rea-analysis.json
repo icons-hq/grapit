@@ -1,0 +1,388 @@
+{
+  "seat": {
+    "tool": "rea-agents@6.8.0",
+    "runtime": "Node 24.22.1",
+    "rootArtifactSha256": "87bd7a4117f41836e0ddf2a7020e9b06e1f3d1a6e77a7698ad16e430d647ef47",
+    "statistics": {
+      "findings": 1169,
+      "invalid_utf8_files": 0,
+      "modules": 170,
+      "nested_asar_containers": 0,
+      "parse_failures": 0,
+      "parsed_javascript_files": 12,
+      "relevant_files": 31,
+      "skipped_javascript_files": 0,
+      "text_bytes_read": 447287,
+      "visited_ast_nodes": 125341
+    },
+    "sourceSelection": {
+      "requested_paths": [
+        "123-808ad1f2ab3616c3.js",
+        "2633-1f21db5f274e356e.js",
+        "4170-e1fb55db8cd87efb.js",
+        "510-977c47d877bd3e4d.js",
+        "5932-0ca7bbbaf3e46dc0.js",
+        "6687-64d96ef47a5f4cb8.js",
+        "8140-a927d45ac9fdd356.js",
+        "8750-5333d3bb7f18759d.js",
+        "9170-07569def00b2c2ab.js",
+        "9880-1307fd97d52e6548.js",
+        "preorder-a81f9ccf0ec595bb.js",
+        "seat-4677441fe91ff657.js"
+      ],
+      "unselected_files": 19
+    },
+    "semanticCoverage": {
+      "limits": [],
+      "omitted_nodes": null,
+      "omitted_relations": null,
+      "status": "partial",
+      "truncated": false
+    },
+    "familyStatus": [
+      {
+        "family": "boundary",
+        "omitted_relations": null,
+        "retained_relations": 132,
+        "status": "partial"
+      },
+      {
+        "family": "call-flow",
+        "omitted_relations": null,
+        "retained_relations": 2406,
+        "status": "partial"
+      },
+      {
+        "family": "child-process",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "closure",
+        "omitted_relations": null,
+        "retained_relations": 7912,
+        "status": "partial"
+      },
+      {
+        "family": "configuration",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "data-flow",
+        "omitted_relations": null,
+        "retained_relations": 95140,
+        "status": "partial"
+      },
+      {
+        "family": "event",
+        "omitted_relations": null,
+        "retained_relations": 2,
+        "status": "partial"
+      },
+      {
+        "family": "object-flow",
+        "omitted_relations": null,
+        "retained_relations": 8936,
+        "status": "partial"
+      },
+      {
+        "family": "promise-ownership",
+        "omitted_relations": null,
+        "retained_relations": 201,
+        "status": "partial"
+      },
+      {
+        "family": "request",
+        "omitted_relations": null,
+        "retained_relations": 4,
+        "status": "partial"
+      },
+      {
+        "family": "resource-lifecycle",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "timer",
+        "omitted_relations": null,
+        "retained_relations": 28,
+        "status": "partial"
+      }
+    ],
+    "selectedPublicSources": [
+      {
+        "name": "9880-1307fd97d52e6548.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/9880-1307fd97d52e6548.js",
+        "bytes": 9757,
+        "sha256": "b072a586da3a04d372b4982505bb37b05bb1be601454dd52479c88267049cef0"
+      },
+      {
+        "name": "123-808ad1f2ab3616c3.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/123-808ad1f2ab3616c3.js",
+        "bytes": 35824,
+        "sha256": "73f92f6e545ed6a01528e9f2224dacdf3179c734d92df84c96b16eff54e17f27"
+      },
+      {
+        "name": "8750-5333d3bb7f18759d.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/8750-5333d3bb7f18759d.js",
+        "bytes": 9517,
+        "sha256": "5a67afda2eacf12766414dc5e8f1ee914170fcc9718afda14db3cfb35e40172e"
+      },
+      {
+        "name": "6687-64d96ef47a5f4cb8.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/6687-64d96ef47a5f4cb8.js",
+        "bytes": 12924,
+        "sha256": "a5e0f3989dac6a7698865c01d092dbe59fa2894341318726c5a88ab0bf2f495c"
+      },
+      {
+        "name": "510-977c47d877bd3e4d.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/510-977c47d877bd3e4d.js",
+        "bytes": 7003,
+        "sha256": "e63a54ac82b030afa9ed7d264777351325b53b373d731c619761e62a07b05965"
+      },
+      {
+        "name": "8140-a927d45ac9fdd356.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/8140-a927d45ac9fdd356.js",
+        "bytes": 16386,
+        "sha256": "ad6c3b9ab8d695df24dee9f50dfe1dd55b3371e07503cfd962e9523b26d4c027"
+      },
+      {
+        "name": "5932-0ca7bbbaf3e46dc0.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/5932-0ca7bbbaf3e46dc0.js",
+        "bytes": 51577,
+        "sha256": "ae1609b0cfb21988bfdcd3da74bd3a180fa1c527cd4ffac4e6055fe482828ce5"
+      },
+      {
+        "name": "4170-e1fb55db8cd87efb.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/4170-e1fb55db8cd87efb.js",
+        "bytes": 105990,
+        "sha256": "f1971eb043588779233541cbde2e617598d59f8e98cf904aa16ab13d05dae18b"
+      },
+      {
+        "name": "seat-4677441fe91ff657.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/pages/seat-4677441fe91ff657.js",
+        "bytes": 70492,
+        "sha256": "b76d7ae083dcb351baca86806223d9106f68501badc1c8d548c05107482914d1"
+      },
+      {
+        "name": "2633-1f21db5f274e356e.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/2633-1f21db5f274e356e.js",
+        "bytes": 34620,
+        "sha256": "429112d1ec34a50051de3ab1860709098d34d407e6eb3d2003bede98199a2761"
+      },
+      {
+        "name": "preorder-a81f9ccf0ec595bb.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/pages/preorder-a81f9ccf0ec595bb.js",
+        "bytes": 16383,
+        "sha256": "1489254e4f29316e5a51654b2909ad1197df9a78e017fee1d69b2d445c66fbc7"
+      },
+      {
+        "name": "9170-07569def00b2c2ab.js",
+        "url": "https://ent-web-assets.interparkcdn.net/applications/onestop-v2-front/962479/_next/static/chunks/9170-07569def00b2c2ab.js",
+        "bytes": 76814,
+        "sha256": "b8a803dc486a7d62c1d741c0dbf5d4ad3afca759d56fdb1454c400c7e364ac45"
+      }
+    ]
+  },
+  "payment": {
+    "tool": "rea-agents@6.8.0",
+    "runtime": "Node 24.22.1",
+    "rootArtifactSha256": "6408a6871608f27239173712a959935d1d0f586bf00906d65f8873133d5160b7",
+    "statistics": {
+      "findings": 320,
+      "invalid_utf8_files": 0,
+      "modules": 11,
+      "nested_asar_containers": 0,
+      "parse_failures": 0,
+      "parsed_javascript_files": 4,
+      "relevant_files": 15,
+      "skipped_javascript_files": 0,
+      "text_bytes_read": 1229887,
+      "visited_ast_nodes": 310269
+    },
+    "sourceSelection": {
+      "requested_paths": [
+        "4eca8c6776911182.js",
+        "5012c150fe4e1316.js",
+        "6faf1da83b3519c9.js",
+        "96a4e4de1e5cdd79.js"
+      ],
+      "unselected_files": 11
+    },
+    "semanticCoverage": {
+      "limits": [
+        {
+          "name": "max_semantic_nodes",
+          "unit": "items",
+          "value": 300000
+        },
+        {
+          "name": "max_semantic_nodes_per_file",
+          "unit": "items",
+          "value": 40000
+        },
+        {
+          "name": "max_semantic_unknowns",
+          "unit": "items",
+          "value": 100000
+        },
+        {
+          "name": "max_semantic_unknowns_per_file",
+          "unit": "items",
+          "value": 20000
+        },
+        {
+          "name": "semantic_graph_file_node_ceiling",
+          "unit": "items",
+          "value": 40000
+        },
+        {
+          "name": "semantic_graph_file_unknown_ceiling",
+          "unit": "items",
+          "value": 20000
+        },
+        {
+          "name": "semantic_graph_node_ceiling",
+          "unit": "items",
+          "value": 300000
+        },
+        {
+          "name": "semantic_graph_unknown_ceiling",
+          "unit": "items",
+          "value": 100000
+        }
+      ],
+      "omitted_nodes": null,
+      "omitted_relations": null,
+      "omitted_unknown_occurrences": [
+        {
+          "family": "call-flow",
+          "occurrences": 10650,
+          "reason": "dynamic-call"
+        },
+        {
+          "family": "object-flow",
+          "occurrences": 11719,
+          "reason": "ambiguous-target"
+        },
+        {
+          "family": "object-flow",
+          "occurrences": 1341,
+          "reason": "dynamic-property"
+        }
+      ],
+      "status": "partial",
+      "truncated": true
+    },
+    "familyStatus": [
+      {
+        "family": "boundary",
+        "omitted_relations": null,
+        "retained_relations": 36,
+        "status": "partial"
+      },
+      {
+        "family": "call-flow",
+        "omitted_relations": null,
+        "retained_relations": 12724,
+        "status": "partial"
+      },
+      {
+        "family": "child-process",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "closure",
+        "omitted_relations": null,
+        "retained_relations": 18583,
+        "status": "partial"
+      },
+      {
+        "family": "configuration",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "data-flow",
+        "omitted_relations": null,
+        "retained_relations": 65282,
+        "status": "partial"
+      },
+      {
+        "family": "event",
+        "omitted_relations": null,
+        "retained_relations": 1,
+        "status": "partial"
+      },
+      {
+        "family": "object-flow",
+        "omitted_relations": null,
+        "retained_relations": 7610,
+        "status": "partial"
+      },
+      {
+        "family": "promise-ownership",
+        "omitted_relations": null,
+        "retained_relations": 34,
+        "status": "partial"
+      },
+      {
+        "family": "request",
+        "omitted_relations": null,
+        "retained_relations": 2,
+        "status": "partial"
+      },
+      {
+        "family": "resource-lifecycle",
+        "omitted_relations": null,
+        "retained_relations": 0,
+        "status": "partial"
+      },
+      {
+        "family": "timer",
+        "omitted_relations": null,
+        "retained_relations": 4,
+        "status": "partial"
+      }
+    ],
+    "selectedPublicSources": [
+      {
+        "name": "4eca8c6776911182.js",
+        "url": "https://commerce-static.yanolja.com/nol-payment/deploy/202610230512-770a5b1e/_next/static/chunks/4eca8c6776911182.js",
+        "bytes": 22620,
+        "sha256": "d23e86bc694730c1861085061e6048be4022013d98efaf8437fc972390f578a0"
+      },
+      {
+        "name": "5012c150fe4e1316.js",
+        "url": "https://commerce-static.yanolja.com/nol-payment/deploy/202610230512-770a5b1e/_next/static/chunks/5012c150fe4e1316.js",
+        "bytes": 272397,
+        "sha256": "9f724e534f371b363ef374dfe35b0345276ee66e4c839cb5286e3c6651fa5206"
+      },
+      {
+        "name": "6faf1da83b3519c9.js",
+        "url": "https://commerce-static.yanolja.com/nol-payment/deploy/202610230512-770a5b1e/_next/static/chunks/6faf1da83b3519c9.js",
+        "bytes": 134633,
+        "sha256": "38702781c633b663427f31686e6ed71a40799619cc511d21add315771aa24371"
+      },
+      {
+        "name": "96a4e4de1e5cdd79.js",
+        "url": "https://commerce-static.yanolja.com/nol-payment/deploy/202610230512-770a5b1e/_next/static/chunks/96a4e4de1e5cdd79.js",
+        "bytes": 800237,
+        "sha256": "d0293e3f5cec60d8d45a97f05445ecbdea107588e1ba13c56dcd622f592980f2"
+      }
+    ]
+  },
+  "limitations": [
+    "Only browser-delivered public JavaScript was analyzed; private server implementations and business rules are unknown.",
+    "19 seat-flow and 11 payment files were outside the selected analysis scope.",
+    "Payment semantic extraction hit per-file node/unknown limits. Empty route inventory is not evidence that routes do not exist.",
+    "The user opened the preorder and payment-method screen. No payment button was clicked."
+  ]
+}

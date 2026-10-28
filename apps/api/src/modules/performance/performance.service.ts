@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne, or, gt, isNull } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, inArray, ne, or, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -30,6 +30,7 @@ import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogNotEnded
 import { CacheService, type CacheLoadResult } from './cache.service.js';
 import { CATALOG_CACHE_GENERATION_SCOPES } from './catalog-cache-keys.js';
 import { PerformanceViewCounter } from './performance-view-counter.service.js';
+import { catalogFilterConditions } from './catalog-filters.js';
 import {
   overlayReviewedCardTranslations,
   overlayReviewedDetailTranslations,
@@ -44,7 +45,7 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v4-opening-boundary';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'ticket-catalog-v5-all-genres';
 const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v3-venue-access';
 const HOME_BANNER_CACHE_VERSION = 'home-visible-v1';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
@@ -234,8 +235,16 @@ export class PerformanceService {
     private readonly viewCounter: PerformanceViewCounter,
   ) {}
 
+  async getPublicVenues() {
+    return this.db.select({ id: venues.id, name: venues.name, address: venues.address,
+      performanceCount: sql<number>`count(${performances.id})::int` })
+      .from(venues).innerJoin(performances, eq(performances.venueId, venues.id))
+      .where(eq(performances.publishState, 'published'))
+      .groupBy(venues.id, venues.name, venues.address).orderBy(asc(venues.name));
+  }
+
   async findByGenre(
-    genre: string,
+    genre: string | undefined,
     query: PerformanceQuery,
   ): Promise<PerformanceListResponse> {
     const { page = 1, limit = 20, sort = 'latest', ended = false, sub, status } = query;
@@ -246,19 +255,20 @@ export class PerformanceService {
     // `sub` is free-form text (bounded by the shared query schema); hash it so
     // the key stays fixed-length and delimiter-free.
     const subSegment = sub ? `sub-${hashCacheKeySegment(sub)}` : 'none';
-    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${cacheGenerationSegment(generation)}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${subSegment}:${status ?? 'all'}`;
+    const filterSegment = hashCacheKeySegment(JSON.stringify([query.region, query.venueId, query.dateFrom, query.dateTo, query.ids?.slice().sort()]));
+    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${cacheGenerationSegment(generation)}:${genre ?? 'all'}:${locale}:${page}:${limit}:${sort}:${ended}:${subSegment}:${status ?? 'all'}:${filterSegment}`;
 
     return this.cacheService.getOrLoad(
       cacheKey,
-      () => this.loadGenreList(genre, { page, limit, sort, ended, sub, status }, locale),
+      () => this.loadGenreList(genre, { ...query, page, limit, sort, ended, sub, status }, locale),
       { readThrough: generation !== null },
     );
   }
 
   private async loadGenreList(
-    genre: string,
+    genre: string | undefined,
     query: Required<Pick<PerformanceQuery, 'page' | 'limit' | 'sort' | 'ended'>>
-      & Pick<PerformanceQuery, 'sub' | 'status'>,
+      & Pick<PerformanceQuery, 'sub' | 'status' | 'region' | 'venueId' | 'dateFrom' | 'dateTo' | 'ids'>,
     locale: string,
   ): Promise<CacheLoadResult<PerformanceListResponse>> {
     const { page, limit, sort, ended, sub, status } = query;
@@ -266,11 +276,10 @@ export class PerformanceService {
 
     const conditions = [
       eq(performances.publishState, 'published'),
-      eq(
-        performances.genre,
-        genre as (typeof performances.genre.enumValues)[number],
-      ),
+      ...catalogFilterConditions(query),
     ];
+    if (genre) conditions.push(eq(performances.genre, genre as (typeof performances.genre.enumValues)[number]));
+    if (query.ids?.length) conditions.push(inArray(performances.id, query.ids));
 
     if (sub) {
       conditions.push(eq(performances.subcategory, sub));
@@ -287,7 +296,9 @@ export class PerformanceService {
 
     const orderByClause = sort === 'popular'
       ? desc(performances.viewCount)
-      : desc(performances.createdAt);
+      : sort === 'opening'
+        ? sql`${bookingPolicies.bookingStartsAt} asc nulls last`
+        : sort === 'date' ? asc(performances.startDate) : desc(performances.createdAt);
 
     const [data, countResult] = await Promise.all([
       this.db
@@ -296,7 +307,7 @@ export class PerformanceService {
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause)
-        .orderBy(orderByClause)
+        .orderBy(orderByClause, asc(performances.id))
         .limit(limit)
         .offset(offset),
       this.db
@@ -308,13 +319,14 @@ export class PerformanceService {
             from performances next_performance
             join booking_policies next_policy on next_policy.performance_id = next_performance.id
             where next_performance.publish_state = 'published'
-              and next_performance.genre = ${genre}
+              ${genre ? sql`and next_performance.genre = ${genre}` : sql``}
               and next_performance.status <> 'ended'
               and next_policy.booking_starts_at > ${queryTime}
               ${sub ? sql`and next_performance.subcategory = ${sub}` : sql``}
           )`,
         })
         .from(performances)
+        .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause),
     ]);

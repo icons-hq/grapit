@@ -19,6 +19,7 @@ export const venueLayouts = pgTable('venue_layouts', {
   layoutName: varchar('layout_name', { length: 255 }).notNull(),
   version: integer('version').notNull().default(1),
   isActive: boolean('is_active').notNull().default(false),
+  isTemplate: boolean('is_template').notNull().default(false),
   sourceSvgUrl: varchar('source_svg_url', { length: 1000 }),
   normalizedSvgUrl: varchar('normalized_svg_url', { length: 1000 }),
   stagePosition: varchar('stage_position', { length: 20 }).notNull().default('top'),
@@ -32,4 +33,5 @@ export const venueLayouts = pgTable('venue_layouts', {
     table.version,
   ),
   index('idx_venue_layouts_venue_active').on(table.venueId, table.isActive),
+  index('idx_venue_layouts_templates').on(table.venueId, table.isTemplate, table.layoutName, table.version),
 ]);

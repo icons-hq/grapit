@@ -238,7 +238,7 @@ export function SvgPreview({
     try {
       await saveSeatMap.mutateAsync({
         svgUrl,
-        seatConfig: { tiers },
+        seatConfig: { ...currentConfig, tiers },
         totalSeats,
       });
       toast.success('좌석맵이 저장되었습니다.');
@@ -305,7 +305,7 @@ export function SvgPreview({
               if (isControlled) {
                 onChange?.({
                   svgUrl,
-                  seatConfig: { tiers: nextTiers },
+                  seatConfig: { ...currentConfig, tiers: nextTiers },
                   totalSeats,
                 });
               }

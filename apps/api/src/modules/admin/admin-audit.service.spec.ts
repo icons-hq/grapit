@@ -70,6 +70,7 @@ describe('AdminAuditService', () => {
       'event.publish',
       'event.update',
       'event.delete',
+      'venue.layout.create',
       'refund.admin_refund',
       'support.escalate',
       'support.assign',

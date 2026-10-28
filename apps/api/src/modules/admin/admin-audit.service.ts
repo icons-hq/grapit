@@ -8,6 +8,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'event.publish',
   'event.update',
   'event.delete',
+  'venue.layout.create',
   'refund.admin_refund',
   'support.escalate',
   'support.assign',

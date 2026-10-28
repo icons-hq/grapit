@@ -1,0 +1,202 @@
+[
+  {
+    "file": "home-desktop.jpg",
+    "sourceScreenshot": "source-home-desktop.png",
+    "implementationScreenshot": "final-home-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": null,
+    "label": "Grabit - original purple palette"
+  },
+  {
+    "file": "home-mobile.jpg",
+    "sourceScreenshot": "source-home-mobile.png",
+    "implementationScreenshot": "final-home-mobile.png",
+    "sourcePixels": [
+      375,
+      812
+    ],
+    "implementationPixels": [
+      376,
+      814
+    ],
+    "normalizedViewport": [
+      390,
+      844
+    ],
+    "crop": null,
+    "label": "Grabit - original purple palette"
+  },
+  {
+    "file": "detail-desktop.jpg",
+    "sourceScreenshot": "source-detail-desktop.png",
+    "implementationScreenshot": "implementation-detail-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": null,
+    "label": "Grabit - purple palette / temporary QA show"
+  },
+  {
+    "file": "detail-mobile.jpg",
+    "sourceScreenshot": "source-detail-mobile.png",
+    "implementationScreenshot": "implementation-detail-mobile.png",
+    "sourcePixels": [
+      375,
+      812
+    ],
+    "implementationPixels": [
+      376,
+      814
+    ],
+    "normalizedViewport": [
+      390,
+      844
+    ],
+    "crop": null,
+    "label": "Grabit - purple / QA show"
+  },
+  {
+    "file": "search-desktop.jpg",
+    "sourceScreenshot": "source-search-desktop.png",
+    "implementationScreenshot": "implementation-search-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": null,
+    "label": "Grabit - original purple palette"
+  },
+  {
+    "file": "header-focus.jpg",
+    "sourceScreenshot": "source-home-desktop.png",
+    "implementationScreenshot": "final-home-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": [
+      80,
+      0,
+      780,
+      145
+    ],
+    "label": "Grabit - original purple palette"
+  },
+  {
+    "file": "calendar-focus.jpg",
+    "sourceScreenshot": "source-detail-desktop.png",
+    "implementationScreenshot": "implementation-detail-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": [
+      955,
+      75,
+      1340,
+      680
+    ],
+    "label": "Grabit / QA dates differ"
+  },
+  {
+    "file": "layout-genre-mobile.jpg",
+    "sourceScreenshot": "source-genre-mobile.png",
+    "implementationScreenshot": "implementation-genre-mobile.png",
+    "sourcePixels": [
+      375,
+      812
+    ],
+    "implementationPixels": [
+      376,
+      814
+    ],
+    "normalizedViewport": [
+      390,
+      844
+    ],
+    "crop": null,
+    "label": "Layout QA - before color restore"
+  },
+  {
+    "file": "layout-ranking-mobile.jpg",
+    "sourceScreenshot": "source-ranking-mobile.png",
+    "implementationScreenshot": "implementation-ranking-mobile.png",
+    "sourcePixels": [
+      375,
+      812
+    ],
+    "implementationPixels": [
+      376,
+      814
+    ],
+    "normalizedViewport": [
+      390,
+      844
+    ],
+    "crop": null,
+    "label": "Layout QA - before color restore"
+  },
+  {
+    "file": "layout-upcoming-desktop.jpg",
+    "sourceScreenshot": "source-upcoming-desktop.png",
+    "implementationScreenshot": "implementation-upcoming-desktop.png",
+    "sourcePixels": [
+      1425,
+      990
+    ],
+    "implementationPixels": [
+      1426,
+      990
+    ],
+    "normalizedViewport": [
+      1440,
+      1000
+    ],
+    "crop": null,
+    "label": "Layout QA - before color restore"
+  }
+]

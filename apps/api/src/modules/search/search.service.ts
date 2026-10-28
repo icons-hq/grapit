@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and } from 'drizzle-orm';
+import { eq, asc, desc, sql, and } from 'drizzle-orm';
 import {
   DEFAULT_LOCALE,
   type PerformanceCardData,
@@ -11,7 +11,9 @@ import {
   publicCatalogCardSelection,
   mapPublicCatalogCard,
   publicCatalogNotEndedCondition,
+  publicCatalogStatusCondition,
 } from '../performance/catalog-card.js';
+import { catalogFilterConditions } from '../performance/catalog-filters.js';
 import { performances, venues, bookingPolicies } from '../../database/schema/index.js';
 import {
   overlayReviewedCardTranslations,
@@ -31,13 +33,16 @@ export class SearchService {
 
     const conditions: ReturnType<typeof eq>[] = [
       eq(performances.publishState, 'published'),
+      ...catalogFilterConditions(query),
     ];
 
     if (genre) {
       conditions.push(eq(performances.genre, genre));
     }
 
-    if (!ended) {
+    const statusCondition = publicCatalogStatusCondition(query.status, new Date());
+    if (statusCondition) conditions.push(statusCondition);
+    else if (!ended) {
       // Same rule as the cards: a performance whose showtimes have all started
       // reads as ended even while its operator status says selling.
       conditions.push(publicCatalogNotEndedCondition());
@@ -83,13 +88,19 @@ export class SearchService {
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause)
         .orderBy(
-          desc(sql`ts_rank(search_vector, plainto_tsquery('simple', ${q}))`),
+          query.sort === 'popular' ? desc(performances.viewCount)
+            : query.sort === 'latest' ? desc(performances.createdAt)
+              : query.sort === 'date' ? asc(performances.startDate)
+                : desc(sql`ts_rank(search_vector, plainto_tsquery('simple', ${q}))`),
+          asc(performances.id),
         )
         .limit(limit)
         .offset(offset),
       this.db
         .select({ count: sql<number>`count(*)::int` })
         .from(performances)
+        .leftJoin(venues, eq(performances.venueId, venues.id))
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause),
     ]);
 

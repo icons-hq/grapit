@@ -613,6 +613,7 @@ describe('BookingPage seat lock flow', () => {
     await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
     await waitFor(() => expect(heldFor(SHOWTIME_A).has('1F:A-1')).toBe(true));
 
+    await user.click(screen.getByRole('button', { name: /일정 변경/ }));
     await user.click(screen.getByRole('button', { name: chipLabel(showtimeA!.dateTime) }));
     await settle();
 
@@ -620,6 +621,7 @@ describe('BookingPage seat lock flow', () => {
     expect(useBookingStore.getState().timerExpiresAt).not.toBeNull();
     expect(lockAllCalls(SHOWTIME_A)).toBe(0);
 
+    await user.click(screen.getByRole('button', { name: /일정 변경/ }));
     await user.click(screen.getByRole('button', { name: dateLabel(showtimeB!.dateTime) }));
 
     await waitFor(() => expect(lockAllCalls(SHOWTIME_A)).toBe(1));

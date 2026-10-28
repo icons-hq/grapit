@@ -72,8 +72,8 @@
     "musical": "音乐剧",
     "concert": "演唱会",
     "play": "话剧",
-    "exhibition": "展览",
-    "classic": "古典",
+    "exhibition": "展览/活动",
+    "classic": "古典/舞蹈",
     "sports": "体育",
     "kids_family": "儿童/家庭",
     "leisure_camping": "休闲/露营"
@@ -351,7 +351,11 @@
       "selectionConflict": "请确认座位状态和每人限购数量后重试。",
       "showtimeClosed": "该场次已开始，无法预订。",
       "selectionResynced": "部分座位的保留状态已变化，已更新所选座位。请确认所选座位。",
-      "selectionVerifyFailed": "无法确认所选座位的保留状态，请稍后重试。"
+      "selectionVerifyFailed": "无法确认所选座位的保留状态，请稍后重试。",
+      "chooseSection": "选择区域",
+      "allSections": "查看全场",
+      "remainingSeats": "余 {count} 座",
+      "changeSchedule": "更改场次"
     }
   },
   "locale": {

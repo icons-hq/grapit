@@ -1,0 +1,82 @@
+import { resolveVisibleCopyLocale } from './visible-copy';
+
+const ko = {
+  ticket: '티켓', allCategories: '전체 카테고리', all: '전체', browse: '둘러보기',
+  upcoming: '오픈 예정', ranking: '장르별 랭킹', rankingTitle: '티켓 장르별 랭킹',
+  rankingBasis: '판매 종료 포함 · 누적 조회수 기준', newShows: '공연 둘러보기', venues: '공연장',
+  venueTitle: '공연장별로 만나보세요', venueSearch: '공연장 이름 검색', venueEmpty: '등록된 공연장이 없습니다.',
+  wishlist: '찜', wishlistTitle: '찜한 공연', recent: '최근 본 공연', my: '마이',
+  myTickets: '내 티켓', searchPlaceholder: '어떤 공연을 찾고 있나요?', search: '검색',
+  guide: '이용안내', notice: '공지', noticeText: '티켓 예매부터 QR 입장까지, Grabit 이용 안내',
+  viewAll: '전체보기', previous: '이전', next: '다음', pause: '자동재생 일시정지', play: '자동재생 시작',
+  allBanners: '배너 전체보기', close: '닫기', filters: '필터', reset: '초기화', apply: '적용하기',
+  genre: '장르', region: '지역', date: '공연일', dateFrom: '시작일', dateTo: '종료일',
+  status: '판매 상태', selling: '판매중', ended: '판매종료', latest: '최신순', popular: '조회순',
+  openingOrder: '오픈순', dateOrder: '공연일순', relevance: '관련도순', includeEnded: '종료된 공연 포함',
+  noShows: '아직 등록된 공연이 없어요', noShowsBody: '다른 장르를 둘러보거나 필터를 변경해 보세요.',
+  noUpcoming: '오픈 예정인 공연을 준비하고 있어요', noUpcomingBody: '지금 예매할 수 있는 공연을 둘러보세요.',
+  loadError: '공연을 불러오지 못했어요.', retry: '다시 시도', results: '개 검색결과',
+  savedEmpty: '마음에 드는 공연을 찜해 보세요', savedEmptyBody: '공연 상세의 하트를 누르면 여기에 모아 볼 수 있어요.',
+  recentEmpty: '최근 본 공연이 없어요', recentEmptyBody: '관심 있는 공연을 둘러보세요.',
+  recentNote: '이 기기에서 최근 30일 동안 본 공연이에요.', clearRecent: '최근 본 공연 지우기',
+  save: '찜하기', unsave: '찜 해제', saved: '찜한 공연에 담았어요.', unsaved: '찜한 공연에서 삭제했어요.',
+  share: '공유하기', copied: '공연 링크를 복사했어요.', copyFailed: '주소창의 링크를 복사해 주세요.',
+  openingTbd: '오픈 일정 미정', today: '오늘', tomorrow: '내일',
+  details: '상품상세', cast: '캐스팅', prices: '가격', information: '이용안내', venue: '장소',
+  selectDate: '관람일 선택', selectTime: '회차 선택', selectTimePrompt: '관람일과 회차를 선택해 주세요.',
+  dateTbd: '공연 일정을 준비하고 있어요.', noFutureShowtime: '예매 가능한 회차가 없습니다.',
+  book: '예매하기', selectedTime: '선택한 회차', tickets: '티켓',
+  searchPrompt: '찾고 있는 공연이 있나요?', searchHint: '공연 이름으로 검색해 보세요.',
+  loginForWishlist: '로그인하고 마음에 드는 공연을 모아 보세요.', login: '로그인',
+  showMore: '더보기', toTop: '맨 위로', untitledPoster: '포스터 준비중',
+  priceFrom: '원부터', feeSeparate: '예매 수수료 별도', categoryHeading: '모든 티켓',
+  accountTitle: '마이페이지', ticketGuide: '예매·입장 안내',
+};
+type TicketCopy = { [K in keyof typeof ko]: string };
+const en: TicketCopy = {
+  ticket: 'Tickets', allCategories: 'All categories', all: 'All', browse: 'Browse',
+  upcoming: 'Opening soon', ranking: 'Rankings', rankingTitle: 'Popular by genre', rankingBasis: 'All-time views · includes ended shows',
+  newShows: 'Discover shows', venues: 'Venues', venueTitle: 'Explore by venue', venueSearch: 'Search venues', venueEmpty: 'No venues yet.',
+  wishlist: 'Saved', wishlistTitle: 'Saved shows', recent: 'Recently viewed', my: 'My', myTickets: 'My tickets',
+  searchPlaceholder: 'Find your next show', search: 'Search', guide: 'Help', notice: 'Notice',
+  noticeText: 'From booking to QR entry: your Grabit guide', viewAll: 'View all', previous: 'Previous', next: 'Next',
+  pause: 'Pause autoplay', play: 'Start autoplay', allBanners: 'All promotions', close: 'Close',
+  filters: 'Filters', reset: 'Reset', apply: 'Apply', genre: 'Genre', region: 'Region', date: 'Show date', dateFrom: 'From', dateTo: 'To',
+  status: 'Sale status', selling: 'On sale', ended: 'Ended', latest: 'Newest', popular: 'Most viewed', openingOrder: 'Opening date',
+  dateOrder: 'Show date', relevance: 'Relevance', includeEnded: 'Include ended shows',
+  noShows: 'No shows here yet', noShowsBody: 'Explore another genre or change your filters.', noUpcoming: 'New shows are on their way',
+  noUpcomingBody: 'Discover shows you can book now.', loadError: 'Unable to load shows.', retry: 'Try again', results: 'results',
+  savedEmpty: 'Save a show you love', savedEmptyBody: 'Tap the heart on a show to find it here.',
+  recentEmpty: 'No recently viewed shows', recentEmptyBody: 'Find something you would love to see.', recentNote: 'Shows viewed on this device in the past 30 days.',
+  clearRecent: 'Clear recently viewed', save: 'Save show', unsave: 'Remove saved show', saved: 'Show saved.', unsaved: 'Show removed.',
+  share: 'Share', copied: 'Show link copied.', copyFailed: 'Please copy the link from your address bar.',
+  openingTbd: 'Opening date to be announced', today: 'Today', tomorrow: 'Tomorrow', details: 'Details', cast: 'Cast', prices: 'Prices',
+  information: 'Visitor information', venue: 'Venue', selectDate: 'Choose a date', selectTime: 'Choose a time',
+  selectTimePrompt: 'Choose a date and showtime.', dateTbd: 'Show dates will be announced.', noFutureShowtime: 'No bookable showtimes.',
+  book: 'Book tickets', selectedTime: 'Selected showtime', tickets: 'Tickets', searchPrompt: 'Looking for a show?',
+  searchHint: 'Search by show name.', loginForWishlist: 'Sign in to save your favorite shows.', login: 'Sign in', showMore: 'Show more',
+  toTop: 'Back to top', untitledPoster: 'Poster coming soon', priceFrom: 'KRW and up', feeSeparate: 'Booking fee extra',
+  categoryHeading: 'All tickets', accountTitle: 'My page', ticketGuide: 'Booking & entry guide',
+};
+const th: TicketCopy = {
+  ...en, ticket:'บัตร',allCategories:'หมวดหมู่ทั้งหมด',all:'ทั้งหมด',browse:'สำรวจ',upcoming:'เร็ว ๆ นี้',ranking:'อันดับ',rankingTitle:'ยอดนิยมตามประเภท',
+  rankingBasis:'ยอดเข้าชมทั้งหมด รวมการแสดงที่สิ้นสุด',newShows:'สำรวจการแสดง',venues:'สถานที่จัดงาน',venueTitle:'สำรวจตามสถานที่',venueSearch:'ค้นหาสถานที่',venueEmpty:'ยังไม่มีสถานที่',
+  wishlist:'ถูกใจ',wishlistTitle:'การแสดงที่ถูกใจ',recent:'ดูล่าสุด',my:'ของฉัน',myTickets:'บัตรของฉัน',searchPlaceholder:'ค้นหาการแสดง',search:'ค้นหา',guide:'คู่มือ',
+  notice:'ประกาศ',noticeText:'คู่มือ Grabit ตั้งแต่จองบัตรจนถึงสแกน QR เข้างาน',viewAll:'ดูทั้งหมด',previous:'ก่อนหน้า',next:'ถัดไป',pause:'หยุดเล่นอัตโนมัติ',play:'เล่นอัตโนมัติ',allBanners:'โปรโมชั่นทั้งหมด',close:'ปิด',
+  filters:'ตัวกรอง',reset:'ล้าง',apply:'ใช้',genre:'ประเภท',region:'ภูมิภาค',date:'วันที่แสดง',dateFrom:'เริ่ม',dateTo:'สิ้นสุด',status:'สถานะการขาย',selling:'เปิดขาย',ended:'สิ้นสุด',latest:'ล่าสุด',popular:'เข้าชมมากที่สุด',openingOrder:'วันเปิดขาย',dateOrder:'วันที่แสดง',relevance:'ความเกี่ยวข้อง',includeEnded:'รวมการแสดงที่สิ้นสุด',
+  noShows:'ยังไม่มีการแสดง',noShowsBody:'ลองประเภทอื่นหรือเปลี่ยนตัวกรอง',noUpcoming:'กำลังเตรียมการแสดงใหม่',noUpcomingBody:'สำรวจการแสดงที่จองได้แล้ว',loadError:'โหลดการแสดงไม่ได้',retry:'ลองอีกครั้ง',results:'ผลการค้นหา',
+  savedEmpty:'บันทึกการแสดงที่คุณชอบ',savedEmptyBody:'กดหัวใจในหน้ารายละเอียดเพื่อบันทึกที่นี่',recentEmpty:'ยังไม่มีการแสดงที่ดูล่าสุด',recentEmptyBody:'สำรวจการแสดงที่คุณชอบ',recentNote:'การแสดงที่ดูบนอุปกรณ์นี้ใน 30 วันที่ผ่านมา',clearRecent:'ล้างประวัติที่ดู',
+  save:'ถูกใจ',unsave:'เลิกถูกใจ',saved:'บันทึกแล้ว',unsaved:'นำออกแล้ว',share:'แชร์',copied:'คัดลอกลิงก์แล้ว',copyFailed:'โปรดคัดลอกลิงก์จากแถบที่อยู่',openingTbd:'รอประกาศวันเปิดขาย',today:'วันนี้',tomorrow:'พรุ่งนี้',
+  details:'รายละเอียด',cast:'นักแสดง',prices:'ราคา',information:'ข้อมูลการเข้าชม',venue:'สถานที่',selectDate:'เลือกวัน',selectTime:'เลือกรอบ',selectTimePrompt:'เลือกวันและรอบการแสดง',dateTbd:'รอประกาศกำหนดการ',noFutureShowtime:'ไม่มีรอบที่จองได้',book:'จองบัตร',selectedTime:'รอบที่เลือก',tickets:'บัตร',searchPrompt:'กำลังมองหาการแสดงไหม?',searchHint:'ค้นหาด้วยชื่อการแสดง',loginForWishlist:'เข้าสู่ระบบเพื่อบันทึกการแสดงที่ชอบ',login:'เข้าสู่ระบบ',showMore:'ดูเพิ่มเติม',toTop:'กลับด้านบน',untitledPoster:'กำลังเตรียมโปสเตอร์',priceFrom:'วอนขึ้นไป',feeSeparate:'ไม่รวมค่าธรรมเนียม',categoryHeading:'บัตรทั้งหมด',accountTitle:'หน้าของฉัน',ticketGuide:'คู่มือการจองและเข้างาน',
+};
+const zh: TicketCopy = {
+  ...en,ticket:'门票',allCategories:'全部分类',all:'全部',browse:'浏览',upcoming:'即将开售',ranking:'排行榜',rankingTitle:'分类人气排行',rankingBasis:'累计浏览量 · 含已结束演出',newShows:'探索演出',venues:'演出场馆',venueTitle:'按场馆探索',venueSearch:'搜索场馆',venueEmpty:'暂无场馆。',
+  wishlist:'收藏',wishlistTitle:'收藏的演出',recent:'最近浏览',my:'我的',myTickets:'我的门票',searchPlaceholder:'寻找下一场演出',search:'搜索',guide:'使用指南',notice:'公告',noticeText:'从预订到扫码入场：Grabit 使用指南',viewAll:'查看全部',previous:'上一个',next:'下一个',pause:'暂停自动播放',play:'开始自动播放',allBanners:'全部推广',close:'关闭',
+  filters:'筛选',reset:'重置',apply:'应用',genre:'类型',region:'地区',date:'演出日期',dateFrom:'开始日期',dateTo:'结束日期',status:'销售状态',selling:'售票中',ended:'已结束',latest:'最新',popular:'浏览量',openingOrder:'开售时间',dateOrder:'演出时间',relevance:'相关度',includeEnded:'包含已结束演出',
+  noShows:'暂无演出',noShowsBody:'试试其他类型或调整筛选条件。',noUpcoming:'新演出正在准备中',noUpcomingBody:'探索现在可预订的演出。',loadError:'无法加载演出。',retry:'重试',results:'个搜索结果',savedEmpty:'收藏喜欢的演出',savedEmptyBody:'点击演出详情中的爱心即可收藏。',recentEmpty:'暂无最近浏览的演出',recentEmptyBody:'寻找喜欢的演出吧。',recentNote:'此设备最近 30 天浏览的演出。',clearRecent:'清空浏览记录',
+  save:'收藏',unsave:'取消收藏',saved:'已收藏演出。',unsaved:'已取消收藏。',share:'分享',copied:'已复制演出链接。',copyFailed:'请从地址栏复制链接。',openingTbd:'开售时间待定',today:'今天',tomorrow:'明天',details:'演出详情',cast:'演员',prices:'票价',information:'入场指南',venue:'场馆',selectDate:'选择日期',selectTime:'选择场次',selectTimePrompt:'请选择日期和场次。',dateTbd:'演出时间待公布。',noFutureShowtime:'暂无可预订场次。',book:'立即预订',selectedTime:'已选场次',tickets:'门票',searchPrompt:'在寻找演出吗？',searchHint:'输入演出名称搜索。',loginForWishlist:'登录以收藏喜欢的演出。',login:'登录',showMore:'查看更多',toTop:'回到顶部',untitledPoster:'海报准备中',priceFrom:'韩元起',feeSeparate:'另收预订手续费',categoryHeading:'全部门票',accountTitle:'我的页面',ticketGuide:'预订及入场指南',
+};
+
+export function getTicketCopy(locale: string): TicketCopy {
+  return { ko, en, th, 'zh-CN': zh }[resolveVisibleCopyLocale(locale)];
+}

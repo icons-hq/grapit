@@ -483,7 +483,7 @@ async function assertTimerAndNextCta(page: Page) {
 
 async function assertPostSelectionState(page: Page) {
   const summary = page.getByRole('complementary');
-  await expect(summary.getByText('VIP')).toBeVisible();
+  await expect(summary.getByRole('button', { name: '1층 A열 1번 선택 해제' }).getByText('VIP')).toBeVisible();
   await expect(summary.getByText('총 1석')).toBeVisible();
   await expect(summary.getByText('총 결제 금액')).toBeVisible();
   await expect(summary.getByText('112,000원')).toBeVisible();
@@ -495,9 +495,13 @@ async function assertPostSelectionState(page: Page) {
 
 async function assertMobilePostSelectionState(page: Page) {
   const mobileSummary = page.getByRole('complementary', { name: '선택 좌석 요약' });
-  await expect(mobileSummary.getByText('VIP')).toBeVisible();
-  await expect(mobileSummary.getByText('총 1석')).toBeVisible();
+  const toggle = mobileSummary.getByRole('button', { name: '선택 좌석 1', exact: true });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(mobileSummary.getByRole('button', { name: '1층 A열 1번 선택 해제' }).getByText('VIP')).toBeVisible();
   await expect(mobileSummary.getByText('총 결제 금액')).toBeVisible();
+  await expect(mobileSummary.getByText('112,000원')).toBeVisible();
   await expect(
     page.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
   ).toBeVisible();

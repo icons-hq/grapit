@@ -93,6 +93,22 @@ describe('useQueue', () => {
     getMock.mockReset();
   });
 
+  it.each([false, true])('shares initial entry before the admission cookie arrives (strict=%s)', async (reactStrictMode) => {
+    postMock.mockResolvedValue({
+      queueSessionId: 'queue-single-entry', state: 'ADMITTED', position: 0,
+      waitingCount: 0, etaSeconds: 0, remainingSeats: 17, autoEnter: true,
+      admittedAt: '2026-05-08T09:00:00.000Z',
+      activeUntilAt: '2026-05-08T09:10:00.000Z',
+      reentryGraceUntilAt: '2026-05-08T09:13:00.000Z',
+    });
+    const { result } = renderHook(() => useQueue({ performanceId: 'performance-1' }), {
+      reactStrictMode,
+    });
+    await flushQueueEffects();
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isReady).toBe(true);
+  });
+
   it('skips the waiting surface when a fetched queue session is immediately admitted', async () => {
     postMock.mockResolvedValueOnce({
       queueSessionId: 'queue-session-1',

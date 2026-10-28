@@ -1,3 +1,4 @@
+vi.mock('@/components/performance/ticket-actions', () => ({ TicketActions: () => null }));
 import { Suspense } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';

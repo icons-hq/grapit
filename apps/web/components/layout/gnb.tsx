@@ -1,231 +1,107 @@
 'use client';
 
-import * as React from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
-import { Search, ChevronDown, LogOut, User, X } from 'lucide-react';
+import { Search, Menu, Heart, Clock3, Ticket, UserRound, LogOut, ChevronDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
-import {
-  getVisibleCopy,
-  resolveVisibleCopyLocale,
-} from '@/lib/i18n/visible-copy';
+import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getTicketCopy } from '@/lib/i18n/ticket-copy';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
-import { Button } from '@/components/ui/button';
-import {
-  getLocalizedPathname,
-  LocaleSwitcher,
-  MobileLocaleSwitcher,
-} from '@/components/i18n/locale-switcher';
+import { getLocalizedPathname, LocaleSwitcher, MobileLocaleSwitcher } from '@/components/i18n/locale-switcher';
 import { resolveLocaleFromPathname } from '@/i18n/routing';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { GenreGrid } from '@/components/home/genre-grid';
+import { TicketActions } from '@/components/performance/ticket-actions';
+import { PUBLIC_GENRES } from '@/lib/performance/public-genres';
 
 export function GNB() {
   const router = useRouter();
   const pathname = usePathname();
-  const locale = useLocale();
-  const activeLocale = resolveVisibleCopyLocale(locale);
-  const copy = getVisibleCopy(activeLocale);
+  const currentSearch = useSearchParams().get('q') ?? '';
+  const locale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(locale);
+  const ticket = getTicketCopy(locale);
   const { user, isInitialized, accessToken, clearAuth } = useAuthStore();
-  const [isProfileOpen, setIsProfileOpen] = React.useState(false);
-  const [searchValue, setSearchValue] = React.useState('');
-  const [isShaking, setIsShaking] = React.useState(false);
-  const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const profileRef = React.useRef<HTMLDivElement>(null);
-
-  const isAuthenticated = isInitialized && !!accessToken && !!user;
-
-  React.useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        profileRef.current &&
-        !profileRef.current.contains(event.target as Node)
-      ) {
-        setIsProfileOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const profileRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const authenticated = isInitialized && !!accessToken && !!user;
+  const { pathnameWithoutLocale: path } = resolveLocaleFromPathname(pathname);
+  const home = path === '/' || path === '/ticket';
+  const detailId = path.startsWith('/performance/') ? path.split('/')[2] : undefined;
+  const genre = PUBLIC_GENRES.find((value) => path === `/genre/${value}`);
+  const mobileTitle = genre ? copy.genres[genre] : path === '/ranking' ? ticket.ranking : path === '/upcoming' ? ticket.upcoming : null;
+  const href = (value: string) => getLocalizedPathname(value, locale);
+  useEffect(() => { setSearch(currentSearch); }, [currentSearch]);
+  useEffect(() => {
+    function dismiss(event: MouseEvent) { if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false); }
+    function escape(event: KeyboardEvent) { if (event.key === 'Escape') setProfileOpen(false); }
+    document.addEventListener('mousedown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('mousedown', dismiss); document.removeEventListener('keydown', escape); };
   }, []);
-
-  const userInitials = user?.name
-    ? user.name
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2)
-    : '';
-
-  async function handleLogout() {
-    setIsProfileOpen(false);
-    try {
-      await apiClient.post('/api/v1/auth/logout');
-    } catch {
-      // Clear state regardless
-    }
-    clearAuth();
-    toast.success(copy.nav.logoutSuccess);
-    router.push(getLocalizedPathname('/', activeLocale));
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!search.trim()) { inputRef.current?.focus(); return; }
+    router.push(`${href('/search')}?q=${encodeURIComponent(search.trim())}`);
   }
-
-  function handleSearch() {
-    const trimmed = searchValue.trim();
-    if (trimmed.length === 0) {
-      setIsShaking(true);
-      setTimeout(() => setIsShaking(false), 200);
-      return;
-    }
-    router.push(
-      `${getLocalizedPathname('/search', activeLocale)}?q=${encodeURIComponent(trimmed)}`,
-    );
+  async function logout() {
+    setProfileOpen(false);
+    try { await apiClient.post('/api/v1/auth/logout'); } catch { /* Local logout still applies. */ }
+    clearAuth(); toast.success(copy.nav.logoutSuccess); router.push(href('/'));
   }
-
-  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
-  }
-
-  const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
   const links = [
-    { href: '/', label: copy.home.findShows, active: pathnameWithoutLocale === '/' || pathnameWithoutLocale.startsWith('/genre') },
-    { href: '/mypage?tab=wallet', label: copy.home.myTickets, active: pathnameWithoutLocale.startsWith('/mypage') },
-    { href: '/support', label: copy.home.guide, active: pathnameWithoutLocale.startsWith('/support') },
+    { href: '/', label: ticket.ticket }, { href: '/upcoming', label: ticket.upcoming },
+    { href: '/ranking', label: ticket.ranking }, { href: '/venues', label: ticket.venues },
+    { href: '/support', label: ticket.guide },
   ];
-
-  return (
-    <>
-      <header className="sticky top-0 z-50 h-14 border-b border-gray-200 bg-white md:h-16">
-        <nav className="mx-auto flex h-full max-w-[1200px] items-center px-4 md:px-6">
-          {/* Logo */}
-          <Link
-            href={getLocalizedPathname('/', activeLocale)}
-            className="mr-0 text-lg font-semibold text-primary md:mr-8 md:text-xl"
-          >
-            Grabit
-          </Link>
-
-          {/* Genre tabs - hidden on mobile */}
-          <div className="hidden items-center gap-1 md:flex">
-            {links.map((link) => (
-              <Link
-                key={link.href}
-                href={getLocalizedPathname(link.href, activeLocale)}
-                className={cn(
-                  'px-3 py-2 text-base transition-colors',
-                  link.active
-                    ? 'border-b-2 border-primary font-semibold text-primary'
-                    : 'text-gray-900 hover:text-primary',
-                )}
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          <div className="flex items-center gap-1 md:hidden">
-            <MobileLocaleSwitcher />
-          </div>
-
-          {/* Search bar - hidden on mobile */}
-          <div className={cn("mr-4 hidden lg:block", pathnameWithoutLocale === "/" && "lg:hidden")}>
-            <div
-              className={cn(
-                'relative transition-transform',
-                isShaking && 'animate-[shake_200ms_ease-in-out]',
-              )}
-            >
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                role="searchbox"
-                aria-label={copy.nav.searchAriaLabel}
-                placeholder={copy.nav.searchPlaceholder}
-                value={searchValue}
-                onChange={(e) => setSearchValue(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                suppressHydrationWarning
-                className="h-10 w-64 rounded-lg bg-gray-100 pl-10 pr-10 text-sm text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-primary focus:outline-none"
-              />
-              {searchValue && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchValue('');
-                    searchInputRef.current?.focus();
-                  }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  aria-label={copy.nav.clearSearch}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Auth area */}
-          <div className="mr-2 hidden md:block">
-            <LocaleSwitcher />
-          </div>
-
-          {isAuthenticated ? (
-            <div ref={profileRef} className="relative hidden md:block">
-              <button
-                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                aria-label={copy.nav.mypage}
-                aria-expanded={isProfileOpen}
-                className="flex items-center gap-2"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-normal text-white">
-                  {userInitials}
-                </div>
-                <ChevronDown
-                  className={cn(
-                    'h-4 w-4 text-gray-500 transition-transform',
-                    isProfileOpen && 'rotate-180',
-                  )}
-                />
-              </button>
-              {isProfileOpen && (
-                <div className="absolute right-0 top-full mt-2 w-40 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                  <Link
-                    href={getLocalizedPathname('/mypage', activeLocale)}
-                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-900 hover:bg-gray-100"
-                    onClick={() => setIsProfileOpen(false)}
-                  >
-                    <User className="h-4 w-4" />
-                    {copy.nav.mypage}
-                  </Link>
-                  <button
-                    className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-500 hover:bg-gray-100"
-                    onClick={handleLogout}
-                  >
-                    <LogOut className="h-4 w-4" />
-                    {copy.nav.logout}
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <Button
-              variant="ghost"
-              asChild
-              className="hidden text-base text-gray-900 hover:text-primary md:inline-flex"
-            >
-              <Link href={getLocalizedPathname('/auth', activeLocale)}>
-                {copy.nav.loginSignup}
-              </Link>
-            </Button>
-          )}
-
-        </nav>
-      </header>
-    </>
-  );
+  return <>
+    <header className={cn('ticket-header', home && 'ticket-header-home', detailId && 'ticket-header-detail', mobileTitle && 'ticket-header-context')}>
+      <div className="ticket-container ticket-header-inner">
+        {!home && <button type="button" className="ticket-menu-icon" aria-label={ticket.allCategories} onClick={() => setCategoriesOpen(true)}><Menu size={21} /></button>}
+        <Link href={href('/')} className="ticket-logo" aria-label="Grabit">Grabit<span aria-hidden="true">.</span></Link>
+        {mobileTitle && <div className="ticket-mobile-page-heading">{genre
+          ? <button type="button" aria-label={`${mobileTitle}: ${ticket.allCategories}`} onClick={() => setCategoriesOpen(true)}><span>{mobileTitle}</span><ChevronDown size={16} className="shrink-0" /></button>
+          : <span>{mobileTitle}</span>}</div>}
+        <form role="search" className="ticket-header-search" onSubmit={submit}>
+          {!home && <span className="ticket-search-scope">Grabit {ticket.ticket}</span>}
+          <input ref={inputRef} type="search" role="searchbox" aria-label={copy.nav.searchAriaLabel} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={ticket.searchPlaceholder} maxLength={200} />
+          {search && <button type="button" onClick={() => { setSearch(''); inputRef.current?.focus(); }} aria-label={copy.nav.clearSearch} className="ticket-search-clear"><X size={16} /></button>}
+          <button type="submit" aria-label={ticket.search}><Search size={24} strokeWidth={1.8} /></button>
+        </form>
+        {mobileTitle && <Link className="ticket-mobile-page-search" href={href('/search')} aria-label={ticket.search}><Search size={21} /></Link>}
+        <div className="ticket-mobile-locale"><MobileLocaleSwitcher /></div>
+        <div className="ticket-header-actions">
+          {authenticated ? <div ref={profileRef} className="relative">
+            <button type="button" aria-label={copy.nav.mypage} aria-expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)} className="ticket-header-action"><UserRound size={18} /><span>{ticket.my}</span><ChevronDown size={12} /></button>
+            {profileOpen && <div className="ticket-profile-menu"><Link href={href('/mypage')} onClick={() => setProfileOpen(false)}>{copy.nav.mypage}</Link><button type="button" onClick={() => void logout()}><LogOut size={16} />{copy.nav.logout}</button></div>}
+          </div> : <Link className="ticket-header-action" href={href('/auth')}><UserRound size={18} /><span>{copy.nav.loginSignup}</span></Link>}
+          <Link className="ticket-header-action" href={href('/wishlist')}><Heart size={18} /><span>{ticket.wishlist}</span></Link>
+          <Link className="ticket-header-action" href={`${href('/mypage')}?tab=wallet`}><Ticket size={18} /><span>{ticket.myTickets}</span></Link>
+          <Link className="ticket-header-action" href={href('/recent')}><Clock3 size={18} /><span>{ticket.recent}</span></Link>
+          <LocaleSwitcher />
+        </div>
+        {detailId && <div className="ticket-detail-header-actions"><TicketActions performanceId={detailId} /></div>}
+      </div>
+    </header>
+    {home && <nav className="ticket-main-nav" aria-label={ticket.ticket}>
+      <div className="ticket-container ticket-main-nav-inner">
+        <button type="button" className="ticket-all-categories" onClick={() => setCategoriesOpen(true)}><Menu size={20} />{ticket.allCategories}</button>
+        {links.map((link) => <Link key={link.href} href={href(link.href)} aria-current={path === link.href ? 'page' : undefined}>{link.label}</Link>)}
+      </div>
+    </nav>}
+    <Dialog open={categoriesOpen} onOpenChange={setCategoriesOpen}>
+      <DialogContent className="ticket-dialog ticket-category-dialog" aria-describedby={undefined}>
+        <DialogTitle>{ticket.allCategories}</DialogTitle>
+        <div onClick={(event) => { if ((event.target as HTMLElement).closest('a')) setCategoriesOpen(false); }}><GenreGrid all /></div>
+        <div className="ticket-category-shortcuts">{links.slice(1).map((link) => <Link key={link.href} href={href(link.href)} onClick={() => setCategoriesOpen(false)}>{link.label}</Link>)}</div>
+      </DialogContent>
+    </Dialog>
+  </>;
 }

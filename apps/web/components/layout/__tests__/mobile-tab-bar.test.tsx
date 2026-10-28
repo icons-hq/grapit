@@ -1,100 +1,29 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-
-const mockPathname = vi.fn<() => string>().mockReturnValue('/');
-const mockIntlState = vi.hoisted(() => ({
-  locale: 'ko',
-}));
-
-vi.mock('next/navigation', () => ({
-  usePathname: () => mockPathname(),
-}));
-
-vi.mock('next-intl', () => ({
-  useLocale: () => mockIntlState.locale,
-}));
-
-// Import after mock setup
+const state = vi.hoisted(() => ({pathname:'/',locale:'ko'}));
+vi.mock('next/navigation',()=>({usePathname:()=>state.pathname}));
+vi.mock('next-intl',()=>({useLocale:()=>state.locale}));
 import { MobileTabBar } from '../mobile-tab-bar';
 
-describe('MobileTabBar', () => {
-  beforeEach(() => {
-    mockPathname.mockReturnValue('/');
-    mockIntlState.locale = 'ko';
-  });
-
-  it('renders 4 tabs with correct labels', () => {
+describe('MobileTabBar',()=>{
+  beforeEach(()=>{state.pathname='/';state.locale='ko';});
+  it('offers all categories, search, home, saved shows and the account hub',()=>{
     render(<MobileTabBar />);
-    expect(screen.getByText('홈')).toBeDefined();
-    expect(screen.getByText('분류')).toBeDefined();
-    expect(screen.getByText('검색')).toBeDefined();
-    expect(screen.getByText('마이페이지')).toBeDefined();
+    expect(screen.getAllByRole('link')).toHaveLength(5);
+    expect(screen.getByRole('link',{name:'전체 카테고리'}).getAttribute('href')).toBe('/categories');
+    expect(screen.getByRole('link',{name:'찜'}).getAttribute('href')).toBe('/wishlist');
+    expect(screen.getByRole('link',{name:'마이'}).getAttribute('href')).toBe('/mypage');
   });
-
-  it('active tab uses primary color class when pathname matches href', () => {
-    mockPathname.mockReturnValue('/');
-    render(<MobileTabBar />);
-    const homeLink = screen.getByText('홈').closest('a');
-    expect(homeLink?.className).toContain('text-primary');
-  });
-
-  it('inactive tabs use gray color classes', () => {
-    mockPathname.mockReturnValue('/');
-    render(<MobileTabBar />);
-    const searchLink = screen.getByText('검색').closest('a');
-    expect(searchLink?.className).toContain('text-gray-400');
-  });
-
-  it('category tab has href="/genre/artist_celebrity"', () => {
-    render(<MobileTabBar />);
-    const categoryLink = screen.getByText('분류').closest('a');
-    expect(categoryLink?.getAttribute('href')).toBe('/genre/artist_celebrity');
-  });
-
-  it('has role="navigation" and active tab has aria-current="page"', () => {
-    mockPathname.mockReturnValue('/');
-    render(<MobileTabBar />);
-    const nav = screen.getByRole('navigation');
-    expect(nav).toBeDefined();
-
-    const homeLink = screen.getByText('홈').closest('a');
-    expect(homeLink?.getAttribute('aria-current')).toBe('page');
-
-    const searchLink = screen.getByText('검색').closest('a');
-    expect(searchLink?.getAttribute('aria-current')).toBeNull();
-  });
-
-  it('component has md:hidden class (hidden on desktop)', () => {
-    render(<MobileTabBar />);
-    const nav = screen.getByRole('navigation');
-    expect(nav.className).toContain('md:hidden');
-  });
-
-  it('marks genre sub-paths as active for category tab', () => {
-    mockPathname.mockReturnValue('/genre/ip_popup');
-    render(<MobileTabBar />);
-    const categoryLink = screen.getByText('분류').closest('a');
-    expect(categoryLink?.getAttribute('aria-current')).toBe('page');
-    expect(categoryLink?.className).toContain('text-primary');
-  });
-
-  it('marks mypage sub-paths as active for mypage tab', () => {
-    mockPathname.mockReturnValue('/mypage/reservations/123');
-    render(<MobileTabBar />);
-    const mypageLink = screen.getByText('마이페이지').closest('a');
-    expect(mypageLink?.getAttribute('aria-current')).toBe('page');
-  });
-
-  it('localizes labels and hrefs for prefixed locale routes', () => {
-    mockPathname.mockReturnValue('/en/search');
-    mockIntlState.locale = 'en';
-
-    render(<MobileTabBar />);
-
-    const searchLink = screen.getByText('Search').closest('a');
-    expect(screen.getByText('Home')).toBeDefined();
-    expect(screen.getByText('Category')).toBeDefined();
-    expect(searchLink?.getAttribute('href')).toBe('/en/search');
-    expect(searchLink?.getAttribute('aria-current')).toBe('page');
+  it.each([['/','홈'],['/genre/concert','전체 카테고리'],['/categories','전체 카테고리'],['/mypage/reservations/123','마이'],['/wishlist','찜']])(
+    'marks the current destination for %s', (path,label)=>{
+      state.pathname=path!;render(<MobileTabBar />);
+      expect(screen.getByRole('link',{name:label}).getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('link',{name:'검색'}).getAttribute('aria-current')).toBeNull();
+    });
+  it('keeps locale prefixes in every destination',()=>{
+    state.pathname='/en/search';state.locale='en';render(<MobileTabBar />);
+    expect(screen.getByRole('link',{name:'Search'}).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link',{name:'All categories'}).getAttribute('href')).toBe('/en/categories');
+    expect(screen.getByRole('link',{name:'Saved'}).getAttribute('href')).toBe('/en/wishlist');
   });
 });

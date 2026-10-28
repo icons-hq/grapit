@@ -19,6 +19,7 @@ import {
   seatMaps,
   showtimes,
   venueLayoutFloors,
+  venueLayoutSections,
   venueLayouts,
   venueLayoutSeats,
 } from '../../database/schema/index.js';
@@ -82,6 +83,7 @@ export class PerformanceIntakeService {
     return floors.map((floor, index) => ({
       id: `${performanceId}:${floor.floorKey}:${index}`,
       performanceId,
+      ...(floor.venueLayoutId !== undefined ? { venueLayoutId: floor.venueLayoutId } : {}),
       floorKey: floor.floorKey,
       floorLabel: floor.floorLabel,
       sortOrder: floor.sortOrder,
@@ -317,11 +319,15 @@ export class PerformanceIntakeService {
       .map(({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig, totalSeats }) => ({ floorKey, floorLabel, sortOrder, svgUrl,
         seatConfig: trimTierNames ? withTrimmedTierNames(seatConfig) : seatConfig ?? null, totalSeats }))
       .sort((a, b) => a.floorKey.localeCompare(b.floorKey));
-    if (stableJson(comparable(previous)) === stableJson(comparable(floors))) return;
+    // Old clients omit the source id. An explicitly chosen version (or explicit
+    // detach) is a structure change even when its SVG happens to be identical.
+    const sameSources = floors.every((floor) => floor.venueLayoutId === undefined
+      || floor.venueLayoutId === previous.find((row) => row.floorKey === floor.floorKey)?.venueLayoutId);
+    if (sameSources && stableJson(comparable(previous)) === stableJson(comparable(floors))) return;
     const structureProtected = protectedStructure ?? await this.lockAndCheckStructureProtection(tx, performanceId);
     // Seat maps saved before tier names were trimmed at the API boundary come back
     // trimmed from the form; that alone must not block copy edits on an open sale.
-    if (structureProtected && stableJson(comparable(previous, true)) === stableJson(comparable(floors, true))) return;
+    if (sameSources && structureProtected && stableJson(comparable(previous, true)) === stableJson(comparable(floors, true))) return;
     this.assertStructureChangeAllowed(structureProtected, 'seatMaps');
     const overlay = await this.syncVenueLayoutOverlay(
       tx,
@@ -469,6 +475,7 @@ export class PerformanceIntakeService {
     floors: PerformanceSeatMapInput[],
     priceTierSnapshots: PriceTierSnapshot[],
   ): Promise<SyncedLayoutOverlay> {
+    const pinned = await this.resolvePinnedLayout(tx, performanceId, venueId, floors);
     await tx
       .delete(performanceSeatAssignments)
       .where(eq(performanceSeatAssignments.performanceId, performanceId));
@@ -478,6 +485,25 @@ export class PerformanceIntakeService {
 
     if (!venueId || floors.length === 0) {
       return { layoutId: null };
+    }
+
+    if (pinned) {
+      const colors = new Map(floors.flatMap((floor) => floor.seatConfig?.tiers.map((tier) =>
+        [tier.tierName.trim(), tier.color] as const) ?? []));
+      const tiers = await tx.insert(performanceSeatTiers).values(priceTierSnapshots.map((tier) => ({
+        performanceId, ...tier, color: colors.get(tier.tierName) ?? '#9CA3AF',
+      }))).returning({ id: performanceSeatTiers.id, tierName: performanceSeatTiers.tierName });
+      const tierIds = new Map(tiers.map((tier) => [tier.tierName, tier.id]));
+      const names = new Map(floors.flatMap((floor) => floor.seatConfig?.tiers.flatMap((tier) =>
+        tier.seatIds.map((id) => [this.toStableSeatKey(floor.floorKey, id), tier.tierName.trim()] as const)) ?? []));
+      const assignments = pinned.seats.map((seat) => ({
+        performanceId, layoutSeatId: seat.id, tierId: tierIds.get(names.get(seat.seatKey)!)!,
+        saleStatus: 'available' as const,
+      }));
+      for (let offset = 0; offset < assignments.length; offset += 1000) {
+        await tx.insert(performanceSeatAssignments).values(assignments.slice(offset, offset + 1000));
+      }
+      return { layoutId: pinned.layoutId };
     }
 
     const layoutName = `performance:${performanceId}:seat-map`;
@@ -560,11 +586,20 @@ export class PerformanceIntakeService {
           floorLabel: floor.floorLabel,
           sortOrder: floor.sortOrder,
           svgUrl: floor.svgUrl,
+          seatConfig: floor.seatConfig,
         })
         .returning({ id: venueLayoutFloors.id });
       const floorId = layoutFloor?.id;
       if (!floorId) {
         continue;
+      }
+
+      const sectionBySeat = new Map<string, string>();
+      for (const [index, section] of (floor.seatConfig?.sections ?? []).entries()) {
+        const [stored] = await tx.insert(venueLayoutSections).values({ floorId,
+          sectionKey: section.sectionKey, sectionLabel: section.label, sortOrder: index,
+        }).returning({ id: venueLayoutSections.id });
+        section.seatIds.forEach((id) => sectionBySeat.set(id, stored!.id));
       }
 
       const seatTierBySeatKey = new Map<string, string>();
@@ -586,6 +621,7 @@ export class PerformanceIntakeService {
           floorId,
           seatKey,
           sourceSeatId,
+          sectionId: sectionBySeat.get(sourceSeatId),
           rowLabel: position.rowLabel,
           seatNumber: position.seatNumber,
           sortOrder: index,
@@ -596,13 +632,12 @@ export class PerformanceIntakeService {
         continue;
       }
 
-      const insertedSeatRows = await tx
-        .insert(venueLayoutSeats)
-        .values(seatValues)
-        .returning({
-          id: venueLayoutSeats.id,
-          seatKey: venueLayoutSeats.seatKey,
-        });
+      const insertedSeatRows: Array<{ id: string; seatKey: string }> = [];
+      for (let offset = 0; offset < seatValues.length; offset += 1000) {
+        insertedSeatRows.push(...await tx.insert(venueLayoutSeats)
+          .values(seatValues.slice(offset, offset + 1000))
+          .returning({ id: venueLayoutSeats.id, seatKey: venueLayoutSeats.seatKey }));
+      }
 
       const assignmentValues = insertedSeatRows
         .map((seatRow) => {
@@ -621,12 +656,50 @@ export class PerformanceIntakeService {
         })
         .filter((value): value is NonNullable<typeof value> => value !== null);
 
-      if (assignmentValues.length > 0) {
-        await tx.insert(performanceSeatAssignments).values(assignmentValues);
+      for (let offset = 0; offset < assignmentValues.length; offset += 1000) {
+        await tx.insert(performanceSeatAssignments).values(assignmentValues.slice(offset, offset + 1000));
       }
     }
 
     return { layoutId };
+  }
+
+  /** Verify geometry before linking a shared version; never mutate that version. */
+  private async resolvePinnedLayout(tx: DrizzleDB, performanceId: string,
+    venueId: string | null | undefined, floors: PerformanceSeatMapInput[]) {
+    const ids = new Set(floors.flatMap((floor) => floor.venueLayoutId ? [floor.venueLayoutId] : []));
+    if (!ids.size) return null;
+    const fail = (): never => { throw new UnprocessableEntityException({ message: 'Validation failed', errors: {
+      seatMaps: ['공연장 템플릿의 장소·버전·층·구역·좌석 구조가 일치하지 않습니다. 템플릿을 다시 불러오거나 연결을 해제해주세요.'],
+    } }); };
+    const layoutId = [...ids][0]!;
+    if (ids.size !== 1 || floors.some((floor) => floor.venueLayoutId !== layoutId)) fail();
+    const [layout] = await tx.select().from(venueLayouts).where(eq(venueLayouts.id, layoutId));
+    if (!layout || layout.venueId !== venueId) return fail();
+    if (!layout.isTemplate) {
+      // Existing performance-owned overlays remain editable by their own draft.
+      if (layout.layoutName !== `performance:${performanceId}:seat-map`) fail();
+      return null;
+    }
+    const [sourceFloors, sourceSeats] = await Promise.all([
+      tx.select().from(venueLayoutFloors).where(eq(venueLayoutFloors.layoutId, layoutId)),
+      tx.select({ id: venueLayoutSeats.id, seatKey: venueLayoutSeats.seatKey, floorId: venueLayoutSeats.floorId })
+        .from(venueLayoutSeats).where(eq(venueLayoutSeats.layoutId, layoutId)),
+    ]);
+    if (sourceFloors.length !== floors.length) fail();
+    for (const floor of floors) {
+      const source = sourceFloors.find((entry) => entry.floorKey === floor.floorKey);
+      if (!source || source.svgUrl !== floor.svgUrl || source.floorLabel !== floor.floorLabel
+        || source.sortOrder !== floor.sortOrder) return fail();
+      const actual = [...this.getAssignedSeatIds(floor)].map((id) => this.toStableSeatKey(floor.floorKey, id)).sort();
+      const expected = sourceSeats.filter((seat) => seat.floorId === source.id).map((seat) => seat.seatKey).sort();
+      const sections = (config: SeatMapConfig | null) => (config?.sections ?? []).map((section) => ({
+        ...section, seatIds: [...section.seatIds].sort(),
+      })).sort((a, b) => a.sectionKey.localeCompare(b.sectionKey));
+      if (stableJson(actual) !== stableJson(expected)
+        || stableJson(sections(source.seatConfig)) !== stableJson(sections(floor.seatConfig))) fail();
+    }
+    return { layoutId, seats: sourceSeats };
   }
 
   private getAssignedSeatIds(floor: PerformanceSeatMapInput): Set<string> {

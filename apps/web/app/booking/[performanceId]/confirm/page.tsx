@@ -704,8 +704,8 @@ function ConfirmPageContent() {
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       <ConfirmHeader onExpire={handleExpire} onBack={handlePaymentReturnRecovery} disabled={isProcessing || isReselecting} />
-      <main className="mx-auto grid w-full max-w-7xl flex-1 items-start gap-8 px-4 py-8 md:px-8 md:py-12 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:gap-12">
-        <div className="space-y-7 md:space-y-9">
+      <main className="mx-auto grid w-full max-w-7xl flex-1 items-start gap-6 px-4 py-6 md:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)] lg:gap-8">
+        <div className="space-y-6 rounded-2xl border border-border bg-white p-4 sm:p-6">
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{checkoutCopy.title}</h1>
           <OrderSummary performanceTitle={performanceTitle ?? ''} posterUrl={posterUrl}
             showDateTime={showDateTime ?? ''} venue={venue ?? ''} seats={selectedSeats} />
@@ -715,7 +715,7 @@ function ConfirmPageContent() {
           <Separator />
           <TermsAgreement performanceId={performanceId} onAgreementChange={handleAgreementChange} />
         </div>
-        <Card className="gap-5 border-border bg-muted/20 shadow-none">
+        <Card className="gap-5 border-border bg-white shadow-sm lg:sticky lg:top-6">
           <CardHeader className="gap-5 px-4 sm:px-6">
             <PaymentDeadlineBanner paymentDeadlineAt={paymentDeadlineAt} lockExpiresAt={lockExpiresAt} />
             <CheckoutAmountSummary seats={selectedSeats} totalPrice={totalPrice} quote={visibleQuote ?? undefined} />

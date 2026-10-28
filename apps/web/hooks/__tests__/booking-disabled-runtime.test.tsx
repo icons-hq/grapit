@@ -207,8 +207,8 @@ function createPerformanceDetail(overrides: {
     title: 'Girl Rules Fanmeet',
     status: overrides.status ?? 'selling',
     posterUrl: null,
-    startDate: '2026-07-04T09:00:00.000Z',
-    endDate: '2026-07-04T11:00:00.000Z',
+    startDate: '2099-07-04T09:00:00.000Z',
+    endDate: '2099-07-04T11:00:00.000Z',
     runtime: '120분',
     ageRating: '전체관람가',
     description: 'fanmeet',
@@ -218,7 +218,7 @@ function createPerformanceDetail(overrides: {
     showtimes: [
       {
         id: 'showtime-disabled',
-        dateTime: '2026-07-04T09:00:00.000Z',
+        dateTime: '2099-07-04T09:00:00.000Z',
         status: 'SCHEDULED',
       },
     ],
@@ -307,7 +307,7 @@ function setCurrentUserRole(role: 'user' | 'admin') {
 
 function seedBookingFlow() {
   useBookingStore.getState().resetBooking();
-  useBookingStore.getState().setDate(new Date('2026-07-04T00:00:00.000Z'));
+  useBookingStore.getState().setDate(new Date('2099-07-04T00:00:00.000Z'));
   useBookingStore.getState().setShowtime('showtime-disabled');
   useBookingStore.getState().setBookingData({
     selectedSeats: [
@@ -452,7 +452,8 @@ describe('runtime booking disabled UI', () => {
       </Suspense>,
     );
 
-    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(2);
+    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '예매하기' })).toBeEnabled();
     expect(screen.queryByText('예매는 5월말 오픈 예정입니다')).not.toBeInTheDocument();
   });
 
@@ -555,12 +556,13 @@ describe('runtime booking disabled UI', () => {
       </Suspense>,
     );
 
-    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(2);
+    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '예매하기' })).toBeEnabled();
     expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
   });
 
   it('allows admin to lock a seat while runtime booking is disabled', async () => {
-    // The fixture showtime (2026-07-04 09:00Z) must not have started yet.
+    // The fixture showtime (2099-07-04 09:00Z) must not have started yet.
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-07-01T00:00:00.000Z'));
     try {
