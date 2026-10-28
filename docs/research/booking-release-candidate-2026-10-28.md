@@ -99,7 +99,7 @@ Cloud Run의 [Adaptive Concurrency Tuning](https://docs.cloud.google.com/run/doc
 
 ## 실험 정리와 재검증
 
-[삭제 확인](booking-release-candidate-2026-10-28/cleanup-verification.json)에서 이 작업 전용 API·부하 Job·PostgreSQL·Valkey 네 자원이 모두 관리 API 404였다. [이미지 정리](booking-release-candidate-2026-10-28/deleted-test-images.json)는 시험용 원격 이미지 5개의 삭제와 전용 이미지 경로가 비어 있음을 확인했다. 운영·rollback 이미지는 삭제하지 않았다. [로컬 정리](booking-release-candidate-2026-10-28/local-credential-cleanup.json)는 이 작업 디렉터리의 임시 비밀 포함 파일과 불필요한 운영 데이터 fingerprint 원본만 제거했다.
+[삭제 확인](booking-release-candidate-2026-10-28/cleanup-verification.json)에서 이 작업 전용 API·부하 Job·PostgreSQL·Valkey 네 자원이 모두 관리 API 404였다. [이미지 정리](booking-release-candidate-2026-10-28/deleted-test-images.json)는 시험용 원격 이미지 5개의 삭제와 전용 이미지 경로가 비어 있음을 확인했다. 운영·rollback 이미지는 삭제하지 않았다. [로컬 정리](booking-release-candidate-2026-10-28/local-credential-cleanup.json)는 이 작업 디렉터리에서 비밀 포함 설정·불필요한 운영 데이터 fingerprint 원본과 실험 임시 복사본 70개를 제거했다. 보고서의 원본 결과·설정·분석 코드는 저장소에 보존했다.
 
 실험 정리는 검증 성공 여부와 별개로 수행했다. 실패 결과를 성공으로 바꾸어 정리 조건을 통과시키지 않았다. 기존 사용자의 미커밋 작업 디렉터리는 보존했고, 별도 작업 브랜치에 후보 코드와 이 보고서를 남겼다.
 
