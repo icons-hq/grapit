@@ -46,8 +46,8 @@ env:
   # Prewarm patches the service-level minimum (no new revision). 'template' is the
   # Phase 24-21 revision-template fallback if the service-level update is refused.
   PREWARM_SCALING_SCOPE: ${{ vars.PREWARM_SCALING_SCOPE || 'service' }}
-  # Waiting WebSockets occupy request slots without occupying DB connections.
-  # The independent 200-buyer admission cap bounds seat/checkout work.
+  # Seat WebSockets occupy request slots without occupying DB connections.
+  # The independently configured admission cap bounds seat/checkout work.
   API_CONCURRENCY: ${{ vars.API_CONCURRENCY || '1000' }}
   API_NODE_HEAP_MAX_MB: ${{ vars.API_NODE_HEAP_MAX_MB || '256' }}
   # Migration sessions fail fast instead of queueing hot-table traffic behind an
@@ -350,6 +350,7 @@ jobs:
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --set-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
             --min-instances=${{ env.API_MIN_INSTANCES }}
+            --max=${{ env.API_MAX_INSTANCES }}
             --max-instances=${{ env.API_MAX_INSTANCES }}
             --concurrency=${{ env.API_CONCURRENCY }}
             --timeout=3600
