@@ -11,6 +11,10 @@ import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
 const WAITING_POLL_JITTER_MS = 5_000;
+// Waiting sockets and purchase HTTP requests share Cloud Run concurrency.
+// Keep push updates for the front of the queue; everybody else continues
+// polling and subscribes when their server-authoritative position reaches it.
+const QUEUE_SOCKET_POSITION_LIMIT = 200;
 // Fast enter responses (immediate admission) skip the queue surface; slower
 // ones show the loading surface instead of a blank screen.
 export const QUEUE_LOADING_SURFACE_DELAY_MS = 600;
@@ -806,15 +810,17 @@ export function useQueue({
 
   const recoveryOnly = isRecoveryOnly(snapshot);
 
-  // Once the booking screen is shown (or the session ended, or only payment
-  // recovery is left) the queue socket is no longer needed; closing it frees a
-  // long-lived connection slot per buyer.
+  // Far-away waiters do not hold a long-lived API request. Polling remains
+  // authoritative even when the socket is unavailable or admission jumps past
+  // this window. Close the socket once the booking screen or recovery is shown.
   const queueSocketWanted =
     enabled &&
     Boolean(snapshot.queueSessionId) &&
     !isReady &&
     !recoveryOnly &&
-    (status === 'loading' || status === 'waiting' || status === 'admitted');
+    (status === 'loading' || status === 'admitted' ||
+      (status === 'waiting' && snapshot.position !== null &&
+        snapshot.position > 0 && snapshot.position <= QUEUE_SOCKET_POSITION_LIMIT));
 
   useEffect(() => {
     if (!queueSocketWanted) {

@@ -880,6 +880,50 @@ describe('useQueue', () => {
     });
   });
 
+  describe('bounded waiting socket connections', () => {
+    it.each([201, 1_500])('polls position %i without holding an API connection', async (position) => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-far', { position }));
+      getMock.mockResolvedValueOnce(waitingSnapshot('queue-far', { position: position - 1 }));
+
+      const { result } = renderQueue('performance-far');
+      await flushQueueEffects();
+      expect(result.current.status).toBe('waiting');
+      expect(ioMock).not.toHaveBeenCalled();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(getMock).toHaveBeenCalledTimes(1);
+      expect(result.current.position).toBe(position - 1);
+    });
+
+    it('subscribes near the front, then releases the connection when admitted', async () => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-moving', { position: 201 }));
+      getMock
+        .mockResolvedValueOnce(waitingSnapshot('queue-moving', { position: 200 }))
+        .mockResolvedValueOnce(admittedSnapshot('queue-moving'));
+
+      const { result } = renderQueue('performance-moving');
+      await flushQueueEffects();
+      expect(ioMock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(result.current.position).toBe(200);
+      expect(socketMock.connect).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(22_000); });
+      expect(result.current.isReady).toBe(true);
+      expect(socketMock.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases a waiting socket when a newer snapshot moves it outside the window', async () => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-reordered', { position: 200 }));
+      getMock.mockResolvedValueOnce(waitingSnapshot('queue-reordered', { position: 201 }));
+      const { result } = renderQueue('performance-reordered');
+      await flushQueueEffects();
+      expect(socketMock.connect).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(result.current.status).toBe('waiting');
+      expect(socketMock.disconnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('queue socket after admission (audit #61)', () => {
     it('closes the queue socket once the booking screen is shown', async () => {
       const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
