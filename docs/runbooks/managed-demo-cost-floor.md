@@ -518,6 +518,7 @@ The Deploy workflow validates these repository variables before any job changes 
 | `MIGRATION_LOCK_TIMEOUT` | `5s` | `lock_timeout` for every migration-job session, applied through `PGOPTIONS`. |
 | `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
 | `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
+| `API_CPU` | `1` | API vCPU count, integer 1–2 for the fixed 512 MiB memory profile. Independent of API instance count, worker resources, DB pools and admission cap. Read the serving revision after changing this repository variable. |
 | `API_CONCURRENCY` | `1000` | API Cloud Run request slots, including waiting WebSockets. This is separate from the admission cap and does not enlarge DB pools. |
 | `QUEUE_MAX_ACTIVE_ADMISSIONS` | `200` | Per-performance active admission cap, integer 1–1000. Direct API startup without this setting retains the legacy 1000 default. Wait estimates use the configured cap. |
 | `API_NODE_HEAP_MAX_MB` | `256` | API Node old-space cap via `NODE_OPTIONS`; guard accepts 128–384. RSS also includes native memory, buffers and other heaps; this is not a 256 MiB total-memory cap. |

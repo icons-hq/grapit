@@ -33,6 +33,7 @@ env:
   API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '2' }}
   WEB_MIN_INSTANCES: ${{ vars.WEB_MIN_INSTANCES || '0' }}
   WEB_MAX_INSTANCES: ${{ vars.WEB_MAX_INSTANCES || '4' }}
+  API_CPU: ${{ vars.API_CPU || '1' }}
   API_CPU_ALLOCATION_FLAG: ${{ vars.API_CPU_ALLOCATION_FLAG || '--cpu-throttling' }}
   BACKGROUND_PROCESSING_ENABLED: ${{ vars.BACKGROUND_PROCESSING_ENABLED || 'false' }}
   # Sitewide booking gate shared by API, Web and the background worker. Unset keeps
@@ -353,7 +354,7 @@ jobs:
             --concurrency=${{ env.API_CONCURRENCY }}
             --timeout=3600
             --memory=512Mi
-            --cpu=1
+            --cpu=${{ env.API_CPU }}
             --port=8080
             --startup-probe=httpGet.path=/api/v1/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=1,timeoutSeconds=1,failureThreshold=180
             --liveness-probe=httpGet.path=/api/v1/health/live,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6
