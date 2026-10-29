@@ -130,7 +130,7 @@ test.describe('booking queue route', () => {
   });
 
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-    test(`distant waiters poll before opening a queue socket (${viewport.width}px)`, async ({ page }, testInfo) => {
+    test(`waiting positions update without opening queue sockets (${viewport.width}px)`, async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);
       await page.clock.install();
       let socketConnections = 0;
@@ -159,7 +159,7 @@ test.describe('booking queue route', () => {
       await page.screenshot({ path: testInfo.outputPath('distant-waiting.png'), fullPage: true });
       await page.clock.fastForward(20_001);
       await expect(page.getByTestId(queueMetricTestIds.position)).toContainText('200');
-      await expect.poll(() => socketConnections).toBe(1);
+      expect(socketConnections).toBe(0);
       expect(statusReads).toBe(1);
       expect(pageErrors).toEqual([]);
     });

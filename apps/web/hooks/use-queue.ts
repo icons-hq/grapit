@@ -1,20 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
-import { attachSocketSessionRecovery } from '@/lib/socket-session';
 import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
 import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
 const WAITING_POLL_JITTER_MS = 5_000;
-// Waiting sockets and purchase HTTP requests share Cloud Run concurrency.
-// Keep push updates for the front of the queue; everybody else continues
-// polling and subscribes when their server-authoritative position reaches it.
-const QUEUE_SOCKET_POSITION_LIMIT = 200;
+// Waiting browsers use short, authoritative reads. Long-lived queue requests
+// competed with purchase traffic in the cloud capacity rehearsal. Seat-map
+// updates keep their separate real-time connection after admission.
 // Fast enter responses (immediate admission) skip the queue surface; slower
 // ones show the loading surface instead of a blank screen.
 export const QUEUE_LOADING_SURFACE_DELAY_MS = 600;
@@ -35,8 +32,7 @@ export const QUEUE_OPEN_OVERDUE_RETRY_MAX_MS = 60_000;
 // Automatic re-entry hitting 429/5xx/network errors keeps the not-open surface
 // and retries with these delays before falling back to the manual retry surface.
 export const QUEUE_OPEN_TRANSIENT_RETRY_DELAYS_MS = [2_000, 4_000, 8_000] as const;
-// After the booking screen is shown the queue socket is closed, so the
-// admission window end is confirmed with a single status request instead.
+// Confirm the admission window end with an authoritative status request.
 export const QUEUE_ADMISSION_CHECK_GRACE_MS = 2_000;
 export const QUEUE_ADMISSION_RECHECK_MS = 15_000;
 
@@ -105,12 +101,6 @@ type QueueEnterResponse = QueueSnapshot & {
   queueActiveWindowSeconds?: number;
 };
 
-type QueueExpiredEvent = {
-  queueSessionId: string;
-  state: 'EXPIRED';
-  autoEnter: boolean;
-};
-
 type UseQueueOptions = {
   performanceId: string;
   enabled?: boolean;
@@ -164,26 +154,6 @@ const EMPTY_SNAPSHOT: QueueSnapshot = {
   activeUntilAt: null,
   reentryGraceUntilAt: null,
 };
-
-function resolveQueueSocketUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_WS_URL ??
-    process.env.NEXT_PUBLIC_API_URL ??
-    ''
-  ).replace(/\/+$/, '');
-}
-
-function createQueueSocket(): Socket {
-  return io(`${resolveQueueSocketUrl()}/queue`, {
-    transports: ['websocket', 'polling'],
-    withCredentials: true,
-    autoConnect: false,
-    reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 1_000,
-    reconnectionDelayMax: 5_000,
-  });
-}
 
 function isAdmittedState(state: QueueTransportState): boolean {
   return state === 'ADMITTED' || state === 'PAYMENT_RECOVERY';
@@ -389,8 +359,8 @@ function mapQueueSessionError(error: unknown): QueueStatus | null {
 
 /**
  * When the route asks the server whether the admission ended: at the seat
- * window end while the seat screen is shown, and at the payment recovery end
- * for a recovery-only session.
+ * window end (including a buyer waiting to enter manually), and at the
+ * payment recovery end for a recovery-only session.
  */
 function resolveAdmissionCheckAt(snapshot: QueueSnapshot): number | null {
   if (isRecoveryOnly(snapshot)) {
@@ -430,7 +400,6 @@ export function useQueue({
   const [bookingOpensAt, setBookingOpensAt] = useState<number | null>(null);
   const [closedReason, setClosedReason] = useState<QueueClosedReason | null>(null);
   const [accessEndedByServer, setAccessEndedByServer] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
   const autoEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingSurfaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entryRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -810,68 +779,6 @@ export function useQueue({
 
   const recoveryOnly = isRecoveryOnly(snapshot);
 
-  // Far-away waiters do not hold a long-lived API request. Polling remains
-  // authoritative even when the socket is unavailable or admission jumps past
-  // this window. Close the socket once the booking screen or recovery is shown.
-  const queueSocketWanted =
-    enabled &&
-    Boolean(snapshot.queueSessionId) &&
-    !isReady &&
-    !recoveryOnly &&
-    (status === 'loading' || status === 'admitted' ||
-      (status === 'waiting' && snapshot.position !== null &&
-        snapshot.position > 0 && snapshot.position <= QUEUE_SOCKET_POSITION_LIMIT));
-
-  useEffect(() => {
-    if (!queueSocketWanted) {
-      return;
-    }
-
-    const socket = createQueueSocket();
-    const detachSessionRecovery = attachSocketSessionRecovery(socket);
-    socketRef.current = socket;
-
-    const handleConnect = () => {
-      socket.emit('join-queue-session', snapshot.queueSessionId);
-    };
-
-    const handlePosition = (nextSnapshot: QueueSnapshot) => {
-      applySnapshot(nextSnapshot);
-    };
-
-    const handleAdmitted = (nextSnapshot: QueueSnapshot) => {
-      applySnapshot(nextSnapshot);
-    };
-
-    const handleExpired = (payload: QueueExpiredEvent) => {
-      applySnapshot({
-        ...EMPTY_SNAPSHOT,
-        queueSessionId: payload.queueSessionId,
-        state: payload.state,
-        autoEnter: payload.autoEnter,
-      });
-    };
-
-    socket.on('connect', handleConnect);
-    socket.on('queue:position', handlePosition);
-    socket.on('queue:admitted', handleAdmitted);
-    socket.on('queue:expired', handleExpired);
-    socket.connect();
-
-    return () => {
-      detachSessionRecovery();
-      socket.emit('leave-queue-session', snapshot.queueSessionId);
-      socket.off('connect', handleConnect);
-      socket.off('queue:position', handlePosition);
-      socket.off('queue:admitted', handleAdmitted);
-      socket.off('queue:expired', handleExpired);
-      socket.disconnect();
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
-    };
-  }, [applySnapshot, queueSocketWanted, snapshot.queueSessionId]);
-
   useEffect(() => {
     if (!enabled || status !== 'waiting' || !snapshot.queueSessionId) {
       return;
@@ -908,10 +815,9 @@ export function useQueue({
     };
   }, [enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId, status]);
 
-  const admissionCheckAt =
-    isReady || (recoveryOnly && status === 'admitted')
-      ? resolveAdmissionCheckAt(snapshot)
-      : null;
+  const admissionCheckAt = status === 'admitted'
+    ? resolveAdmissionCheckAt(snapshot)
+    : null;
 
   useEffect(() => {
     if (!enabled || admissionCheckAt === null || !snapshot.queueSessionId) {
@@ -957,8 +863,6 @@ export function useQueue({
       clearAutoEnterTimer();
       clearEntryRetryTimer();
       clearLoadingSurfaceTimer();
-      socketRef.current?.disconnect();
-      socketRef.current = null;
     };
   }, [clearAutoEnterTimer, clearEntryRetryTimer, clearLoadingSurfaceTimer]);
 
