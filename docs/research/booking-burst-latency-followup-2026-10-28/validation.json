@@ -1,0 +1,42 @@
+{
+  "validatedRuntimeSourceSha256": "2cc2970a59462a45c08c4be968e960ea67259f9888f6babbe4174e00ca7a04b9",
+  "apiUnit": {
+    "command": "pnpm --filter @grabit/api test",
+    "filesPassed": 162,
+    "testsPassed": 2701
+  },
+  "integration": {
+    "command": "pnpm --filter @grabit/api test:integration",
+    "filesPassed": 37,
+    "testsPassed": 437,
+    "usesRealPostgreSQLAndValkey": true
+  },
+  "typecheck": {
+    "command": "pnpm --filter @grabit/api typecheck",
+    "passed": true
+  },
+  "lint": {
+    "command": "pnpm --filter @grabit/api lint",
+    "errors": 0,
+    "warnings": 50,
+    "warningsPreexisting": true
+  },
+  "build": {
+    "compiler": "Nest/SWC, same pinned Linux Node/OS/dependencies as reference production image",
+    "passed": true
+  },
+  "regressions": [
+    "Overlapping catalog cache hits perform one Valkey payload read and release the completed value",
+    "A readThrough=false request cannot join a pending cache hit",
+    "Metadata reads started after an earlier query use a new database snapshot",
+    "Different performance/showtime keys do not block each other",
+    "Each caller checks its own actor permission, current sales cutoff and requested seat",
+    "Consent capture uses the exact transaction executor and sees its own uncommitted data",
+    "JWT signature, expiration, unsigned-token rejection, wrong key, key rotation and account withdrawal remain enforced"
+  ],
+  "ui": {
+    "run": false,
+    "reason": "API-only changes; no rendered screen changed"
+  },
+  "productionDeploy": false
+}

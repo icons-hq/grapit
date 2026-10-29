@@ -1,0 +1,93 @@
+{
+  "sampledRows": 1340,
+  "logQueryLimit": 10000,
+  "limited": false,
+  "countsInSample": {
+    "200": 3,
+    "201": 5,
+    "101": 1300,
+    "503": 32
+  },
+  "samples": [
+    {
+      "at": "2026-10-29T00:40:32.891551Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 101,
+      "latency": "216.073603s",
+      "path": "/socket.io/",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:40:32.892912Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 101,
+      "latency": "216.072427s",
+      "path": "/socket.io/",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:40:32.896624Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 101,
+      "latency": "216.069686s",
+      "path": "/socket.io/",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:40:32.897214Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 101,
+      "latency": "216.068836s",
+      "path": "/socket.io/",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:40:32.900296Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 101,
+      "latency": "216.075336s",
+      "path": "/socket.io/",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:45:11.702951Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.263587042s",
+      "path": "/api/v1/queue/sessions/ce4341f0-7672-4123-9ab2-d117abf3d86a",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:45:11.703153Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.304564013s",
+      "path": "/api/v1/queue/sessions/ba300420-d5e1-4344-aa5b-ceb67ff349cb",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:45:11.707564Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.261740848s",
+      "path": "/api/v1/queue/sessions/b0ab24a1-ab35-4aad-9ecb-df102ee0e095",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:45:11.803510Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.164954470s",
+      "path": "/api/v1/queue/sessions/247a6736-1b84-4d94-b89f-5c7d6737ba3f",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:45:11.903628Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.065220778s",
+      "path": "/api/v1/queue/sessions/f24c2571-f607-4490-a7fe-fd4154b3500d",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    }
+  ]
+}

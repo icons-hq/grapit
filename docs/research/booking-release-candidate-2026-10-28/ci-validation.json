@@ -1,0 +1,243 @@
+{
+  "conclusion": "success",
+  "headSha": "a3c62fae321f00477b8dc7c4bab1381229aa0865",
+  "jobs": [
+    {
+      "completedAt": "2026-10-28T07:16:17Z",
+      "conclusion": "success",
+      "databaseId": 122680063902,
+      "name": "check",
+      "startedAt": "2026-10-28T07:03:32Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-28T07:03:34Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-28T07:03:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:03:55Z",
+          "conclusion": "success",
+          "name": "Initialize containers",
+          "number": 2,
+          "startedAt": "2026-10-28T07:03:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:03:57Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v6",
+          "number": 3,
+          "startedAt": "2026-10-28T07:03:55Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:04:13Z",
+          "conclusion": "success",
+          "name": "Run pnpm/action-setup@v5",
+          "number": 4,
+          "startedAt": "2026-10-28T07:03:57Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:04:21Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v6",
+          "number": 5,
+          "startedAt": "2026-10-28T07:04:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:04:26Z",
+          "conclusion": "success",
+          "name": "Run pnpm install --frozen-lockfile",
+          "number": 6,
+          "startedAt": "2026-10-28T07:04:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:05:04Z",
+          "conclusion": "success",
+          "name": "Run pnpm lint",
+          "number": 7,
+          "startedAt": "2026-10-28T07:04:26Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:05:34Z",
+          "conclusion": "success",
+          "name": "Run pnpm typecheck",
+          "number": 8,
+          "startedAt": "2026-10-28T07:05:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:09:30Z",
+          "conclusion": "success",
+          "name": "Run pnpm test",
+          "number": 9,
+          "startedAt": "2026-10-28T07:05:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:09:31Z",
+          "conclusion": "success",
+          "name": "Test managed-demo deploy scripts (worker payload, deploy guards, Valkey posture)",
+          "number": 10,
+          "startedAt": "2026-10-28T07:09:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:09:32Z",
+          "conclusion": "success",
+          "name": "Test load-gate, smoke, preflight and cleanup scripts",
+          "number": 11,
+          "startedAt": "2026-10-28T07:09:31Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:30Z",
+          "conclusion": "success",
+          "name": "Integration tests (testcontainers \u2014 SC-2 Valkey Cluster CROSSSLOT guard)",
+          "number": 12,
+          "startedAt": "2026-10-28T07:09:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:31Z",
+          "conclusion": "success",
+          "name": "Run DB migrations",
+          "number": 13,
+          "startedAt": "2026-10-28T07:11:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:32Z",
+          "conclusion": "success",
+          "name": "Seed test data (***)",
+          "number": 14,
+          "startedAt": "2026-10-28T07:11:31Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:32Z",
+          "conclusion": "success",
+          "name": "Verify seed \u2014 admin user present in DB (debug aid)",
+          "number": 15,
+          "startedAt": "2026-10-28T07:11:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:32Z",
+          "conclusion": "success",
+          "name": "Verify Toss test secrets present (hard-gate on non-fork events)",
+          "number": 16,
+          "startedAt": "2026-10-28T07:11:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:11:58Z",
+          "conclusion": "success",
+          "name": "Install Playwright browsers",
+          "number": 17,
+          "startedAt": "2026-10-28T07:11:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:12:14Z",
+          "conclusion": "success",
+          "name": "Build API",
+          "number": 18,
+          "startedAt": "2026-10-28T07:11:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:12:16Z",
+          "conclusion": "success",
+          "name": "Start API server (background)",
+          "number": 19,
+          "startedAt": "2026-10-28T07:12:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:12:16Z",
+          "conclusion": "success",
+          "name": "Smoke test login (debug aid)",
+          "number": 20,
+          "startedAt": "2026-10-28T07:12:16Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:14Z",
+          "conclusion": "success",
+          "name": "E2E tests (Toss Payments)",
+          "number": 21,
+          "startedAt": "2026-10-28T07:12:16Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:14Z",
+          "conclusion": "skipped",
+          "name": "Dump API log (on failure)",
+          "number": 22,
+          "startedAt": "2026-10-28T07:16:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:14Z",
+          "conclusion": "success",
+          "name": "Stop API server",
+          "number": 23,
+          "startedAt": "2026-10-28T07:16:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:14Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@v6",
+          "number": 43,
+          "startedAt": "2026-10-28T07:16:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:14Z",
+          "conclusion": "success",
+          "name": "Post Run pnpm/action-setup@v5",
+          "number": 44,
+          "startedAt": "2026-10-28T07:16:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:15Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v6",
+          "number": 45,
+          "startedAt": "2026-10-28T07:16:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:15Z",
+          "conclusion": "success",
+          "name": "Stop containers",
+          "number": 46,
+          "startedAt": "2026-10-28T07:16:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-28T07:16:15Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 47,
+          "startedAt": "2026-10-28T07:16:15Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/icons-hq/grapit/actions/runs/40647638115/job/122680063902"
+    }
+  ],
+  "status": "completed",
+  "url": "https://github.com/icons-hq/grapit/actions/runs/40647638115"
+}

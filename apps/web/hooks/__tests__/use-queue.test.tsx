@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mock } from 'vitest';
 
 const {
   postMock,
@@ -221,7 +220,7 @@ describe('useQueue', () => {
     }
   });
 
-  it('moves to expired state when queue:expired arrives over the socket contract', async () => {
+  it('moves to expired state when the authoritative status poll expires the session', async () => {
     postMock.mockResolvedValueOnce({
       queueSessionId: 'queue-session-2',
     });
@@ -251,24 +250,11 @@ describe('useQueue', () => {
     await flushQueueEffects();
     expect(result.current.status).toBe('waiting');
 
-    const expiredCall = (socketMock.on as Mock).mock.calls.find(
-      (call: unknown[]) => call[0] === 'queue:expired',
-    );
-    expect(expiredCall).toBeDefined();
-
-    const expiredHandler = expiredCall?.[1] as (payload: {
-      queueSessionId: string;
-      state: string;
-      autoEnter: boolean;
-    }) => void;
-
-    act(() => {
-      expiredHandler({
-        queueSessionId: 'queue-session-2',
-        state: 'EXPIRED',
-        autoEnter: false,
-      });
+    getMock.mockResolvedValueOnce({
+      ...waitingSnapshot('queue-session-2'),
+      state: 'EXPIRED',
     });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
 
     expect(result.current.status).toBe('expired');
     expect(result.current.autoEnter).toBe(false);
@@ -880,8 +866,73 @@ describe('useQueue', () => {
     });
   });
 
-  describe('queue socket after admission (audit #61)', () => {
-    it('closes the queue socket once the booking screen is shown', async () => {
+  describe('waiting without long-lived API connections', () => {
+    it.each([1, 200, 201, 1_500])('polls position %i without holding an API connection', async (position) => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-far', { position }));
+      getMock.mockResolvedValueOnce(waitingSnapshot('queue-far', { position: Math.max(1, position - 1) }));
+
+      const { result } = renderQueue('performance-far');
+      await flushQueueEffects();
+      expect(result.current.status).toBe('waiting');
+      expect(ioMock).not.toHaveBeenCalled();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(getMock).toHaveBeenCalledTimes(1);
+      expect(result.current.position).toBe(Math.max(1, position - 1));
+      expect(ioMock).not.toHaveBeenCalled();
+    });
+
+    it('reaches the front and enters from status polls without opening a socket', async () => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-moving', { position: 201 }));
+      getMock
+        .mockResolvedValueOnce(waitingSnapshot('queue-moving', { position: 200 }))
+        .mockResolvedValueOnce(admittedSnapshot('queue-moving'));
+
+      const { result } = renderQueue('performance-moving');
+      await flushQueueEffects();
+      expect(ioMock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(result.current.position).toBe(200);
+      expect(ioMock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(22_000); });
+      expect(result.current.isReady).toBe(true);
+      expect(ioMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps polling when a newer snapshot changes its waiting position', async () => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-reordered', { position: 200 }));
+      getMock.mockResolvedValueOnce(waitingSnapshot('queue-reordered', { position: 201 }));
+      const { result } = renderQueue('performance-reordered');
+      await flushQueueEffects();
+      expect(ioMock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(result.current.status).toBe('waiting');
+      expect(result.current.position).toBe(201);
+      expect(ioMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('queue authority after admission (audit #61)', () => {
+    it('checks expiry while an admitted buyer still waits to enter manually', async () => {
+      postMock.mockResolvedValueOnce(admittedSnapshot('queue-manual-expiry', {
+        autoEnter: false,
+        activeUntilAt: '2026-05-08T09:01:00.000Z',
+      }));
+      getMock.mockResolvedValueOnce({
+        ...waitingSnapshot('queue-manual-expiry'), state: 'EXPIRED',
+      });
+      const { result } = renderQueue('performance-manual-expiry');
+      await flushQueueEffects();
+      expect(result.current.status).toBe('admitted');
+      expect(result.current.isReady).toBe(false);
+      await act(async () => { await vi.advanceTimersByTimeAsync(62_000); });
+      expect(getMock).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe('expired');
+      expect(result.current.isReady).toBe(false);
+      expect(ioMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the delayed auto-entry flow without opening a queue socket', async () => {
       const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
       postMock.mockResolvedValueOnce(waitingSnapshot('queue-session-socket'));
       getMock.mockResolvedValueOnce(
@@ -890,8 +941,7 @@ describe('useQueue', () => {
 
       const { result } = renderQueue('performance-socket');
       await flushQueueEffects();
-      expect(socketMock.connect).toHaveBeenCalledTimes(1);
-      expect(socketMock.disconnect).not.toHaveBeenCalled();
+      expect(ioMock).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15_000);
@@ -904,8 +954,7 @@ describe('useQueue', () => {
       });
 
       expect(result.current.isReady).toBe(true);
-      expect(socketMock.disconnect).toHaveBeenCalledTimes(1);
-      expect(socketMock.connect).toHaveBeenCalledTimes(1);
+      expect(ioMock).not.toHaveBeenCalled();
       randomSpy.mockRestore();
     });
 

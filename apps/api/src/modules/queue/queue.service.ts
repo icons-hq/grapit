@@ -29,6 +29,7 @@ import {
   showtimeOnSaleCondition,
 } from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
+import { FreshReadBatcher } from '../../common/fresh-read-batcher.js';
 import {
   CACHE_QUEUE_CAPACITY_LUA,
   COUNT_VALID_LOCKED_SEATS_LUA,
@@ -305,6 +306,15 @@ type RemainingSeatsState = {
 
 type RemainingSeatsSnapshot = RemainingSeatsState & { capacityVersion: string };
 
+type PerformanceGateSnapshot = {
+  id: string;
+  status: typeof performances.$inferSelect.status;
+  publishState: typeof performances.$inferSelect.publishState;
+  bookingStartsAt: Date | null;
+  showtimeCount: number;
+  sellableShowtimeCount: number;
+};
+
 type OrderAdmissionBinding = {
   status: string;
   queueSessionId: string | null;
@@ -324,6 +334,8 @@ export class QueueService {
   // One fresh remaining-seat computation per performance per instance at a
   // time; concurrent cache misses share it.
   private readonly remainingSeatsInFlight = new Map<string, Promise<RemainingSeatsSnapshot>>();
+  private readonly browserIdentities: FreshReadBatcher<string, string>;
+  private readonly performanceGates: FreshReadBatcher<string, PerformanceGateSnapshot>;
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
@@ -332,6 +344,34 @@ export class QueueService {
     @Optional() config?: ConfigService,
   ) {
     this.maxActiveAdmissions = resolveQueueAdmissionLimit(config?.get('QUEUE_MAX_ACTIVE_ADMISSIONS'));
+    this.performanceGates = new FreshReadBatcher(async (ids) => {
+      const now = new Date();
+      const rows = await this.db.select({
+        id: performances.id,
+        status: performances.status,
+        publishState: performances.publishState,
+        bookingStartsAt: bookingPolicies.bookingStartsAt,
+        showtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${eq(showtimes.performanceId, performances.id)})`,
+        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), showtimeOnSaleCondition(now))})`,
+      }).from(performances)
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(inArray(performances.id, [...ids]));
+      return new Map(rows.map((row) => [row.id, row]));
+    });
+    this.browserIdentities = new FreshReadBatcher(async (keys) => {
+      const hashes = [...new Set(keys.map((key) => key.slice(key.lastIndexOf(':') + 1)))];
+      const rows = await this.db.select({ userId: refreshTokens.userId,
+        tokenHash: refreshTokens.tokenHash, family: refreshTokens.family })
+        .from(refreshTokens).where(and(inArray(refreshTokens.tokenHash, hashes),
+          isNull(refreshTokens.revokedAt), gt(refreshTokens.expiresAt, new Date())));
+      const identities = new Map<string, string>();
+      for (const row of rows) {
+        const key = `${row.userId}:${row.tokenHash}`;
+        // Keep the first valid record, as the previous single-session read did.
+        if (!identities.has(key)) identities.set(key, row.family);
+      }
+      return identities;
+    });
   }
 
   async resolveBrowserIdentity(
@@ -343,28 +383,15 @@ export class QueueService {
     }
 
     const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
-    const [tokenRecord] = await this.db
-      .select({
-        family: refreshTokens.family,
-      })
-      .from(refreshTokens)
-      .where(
-        and(
-          eq(refreshTokens.userId, userId),
-          eq(refreshTokens.tokenHash, tokenHash),
-          isNull(refreshTokens.revokedAt),
-          gt(refreshTokens.expiresAt, new Date()),
-        ),
-      );
-
-    if (!tokenRecord) {
+    const family = await this.browserIdentities.read(`${userId}:${tokenHash}`);
+    if (family === undefined) {
       throw new UnauthorizedException('유효한 브라우저 세션이 필요합니다');
     }
 
     return {
       userId,
-      refreshTokenFamilyId: tokenRecord.family,
-      deviceSlotId: tokenRecord.family,
+      refreshTokenFamilyId: family,
+      deviceSlotId: family,
     };
   }
 
@@ -580,18 +607,8 @@ export class QueueService {
     performanceId: string,
     actorRole: string | undefined,
   ): Promise<void> {
+    const row = await this.performanceGates.read(performanceId.toLowerCase());
     const now = new Date();
-    const [row] = await this.db
-      .select({
-        status: performances.status,
-        publishState: performances.publishState,
-        bookingStartsAt: bookingPolicies.bookingStartsAt,
-        showtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${eq(showtimes.performanceId, performances.id)})`,
-        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), showtimeOnSaleCondition(now))})`,
-      })
-      .from(performances)
-      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
-      .where(eq(performances.id, performanceId));
 
     const isAdmin = actorRole === 'admin';
     if (!row || (!isAdmin && row.publishState !== 'published')) {

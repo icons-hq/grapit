@@ -1,0 +1,13 @@
+{
+  "pass": true,
+  "completedAt": "2026-10-28T02:24:37.075Z",
+  "instance": "grapit-491806:asia-northeast3:grabit-db-burst-20261028",
+  "database": "grabit_rehearsal_burst_20261028",
+  "serverIdentitySha256": "acd55daffab873dbb5235a9da6922c9824d4cc3d2b2637202da56cec9715bb1f",
+  "ordinaryConnections": 22,
+  "applicationRoleConnectionLimit": 13,
+  "migrations": 51,
+  "pgBossQueues": 3,
+  "backgroundWorkerStarted": false,
+  "productionServerUsed": false
+}

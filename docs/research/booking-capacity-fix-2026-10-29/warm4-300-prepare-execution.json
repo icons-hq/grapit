@@ -1,0 +1,14 @@
+{
+  "label": "warm4-300-prepare",
+  "execution": "grabit-load-capfix-20261029-nksf7",
+  "cap": 300,
+  "queueSocketLimit": 0,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 300,
+  "restAffinity": "shared",
+  "holdSeatSocketsThroughCheckout": false,
+  "apiMaxInstances": 4,
+  "apiPoolMax": 2
+}

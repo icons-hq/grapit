@@ -1,0 +1,15 @@
+{
+  "commit": "f52a135ecc6c4b16676186d0a87b3a200b03518e",
+  "runId": 40824536165,
+  "url": "https://github.com/icons-hq/grapit/actions/runs/40824536165",
+  "status": "completed",
+  "conclusion": "success",
+  "local": {
+    "queueRegression": 50,
+    "queueBrowserChrome": 10,
+    "paymentReturnPolicy": 15,
+    "confirmRecoveryPage": 12,
+    "operationsContracts": 51,
+    "typecheck": "passed"
+  }
+}

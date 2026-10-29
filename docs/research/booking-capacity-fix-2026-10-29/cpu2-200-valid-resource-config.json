@@ -1,0 +1,25 @@
+{
+  "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+  "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:1444c8fa12df658509161e117a0dc1b889a73f0b90454a53226e2a69877428b7",
+  "resources": {
+    "limits": {
+      "cpu": "2",
+      "memory": "512Mi"
+    }
+  },
+  "concurrency": 1000,
+  "traffic": [
+    {
+      "latestRevision": true,
+      "percent": 100,
+      "revisionName": "grabit-rehearsal-capfix-20261029-00006-xf5"
+    }
+  ],
+  "settings": {
+    "BACKGROUND_PROCESSING_ENABLED": "false",
+    "DB_POOL_MAX": "5",
+    "QUEUE_MAX_ACTIVE_ADMISSIONS": "200",
+    "NODE_OPTIONS": "--max-old-space-size=256",
+    "BOOKING_ENABLED": "true"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "startedAt": "2026-10-28T09:50:37.464917+00:00",
+  "productionImagesModified": false,
+  "remote": [
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:34833f134aafe65c90710ede697e2695287e9ef5386fba3d23e7690db078077c",
+      "deleted": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:d2d9e61dbbe89eca96c00918ee09caa256d263813b5bd3fec8c4e492dae2079d",
+      "deleted": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:ff58e7b2c609f490482acd0a038ac8f40f2ce8f19bf645100c6bbf7bd1941fdb",
+      "deleted": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:9fee353d7e65e95f8921434abe8b5d7db9850ac74b512d30b44d0b3f38309dd3",
+      "deleted": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:f272c9394279541a90c5cad48626d9ddca3d5bc732c0d17212d236c41e4cb28d",
+      "deleted": true
+    }
+  ],
+  "local": [
+    {
+      "tag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal:a-20261028",
+      "removed": true
+    },
+    {
+      "tag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal:b-20261028",
+      "removed": true
+    },
+    {
+      "tag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal:routing-diagnostic-20261028",
+      "removed": true
+    },
+    {
+      "tag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source:a-20261028",
+      "removed": true
+    },
+    {
+      "tag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source:b-20261028",
+      "removed": true
+    }
+  ],
+  "remotePathsVerifiedEmpty": [
+    "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source",
+    "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal"
+  ],
+  "completedAt": "2026-10-28T09:50:56.226140+00:00"
+}

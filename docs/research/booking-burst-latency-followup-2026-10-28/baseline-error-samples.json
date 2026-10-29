@@ -1,0 +1,26 @@
+[
+  {
+    "code": null,
+    "instance": null,
+    "kind": "http-failure-sample",
+    "message": null,
+    "metric": "queue.enter",
+    "status": 500
+  },
+  {
+    "code": null,
+    "instance": null,
+    "kind": "http-failure-sample",
+    "message": null,
+    "metric": "queue.enter",
+    "status": 500
+  },
+  {
+    "code": null,
+    "instance": null,
+    "kind": "http-failure-sample",
+    "message": null,
+    "metric": "queue.enter",
+    "status": 500
+  }
+]

@@ -1,0 +1,175 @@
+{
+  "apiResources": {
+    "cpu": 1,
+    "heapMiB": 256,
+    "maxInstances": 4,
+    "memoryMiB": 512,
+    "minInstances": 4
+  },
+  "apiRevision": "projects/grapit-491806/locations/asia-northeast3/services/grabit-rehearsal-capfix-20261029/revisions/grabit-rehearsal-capfix-20261029-00008-q7s",
+  "apiScaling": {
+    "maxInstanceCount": 4,
+    "minInstanceCount": 4
+  },
+  "apiService": "grabit-rehearsal-capfix-20261029",
+  "completedAt": "2026-10-29T05:48:01.699Z",
+  "confirmRecovery": {
+    "ordersRetried": 0,
+    "recoveredOrders": 0,
+    "retryAttempts": 0,
+    "unrecoveredOrders": 0
+  },
+  "cookieDiagnostics": {
+    "affinityCookieChanges": 0,
+    "affinityCookiesReceived": 0,
+    "synchronized": true,
+    "upgradeResponses": 300
+  },
+  "database": "grabit_rehearsal_capfix_20261029",
+  "diagnosticOnly": true,
+  "environment": "private-cloud-run-rehearsal",
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "loadGeneratorSeatBursts": [
+    {
+      "cohort": 300,
+      "eventLoopDelayMaxMs": 362,
+      "eventLoopDelayP95Ms": 235,
+      "eventLoopUtilization": 0.9238513400695546
+    }
+  ],
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "provider": "simulated-300ms-no-provider-network",
+  "restAffinity": "shared",
+  "socketRecovery": {
+    "disconnectReasons": {},
+    "reconnectFailures": 0,
+    "reconnections": 0,
+    "resyncFailures": 0,
+    "resyncs": 0
+  },
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "startedAt": "2026-10-29T05:47:37.416Z",
+  "status": "diagnostic_limited",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 300,
+    "apiInstances": 4,
+    "dbPoolMax": 2,
+    "queueSocketLimit": 0,
+    "saleSeats": 600,
+    "socketClients": 300
+  },
+  "waves": [
+    {
+      "admitted": 300,
+      "apiInstancesObserved": 4,
+      "diagnostic": "prepare-only",
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "metrics": {
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 3316,
+          "outcomes": {
+            "none": 300
+          },
+          "p50Ms": 2103,
+          "p95Ms": 3132,
+          "requests": 300,
+          "statuses": {
+            "201": 300
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 1717,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 933,
+          "p95Ms": 1444,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 2891,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1515,
+          "p95Ms": 2752,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 2394,
+          "outcomes": {
+            "none": 300
+          },
+          "p50Ms": 1620,
+          "p95Ms": 2378,
+          "requests": 300,
+          "statuses": {
+            "201": 300
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 1273,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 636,
+          "p95Ms": 1077,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 2391,
+          "outcomes": {
+            "none": 90000
+          },
+          "p50Ms": 1362,
+          "p95Ms": 2306,
+          "requests": 90000,
+          "statuses": {
+            "delivered": 90000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "peakActiveAdmissions": 300,
+      "prepared": 300,
+      "sessions": 1500,
+      "sloPassed": false
+    }
+  ],
+  "workload": {
+    "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "holdSeatSocketsThroughCheckout": false,
+    "profilingEnabled": false,
+    "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter"
+  }
+}

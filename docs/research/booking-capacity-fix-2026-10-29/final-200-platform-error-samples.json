@@ -1,0 +1,91 @@
+{
+  "sampledRows": 641,
+  "logQueryLimit": 10000,
+  "limited": false,
+  "countsInSample": {
+    "429": 630,
+    "503": 11
+  },
+  "samples": [
+    {
+      "at": "2026-10-29T01:34:19.374442Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 503,
+      "latency": "0.018530111s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T01:34:19.378468Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 503,
+      "latency": "0.017470759s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T01:37:46.936143Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 503,
+      "latency": "0.019329893s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T01:37:46.940279Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 503,
+      "latency": "0.017736260s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T01:39:27.330598Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 503,
+      "latency": "0.170884679s",
+      "path": "/api/v1/queue/sessions/957dad20-6bd9-41ed-9dfc-ed7647f060bd",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T01:41:23.238782Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/c3b5fd9e-aa52-4880-a449-34e7dd3567f5",
+      "platformMessage": "The request was aborted because there was no available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T01:41:23.239205Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/395cd42f-3972-4990-adff-30ca573a4cf6",
+      "platformMessage": "The request was aborted because there was no available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T01:41:23.265205Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/ba93b3e0-6ece-461c-a4e8-e2e0525c7e97",
+      "platformMessage": "The request was aborted because there was no available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T01:41:23.337354Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/f260179e-bc24-4dc1-a9ac-99662de8a39f",
+      "platformMessage": "The request was aborted because there was no available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T01:41:23.338257Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00005-ktz",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/0406b021-6aab-45b9-b234-7069af72f8ef",
+      "platformMessage": "The request was aborted because there was no available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    }
+  ]
+}

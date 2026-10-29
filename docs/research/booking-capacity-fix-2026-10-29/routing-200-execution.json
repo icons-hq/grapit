@@ -1,0 +1,11 @@
+{
+  "label": "routing-200",
+  "execution": "grabit-load-capfix-20261029-m8zmq",
+  "cap": 200,
+  "queueSocketLimit": 200,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 200,
+  "restAffinity": "isolated"
+}

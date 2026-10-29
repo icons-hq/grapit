@@ -1,0 +1,2113 @@
+{
+  "windowStart": "2026-10-28T05:33:37.666Z",
+  "windowEnd": "2026-10-28T05:44:42.993Z",
+  "sampling": "Cloud Monitoring may lag; raw series retained",
+  "metrics": {
+    "apiRequests": {
+      "timeSeries": [
+        {
+          "metric": {
+            "labels": {
+              "response_code": "200",
+              "response_code_class": "2xx",
+              "route": ""
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "project_id": "grapit-491806",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "location": "asia-northeast3",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00006-nz6",
+              "service_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "response_code": "201",
+              "route": "",
+              "response_code_class": "2xx"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00006-nz6",
+              "location": "asia-northeast3",
+              "project_id": "grapit-491806",
+              "service_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "route": "",
+              "response_code_class": "4xx",
+              "response_code": "401"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00006-nz6",
+              "location": "asia-northeast3",
+              "project_id": "grapit-491806",
+              "service_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "route": "",
+              "response_code": "101",
+              "response_code_class": "1xx"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "project_id": "grapit-491806",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm",
+              "location": "asia-northeast3"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00.001Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00.001Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00.001Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "300"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00.001Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00.001Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "300"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "100"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "route": "",
+              "response_code_class": "2xx",
+              "response_code": "200"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "location": "asia-northeast3",
+              "project_id": "grapit-491806",
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00.001Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "3073"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00.001Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "3066"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00.001Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "3090"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00.001Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "3170"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00.001Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "3406"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "3676"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "3646"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "4124"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "4050"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "3866"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "4475"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "route": "",
+              "response_code": "201",
+              "response_code_class": "2xx"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "location": "asia-northeast3",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "project_id": "grapit-491806",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00.001Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00.001Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00.001Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "452"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00.001Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00.001Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "451"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "60"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "505"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "1438"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "response_code_class": "5xx",
+              "route": "",
+              "response_code": "503"
+            },
+            "type": "run.googleapis.com/request_count"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "location": "asia-northeast3",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm",
+              "project_id": "grapit-491806"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00.001Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00.001Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00.001Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00.001Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00.001Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "1"
+    },
+    "apiMemoryP95": {
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "run.googleapis.com/container/memory/utilizations"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "location": "asia-northeast3",
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "project_id": "grapit-491806",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00006-nz6",
+              "configuration_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:42.993Z",
+                "endTime": "2026-10-28T05:33:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.449
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "type": "run.googleapis.com/container/memory/utilizations"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "project_id": "grapit-491806",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm",
+              "location": "asia-northeast3",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "service_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:42.993Z",
+                "endTime": "2026-10-28T05:44:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:42.993Z",
+                "endTime": "2026-10-28T05:43:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:42.993Z",
+                "endTime": "2026-10-28T05:42:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:42.993Z",
+                "endTime": "2026-10-28T05:41:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:42.993Z",
+                "endTime": "2026-10-28T05:40:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.539
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:42.993Z",
+                "endTime": "2026-10-28T05:39:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:42.993Z",
+                "endTime": "2026-10-28T05:38:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:42.993Z",
+                "endTime": "2026-10-28T05:37:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:42.993Z",
+                "endTime": "2026-10-28T05:36:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5385000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:42.993Z",
+                "endTime": "2026-10-28T05:35:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.529
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:42.993Z",
+                "endTime": "2026-10-28T05:34:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.439
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "10^2.%"
+    },
+    "apiCpuP95": {
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "run.googleapis.com/container/cpu/utilizations"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "location": "asia-northeast3",
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "project_id": "grapit-491806",
+              "configuration_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00006-nz6"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:42.993Z",
+                "endTime": "2026-10-28T05:33:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.0095
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "type": "run.googleapis.com/container/cpu/utilizations"
+          },
+          "resource": {
+            "type": "cloud_run_revision",
+            "labels": {
+              "service_name": "grabit-rehearsal-burst2-20261028",
+              "revision_name": "grabit-rehearsal-burst2-20261028-00007-tdm",
+              "location": "asia-northeast3",
+              "project_id": "grapit-491806",
+              "configuration_name": "grabit-rehearsal-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:42.993Z",
+                "endTime": "2026-10-28T05:44:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.2885
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:42.993Z",
+                "endTime": "2026-10-28T05:43:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.2785
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:42.993Z",
+                "endTime": "2026-10-28T05:42:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.4385
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:42.993Z",
+                "endTime": "2026-10-28T05:41:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.3985
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:42.993Z",
+                "endTime": "2026-10-28T05:40:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.429
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:42.993Z",
+                "endTime": "2026-10-28T05:39:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.5285000000000001
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:42.993Z",
+                "endTime": "2026-10-28T05:38:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.4385
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:42.993Z",
+                "endTime": "2026-10-28T05:37:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.4685
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:42.993Z",
+                "endTime": "2026-10-28T05:36:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.3685
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:42.993Z",
+                "endTime": "2026-10-28T05:35:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.539
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:42.993Z",
+                "endTime": "2026-10-28T05:34:42.993Z"
+              },
+              "value": {
+                "doubleValue": 0.239
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "10^2.%"
+    },
+    "sqlCpu": {
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "cloudsql.googleapis.com/database/cpu/utilization"
+          },
+          "resource": {
+            "type": "cloudsql_database",
+            "labels": {
+              "region": "asia-northeast3",
+              "project_id": "grapit-491806",
+              "database_id": "grapit-491806:grabit-db-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "doubleValue": 0.14508808121593547
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "doubleValue": 0.16634539121318143
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "doubleValue": 0.18205623822588707
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "doubleValue": 0.160591831305427
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "doubleValue": 0.14412292174862434
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "doubleValue": 0.16717408253950244
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "doubleValue": 0.17391540154053708
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "doubleValue": 0.16848147474795544
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "doubleValue": 0.17868787853553367
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13860948020266808
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "doubleValue": 0.09344104187672524
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "10^2.%"
+    },
+    "sqlConnections": {
+      "timeSeries": [
+        {
+          "metric": {
+            "labels": {
+              "database": "cloudsqladmin"
+            },
+            "type": "cloudsql.googleapis.com/database/postgresql/num_backends"
+          },
+          "resource": {
+            "type": "cloudsql_database",
+            "labels": {
+              "project_id": "grapit-491806",
+              "region": "asia-northeast3",
+              "database_id": "grapit-491806:grabit-db-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "2"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "database": "grabit_rehearsal_burst2_20261028"
+            },
+            "type": "cloudsql.googleapis.com/database/postgresql/num_backends"
+          },
+          "resource": {
+            "type": "cloudsql_database",
+            "labels": {
+              "region": "asia-northeast3",
+              "database_id": "grapit-491806:grabit-db-burst2-20261028",
+              "project_id": "grapit-491806"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "6"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "8"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "6"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "6"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "6"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "10"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "6"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "8"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "8"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "8"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "database": "postgres"
+            },
+            "type": "cloudsql.googleapis.com/database/postgresql/num_backends"
+          },
+          "resource": {
+            "type": "cloudsql_database",
+            "labels": {
+              "project_id": "grapit-491806",
+              "region": "asia-northeast3",
+              "database_id": "grapit-491806:grabit-db-burst2-20261028"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "database": "template1"
+            },
+            "type": "cloudsql.googleapis.com/database/postgresql/num_backends"
+          },
+          "resource": {
+            "type": "cloudsql_database",
+            "labels": {
+              "database_id": "grapit-491806:grabit-db-burst2-20261028",
+              "region": "asia-northeast3",
+              "project_id": "grapit-491806"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "1"
+    },
+    "valkeyMemory": {
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "memorystore.googleapis.com/instance/memory/maximum_utilization"
+          },
+          "resource": {
+            "type": "memorystore.googleapis.com/Instance",
+            "labels": {
+              "instance_id": "grabit-valkey-burst2-20261028",
+              "project_id": "grapit-491806",
+              "location": "asia-northeast3",
+              "instance_uid": "214efd05-79bc-4137-b79c-f55021365d35"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "DOUBLE",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13538993149995804
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "doubleValue": 0.1355372965335846
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13565592467784882
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13560297340154648
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13566415011882782
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "doubleValue": 0.13055703043937683
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "doubleValue": 0.11772049963474274
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "doubleValue": 0.10351347178220749
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "doubleValue": 0.09000276029109955
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "doubleValue": 0.0797371044754982
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "doubleValue": 0.07209216058254242
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "10^2.%"
+    },
+    "valkeyClients": {
+      "timeSeries": [
+        {
+          "metric": {
+            "labels": {
+              "role": "primary"
+            },
+            "type": "memorystore.googleapis.com/instance/clients/total_connected_clients"
+          },
+          "resource": {
+            "type": "memorystore.googleapis.com/Instance",
+            "labels": {
+              "instance_uid": "214efd05-79bc-4137-b79c-f55021365d35",
+              "project_id": "grapit-491806",
+              "instance_id": "grabit-valkey-burst2-20261028",
+              "location": "asia-northeast3"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "7"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "5"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "5"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "4"
+              }
+            }
+          ]
+        },
+        {
+          "metric": {
+            "labels": {
+              "role": "replica"
+            },
+            "type": "memorystore.googleapis.com/instance/clients/total_connected_clients"
+          },
+          "resource": {
+            "type": "memorystore.googleapis.com/Instance",
+            "labels": {
+              "instance_uid": "214efd05-79bc-4137-b79c-f55021365d35",
+              "instance_id": "grabit-valkey-burst2-20261028",
+              "project_id": "grapit-491806",
+              "location": "asia-northeast3"
+            }
+          },
+          "metricKind": "GAUGE",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:44:00Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "1"
+    },
+    "valkeyEvictions": {
+      "timeSeries": [
+        {
+          "metric": {
+            "type": "memorystore.googleapis.com/instance/stats/total_evicted_keys_count"
+          },
+          "resource": {
+            "type": "memorystore.googleapis.com/Instance",
+            "labels": {
+              "project_id": "grapit-491806",
+              "location": "asia-northeast3",
+              "instance_uid": "214efd05-79bc-4137-b79c-f55021365d35",
+              "instance_id": "grabit-valkey-burst2-20261028"
+            }
+          },
+          "metricKind": "DELTA",
+          "valueType": "INT64",
+          "points": [
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:43:00.001Z",
+                "endTime": "2026-10-28T05:44:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:42:00.001Z",
+                "endTime": "2026-10-28T05:43:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:41:00.001Z",
+                "endTime": "2026-10-28T05:42:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:40:00.001Z",
+                "endTime": "2026-10-28T05:41:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:39:00.001Z",
+                "endTime": "2026-10-28T05:40:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:38:00.001Z",
+                "endTime": "2026-10-28T05:39:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:37:00.001Z",
+                "endTime": "2026-10-28T05:38:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:36:00.001Z",
+                "endTime": "2026-10-28T05:37:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:35:00.001Z",
+                "endTime": "2026-10-28T05:36:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:34:00.001Z",
+                "endTime": "2026-10-28T05:35:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            },
+            {
+              "interval": {
+                "startTime": "2026-10-28T05:33:00.001Z",
+                "endTime": "2026-10-28T05:34:00Z"
+              },
+              "value": {
+                "int64Value": "0"
+              }
+            }
+          ]
+        }
+      ],
+      "unit": "1"
+    }
+  }
+}

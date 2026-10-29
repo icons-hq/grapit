@@ -1,0 +1,34 @@
+{
+  "region": "asia-northeast3",
+  "currency": "USD",
+  "onDemandRequestBillingCpuPerSecond": 3.36e-05,
+  "onDemandMemoryPerGiBSecond": 3.5e-06,
+  "excluded": "free tier, taxes, FX, traffic, request count, startup boost; DB/Valkey unchanged",
+  "assumption": "all listed API instances actively billable continuously during the hour; production minimum stays 0",
+  "options": [
+    {
+      "name": "current-2x1cpu",
+      "activeHour": 0.25452,
+      "additionalActiveHour": 0.0,
+      "additional10Hours": 0.0
+    },
+    {
+      "name": "2x2cpu",
+      "activeHour": 0.49644,
+      "additionalActiveHour": 0.24192,
+      "additional10Hours": 2.4192
+    },
+    {
+      "name": "3x1cpu",
+      "activeHour": 0.38178,
+      "additionalActiveHour": 0.12726,
+      "additional10Hours": 1.2726
+    },
+    {
+      "name": "4x1cpu",
+      "activeHour": 0.50904,
+      "additionalActiveHour": 0.25452,
+      "additional10Hours": 2.5452
+    }
+  ]
+}

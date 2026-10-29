@@ -59,7 +59,19 @@ test('validates workflow defaults and builds fail-fast migration session options
   assert.equal(config.bookingEnabled, true);
   assert.equal(config.queueMaxActiveAdmissions, 200);
   assert.equal(config.apiNodeHeapMaxMb, 256);
+  assert.equal(config.apiCpu, 1);
+  assert.equal(validateDeployConfig({ ...workflowDefaults, API_CPU: '2' }).apiCpu, 2);
   assert.equal(buildMigrationPgOptions(config), '-c lock_timeout=5s -c statement_timeout=60s');
+});
+
+test('API deployment updates both Cloud Run caps when resizing an existing service', async () => {
+  const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
+  const apiDeployment = workflow.split('service: ${{ env.API_SERVICE }}')[1]?.split('env_vars:')[0];
+  assert.ok(apiDeployment, 'API deploy action must be present');
+  // Cloud Run uses the smaller cap: leaving the old service maximum at 2
+  // would silently defeat a tested revision maximum of 4.
+  assert.match(apiDeployment, /--max=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
+  assert.match(apiDeployment, /--max-instances=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
 });
 
 test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
@@ -72,6 +84,8 @@ test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
     [{ MIGRATION_LOCK_TIMEOUT: '30s', MIGRATION_STATEMENT_TIMEOUT: '20s' }, /must be shorter/],
     [{ API_MIN_INSTANCES: '5', API_MAX_INSTANCES: '4' }, /API_MIN_INSTANCES must not exceed/],
     [{ API_CONCURRENCY: '0' }, /API_CONCURRENCY must be between/],
+    [{ API_CPU: '0' }, /API_CPU must be between/],
+    [{ API_CPU: '4' }, /API_CPU must be between/],
     [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '0' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
     [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '1001' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
     [{ API_NODE_HEAP_MAX_MB: '512' }, /API_NODE_HEAP_MAX_MB must be between/],

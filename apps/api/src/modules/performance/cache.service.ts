@@ -108,6 +108,7 @@ function hasClusterNodes(client: unknown): client is RedisClusterScanClient {
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
   private readonly inflightLoads = new Map<string, Promise<unknown>>();
+  private readonly uncachedInflightLoads = new Map<string, Promise<unknown>>();
   private readonly generationMemo = new Map<string, { token: string; expiresAt: number }>();
   private readonly generationReads = new Map<string, Promise<string | null>>();
   /** Incremented by every local bump; a read that overlapped one is not memoized. */
@@ -123,32 +124,31 @@ export class CacheService {
     options: CacheGetOrLoadOptions = {},
   ): Promise<T> {
     const readThrough = options.readThrough !== false;
-    const pendingBeforeRead = this.inflightLoads.get(key);
+    const inflight = readThrough ? this.inflightLoads : this.uncachedInflightLoads;
+    const pendingBeforeRead = inflight.get(key);
     if (pendingBeforeRead) return pendingBeforeRead as Promise<T>;
 
-    if (readThrough) {
-      const cached = await this.get<T>(key);
-      if (cached !== null) return cached;
-    }
-
-    // Another request may have started the load while this one awaited Redis.
-    const pendingAfterRead = this.inflightLoads.get(key);
-    if (pendingAfterRead) return pendingAfterRead as Promise<T>;
-
     const load = (async () => {
+      // Include hits in single-flight: a burst must not transfer and parse the
+      // same cached catalog JSON once per caller. Retain only the pending read,
+      // never the completed value or a new local TTL.
+      if (readThrough) {
+        const cached = await this.get<T>(key);
+        if (cached !== null) return cached;
+      }
       const result = await loader();
       if (readThrough && result.ttlSeconds !== null && result.ttlSeconds > 0) {
         await this.set(key, result.value, result.ttlSeconds);
       }
       return result.value;
     })();
-    this.inflightLoads.set(key, load);
+    inflight.set(key, load);
 
     try {
       return await load;
     } finally {
-      if (this.inflightLoads.get(key) === load) {
-        this.inflightLoads.delete(key);
+      if (inflight.get(key) === load) {
+        inflight.delete(key);
       }
     }
   }

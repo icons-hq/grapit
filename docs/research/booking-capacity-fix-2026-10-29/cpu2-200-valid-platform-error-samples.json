@@ -1,0 +1,91 @@
+{
+  "sampledRows": 10000,
+  "logQueryLimit": 10000,
+  "limited": true,
+  "countsInSample": {
+    "429": 9992,
+    "503": 8
+  },
+  "samples": [
+    {
+      "at": "2026-10-29T02:16:32.454391Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 503,
+      "latency": "0.027940427s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T02:16:32.455674Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 503,
+      "latency": "0.030596893s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T02:19:59.166095Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 503,
+      "latency": "0.144974096s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T02:20:25.117598Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 503,
+      "latency": "0.033801698s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T02:20:26.350271Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 503,
+      "latency": "0.611426075s",
+      "path": "/api/v1/queue/sessions/116d2534-34b4-4f41-9588-322c38bee09d",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T02:23:22.462359Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/a8431951-3ed4-4fb3-8416-11a5e5094603",
+      "platformMessage": "The request was aborted after waiting too long for an available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T02:23:22.462433Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/39807f72-5bcd-43c3-b3da-c9ef37764d43",
+      "platformMessage": "The request was aborted after waiting too long for an available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T02:23:22.462840Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/4231d388-0483-45e2-be4c-fed34e1282df",
+      "platformMessage": "The request was aborted after waiting too long for an available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T02:23:22.562558Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/af8bc169-bf49-474f-a50d-bddaffdc7eaa",
+      "platformMessage": "The request was aborted after waiting too long for an available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    },
+    {
+      "at": "2026-10-29T02:23:22.562787Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00006-xf5",
+      "status": 429,
+      "latency": "0s",
+      "path": "/api/v1/queue/sessions/27d95eb6-4421-4f21-a988-a14c9af5eb61",
+      "platformMessage": "The request was aborted after waiting too long for an available instance. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#abort-request"
+    }
+  ]
+}

@@ -1,0 +1,664 @@
+[
+  {
+    "label": "baseline-full",
+    "status": "failed",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 2000,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "checkout.prepare": 4,
+      "queue.status": 30
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 652,
+      "checkout.duplicate-inflight": 884,
+      "checkout.duplicate-replay": 61,
+      "checkout.prepare": 4230,
+      "performance.detail": 1940,
+      "queue.enter": 4829,
+      "queue.status": 522,
+      "seat.lock": 1887,
+      "seat.read": 1831,
+      "socket.seat-update": 1881
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "cookie-full",
+    "status": "failed",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 2000,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "checkout.confirm": 1,
+      "queue.status": 24
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 683,
+      "checkout.duplicate-inflight": 539,
+      "checkout.duplicate-replay": 54,
+      "checkout.prepare": 3103,
+      "performance.detail": 2227,
+      "queue.enter": 4826,
+      "queue.status": 527,
+      "seat.lock": 1993,
+      "seat.read": 1966,
+      "socket.seat-update": 1971
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "window-full",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {
+      "queue.status": 3
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 594,
+      "checkout.duplicate-inflight": 502,
+      "checkout.duplicate-replay": 84,
+      "checkout.prepare": 3165,
+      "performance.detail": 2245,
+      "queue.enter": 4436,
+      "queue.status": 137,
+      "queue.status.final": 288,
+      "seat.lock": 2071,
+      "seat.read": 1948,
+      "socket.seat-update": 2058
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "fast-200",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 100,
+      "confirmPattern": "paced-600-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 831,
+      "checkout.duplicate-inflight": 587,
+      "checkout.duplicate-replay": 83,
+      "checkout.prepare": 2982,
+      "performance.detail": 2207,
+      "queue.enter": 4973,
+      "queue.status": 733,
+      "queue.status.final": 260,
+      "seat.lock": 1770,
+      "seat.read": 1866,
+      "socket.seat-update": 1790
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "fast-200-fresh",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 100,
+      "confirmPattern": "paced-600-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 1031,
+      "checkout.duplicate-inflight": 557,
+      "checkout.duplicate-replay": 60,
+      "checkout.prepare": 3354,
+      "performance.detail": 2435,
+      "queue.enter": 5096,
+      "queue.status": 1051,
+      "queue.status.final": 162,
+      "seat.lock": 1973,
+      "seat.read": 2102,
+      "socket.seat-update": 1991
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "fast-250",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 250,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 100,
+      "confirmPattern": "paced-600-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 1138,
+      "checkout.duplicate-inflight": 651,
+      "checkout.duplicate-replay": 54,
+      "checkout.prepare": 4158,
+      "performance.detail": 2316,
+      "queue.enter": 7545,
+      "queue.status": 442,
+      "queue.status.final": 229,
+      "seat.lock": 2386,
+      "seat.read": 2991,
+      "socket.seat-update": 2382
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "fast-300",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 300,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 100
+    },
+    "workload": {
+      "confirmCadenceMs": 100,
+      "confirmPattern": "paced-600-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 1065,
+      "checkout.duplicate-inflight": 570,
+      "checkout.duplicate-replay": 50,
+      "checkout.prepare": 4124,
+      "performance.detail": 2324,
+      "queue.enter": 5395,
+      "queue.status": 1149,
+      "queue.status.final": 180,
+      "seat.lock": 2801,
+      "seat.read": 2039,
+      "socket.seat-update": 2801
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "final-200",
+    "status": "failed",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 200
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "queue.status": 636
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 634,
+      "checkout.duplicate-inflight": 445,
+      "checkout.duplicate-replay": 102,
+      "checkout.prepare": 2646,
+      "performance.detail": 2024,
+      "queue.enter": 4591,
+      "queue.status": 238,
+      "seat.lock": 1931,
+      "seat.read": 1456,
+      "socket.seat-update": 1893
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "routing-200",
+    "status": "failed",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 200
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "checkout.confirm": 55,
+      "checkout.duplicate-replay": 2,
+      "queue.status": 2349
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 10243,
+      "checkout.duplicate-inflight": 515,
+      "checkout.duplicate-replay": 51,
+      "checkout.prepare": 2869,
+      "performance.detail": 2183,
+      "queue.enter": 5252,
+      "queue.status": 1034,
+      "seat.lock": 2160,
+      "seat.read": 1914,
+      "socket.seat-update": 2228
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "cpu2-200-valid",
+    "status": "failed",
+    "cpu": 2,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 200,
+      "saleSeats": 600,
+      "socketClients": 200
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "checkout.confirm": 173,
+      "checkout.duplicate-replay": 2,
+      "queue.status": 10143
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 10154,
+      "checkout.duplicate-inflight": 531,
+      "checkout.duplicate-replay": 10237,
+      "checkout.prepare": 1772,
+      "performance.detail": 1639,
+      "queue.enter": 3351,
+      "queue.status": 10204,
+      "seat.lock": 1347,
+      "seat.read": 1292,
+      "socket.seat-update": 1311
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "noqueue-200",
+    "status": "capacity_limited",
+    "cpu": 2,
+    "topology": {
+      "admissionLimit": 200,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 0,
+      "saleSeats": 600,
+      "socketClients": 200
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 502,
+      "checkout.duplicate-inflight": 534,
+      "checkout.duplicate-replay": 75,
+      "checkout.prepare": 1796,
+      "performance.detail": 1749,
+      "queue.enter": 3313,
+      "queue.status": 58,
+      "queue.status.final": 150,
+      "seat.lock": 1357,
+      "seat.read": 1426,
+      "socket.seat-update": 1334
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "noqueue-300-dwell",
+    "status": "capacity_limited",
+    "cpu": 2,
+    "topology": {
+      "admissionLimit": 300,
+      "apiInstances": 2,
+      "dbPoolMax": 5,
+      "queueSocketLimit": 0,
+      "saleSeats": 600,
+      "socketClients": 300
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "holdSeatSocketsThroughCheckout": true,
+      "profilingEnabled": false
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 532,
+      "checkout.duplicate-inflight": 551,
+      "checkout.duplicate-replay": 94,
+      "checkout.prepare": 5447,
+      "performance.detail": 1656,
+      "queue.enter": 4305,
+      "queue.status": 87,
+      "queue.status.final": 126,
+      "seat.lock": 8862,
+      "seat.read": 1397,
+      "socket.seat-update": 8810
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "scale4-300-dwell",
+    "status": "failed",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 300,
+      "apiInstances": 4,
+      "dbPoolMax": 2,
+      "queueSocketLimit": 0,
+      "saleSeats": 600,
+      "socketClients": 300
+    },
+    "workload": {
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "holdSeatSocketsThroughCheckout": true,
+      "profilingEnabled": false
+    },
+    "invariantsPassed": false,
+    "checkout": null,
+    "rawUnexpectedErrors": {
+      "checkout.confirm": 1,
+      "queue.status": 16
+    },
+    "latencyP95Ms": {
+      "checkout.confirm": 539,
+      "checkout.duplicate-inflight": 538,
+      "checkout.duplicate-replay": 95,
+      "checkout.prepare": 6885,
+      "performance.detail": 1912,
+      "queue.enter": 3066,
+      "queue.status": 92,
+      "seat.lock": 2358,
+      "seat.read": 1248,
+      "socket.seat-update": 2286
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": null,
+    "socketRecovery": null,
+    "seatHoldChecks": null
+  },
+  {
+    "label": "browser4-300-valid",
+    "status": "capacity_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 300,
+      "apiInstances": 4,
+      "dbPoolMax": 2,
+      "queueSocketLimit": 0,
+      "saleSeats": 600,
+      "socketClients": 300
+    },
+    "workload": {
+      "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "holdSeatSocketsThroughCheckout": true,
+      "profilingEnabled": false,
+      "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter"
+    },
+    "invariantsPassed": true,
+    "checkout": {
+      "confirmed": 600,
+      "credentials": 600,
+      "items": 600,
+      "sold": 600
+    },
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.confirm": 544,
+      "checkout.confirm.completed": 544,
+      "checkout.duplicate-inflight": 513,
+      "checkout.duplicate-replay": 200,
+      "checkout.prepare": 3061,
+      "performance.detail": 12330,
+      "queue.enter": 3410,
+      "queue.status": 66,
+      "queue.status.final": 143,
+      "seat.lock": 2590,
+      "seat.read": 1353,
+      "socket.seat-update": 2439
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": {
+      "ordersRetried": 0,
+      "recoveredOrders": 0,
+      "retryAttempts": 0,
+      "unrecoveredOrders": 0
+    },
+    "socketRecovery": {
+      "disconnectReasons": {},
+      "reconnectFailures": 0,
+      "reconnections": 0,
+      "resyncFailures": 0,
+      "resyncs": 0
+    },
+    "seatHoldChecks": [
+      {
+        "clients": 300,
+        "connectedAtEnd": 300,
+        "finalSoldStatesComplete": true
+      },
+      {
+        "clients": 300,
+        "connectedAtEnd": 300,
+        "finalSoldStatesComplete": true
+      }
+    ]
+  },
+  {
+    "label": "warm4-300-prepare",
+    "status": "diagnostic_limited",
+    "cpu": 1,
+    "topology": {
+      "admissionLimit": 300,
+      "apiInstances": 4,
+      "dbPoolMax": 2,
+      "queueSocketLimit": 0,
+      "saleSeats": 600,
+      "socketClients": 300
+    },
+    "workload": {
+      "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+      "confirmCadenceMs": 1000,
+      "confirmPattern": "paced-60-per-minute",
+      "holdSeatSocketsThroughCheckout": false,
+      "profilingEnabled": false,
+      "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter"
+    },
+    "invariantsPassed": true,
+    "checkout": null,
+    "rawUnexpectedErrors": {},
+    "latencyP95Ms": {
+      "checkout.prepare": 3132,
+      "performance.detail": 1444,
+      "queue.enter": 2752,
+      "seat.lock": 2378,
+      "seat.read": 1077,
+      "socket.seat-update": 2306
+    },
+    "latencyTargetsPassed": false,
+    "confirmRecovery": {
+      "ordersRetried": 0,
+      "recoveredOrders": 0,
+      "retryAttempts": 0,
+      "unrecoveredOrders": 0
+    },
+    "socketRecovery": {
+      "disconnectReasons": {},
+      "reconnectFailures": 0,
+      "reconnections": 0,
+      "resyncFailures": 0,
+      "resyncs": 0
+    },
+    "seatHoldChecks": null
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:9fee353d7e65e95f8921434abe8b5d7db9850ac74b512d30b44d0b3f38309dd3",
+  "sourceCommit": "7ff9d8b5655ca7a34648b9311bc15a2c0984391f",
+  "rehearsalImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:d2d9e61dbbe89eca96c00918ee09caa256d263813b5bd3fec8c4e492dae2079d",
+  "rehearsalTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal:routing-diagnostic-20261028",
+  "harnessSha256": "bab7e0654705b39d06e12ae34769537112f3b14a7eef5e9469da514910080754",
+  "applicationSourceChanged": false,
+  "loadJobOnly": true
+}

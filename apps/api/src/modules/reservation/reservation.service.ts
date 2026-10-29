@@ -1,3 +1,4 @@
+import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
   Injectable,
   Inject,
@@ -405,6 +406,9 @@ function isPaymentProvider(provider: string): provider is PaymentProvider {
 @Injectable()
 export class ReservationService {
   private readonly logger = new Logger(ReservationService.name);
+  private readonly showtimeContexts = coalesceFreshReads((id: string) => this.loadShowtimeBookingContext(id));
+  private readonly canonicalSeatMetadata = coalesceFreshReads((id: string) => this.loadCanonicalSeatMetadata(id));
+  private readonly seatAssignmentRows = coalesceFreshReads((id: string) => this.loadSeatAssignmentRows(id));
   private readonly reservationFinalizationService: ReservationFinalizationService;
   private reservationDetailQuery?: ReturnType<ReservationService['createReservationDetailQuery']>;
 
@@ -776,11 +780,8 @@ export class ReservationService {
     });
   }
 
-  private async getCanonicalSeatSelectionsFromOverlay(
-    requestedSeats: FloorAwareSeatSelection[],
-    performanceId: string,
-  ): Promise<CanonicalSeatSelection[] | null> {
-    const overlayRows = await this.db
+  private async loadSeatAssignmentRows(performanceId: string) {
+    return this.db
       .select({
         assignmentId: performanceSeatAssignments.id,
         saleStatus: performanceSeatAssignments.saleStatus,
@@ -808,6 +809,13 @@ export class ReservationService {
         eq(performanceSeatAssignments.tierId, performanceSeatTiers.id),
       )
       .where(eq(performanceSeatAssignments.performanceId, performanceId));
+  }
+
+  private async getCanonicalSeatSelectionsFromOverlay(
+    requestedSeats: FloorAwareSeatSelection[],
+    performanceId: string,
+  ): Promise<CanonicalSeatSelection[] | null> {
+    const overlayRows = await this.seatAssignmentRows(performanceId);
 
     if (overlayRows.length === 0) {
       return null;
@@ -848,14 +856,8 @@ export class ReservationService {
     });
   }
 
-  private async getCanonicalSeatSelections(
-    seats: SeatSelectionLike[],
-    performanceId: string,
-  ): Promise<CanonicalSeatSelection[]> {
-    const requestedSeats = seats.map((seat) => toFloorAwareSeatSelection(seat));
-    this.assertUniqueSeatIds(requestedSeats);
-
-    const [tiers, seatMapRows] = await Promise.all([
+  private async loadCanonicalSeatMetadata(performanceId: string) {
+    return Promise.all([
       this.db
         .select()
         .from(priceTiers)
@@ -870,6 +872,16 @@ export class ReservationService {
         .from(seatMaps)
         .where(eq(seatMaps.performanceId, performanceId)),
     ]);
+  }
+
+  private async getCanonicalSeatSelections(
+    seats: SeatSelectionLike[],
+    performanceId: string,
+  ): Promise<CanonicalSeatSelection[]> {
+    const requestedSeats = seats.map((seat) => toFloorAwareSeatSelection(seat));
+    this.assertUniqueSeatIds(requestedSeats);
+
+    const [tiers, seatMapRows] = await this.canonicalSeatMetadata(performanceId);
 
     if (seatMapRows.some((row) => typeof row.venueLayoutId === 'string')) {
       const overlaySeats = await this.getCanonicalSeatSelectionsFromOverlay(
@@ -1073,6 +1085,10 @@ export class ReservationService {
   }
 
   private async getShowtimeBookingContext(showtimeId: string): Promise<ShowtimeBookingContext> {
+    return this.showtimeContexts(showtimeId);
+  }
+
+  private async loadShowtimeBookingContext(showtimeId: string): Promise<ShowtimeBookingContext> {
     const [showtime] = await this.db
       .select({
         id: showtimes.id,

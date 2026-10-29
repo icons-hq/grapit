@@ -1,0 +1,54 @@
+{
+  "checkedAt": "2026-10-29T05:58:36.277776+00:00",
+  "images": [
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:0dab374489f5c9303d603c4de875240029560fde5cba4fbec0a9bf6ad520efd4",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:1444c8fa12df658509161e117a0dc1b889a73f0b90454a53226e2a69877428b7",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:227be1d1edeb3cc99139af73678017b2862e5db2128f475c6627a2a879a653c3",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:386a70e3f0080d1d5e93a5439cbdabf77f3d7aa3711f473a9d203ae907c73621",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:3a9ece3e42f05ed3d5472ba9499a5b51c01d43d556ee0fe9df88a18c7b84d738",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:930f1fc5f000fe3c9a2468b22031cfed5e383aca80e9ba26c90f672bd75e4ddf",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:9737447b9a2048696adde6c306d502ce8cd45e3e55792669c2405c0274f22126",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:b16283c2992f40df75f0a7e852933abf59fa155e05ae63d106111d7c4296a5cf",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:b1928b218836e5dd8167541b0050036fef15ccb643f6a3c1a3aa355f190c5b7c",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:caaf5b40fb36c29452ce84611b4d8580853fda383c1354fd65eb204beae16163",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:ea62336235c90d7e1cbabf6b0cd4dd596cc60f8c647db4f203dc12b92d9ba5f6",
+      "absent": true
+    },
+    {
+      "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+      "absent": true
+    }
+  ],
+  "allAbsent": true
+}

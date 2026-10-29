@@ -1,0 +1,12 @@
+{
+  "variant": "b",
+  "sourceCommit": "7ff9d8b5655ca7a34648b9311bc15a2c0984391f",
+  "runtimeSourceSha256": "2cc2970a59462a45c08c4be968e960ea67259f9888f6babbe4174e00ca7a04b9",
+  "frozenDistSha256": "0c24f05ba923022cef3a7a01f56c2d4819645c1d0da7017b6cd9b043ad8a2334",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:9fee353d7e65e95f8921434abe8b5d7db9850ac74b512d30b44d0b3f38309dd3",
+  "sourceTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source:b-20261028",
+  "rehearsalImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal@sha256:34833f134aafe65c90710ede697e2695287e9ef5386fba3d23e7690db078077c",
+  "rehearsalTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-rehearsal:b-20261028",
+  "baselineRuntimeImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:ee6568bea2ea9b595c27006e0ba5d2d5c90d9f11217f3d4f0a6477f041deea86",
+  "productionImagesModified": false
+}

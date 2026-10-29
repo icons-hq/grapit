@@ -129,6 +129,42 @@ test.describe('booking queue route', () => {
     );
   });
 
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    test(`waiting positions update without opening queue sockets (${viewport.width}px)`, async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      await page.clock.install();
+      let socketConnections = 0;
+      let statusReads = 0;
+      const pageErrors: string[] = [];
+      page.on('pageerror', (error) => pageErrors.push(error.message));
+      await page.routeWebSocket('**/socket.io/**', (socket) => {
+        socketConnections++;
+        socket.send('0{"sid":"bounded-queue","upgrades":[],"pingInterval":25000,"pingTimeout":20000}');
+        socket.onMessage((message) => {
+          if (String(message).startsWith('40/queue,')) {
+            socket.send('40/queue,{"sid":"bounded-queue"}');
+          }
+        });
+      });
+      await page.route('**/api/v1/queue/performances/**/enter', (route) =>
+        fulfillJson(route, 201, { ...waitingSnapshot, position: 1_300, waitingCount: 1_300 }),
+      );
+      await page.route(`**/api/v1/queue/sessions/${waitingSnapshot.queueSessionId}`, (route) => {
+        statusReads++;
+        return fulfillJson(route, 200, { ...waitingSnapshot, position: 200, waitingCount: 200 });
+      });
+      await page.goto(`/booking/${queuePerformanceId}`);
+      await expect(page.getByTestId(queueMetricTestIds.position)).toContainText('1300');
+      expect(socketConnections).toBe(0);
+      await page.screenshot({ path: testInfo.outputPath('distant-waiting.png'), fullPage: true });
+      await page.clock.fastForward(20_001);
+      await expect(page.getByTestId(queueMetricTestIds.position)).toContainText('200');
+      expect(socketConnections).toBe(0);
+      expect(statusReads).toBe(1);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
   test('queue entry before the booking opens shows a countdown and enters automatically at the open time', async ({
     page,
   }) => {

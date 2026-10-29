@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "7ff9d8b5655ca7a34648b9311bc15a2c0984391f",
+  "runtimeSourceSha256": "2cc2970a59462a45c08c4be968e960ea67259f9888f6babbe4174e00ca7a04b9",
+  "runtimeSourceFiles": 567,
+  "variant": "after-clean",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "sourceTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source:after-clean-20261028",
+  "rehearsalImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:cbae795ffb6df6a1e49aa878786c44675ff381623df5791aef65f3f612dbc295",
+  "rehearsalTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal:after-clean-20261028",
+  "baselineRuntimeImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:ee6568bea2ea9b595c27006e0ba5d2d5c90d9f11217f3d4f0a6477f041deea86",
+  "build": "same Nest/SWC build as API Dockerfile; replace dist on identical production Node/OS/dependencies",
+  "productionImagesModified": false,
+  "harnessSha256": {
+    "header.mjs": "4fa0d7ae9931c1a93ba5f538f2bc3ab1bc5591b226bfb225d9b2ee0face035bf",
+    "guard.test.mjs": "cd58401af8a5340998bd33bd8497ef049909925ae2ae25429381e2f9811cec97",
+    "cloud-capacity.mjs": "588bfabe8dad7041ec53383c183d9681a134cc857f6ecbe7d27452d71b69f046",
+    "api-preload.mjs": "f5829e806ad01408e70e837a20ce9364cfd4ec12d459176f96ca10bdc9448ddd",
+    "pg-stub-preload.mjs": "85717c5caf3f42a05ac091b5769c1be92d8815a0893990960c12e648fcf06d5a",
+    "Dockerfile": "07aefac9321c3ecf95dd8fdd20c2184613872eb77662256728067173d00c6f95",
+    "check-profiler.mjs": "9a48308e9c7832fdf08b40f76b974f44f1586f30952af6080cd3126128a035e7",
+    "profile-sanity.mjs": "73d906512ffaedde70d3f6295464d5617629bf827f892d7020242b0be9a2a4c6",
+    "cloud-ops.mjs": "1490ef29ddc7c243fe285939bd92e88a2ae723e3121ad8498a6af7a025d57506",
+    "cpu-probe.mjs": "8020c13c076525d8d0f573f69c4f66843e4b8244099f9cddaf97b24ec6e1d332",
+    "cloud-profile.mjs": "a275a84f21b2f87a17ea1697db1b0cc584a3cd29fe49550ff9c831040dabe446",
+    "guard.mjs": "0388d9d4bec53cdaa57ec8f7aa790829f48b06de4cbc9ae684698d956ba70e38"
+  },
+  "launchErrorSamplingSha256": "9707f5306077af0d36ea3cbc4da4584d70d4292ae244ece7bdc439c3666b8164"
+}

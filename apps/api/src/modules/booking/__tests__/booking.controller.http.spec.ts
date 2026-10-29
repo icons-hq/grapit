@@ -143,11 +143,27 @@ describe('GET /booking/schedules/:showtimeId/seats', () => {
 describe('resolveSeatStatusThrottleTracker', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   function createRequest(headers: Record<string, string> = {}) {
     return { headers, ip: '203.0.113.7', socket: { remoteAddress: '203.0.113.7' } };
   }
+
+  it('rechecks token expiry and replaces a prepared key when configuration changes', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.stubEnv('JWT_SECRET', JWT_SECRET);
+    const now = Date.now();
+    const short = new JwtService().sign({ sub: 'buyer-a' }, { secret: JWT_SECRET, expiresIn: 1 });
+    const old = signAccessToken('buyer-a');
+    const track = (token: string) => resolveSeatStatusThrottleTracker(createRequest({ authorization: `Bearer ${token}` }));
+    expect(track(short)).toBe('seat-status:user:buyer-a');
+    vi.setSystemTime(now + 2000);
+    expect(track(short)).toBe('seat-status:ip:203.0.113.7');
+    vi.stubEnv('JWT_SECRET', 'rotated-server-key');
+    expect(track(signAccessToken('buyer-b', 'rotated-server-key'))).toBe('seat-status:user:buyer-b');
+    expect(track(old)).toBe('seat-status:ip:203.0.113.7');
+  });
 
   it('uses the verified access-token subject, never a cookie', () => {
     vi.stubEnv('JWT_SECRET', JWT_SECRET);

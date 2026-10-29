@@ -33,6 +33,33 @@ describe('CacheService', () => {
     service = new CacheService(mockRedis as never);
   });
 
+  it('coalesces a burst of cache hits without retaining the completed response', async () => {
+    let stored = JSON.stringify({ title: 'Before edit' });
+    mockRedis.get.mockImplementation(async () => stored);
+    const loader = vi.fn();
+    const results = await Promise.all(Array.from({ length: 1500 }, () =>
+      service.getOrLoad('detail:generation-one', loader)));
+    expect(results.every((result) => (result as { title: string }).title === 'Before edit')).toBe(true);
+    expect(mockRedis.get).toHaveBeenCalledTimes(1);
+    expect(loader).not.toHaveBeenCalled();
+
+    stored = JSON.stringify({ title: 'After edit' });
+    await expect(service.getOrLoad('detail:generation-one', loader)).resolves.toEqual({ title: 'After edit' });
+    expect(mockRedis.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a cache-bypassing read independent of an already pending cache hit', async () => {
+    let finishCache!: (value: string) => void;
+    mockRedis.get.mockImplementation(() => new Promise<string>((resolve) => { finishCache = resolve; }));
+    const loader = vi.fn(async () => ({ value: 'fresh database value', ttlSeconds: 10 }));
+    const cached = service.getOrLoad('detail:same-generation', loader);
+    const bypassed = service.getOrLoad('detail:same-generation', loader, { readThrough: false });
+    finishCache(JSON.stringify('older cached value'));
+    await expect(bypassed).resolves.toBe('fresh database value');
+    await expect(cached).resolves.toBe('older cached value');
+    expect(mockRedis.set).not.toHaveBeenCalled();
+  });
+
   describe('get()', () => {
     it('returns null when key does not exist', async () => {
       mockRedis.get.mockResolvedValueOnce(null);

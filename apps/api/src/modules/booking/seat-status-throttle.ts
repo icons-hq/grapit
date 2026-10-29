@@ -1,6 +1,7 @@
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import { resolveThrottleIpKey } from '../traffic/throttle-identity.js';
+import { prepareJwtVerificationKey } from '../../common/jwt-verification-key.js';
 
 /**
  * Rate limit for the public seat status read (audit #8).
@@ -12,7 +13,8 @@ import { resolveThrottleIpKey } from '../traffic/throttle-identity.js';
 export const SEAT_STATUS_THROTTLE_LIMIT = 60;
 export const SEAT_STATUS_THROTTLE_TTL_MS = 10_000;
 
-const accessTokenVerifier = new JwtService();
+let verifierSecret: string | undefined;
+let accessTokenVerifier: JwtService | undefined;
 
 function readBearerToken(req: Request): string | null {
   const header = req.headers?.authorization;
@@ -33,7 +35,11 @@ function readVerifiedSubject(req: Request): string | null {
   if (!token || !secret) return null;
 
   try {
-    const payload = accessTokenVerifier.verify<{ sub?: unknown }>(token, { secret });
+    if (secret !== verifierSecret || !accessTokenVerifier) {
+      accessTokenVerifier = new JwtService({ secret: prepareJwtVerificationKey(secret) });
+      verifierSecret = secret;
+    }
+    const payload = accessTokenVerifier.verify<{ sub?: unknown }>(token);
     return typeof payload.sub === 'string' && payload.sub.length > 0 ? payload.sub : null;
   } catch {
     return null;

@@ -79,6 +79,7 @@ function createQueueDb(state: DbState) {
             // Queue entry gate row: a published, selling performance with a
             // showtime that has not started yet.
             return [{
+              id: state.performanceId,
               status: 'selling',
               publishState: 'published',
               bookingStartsAt: null,

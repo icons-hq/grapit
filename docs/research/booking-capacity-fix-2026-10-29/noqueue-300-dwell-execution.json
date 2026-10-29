@@ -1,0 +1,12 @@
+{
+  "label": "noqueue-300-dwell",
+  "execution": "grabit-load-capfix-20261029-wcfmf",
+  "cap": 300,
+  "queueSocketLimit": 0,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 300,
+  "restAffinity": "shared",
+  "holdSeatSocketsThroughCheckout": true
+}

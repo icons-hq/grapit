@@ -1,0 +1,17 @@
+{
+  "releaseStatus": "blocked_by_availability",
+  "productionDeploymentPerformed": false,
+  "candidatePreserved": "B",
+  "candidateCommit": "a3c62fae321f00477b8dc7c4bab1381229aa0865",
+  "pullRequest": "https://github.com/icons-hq/grapit/pull/240",
+  "reason": "Prepare regression was not reproduced, but A and B both had request availability failures in the fixed-capacity repeated comparison; B4 regular confirmation had 127 unexpected 429 responses out of 597 requests.",
+  "originalComparisonAttempts": 8,
+  "full600SaleCompletions": {"A": 1, "B": 2},
+  "extraDiagnosticIncludedInComparison": false,
+  "extraDiagnostic": "Same B4 revision completed 600 sales with 9 unexpected queue 503 responses; all 128 fresh-TCP health probe groups returned 200 with all cookies and with no cookies. No root cause or fix established.",
+  "admissionCap": 200,
+  "hardwareChanged": false,
+  "latencySloRelaxed": false,
+  "productionChanges": [],
+  "nextGate": "Explain and correct request acceptance/connection failures, then repeat the original 1500-user/600-seat/cap-200 validation before deploying."
+}

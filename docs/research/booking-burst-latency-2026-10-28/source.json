@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "7ff9d8b5655ca7a34648b9311bc15a2c0984391f",
+  "runtimeSourceSha256": "afb350fc3ee3f1b60ee6d9bae8c1691d869f684463436a90a0c114722792fc1d",
+  "runtimeSourceFiles": 565,
+  "variant": "batch2-fixed",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source@sha256:4da72084a540b7c3708112c1adb25fffda5986b9c4f56e0a44e1239790c3993b",
+  "sourceTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-source:batch2-fixed-20261028",
+  "rehearsalImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal@sha256:22ef7b19f136d5227cd2b009a62251a120acf0e5be84709e0e3ab84d5ac0e0f8",
+  "rehearsalTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-burst-rehearsal:batch2-fixed-20261028",
+  "baselineRuntimeImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:ee6568bea2ea9b595c27006e0ba5d2d5c90d9f11217f3d4f0a6477f041deea86",
+  "build": "same Nest/SWC build as API Dockerfile; replace dist on identical production Node/OS/dependencies",
+  "productionImagesModified": false,
+  "harness": {
+    "header.mjs": "4fa0d7ae9931c1a93ba5f538f2bc3ab1bc5591b226bfb225d9b2ee0face035bf",
+    "guard.test.mjs": "b60ce7ac4511aebd2984979c0a3d413e485e66d3103f62ee5f55656c5935dc7c",
+    "cloud-capacity.mjs": "588bfabe8dad7041ec53383c183d9681a134cc857f6ecbe7d27452d71b69f046",
+    "api-preload.mjs": "f5829e806ad01408e70e837a20ce9364cfd4ec12d459176f96ca10bdc9448ddd",
+    "pg-stub-preload.mjs": "85717c5caf3f42a05ac091b5769c1be92d8815a0893990960c12e648fcf06d5a",
+    "check-profiler.mjs": "2e94cd68986cb38b295a410102ac059241709abc368c65248493b2941accc3ad",
+    "profile-sanity.mjs": "af0695817ea825d800a1160b35ed5c931ff8ed413f2d7fa8e528cc5cacdc14f3",
+    "cloud-ops.mjs": "dd7803b27c4900f62249f007ac3b5bbab02a36f07a6464fc36f469e7da337c79",
+    "cloud-profile.mjs": "2ec0648b636029b4de0bb771c390ea8549720d7fa36e23026f0cb1306dff575e",
+    "guard.mjs": "9333d90b4418806d383fec18de35be128d98b1f21b92929260ada0570d1e0df7"
+  }
+}

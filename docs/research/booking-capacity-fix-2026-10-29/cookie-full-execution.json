@@ -1,0 +1,9 @@
+{
+  "label": "cookie-full",
+  "execution": "grabit-load-capfix-20261029-nzdln",
+  "cap": 200,
+  "queueSocketLimit": 2000,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true
+}

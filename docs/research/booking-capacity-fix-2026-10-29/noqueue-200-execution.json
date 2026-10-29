@@ -1,0 +1,11 @@
+{
+  "label": "noqueue-200",
+  "execution": "grabit-load-capfix-20261029-dlmdt",
+  "cap": 200,
+  "queueSocketLimit": 0,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 200,
+  "restAffinity": "shared"
+}

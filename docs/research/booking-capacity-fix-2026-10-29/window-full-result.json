@@ -1,0 +1,313 @@
+{
+  "apiResources": {
+    "cpu": 1,
+    "heapMiB": 256,
+    "maxInstances": 2,
+    "memoryMiB": 512,
+    "minInstances": 2
+  },
+  "apiService": "grabit-rehearsal-capfix-20261029",
+  "completedAt": "2026-10-29T01:08:52.646Z",
+  "cookieDiagnostics": {
+    "affinityCookieChanges": 0,
+    "affinityCookiesReceived": 0,
+    "synchronized": true,
+    "upgradeResponses": 900
+  },
+  "database": "grabit_rehearsal_capfix_20261029",
+  "diagnosticOnly": false,
+  "environment": "private-cloud-run-rehearsal",
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "provider": "simulated-300ms-no-provider-network",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "startedAt": "2026-10-29T00:57:48.105Z",
+  "status": "capacity_limited",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 200,
+    "apiInstances": 2,
+    "dbPoolMax": 5,
+    "queueSocketLimit": 200,
+    "saleSeats": 600,
+    "socketClients": 100
+  },
+  "waves": [
+    {
+      "activeAdmissionLimit": 200,
+      "admitted": 200,
+      "apiInstancesObserved": 2,
+      "apiRssMiBObservedMax": [
+        203,
+        199
+      ],
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "cohorts": [
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "bed7a272-d89b-4e53-9fa5-e002b9227738": 96,
+            "e4741eee-fa0c-4dc8-a7e1-0e5ab2ec6d1a": 104
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        },
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "bed7a272-d89b-4e53-9fa5-e002b9227738": 71,
+            "e4741eee-fa0c-4dc8-a7e1-0e5ab2ec6d1a": 129
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        },
+        {
+          "buyers": 200,
+          "confirmInstances": {
+            "bed7a272-d89b-4e53-9fa5-e002b9227738": 199,
+            "e4741eee-fa0c-4dc8-a7e1-0e5ab2ec6d1a": 1
+          },
+          "confirmed": 200,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 200
+        }
+      ],
+      "durationMs": 661619,
+      "finalWaiting": 900,
+      "initialWaiting": 1300,
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "maxConcurrentPolls": 92,
+      "memoryBudgetPassed": true,
+      "metrics": {
+        "checkout.confirm": {
+          "errorRate": 0,
+          "maxMs": 2322,
+          "outcomes": {
+            "none": 597
+          },
+          "p50Ms": 443,
+          "p95Ms": 594,
+          "requests": 597,
+          "statuses": {
+            "201": 597
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-inflight": {
+          "errorRate": 0,
+          "maxMs": 502,
+          "outcomes": {
+            "none": 9
+          },
+          "p50Ms": 78,
+          "p95Ms": 502,
+          "requests": 9,
+          "statuses": {
+            "201": 3,
+            "503": 6
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-replay": {
+          "errorRate": 0,
+          "maxMs": 84,
+          "outcomes": {
+            "none": 6
+          },
+          "p50Ms": 55,
+          "p95Ms": 84,
+          "requests": 6,
+          "statuses": {
+            "201": 6
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 3418,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 1972,
+          "p95Ms": 3165,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 2611,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1453,
+          "p95Ms": 2245,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 4801,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 2628,
+          "p95Ms": 4436,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status": {
+          "errorRate": 8.028044635928175e-05,
+          "maxMs": 4071,
+          "outcomes": {
+            "none": 37369
+          },
+          "p50Ms": 31,
+          "p95Ms": 137,
+          "requests": 37369,
+          "statuses": {
+            "200": 37366,
+            "503": 3
+          },
+          "unexpectedErrors": 3
+        },
+        "queue.status.final": {
+          "errorRate": 0,
+          "maxMs": 399,
+          "outcomes": {
+            "none": 900
+          },
+          "p50Ms": 104,
+          "p95Ms": 288,
+          "requests": 900,
+          "statuses": {
+            "200": 900
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 2327,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 1204,
+          "p95Ms": 2071,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 2159,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 1003,
+          "p95Ms": 1948,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 2331,
+          "outcomes": {
+            "none": 60000
+          },
+          "p50Ms": 1221,
+          "p95Ms": 2058,
+          "requests": 60000,
+          "statuses": {
+            "delivered": 60000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "paymentConfirmTargetPassed": true,
+      "peakActiveAdmissions": 200,
+      "queueSockets": {
+        "admissionEventsReceived": 400,
+        "connected": 600,
+        "expectedAdmissionEvents": 400,
+        "positionMessages": 70121
+      },
+      "seats": 600,
+      "sessions": 1500,
+      "sloPassed": false,
+      "socketFanout": {
+        "clients": 100,
+        "delivered": 60000,
+        "duplicateDeliveries": 0,
+        "expectedDeliveries": 60000
+      }
+    }
+  ],
+  "workload": {
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "profilingEnabled": false
+  }
+}

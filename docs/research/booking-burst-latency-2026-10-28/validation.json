@@ -1,0 +1,29 @@
+{
+  "unit": {
+    "files": 161,
+    "passed": 2688
+  },
+  "integration": {
+    "files": 36,
+    "passed": 432
+  },
+  "typecheck": "passed",
+  "build": "passed",
+  "lint": {
+    "errors": 0,
+    "existingWarnings": 50
+  },
+  "diffCheck": "passed",
+  "realPostgresReadRegression": {
+    "buyers": 1500,
+    "poolMax": 5,
+    "jwtReadBudget": 24,
+    "sessionReadBudget": 24,
+    "performanceGateReadBudget": 2,
+    "beforeGateReads": 1502,
+    "afterGateReadsAtMost": 2
+  },
+  "runtimeSourceMatchesMeasuredImage": true,
+  "uiTests": "not run; API-only change",
+  "productionDeployment": false
+}

@@ -177,7 +177,7 @@ describe('BookingService', () => {
     });
 
     it('rejects seat locks once the showtime has started, for every actor (audit #2)', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const startsAt = new Date('2026-10-05T10:00:00.000Z');
       vi.setSystemTime(startsAt);
       try {
@@ -212,7 +212,7 @@ describe('BookingService', () => {
     });
 
     it('still accepts seat locks one millisecond before the showtime start (audit #2)', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const startsAt = new Date('2026-10-05T10:00:00.000Z');
       vi.setSystemTime(new Date(startsAt.getTime() - 1));
       try {
@@ -296,7 +296,7 @@ describe('BookingService', () => {
     });
 
     it('rejects public users before a scheduled booking start even when sale status is open', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
       try {
         mockDb.select.mockReturnValueOnce(
@@ -319,7 +319,7 @@ describe('BookingService', () => {
     });
 
     it('allows public users after a scheduled booking start even while stored status is upcoming', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
       try {
         mockNoSoldRecord(4, {
@@ -1217,7 +1217,7 @@ describe('BookingService', () => {
       });
 
       it('shares the snapshot across instances through a short-lived Valkey entry', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
         try {
           mockRedis.get.mockResolvedValue(null);
@@ -1264,7 +1264,7 @@ describe('BookingService', () => {
       });
 
       it('serves repeat reads from memory briefly, then recomputes', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
         try {
           mockRedis.get.mockResolvedValue(null);
@@ -1290,7 +1290,7 @@ describe('BookingService', () => {
       });
 
       it('never keeps a shared snapshot in memory beyond its shared lifetime', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         vi.setSystemTime(new Date('2026-10-01T00:00:10.000Z'));
         try {
           const almostExpired = sharedSnapshot(
@@ -1310,7 +1310,7 @@ describe('BookingService', () => {
       });
 
       it('ignores a shared snapshot that is past its lifetime or for another showtime', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         vi.setSystemTime(new Date('2026-10-01T00:00:10.000Z'));
         try {
           const expired = sharedSnapshot(Date.now() - SEAT_STATUS_CACHE_TTL_MS, { 'Z-9': 'locked' });
@@ -1400,7 +1400,7 @@ describe('BookingService', () => {
       });
 
       it('answers the click -> re-read loop from the cached snapshot plus own changes, without recomputing', async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
         try {
           let writeResult: unknown = 1;
@@ -1442,7 +1442,7 @@ describe('BookingService', () => {
       });
 
       it("applies this instance's change to another instance's snapshot unless that snapshot was read clearly later", async () => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         const changedAt = new Date('2026-10-01T00:00:00.000Z').getTime();
         vi.setSystemTime(changedAt);
         try {

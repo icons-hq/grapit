@@ -1,0 +1,53 @@
+{
+  "createdAt": "2026-10-29T00:19:25.063285+00:00",
+  "scope": "existing candidate B, API two x 1 vCPU/512MiB, pool 5, identical private physical SQL/Valkey",
+  "diagnosis": [
+    {
+      "name": "baseline",
+      "admission": 200,
+      "waitingSockets": "all",
+      "confirmCadenceMs": 1000,
+      "sales": 200
+    },
+    {
+      "name": "bounded-waiting",
+      "admission": 200,
+      "waitingSockets": 200,
+      "confirmCadenceMs": 1000,
+      "sales": 200
+    }
+  ],
+  "falsification": "If failures persist with bounded waiting sockets, inspect transport timeout separately before accepting fix. Do not relabel raw 429/503 as success.",
+  "capacityComparison": "After cause isolated, compare 200, 250, 300 on identical corrected transport; full 600 seats; faster confirm can be used only for separate burst comparison and labeled. Repeat selected setting under original 1/s confirm cadence.",
+  "releaseGate": "all 600 sold/confirmed/ticket items/QR match, active admissions never exceed selected cap, no ordinary confirm/prepare/lock failures, no unresolved repeatable platform starvation. Existing latency SLO reported separately, never relaxed.",
+  "production": "Deploy via PR/main CI/CD only after corrected transport validated. No real payments/refunds or customer writes in load tests.",
+  "protocolAmendments": [
+    {
+      "reason": "Fresh Direct VPC startup in NODE_ENV=test allowed a permanently local Socket.IO adapter; production would exit. Both initial diagnostic runs excluded; enforce production adapter readiness in rehearsal wrapper before evaluating capacity.",
+      "excluded": [
+        "baseline (IAM propagation 403)",
+        "baseline-valid (only 9,880/20,000 seat deliveries)",
+        "window-diagnostic (same invalid startup, cancelled)"
+      ],
+      "restart": "Full baseline and bounded-window runs use same strict wrapper and same API revision, full 600 seats at original 1 confirm/s."
+    },
+    {
+      "reason": "A local real-Chrome probe proves old Node workload ignores WebSocket Set-Cookie while browser applies it. Need isolate routing-cookie fidelity before attributing failure to server capacity.",
+      "sequence": [
+        "baseline-full: original jar, all waiting sockets, cap200, 1confirm/s",
+        "cookie-full: browser-equivalent upgraded cookie jar only; same API revision and all waiting sockets",
+        "window-full: correct jar and front200 waiting socket window; same API revision, cap200, 1confirm/s"
+      ],
+      "preserveFailures": true
+    },
+    {
+      "reason": "The zero-raw-error diagnostic stop triggered after window-full: 600-seat invariants/60000 seat messages and all purchase requests passed, but 3/37369 queue polls were503. This is0.008% below the existing1% route error SLO, and the client explicitly retries these polls. Inspection found no purchase error or starvation. Continue capacity sizing under the original1% queue limit and zero purchase errors, preserve all3 failures; do not claim zero infrastructure errors or full latency SLO success.",
+      "baseline": "window-full",
+      "admissionSizingAllowed": true
+    },
+    {
+      "reason": "Final all-200-observer run reproduced629platform429 andfailed after400sales. Removing REST affinity cookie on the identical API revision did not solve it (54 ordinary confirm429 and2340queue429), so edge change is rejected/reverted. Next change only CPU1->2 per API, keep512MiB/heap256/pool5/max2/cap200/front200/200seat observers/1confirm-sec and original affinity. This tests CPU/ACT pressure, not higher admissions.",
+      "deploymentBlockedUntilRetest": true
+    }
+  ]
+}

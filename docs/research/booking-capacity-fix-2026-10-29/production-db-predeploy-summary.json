@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-10-29T05:46:59.571Z",
+  "target": "grabit-db-managed-demo/grapit",
+  "readOnly": true,
+  "inFlight": {
+    "all_pending": 0,
+    "within_deadline": 0
+  },
+  "providerProcessing": [],
+  "pendingTicketCancellations": 0,
+  "pendingRefunds": [],
+  "migrations": {
+    "count": 50,
+    "latest_created_at": "1792989568714"
+  },
+  "migrationExpectation": {
+    "expected": 50,
+    "actual": 50,
+    "met": true
+  }
+}

@@ -963,7 +963,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation rejects public users before a scheduled booking start', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
       try {
         const userId = randomUUID();
@@ -990,7 +990,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation allows public users after a scheduled booking start while stored status is upcoming', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
       try {
         const userId = randomUUID();
@@ -1144,7 +1144,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation stores server-side paymentDeadlineAt plus admission recovery timestamps', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-08T07:00:00.000Z');
       vi.setSystemTime(now);
 
@@ -1213,7 +1213,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation stores and returns a PayPal provider charge quote when checkout is enabled', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
 
@@ -1307,7 +1307,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation stores and returns an overseas-card USD provider charge quote for USD card requests', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
 
@@ -1402,7 +1402,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation stores and returns an Alipay provider charge quote when checkout is enabled', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
 
@@ -1497,7 +1497,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation keeps Alipay checkout disabled when the Alipay provider flag is off', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
 
@@ -2091,7 +2091,7 @@ describe('ReservationService', () => {
     });
 
     it('prepareReservation expires pending reservation when the 7-minute payment deadline already passed without handoff', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-08T07:08:00.000Z');
       vi.setSystemTime(now);
 
@@ -2198,7 +2198,7 @@ describe('ReservationService', () => {
     });
 
     it('closes sales exactly at the showtime start, even for Admin Booking Bypass (audit #2)', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const startsAt = new Date('2026-10-05T10:00:00.000Z');
       vi.setSystemTime(startsAt);
       try {
@@ -3468,7 +3468,7 @@ describe('ReservationService', () => {
     });
 
     it('completes reservation from async DONE payment after 7-minute deadline but before 10-minute admission expiry', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       const now = new Date('2026-05-08T07:08:00.000Z');
       vi.setSystemTime(now);
 

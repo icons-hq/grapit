@@ -221,6 +221,9 @@ export function validateDeployConfig(env) {
     migrationFreeze: parseStrictBoolean(env.MIGRATION_FREEZE, 'MIGRATION_FREEZE'),
     apiMinInstances,
     apiMaxInstances,
+    // The API memory profile stays at 512 MiB; validate CPU changes before
+    // migrations rather than discovering an invalid size during deployment.
+    apiCpu: parseInteger(env.API_CPU ?? '1', 'API_CPU', { min: 1, max: 2 }),
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     apiNodeHeapMaxMb: parseInteger(env.API_NODE_HEAP_MAX_MB ?? '256', 'API_NODE_HEAP_MAX_MB', { min: 128, max: 384 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),

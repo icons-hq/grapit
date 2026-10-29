@@ -1,0 +1,14 @@
+{
+  "label": "browser4-300-valid",
+  "execution": "grabit-load-capfix-20261029-gb62r",
+  "cap": 300,
+  "queueSocketLimit": 0,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 300,
+  "restAffinity": "shared",
+  "holdSeatSocketsThroughCheckout": true,
+  "apiMaxInstances": 4,
+  "apiPoolMax": 2
+}

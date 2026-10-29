@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-10-28T06:06:10.519641+00:00",
+  "equal": {
+    "productionApi": true,
+    "productionSql": true,
+    "productionValkey": true
+  },
+  "productionDeploy": false,
+  "productionDatabaseWrites": false,
+  "productionApiRevision": "grabit-api-00268-2sd"
+}

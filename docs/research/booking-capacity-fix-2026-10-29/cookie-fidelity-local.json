@@ -1,0 +1,6 @@
+{
+  "kind": "cookie-fidelity-local-probe",
+  "nodeReceivedUpgradeCookie": true,
+  "oldHarnessRetainedStaleCookie": true,
+  "browserAppliedUpgradeCookie": true
+}

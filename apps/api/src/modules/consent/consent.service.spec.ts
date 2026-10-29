@@ -79,7 +79,7 @@ describe('ConsentService', () => {
   it('writes one immutable audit row per submitted item/version/language', async () => {
     const userId = randomUUID();
     const capturedAt = new Date('2026-05-06T00:00:00.000Z');
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     vi.setSystemTime(capturedAt);
 
     try {

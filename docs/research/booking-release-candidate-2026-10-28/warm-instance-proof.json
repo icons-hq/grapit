@@ -1,0 +1,138 @@
+[
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bd406b1621ce22f270e222e56527a9fa8c535172113563d9f3d4e4ff14709ba9cb02881d46c8ec083c0dd51462609f7c851a6342fd03030fda9439544a66ee0feb7c7130fb4b1ccab3fdd80c389ccacfe90d5bbb2dcb112f03f49535d1",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-q7x7j",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T06:44:16.523976Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bdfd7d52fa14fb61087e504b76f729ca775fe94629d4e71de5c48161ce0dc2eee1e0f4aa5ef11b0cadb4c2b1934b9d9b68bce2f29dac0b4f57b2ee759bebd11379659a7e94dbf90ccd6936469eb5d03282209f9227872eb4f6fe",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-wf5th",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T07:00:57.386129Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "0010dd860789448a6e16e3136e23e6e97b6e7339db1db127df632ec9b261e6418da900b009c2d4bb34ca180cf3a275063d0a8ad605317fe72c18a45d25b8a5504f53614987d7ece16e7b353f4988e57cf79f9c2d55506ae322b856085c80",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-9wqsq",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T07:16:27.788482Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bdabe04db9334b61809dc3358a3efaa7dc107881b3d5651436c04ddfe5b1e6d2f3f478541ffe75a04372608d5b9c252688cbd414c8b9c0ea718e6dea32b13d8b45d6bfe426924d754c80b91b023609912caf875d3945ae230bc3e8164c",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-9h74c",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T07:32:42.405215Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bdba890afe93fe769ec0949a8bb1b1c177d88d1e854e9c9940c57b1d1151eb835d36c5635187c83f0fcf21e8c8429585cfebd4f463bebe7775c39e2a810975d936118a76a0182f01cac8107dde4736d817a61369c70da091742017e685",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-wpl5t",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T07:48:41.463268Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bd5c5ff5d7e7082f45ba247065392644e97c308daaf2d7bf23079dfb7803b857a767e37f90d275ea8b3b74c0205e8f428f3543839241bc79e21d97e47d586af06c67ba1e953d273d0e1e2e36ca84260d993f911bdcf4a8ffef2d913fe7",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-d2kwb",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T08:13:48.629076Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "00e8a408bdad1d0e0730f9f78e61aede9f1f949718893be9d2ae9b318b9352f216c2050bdda3abe392afe062d3d29cb8f2d6adf78409399e5b5832b40352a73b89b74ac06780667687802b054350f26775771edc40d824d1066ff13a72ab",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-lvzd2",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T08:29:14.351590Z"
+  },
+  {
+    "jsonPayload": {
+      "instancesObserved": 2,
+      "kind": "cloud-capacity-progress",
+      "sessions": 1500,
+      "stage": "warm"
+    },
+    "labels": {
+      "instanceId": "0010dd8607a27bf35c762a339e989672516476584e517063dbdcae98db0dc8a3783366508af6e45778ee68c9b4a08eb42692111bb3106c5de8fe47de2bad1f54ae0040b6c147df149dfce6ac8119f54c1d1c119d5e895afee47d6ff20e",
+      "managed-by": "grabit-ops",
+      "purpose": "booking-release-ab",
+      "run.googleapis.com/execution_name": "grabit-load-releaseab-20261028-pck2d",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "timestamp": "2026-10-28T08:39:19.619936Z"
+  }
+]

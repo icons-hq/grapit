@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-10-28T04:13:04.890769+00:00",
+  "resources": {
+    "grabit-rehearsal-burst-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-load-burst-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-db-burst-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    },
+    "grabit-valkey-burst-20261028": {
+      "httpStatus": 404,
+      "absent": true
+    }
+  },
+  "allAbsent": true,
+  "testImagesDeleted": 9,
+  "ownedRemoteImagePackagesEmpty": true,
+  "localTestImageTagsRemoved": 5,
+  "ephemeralCredentialFilesRemoved": 26,
+  "productionResourcesModified": false
+}

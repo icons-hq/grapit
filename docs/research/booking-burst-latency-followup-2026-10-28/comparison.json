@@ -1,0 +1,76 @@
+{
+  "comparison": "previous completed run versus followup completed run; equal sizes and scenario, different isolated physical resources and time",
+  "causalEffectEstablished": false,
+  "sameResourcePairedBaselineCompleted": false,
+  "beforeStartedAt": "2026-10-28T03:52:18.782Z",
+  "afterStartedAt": "2026-10-28T05:33:37.666Z",
+  "p95Ms": {
+    "checkout.confirm": {
+      "before": 588,
+      "after": 647,
+      "observedChangePercent": 10.0,
+      "target": 2000
+    },
+    "checkout.duplicate-inflight": {
+      "before": 979,
+      "after": 712,
+      "observedChangePercent": -27.3,
+      "target": 2000
+    },
+    "checkout.duplicate-replay": {
+      "before": 63,
+      "after": 64,
+      "observedChangePercent": 1.6,
+      "target": 2000
+    },
+    "checkout.prepare": {
+      "before": 4277,
+      "after": 5949,
+      "observedChangePercent": 39.1,
+      "target": 2000
+    },
+    "performance.detail": {
+      "before": 2805,
+      "after": 2655,
+      "observedChangePercent": -5.3,
+      "target": 2000
+    },
+    "queue.enter": {
+      "before": 5412,
+      "after": 5784,
+      "observedChangePercent": 6.9,
+      "target": 2000
+    },
+    "queue.status": {
+      "before": 224,
+      "after": 281,
+      "observedChangePercent": 25.4,
+      "target": 2000
+    },
+    "queue.status.final": {
+      "before": 158,
+      "after": 241,
+      "observedChangePercent": 52.5,
+      "target": 2000
+    },
+    "seat.lock": {
+      "before": 2541,
+      "after": 2771,
+      "observedChangePercent": 9.1,
+      "target": 1000
+    },
+    "seat.read": {
+      "before": 2384,
+      "after": 2193,
+      "observedChangePercent": -8.0,
+      "target": 2000
+    },
+    "socket.seat-update": {
+      "before": 2526,
+      "after": 2767,
+      "observedChangePercent": 9.5,
+      "target": 1000
+    }
+  },
+  "followupStatus": "capacity_limited"
+}

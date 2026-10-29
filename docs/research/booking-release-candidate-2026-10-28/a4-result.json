@@ -1,0 +1,96 @@
+{
+  "apiResources": {
+    "cpu": 1,
+    "heapMiB": 256,
+    "maxInstances": 2,
+    "memoryMiB": 512,
+    "minInstances": 2
+  },
+  "apiService": "grabit-rehearsal-releaseab-20261028",
+  "completedAt": "2026-10-28T08:29:30.445Z",
+  "database": "grabit_rehearsal_releaseab_20261028",
+  "diagnosticOnly": false,
+  "environment": "private-cloud-run-rehearsal",
+  "error": {
+    "code": "ERR_ASSERTION",
+    "message": "Queue entry must accept each synthetic visitor\n\n429 !== 201\n",
+    "name": "AssertionError"
+  },
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "partialApiInstances": 2,
+  "partialMemoryMiB": [
+    183,
+    190
+  ],
+  "partialMetrics": {
+    "performance.detail": {
+      "errorRate": 0,
+      "maxMs": 3217,
+      "outcomes": {
+        "none": 1500
+      },
+      "p50Ms": 1461,
+      "p95Ms": 2699,
+      "requests": 1500,
+      "statuses": {
+        "200": 1500
+      },
+      "unexpectedErrors": 0
+    },
+    "queue.enter": {
+      "errorRate": 0.11209439528023599,
+      "maxMs": 10251,
+      "outcomes": {
+        "none": 1017
+      },
+      "p50Ms": 6532,
+      "p95Ms": 10195,
+      "requests": 1017,
+      "statuses": {
+        "201": 903,
+        "429": 114
+      },
+      "unexpectedErrors": 114
+    },
+    "seat.read": {
+      "errorRate": 0.0013333333333333333,
+      "maxMs": 2443,
+      "outcomes": {
+        "none": 1500
+      },
+      "p50Ms": 1044,
+      "p95Ms": 2174,
+      "requests": 1500,
+      "statuses": {
+        "200": 1498,
+        "500": 2
+      },
+      "unexpectedErrors": 2
+    }
+  },
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "provider": "simulated-300ms-no-provider-network",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-release-ab-source@sha256:f272c9394279541a90c5cad48626d9ddca3d5bc732c0d17212d236c41e4cb28d",
+  "startedAt": "2026-10-28T08:29:03.921Z",
+  "status": "failed",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 200,
+    "apiInstances": 2,
+    "dbPoolMax": 5,
+    "saleSeats": 600,
+    "socketClients": 100
+  },
+  "waves": [],
+  "workload": {
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "profilingEnabled": false
+  }
+}

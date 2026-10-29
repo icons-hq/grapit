@@ -1,0 +1,17 @@
+{
+  "checkout": {
+    "confirmed": 599,
+    "credentials": 599,
+    "items": 599,
+    "sold": 599
+  },
+  "kind": "final-queue-audit",
+  "pass": false,
+  "readOnly": true,
+  "remainingActiveAdmissions": 1,
+  "remainingWaiting": 900,
+  "syntheticOnly": true,
+  "waitingSessionStates": {
+    "WAITING": 900
+  }
+}

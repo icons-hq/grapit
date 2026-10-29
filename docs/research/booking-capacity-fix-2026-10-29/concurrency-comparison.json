@@ -1,0 +1,139 @@
+[
+  {
+    "label": "baseline-full",
+    "excludeInitialSeconds": 60,
+    "samples": 6,
+    "maxMinuteInstanceMean": 819.5,
+    "maxObservedBucketUpper": 850,
+    "points": [
+      {
+        "at": "2026-10-29T00:47:00Z",
+        "instanceMean": 563.0000000000002,
+        "maxBucketUpper": 640
+      },
+      {
+        "at": "2026-10-29T00:46:00Z",
+        "instanceMean": 654,
+        "maxBucketUpper": 790
+      },
+      {
+        "at": "2026-10-29T00:45:00Z",
+        "instanceMean": 671.5,
+        "maxBucketUpper": 710
+      },
+      {
+        "at": "2026-10-29T00:44:00Z",
+        "instanceMean": 670.5,
+        "maxBucketUpper": 710
+      },
+      {
+        "at": "2026-10-29T00:43:00Z",
+        "instanceMean": 685,
+        "maxBucketUpper": 720
+      },
+      {
+        "at": "2026-10-29T00:42:00Z",
+        "instanceMean": 819.5,
+        "maxBucketUpper": 850
+      }
+    ]
+  },
+  {
+    "label": "cookie-full",
+    "excludeInitialSeconds": 60,
+    "samples": 6,
+    "maxMinuteInstanceMean": 800,
+    "maxObservedBucketUpper": 810,
+    "points": [
+      {
+        "at": "2026-10-29T00:56:00Z",
+        "instanceMean": 582.5,
+        "maxBucketUpper": 640
+      },
+      {
+        "at": "2026-10-29T00:55:00Z",
+        "instanceMean": 670,
+        "maxBucketUpper": 680
+      },
+      {
+        "at": "2026-10-29T00:54:00Z",
+        "instanceMean": 699.5,
+        "maxBucketUpper": 770
+      },
+      {
+        "at": "2026-10-29T00:53:00Z",
+        "instanceMean": 675.5,
+        "maxBucketUpper": 720
+      },
+      {
+        "at": "2026-10-29T00:52:00Z",
+        "instanceMean": 680,
+        "maxBucketUpper": 710
+      },
+      {
+        "at": "2026-10-29T00:51:00Z",
+        "instanceMean": 800,
+        "maxBucketUpper": 810
+      }
+    ]
+  },
+  {
+    "label": "window-full",
+    "excludeInitialSeconds": 60,
+    "samples": 10,
+    "maxMinuteInstanceMean": 750,
+    "maxObservedBucketUpper": 760,
+    "points": [
+      {
+        "at": "2026-10-29T01:08:00Z",
+        "instanceMean": 108,
+        "maxBucketUpper": 125
+      },
+      {
+        "at": "2026-10-29T01:07:00Z",
+        "instanceMean": 208.9999999999991,
+        "maxBucketUpper": 295
+      },
+      {
+        "at": "2026-10-29T01:06:00Z",
+        "instanceMean": 157.5,
+        "maxBucketUpper": 225
+      },
+      {
+        "at": "2026-10-29T01:05:00Z",
+        "instanceMean": 111.00000000000091,
+        "maxBucketUpper": 130
+      },
+      {
+        "at": "2026-10-29T01:04:00Z",
+        "instanceMean": 117,
+        "maxBucketUpper": 125
+      },
+      {
+        "at": "2026-10-29T01:03:00Z",
+        "instanceMean": 270.4999999999991,
+        "maxBucketUpper": 285
+      },
+      {
+        "at": "2026-10-29T01:02:00Z",
+        "instanceMean": 118.5,
+        "maxBucketUpper": 130
+      },
+      {
+        "at": "2026-10-29T01:01:00Z",
+        "instanceMean": 121,
+        "maxBucketUpper": 125
+      },
+      {
+        "at": "2026-10-29T01:00:00Z",
+        "instanceMean": 165.0000000000009,
+        "maxBucketUpper": 170
+      },
+      {
+        "at": "2026-10-29T00:59:00Z",
+        "instanceMean": 750,
+        "maxBucketUpper": 760
+      }
+    ]
+  }
+]
