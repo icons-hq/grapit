@@ -1,0 +1,43 @@
+{
+  "sampledRows": 2,
+  "logQueryLimit": 10000,
+  "limited": false,
+  "countsInSample": {
+    "500": 1,
+    "503": 1
+  },
+  "samples": [
+    {
+      "at": "2026-10-29T03:04:06.681303Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+      "status": 503,
+      "latency": "0.028959373s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T03:06:11.533351Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+      "status": 500,
+      "latency": "0.021727476s",
+      "path": "/api/v1/queue/sessions/c3b50d4d-c3d3-42d7-8189-49653d161d6d",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T03:04:06.681303Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+      "status": 503,
+      "latency": "0.028959373s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T03:06:11.533351Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+      "status": 500,
+      "latency": "0.021727476s",
+      "path": "/api/v1/queue/sessions/c3b50d4d-c3d3-42d7-8189-49653d161d6d",
+      "platformMessage": ""
+    }
+  ]
+}

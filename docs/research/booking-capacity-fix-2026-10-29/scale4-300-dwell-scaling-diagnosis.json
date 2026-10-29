@@ -1,0 +1,763 @@
+[
+  {
+    "metric": "container/max_request_concurrencies",
+    "series": [
+      {
+        "labels": {
+          "state": "active"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "state": "idle"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0,
+              "count": "1",
+              "maxBucketUpper": 1
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0,
+              "count": "2",
+              "maxBucketUpper": 1
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0,
+              "count": "2",
+              "maxBucketUpper": 1
+            }
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "state": "active"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            {
+              "mean": 7,
+              "count": "4",
+              "maxBucketUpper": 9
+            }
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 7.5,
+              "count": "4",
+              "maxBucketUpper": 9
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 10.25,
+              "count": "4",
+              "maxBucketUpper": 14
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 84.75,
+              "count": "4",
+              "maxBucketUpper": 155
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 250,
+              "count": "4",
+              "maxBucketUpper": 255
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 1.25,
+              "count": "4",
+              "maxBucketUpper": 3
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "metric": "container/cpu/utilizations",
+    "series": [
+      {
+        "labels": {},
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ]
+        ]
+      },
+      {
+        "labels": {},
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            {
+              "mean": 0.1683,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0.1726,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0.1945,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0.2145,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0.2264,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0.0264,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "metric": "scaling/recommended_instances",
+    "series": [
+      {
+        "labels": {
+          "scaling_driver": "Adaptive Concurrency Tuning"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "1"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "CPU Utilization"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "0"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "Concurrency Utilization"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "1"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "System"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "1"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "Adaptive Concurrency Tuning"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "1"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "CPU Utilization"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "3"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "1"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "Concurrency Utilization"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "2"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "2"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "scaling_driver": "System"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "1"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "7"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "0"
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "metric": "container/instance_count",
+    "series": [
+      {
+        "labels": {
+          "state": "active"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "0"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "state": "idle"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "0"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "state": "active"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "4"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "2"
+          ]
+        ]
+      },
+      {
+        "labels": {
+          "state": "idle"
+        },
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            "0"
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            "2"
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "metric": "container/memory/utilizations",
+    "series": [
+      {
+        "labels": {},
+        "revision": "grabit-rehearsal-capfix-20261029-00007-lwb",
+        "points": [
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0,
+              "count": null,
+              "maxBucketUpper": 0
+            }
+          ]
+        ]
+      },
+      {
+        "labels": {},
+        "revision": "grabit-rehearsal-capfix-20261029-00008-q7s",
+        "points": [
+          [
+            "2026-10-29T03:09:00Z",
+            {
+              "mean": 0.4045,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:08:00Z",
+            {
+              "mean": 0.4042,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:07:00Z",
+            {
+              "mean": 0.4021,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:06:00Z",
+            {
+              "mean": 0.3972,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:05:00Z",
+            {
+              "mean": 0.4015,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ],
+          [
+            "2026-10-29T03:04:00Z",
+            {
+              "mean": 0.354,
+              "count": "4",
+              "maxBucketUpper": 0
+            }
+          ]
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,91 @@
+{
+  "sampledRows": 30,
+  "logQueryLimit": 10000,
+  "limited": false,
+  "countsInSample": {
+    "200": 1,
+    "503": 29
+  },
+  "samples": [
+    {
+      "at": "2026-10-29T00:50:00.587170Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.050061763s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:50:00.588053Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.051165477s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:53:27.997406Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.022734670s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:53:28.001253Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.021677604s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:53:35.655301Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 200,
+      "latency": "27.686397366s",
+      "path": "/api/v1/queue/sessions/7c5c3850-e84b-403e-afaf-7578ee777fb0",
+      "platformMessage": ""
+    },
+    {
+      "at": "2026-10-29T00:54:33.744393Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.395756360s",
+      "path": "/api/v1/queue/sessions/89d2cd6b-8bdd-4a9b-9829-6e0d759e7522",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:54:33.745397Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.394700673s",
+      "path": "/api/v1/queue/sessions/c4608905-a041-4546-a17c-da546cc74b2a",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:54:33.959221Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.181064582s",
+      "path": "/api/v1/payments/confirm",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:54:34.044327Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.095505445s",
+      "path": "/api/v1/queue/sessions/84fa6c40-a6d7-41e4-89e1-8cfdcf1c4270",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    },
+    {
+      "at": "2026-10-29T00:54:34.054168Z",
+      "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+      "status": 503,
+      "latency": "0.085949822s",
+      "path": "/api/v1/queue/sessions/52c36a2f-45ed-458b-b8ed-55010953fbf3",
+      "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+    }
+  ]
+}

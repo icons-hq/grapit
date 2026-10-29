@@ -1,0 +1,11 @@
+{
+  "label": "cpu2-200-valid",
+  "execution": "grabit-load-capfix-20261029-pbrmn",
+  "cap": 200,
+  "queueSocketLimit": 200,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 200,
+  "restAffinity": "shared"
+}

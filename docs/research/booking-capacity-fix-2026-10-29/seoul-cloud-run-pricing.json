@@ -1,0 +1,1135 @@
+{
+  "service": {
+    "name": "services/152E-C115-5142",
+    "serviceId": "152E-C115-5142",
+    "displayName": "Cloud Run",
+    "businessEntityName": "businessEntities/GCP"
+  },
+  "skus": [
+    {
+      "name": "services/152E-C115-5142/skus/085C-A237-027A",
+      "skuId": "085C-A237-027A",
+      "description": "Services CPU Tier 2  (Request-based billing)",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east2",
+        "asia-northeast3",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2",
+        "australia-southeast1",
+        "australia-southeast2",
+        "europe-central2",
+        "europe-west10",
+        "europe-west12",
+        "europe-west2",
+        "europe-west3",
+        "europe-west6",
+        "me-central1",
+        "me-central2",
+        "northamerica-northeast1",
+        "northamerica-northeast2",
+        "southamerica-east1",
+        "southamerica-west1",
+        "us-west2",
+        "us-west3",
+        "us-west4"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 33600
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "GLOBAL",
+        "regions": []
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/0C0D-D2C8-5730",
+      "skuId": "0C0D-D2C8-5730",
+      "description": "Jobs Memory in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 2400
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/12C5-F119-5204",
+      "skuId": "12C5-F119-5204",
+      "description": "Cloud Run Network Inter Region Data Transfer Out AsiaPacific to AsiaPacific",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "Network",
+        "resourceGroup": "InterregionEgress",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east1",
+        "asia-east2",
+        "asia-northeast1",
+        "asia-northeast2",
+        "asia-northeast3",
+        "asia-south1",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 50000000
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte",
+            "baseUnit": "By",
+            "baseUnitDescription": "byte",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "aggregationInfo": {
+            "aggregationLevel": "ACCOUNT",
+            "aggregationInterval": "MONTHLY",
+            "aggregationCount": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google"
+    },
+    {
+      "name": "services/152E-C115-5142/skus/19BF-9700-359E",
+      "skuId": "19BF-9700-359E",
+      "description": "Cloud Run Committed Use Discounts - asia-northeast3 - 1 Year",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "1",
+                  "nanos": 0
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/1A1C-EC5D-EB65",
+      "skuId": "1A1C-EC5D-EB65",
+      "description": "Delayed Jobs CPU in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 15120
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/4103-2053-372F",
+      "skuId": "4103-2053-372F",
+      "description": "Instances Memory in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 2316
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/4350-71E4-3051",
+      "skuId": "4350-71E4-3051",
+      "description": "Services Min Instance CPU Tier 2 (Request-based billing)",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east2",
+        "asia-northeast3",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2",
+        "australia-southeast1",
+        "australia-southeast2",
+        "europe-central2",
+        "europe-west10",
+        "europe-west12",
+        "europe-west2",
+        "europe-west3",
+        "europe-west6",
+        "me-central1",
+        "me-central2",
+        "northamerica-northeast1",
+        "northamerica-northeast2",
+        "southamerica-east1",
+        "southamerica-west1",
+        "us-west2",
+        "us-west3",
+        "us-west4"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 3500
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "GLOBAL",
+        "regions": []
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/5AF1-E483-6197",
+      "skuId": "5AF1-E483-6197",
+      "description": "Services Min Instance Memory Tier 2 (Request-based billing)",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east2",
+        "asia-northeast3",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2",
+        "australia-southeast1",
+        "australia-southeast2",
+        "europe-central2",
+        "europe-west10",
+        "europe-west12",
+        "europe-west2",
+        "europe-west3",
+        "europe-west6",
+        "me-central1",
+        "me-central2",
+        "northamerica-northeast1",
+        "northamerica-northeast2",
+        "southamerica-east1",
+        "southamerica-west1",
+        "us-west2",
+        "us-west3",
+        "us-west4"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 3500
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "GLOBAL",
+        "regions": []
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/600C-3782-6708",
+      "skuId": "600C-3782-6708",
+      "description": "Services Memory Tier 2 (Request-based billing)",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east2",
+        "asia-northeast3",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2",
+        "australia-southeast1",
+        "australia-southeast2",
+        "europe-central2",
+        "europe-west10",
+        "europe-west12",
+        "europe-west2",
+        "europe-west3",
+        "europe-west6",
+        "me-central1",
+        "me-central2",
+        "northamerica-northeast1",
+        "northamerica-northeast2",
+        "southamerica-east1",
+        "southamerica-west1",
+        "us-west2",
+        "us-west3",
+        "us-west4"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 3500
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "GLOBAL",
+        "regions": []
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/7293-3107-4405",
+      "skuId": "7293-3107-4405",
+      "description": "Services Memory (Instance-based billing) in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 2400
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/7859-4826-8C52",
+      "skuId": "7859-4826-8C52",
+      "description": "Commitment - dollar based v1: Cloud Run asia-northeast3 for 1 year",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 8300000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/81E2-DB9C-13B8",
+      "skuId": "81E2-DB9C-13B8",
+      "description": "Ephemeral Storage in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "EphemeralDisk",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 131507
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte hour",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 3865470566400
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/8974-2D16-9117",
+      "skuId": "8974-2D16-9117",
+      "description": "Cloud Run Committed Use Discounts - asia-northeast3 - 3 Year",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "1",
+                  "nanos": 0
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/8FA3-68EC-A5A2",
+      "skuId": "8FA3-68EC-A5A2",
+      "description": "Cloud Run Network Data Transfer Out via Carrier Peering Network - Asia Pacific Based",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "Network",
+        "resourceGroup": "PeeringOrInterconnectEgress",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east1",
+        "asia-east2",
+        "asia-northeast1",
+        "asia-northeast2",
+        "asia-northeast3",
+        "asia-south1",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 42000000
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte",
+            "baseUnit": "By",
+            "baseUnitDescription": "byte",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "aggregationInfo": {
+            "aggregationLevel": "ACCOUNT",
+            "aggregationInterval": "MONTHLY",
+            "aggregationCount": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google"
+    },
+    {
+      "name": "services/152E-C115-5142/skus/9EA6-AE6D-E34E",
+      "skuId": "9EA6-AE6D-E34E",
+      "description": "Cloud Run Network Internet Data Transfer Out AsiaPacific to AsiaPacific",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "Network",
+        "resourceGroup": "PremiumInternetEgress",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-east1",
+        "asia-east2",
+        "asia-northeast1",
+        "asia-northeast2",
+        "asia-northeast3",
+        "asia-south1",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 120000000
+                }
+              },
+              {
+                "startUsageAmount": 10240,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 85000000
+                }
+              },
+              {
+                "startUsageAmount": 153600,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 80000000
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte",
+            "baseUnit": "By",
+            "baseUnitDescription": "byte",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "aggregationInfo": {
+            "aggregationLevel": "ACCOUNT",
+            "aggregationInterval": "MONTHLY",
+            "aggregationCount": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google"
+    },
+    {
+      "name": "services/152E-C115-5142/skus/AA48-4683-AF1F",
+      "skuId": "AA48-4683-AF1F",
+      "description": "Commitment - dollar based v1: Cloud Run asia-northeast3 for 3 years",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 8300000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/AAE8-E966-AD14",
+      "skuId": "AAE8-E966-AD14",
+      "description": "Worker Pools CPU in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 13492
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/B1C8-2FF4-877F",
+      "skuId": "B1C8-2FF4-877F",
+      "description": "Worker Pools Memory in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 1482
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/BBFC-4245-7A39",
+      "skuId": "BBFC-4245-7A39",
+      "description": "Delayed Jobs Memory in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "GiBy.s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 1680
+                }
+              }
+            ],
+            "usageUnitDescription": "gibibyte second",
+            "baseUnit": "By.s",
+            "baseUnitDescription": "byte second",
+            "baseUnitConversionFactor": 1073741824
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/D5E2-3282-985E",
+      "skuId": "D5E2-3282-985E",
+      "description": "Instances CPU in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 324
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/DD20-CF44-7639",
+      "skuId": "DD20-CF44-7639",
+      "description": "Jobs CPU in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 21600
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    },
+    {
+      "name": "services/152E-C115-5142/skus/F56E-AEF4-EA65",
+      "skuId": "F56E-AEF4-EA65",
+      "description": "Services CPU (Instance-based billing) in asia-northeast3",
+      "category": {
+        "serviceDisplayName": "Cloud Run",
+        "resourceFamily": "ApplicationServices",
+        "resourceGroup": "Compute",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "asia-northeast3"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "s",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 21600
+                }
+              }
+            ],
+            "usageUnitDescription": "second",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 1
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-10-28T07:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "asia-northeast3"
+        ]
+      }
+    }
+  ]
+}

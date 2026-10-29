@@ -1,0 +1,322 @@
+[
+  {
+    "at": "2026-10-29T00:40:47.002307Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.026316388s",
+    "path": "/api/v1/payments/confirm",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:40:47.003019Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.029801375s",
+    "path": "/api/v1/payments/confirm",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:11.964262Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 201,
+    "latency": "41.578299371s",
+    "path": "/api/v1/reservations/prepare",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:11.964655Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 201,
+    "latency": "59.825334658s",
+    "path": "/api/v1/reservations/prepare",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:11.965759Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 201,
+    "latency": "37.671922590s",
+    "path": "/api/v1/reservations/prepare",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:11.965980Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 201,
+    "latency": "43.501592286s",
+    "path": "/api/v1/reservations/prepare",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:11.971468Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 201,
+    "latency": "25.021315025s",
+    "path": "/api/v1/reservations/prepare",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:15.316610Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 200,
+    "latency": "53.472388885s",
+    "path": "/api/v1/queue/sessions/9d18fb8c-aac2-4b6e-b303-4d3ef7bd736a",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:20.606871Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 200,
+    "latency": "26.995827331s",
+    "path": "/api/v1/queue/sessions/97483bad-e9d9-4a15-a004-4e61abc46df9",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:26.413528Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 200,
+    "latency": "30.288776510s",
+    "path": "/api/v1/queue/sessions/c0e2195b-189a-401f-aa38-f3cbd0f7068e",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:33.396631Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "38.572765691s",
+    "path": "/api/v1/queue/sessions/6eb1ceae-9503-437d-91c8-4a10b2a02db7",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:42.042294Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.026884839s",
+    "path": "/api/v1/payments/confirm",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:42.054180Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.022727547s",
+    "path": "/api/v1/payments/confirm",
+    "platformMessage": ""
+  },
+  {
+    "at": "2026-10-29T00:44:47.580991Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "24.389378708s",
+    "path": "/api/v1/queue/sessions/ebdb6d6a-9906-4693-8d29-9051ee7852ce",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:48.783325Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "23.180342692s",
+    "path": "/api/v1/queue/sessions/f884c209-647d-47bf-8be9-7e1fe0f87089",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:48.783476Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "23.182483640s",
+    "path": "/api/v1/queue/sessions/26b510a5-aa5a-4caf-ab00-15fcc4786258",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:53.383670Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "18.587277400s",
+    "path": "/api/v1/queue/sessions/4a9d1cc6-72cf-4b5c-bc5c-9e181f230d69",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:53.483472Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "18.481724249s",
+    "path": "/api/v1/queue/sessions/2b3604e1-da73-4dde-8dc6-5c3bd029fec2",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:55.384261Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "16.581190742s",
+    "path": "/api/v1/queue/sessions/fdef66cf-4d71-4eb1-aac8-870b8b2256ed",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:56.686600Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "15.921120989s",
+    "path": "/api/v1/queue/sessions/994155d3-54ab-4ec5-89f0-7a84d2d413cf",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:44:57.763529Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "14.204735645s",
+    "path": "/api/v1/queue/sessions/3ff2bd8f-6bdf-4c36-9479-67d847747ac1",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:08.777259Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "3.189699143s",
+    "path": "/api/v1/queue/sessions/f0f43b5e-0b1f-4f0e-b05e-0407b886597c",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:08.777427Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "3.191075889s",
+    "path": "/api/v1/queue/sessions/37bfad74-8414-4ffa-9332-903ea212e9d9",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:10.779043Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "1.188984624s",
+    "path": "/api/v1/queue/sessions/927221c7-9658-4ccc-bf79-caa758b36406",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:10.878868Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "1.088869915s",
+    "path": "/api/v1/queue/sessions/ae2971d9-dd4b-4e77-ad26-ecd7f109b9a8",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.282294Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.685663538s",
+    "path": "/api/v1/queue/sessions/d7f37cae-b9a1-4f13-a651-9b24a8dba71b",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.381195Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.588050172s",
+    "path": "/api/v1/queue/sessions/00be63b6-6219-4851-8e98-85d4226b7aca",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.481748Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.525631930s",
+    "path": "/api/v1/queue/sessions/8b263de2-66ba-4a7a-bc80-eddc99e2ca47",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.603018Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.365811612s",
+    "path": "/api/v1/queue/sessions/345bc61f-b96b-49d0-acec-b85f80caed76",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.603598Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.365399037s",
+    "path": "/api/v1/queue/sessions/b6257d08-9b33-428f-97c0-f9fbf6d978e9",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.604231Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.363646831s",
+    "path": "/api/v1/queue/sessions/531b0b7f-256c-4c7e-9d89-185553262809",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.607852Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.361151803s",
+    "path": "/api/v1/queue/sessions/c5ca619b-ddac-4aa1-bd66-2b87a3df9400",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.702502Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.505499495s",
+    "path": "/api/v1/queue/sessions/7087e388-c9f4-4a1c-8779-a6bc2e247631",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.702512Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.265287016s",
+    "path": "/api/v1/queue/sessions/4a7f1f2e-078c-425f-823e-931127a08cf3",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.702573Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.266292304s",
+    "path": "/api/v1/queue/sessions/867010ea-c89a-4216-81bd-f0377162d4aa",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.702951Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.263587042s",
+    "path": "/api/v1/queue/sessions/ce4341f0-7672-4123-9ab2-d117abf3d86a",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.703153Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.304564013s",
+    "path": "/api/v1/queue/sessions/ba300420-d5e1-4344-aa5b-ceb67ff349cb",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.707564Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.261740848s",
+    "path": "/api/v1/queue/sessions/b0ab24a1-ab35-4aad-9ecb-df102ee0e095",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.803510Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.164954470s",
+    "path": "/api/v1/queue/sessions/247a6736-1b84-4d94-b89f-5c7d6737ba3f",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  },
+  {
+    "at": "2026-10-29T00:45:11.903628Z",
+    "revision": "grabit-rehearsal-capfix-20261029-00002-qsm",
+    "status": 503,
+    "latency": "0.065220778s",
+    "path": "/api/v1/queue/sessions/f24c2571-f607-4490-a7fe-fd4154b3500d",
+    "platformMessage": "The request failed because either the HTTP response was malformed or connection to the instance had an error. Additional troubleshooting documentation can be found at: https://cloud.google.com/run/docs/troubleshooting#malformed-response-or-connection-error"
+  }
+]

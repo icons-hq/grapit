@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "3db73f41b6a351185d5de27152b90783f1a8080e",
+  "runtimeSourceSha256": "2cc2970a59462a45c08c4be968e960ea67259f9888f6babbe4174e00ca7a04b9",
+  "runtimeSourceFiles": 567,
+  "variant": "strict",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "sourceTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source:strict-20261028",
+  "rehearsalImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:1444c8fa12df658509161e117a0dc1b889a73f0b90454a53226e2a69877428b7",
+  "rehearsalTag": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal:strict-20261028",
+  "baselineRuntimeImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:ee6568bea2ea9b595c27006e0ba5d2d5c90d9f11217f3d4f0a6477f041deea86",
+  "build": "same Nest/SWC build as API Dockerfile; replace dist on identical production Node/OS/dependencies",
+  "productionImagesModified": false
+}

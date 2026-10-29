@@ -1,0 +1,10 @@
+{
+  "label": "fast-250",
+  "execution": "grabit-load-capfix-20261029-58dw4",
+  "cap": 250,
+  "queueSocketLimit": 200,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 100,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 100
+}

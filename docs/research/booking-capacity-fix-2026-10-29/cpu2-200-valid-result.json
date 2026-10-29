@@ -1,0 +1,211 @@
+{
+  "apiResources": {
+    "cpu": 2,
+    "heapMiB": 256,
+    "maxInstances": 2,
+    "memoryMiB": 512,
+    "minInstances": 2
+  },
+  "apiRevision": "projects/grapit-491806/locations/asia-northeast3/services/grabit-rehearsal-capfix-20261029/revisions/grabit-rehearsal-capfix-20261029-00006-xf5",
+  "apiScaling": {
+    "maxInstanceCount": 2,
+    "minInstanceCount": 2
+  },
+  "apiService": "grabit-rehearsal-capfix-20261029",
+  "completedAt": "2026-10-29T02:23:38.573Z",
+  "cookieDiagnostics": {
+    "affinityCookieChanges": 0,
+    "affinityCookiesReceived": 0,
+    "synchronized": true,
+    "upgradeResponses": 817
+  },
+  "database": "grabit_rehearsal_capfix_20261029",
+  "diagnosticOnly": false,
+  "environment": "private-cloud-run-rehearsal",
+  "error": {
+    "code": "ERR_ASSERTION",
+    "message": "Expected values to be strictly equal:\n\n27 !== 200\n",
+    "name": "AssertionError"
+  },
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "partialApiInstances": 2,
+  "partialMemoryMiB": [
+    203,
+    202
+  ],
+  "partialMetrics": {
+    "checkout.confirm": {
+      "errorRate": 0.43467336683417085,
+      "maxMs": 11014,
+      "outcomes": {
+        "none": 398
+      },
+      "p50Ms": 413,
+      "p95Ms": 10154,
+      "requests": 398,
+      "statuses": {
+        "201": 225,
+        "429": 172,
+        "503": 1
+      },
+      "unexpectedErrors": 173
+    },
+    "checkout.duplicate-inflight": {
+      "errorRate": 0,
+      "maxMs": 531,
+      "outcomes": {
+        "none": 6
+      },
+      "p50Ms": 212,
+      "p95Ms": 531,
+      "requests": 6,
+      "statuses": {
+        "201": 3,
+        "503": 3
+      },
+      "unexpectedErrors": 0
+    },
+    "checkout.duplicate-replay": {
+      "errorRate": 0.5,
+      "maxMs": 10237,
+      "outcomes": {
+        "none": 4
+      },
+      "p50Ms": 97,
+      "p95Ms": 10237,
+      "requests": 4,
+      "statuses": {
+        "201": 2,
+        "429": 2
+      },
+      "unexpectedErrors": 2
+    },
+    "checkout.prepare": {
+      "errorRate": 0,
+      "maxMs": 1895,
+      "outcomes": {
+        "none": 400
+      },
+      "p50Ms": 1276,
+      "p95Ms": 1772,
+      "requests": 400,
+      "statuses": {
+        "201": 400
+      },
+      "unexpectedErrors": 0
+    },
+    "performance.detail": {
+      "errorRate": 0,
+      "maxMs": 1882,
+      "outcomes": {
+        "none": 1500
+      },
+      "p50Ms": 1008,
+      "p95Ms": 1639,
+      "requests": 1500,
+      "statuses": {
+        "200": 1500
+      },
+      "unexpectedErrors": 0
+    },
+    "queue.enter": {
+      "errorRate": 0,
+      "maxMs": 3796,
+      "outcomes": {
+        "none": 1500
+      },
+      "p50Ms": 1929,
+      "p95Ms": 3351,
+      "requests": 1500,
+      "statuses": {
+        "201": 1500
+      },
+      "unexpectedErrors": 0
+    },
+    "queue.status": {
+      "errorRate": 0.3939947172156619,
+      "maxMs": 11273,
+      "outcomes": {
+        "none": 25744
+      },
+      "p50Ms": 28,
+      "p95Ms": 10204,
+      "requests": 25744,
+      "statuses": {
+        "200": 15601,
+        "429": 10139,
+        "503": 4
+      },
+      "unexpectedErrors": 10143
+    },
+    "seat.lock": {
+      "errorRate": 0,
+      "maxMs": 1377,
+      "outcomes": {
+        "none": 400
+      },
+      "p50Ms": 816,
+      "p95Ms": 1347,
+      "requests": 400,
+      "statuses": {
+        "201": 400
+      },
+      "unexpectedErrors": 0
+    },
+    "seat.read": {
+      "errorRate": 0,
+      "maxMs": 1480,
+      "outcomes": {
+        "none": 1500
+      },
+      "p50Ms": 710,
+      "p95Ms": 1292,
+      "requests": 1500,
+      "statuses": {
+        "200": 1500
+      },
+      "unexpectedErrors": 0
+    },
+    "socket.seat-update": {
+      "errorRate": 0,
+      "maxMs": 1379,
+      "outcomes": {
+        "none": 80000
+      },
+      "p50Ms": 810,
+      "p95Ms": 1311,
+      "requests": 80000,
+      "statuses": {
+        "delivered": 80000
+      },
+      "unexpectedErrors": 0
+    }
+  },
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "provider": "simulated-300ms-no-provider-network",
+  "restAffinity": "shared",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-source@sha256:39670651300ec83da4761965b148f57d2a6827c40535562354fbce0508e176f1",
+  "startedAt": "2026-10-29T02:16:07.433Z",
+  "status": "failed",
+  "syntheticIdentities": "unique phone identity per actor across retained fixtures",
+  "topology": {
+    "admissionLimit": 200,
+    "apiInstances": 2,
+    "dbPoolMax": 5,
+    "queueSocketLimit": 200,
+    "saleSeats": 600,
+    "socketClients": 200
+  },
+  "waves": [],
+  "workload": {
+    "confirmCadenceMs": 1000,
+    "confirmPattern": "paced-60-per-minute",
+    "profilingEnabled": false
+  }
+}

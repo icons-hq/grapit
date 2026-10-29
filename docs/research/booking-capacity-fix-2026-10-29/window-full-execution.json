@@ -1,0 +1,9 @@
+{
+  "label": "window-full",
+  "execution": "grabit-load-capfix-20261029-gwv7k",
+  "cap": 200,
+  "queueSocketLimit": 200,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 1000,
+  "syncUpgradeCookies": true
+}

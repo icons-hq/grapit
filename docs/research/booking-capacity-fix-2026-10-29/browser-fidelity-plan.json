@@ -1,0 +1,9 @@
+{
+  "reason": "Match existing production browser reconnect and confirm delivery policies; preserve original no-retry results and raw attempt failures.",
+  "apiBusinessSourceUnchanged": true,
+  "webPolicySource": "apps/web/lib/booking/payment-return.ts",
+  "webPolicySourceSha256": "6ec4b9b352d2d52e517b7737d05cb451b2ad7cfca3e6ffec97c87ee783cf9aa7",
+  "purchaseGate": "600 confirmed purchases, items and QR; no unrecovered confirm failures; all original per-path raw error-rate and latency SLOs retained and reported separately.",
+  "seatGate": "300 initial lock observers, reconnect/resync diagnostics, all held observers connected with final sold states after each cohort.",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-capfix-rehearsal@sha256:386a70e3f0080d1d5e93a5439cbdabf77f3d7aa3711f473a9d203ae907c73621"
+}

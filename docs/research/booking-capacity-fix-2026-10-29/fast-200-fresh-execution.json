@@ -1,0 +1,10 @@
+{
+  "label": "fast-200-fresh",
+  "execution": "grabit-load-capfix-20261029-xkdmx",
+  "cap": 200,
+  "queueSocketLimit": 200,
+  "diagnosticCohorts": 0,
+  "confirmCadenceMs": 100,
+  "syncUpgradeCookies": true,
+  "seatSocketClients": 100
+}
