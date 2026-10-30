@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
@@ -186,6 +186,29 @@ describe('TossPaymentWidget', () => {
       renderAgreementMock.mock.invocationCallOrder[1],
     );
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
+  });
+
+  it('does not replace the current payment iframe when a superseded amount request resolves', async () => {
+    let releaseOldAmount!: () => void;
+    setAmountMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseOldAmount = resolve;
+    }));
+    const onReady = vi.fn();
+    const { rerender } = render(<TossPaymentWidget {...defaultProps} onReady={onReady} />);
+    await waitFor(() => expect(setAmountMock).toHaveBeenCalledTimes(1));
+
+    rerender(<TossPaymentWidget {...defaultProps} amount={60000} onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    // The official SDK owns this child; a late render must not remove it.
+    const currentIframe = document.createElement('iframe');
+    currentIframe.title = 'Active payment choices';
+    document.getElementById('payment-method')!.append(currentIframe);
+
+    await act(async () => { releaseOldAmount(); });
+
+    expect(currentIframe.isConnected).toBe(true);
+    expect(renderPaymentMethodsMock).toHaveBeenCalledTimes(1);
+    expect(renderAgreementMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not render a foreign variant with the previous widgets instance', async () => {

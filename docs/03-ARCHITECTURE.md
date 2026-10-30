@@ -462,6 +462,12 @@ sales cutoff and every queue admission 403, and outside `ko` it replaces any oth
 provider SDK or network message with the generic payment-request failure (messages the widget
 raises itself are already localized).
 
+Widget initialization and rendering stop after an awaited SDK or teardown operation if
+their React effect has been superseded. An old amount request must not clear the new
+payment iframe. Each rendered handle is owned as soon as the SDK returns it, so cleanup
+can destroy a partially initialized widget; late handles are destroyed without updating
+the active checkout's selected method or readiness.
+
 ### 6.4 Payment Confirm
 
 `ReservationService.confirmAndCreateReservation` and payment services coordinate:

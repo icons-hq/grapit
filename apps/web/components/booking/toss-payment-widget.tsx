@@ -893,6 +893,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         try {
           setWidgetState(null);
           await destroyRenderedWidgets();
+          if (!mounted) return;
           setIsLoading(true);
           setError(null);
           agreementAgreedRef.current = null;
@@ -956,8 +957,12 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             variantKey: paymentWidgetVariantKey,
           });
           await activeWidgets.setAmount(renderAmount);
+          // A superseded effect must not clear the current SDK iframe after
+          // its asynchronous amount/destroy operation eventually resolves.
+          if (!mounted) return;
 
           await destroyRenderedWidgets();
+          if (!mounted) return;
           document.getElementById('payment-method')?.replaceChildren();
           document.getElementById('agreement')?.replaceChildren();
 
@@ -965,23 +970,31 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             selector: '#payment-method',
             variantKey: resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
           });
+          if (!mounted) {
+            await destroyWidgetInstance(paymentMethodWidget);
+            return;
+          }
+          paymentWidgetInstance = paymentMethodWidget;
+          paymentWidgetInstanceRef.current = paymentMethodWidget;
           const agreementWidget = await activeWidgets.renderAgreement({
             selector: '#agreement',
             variantKey: 'AGREEMENT',
           });
-
-          paymentWidgetInstance = paymentMethodWidget;
+          if (!mounted) {
+            await destroyWidgetInstance(agreementWidget);
+            return;
+          }
           agreementWidgetInstance = agreementWidget;
-          paymentWidgetInstanceRef.current = paymentMethodWidget;
           agreementWidgetInstanceRef.current = agreementWidget;
           paymentMethodWidget.on('paymentMethodSelect', updateSelectedPaymentMethod);
           agreementWidget.on('agreementStatusChange', updateWidgetAgreement);
           const selectedPaymentMethod = await paymentMethodWidget.getSelectedPaymentMethod();
-          updateSelectedPaymentMethod(selectedPaymentMethod);
 
           if (!mounted) {
             return;
           }
+
+          updateSelectedPaymentMethod(selectedPaymentMethod);
 
           setIsLoading(false);
           onReady();
