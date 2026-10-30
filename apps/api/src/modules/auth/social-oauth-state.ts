@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ConfigService } from '@nestjs/config';
 import type { CookieOptions, Request } from 'express';
+import { decodeSocialOAuthState } from './social-oauth-state-transport.js';
 import {
   resolveSafeSocialReturnTo,
   resolveSocialCallbackLocale,
@@ -105,7 +106,7 @@ export function verifySignedSocialOAuthState(
   rawState: unknown,
   input: { provider: string; nonceCookie: unknown; secret: string; now?: Date },
 ): SocialOAuthStateVerification {
-  const state = Array.isArray(rawState) ? rawState[0] : rawState;
+  const state = decodeSocialOAuthState(rawState);
   if (typeof state !== 'string' || state.length === 0) {
     return { ok: false, reason: 'missing_state' };
   }

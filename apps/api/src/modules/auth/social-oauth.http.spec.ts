@@ -15,7 +15,7 @@ import { KakaoStrategy } from './strategies/kakao.strategy.js';
 import { NaverStrategy } from './strategies/naver.strategy.js';
 
 // Real passport strategies, guards, cookie parsing and redirects. No provider is called:
-// the start request only redirects, and every callback here must be rejected first.
+// successful exchanges/profiles are stubbed; rejected callbacks must stop before them.
 describe('Social OAuth state over HTTP', () => {
   let app: INestApplication;
   let agent: Agent;
@@ -91,6 +91,47 @@ describe('Social OAuth state over HTTP', () => {
     expect(stateCookie).toMatch(/SameSite=Lax/);
     const nonce = decodeURIComponent(stateCookie.split(';')[0]!.split('=')[1]!);
     expect(new URLSearchParams(state).get('nonce')).toBe(nonce);
+  });
+
+  it('preserves a Naver login when the provider appends state directly to its callback URL', async () => {
+    const naver = app.get(NaverStrategy) as unknown as {
+      _oauth2: { getOAuthAccessToken: (...args: unknown[]) => void };
+      userProfile: (...args: unknown[]) => void;
+    };
+    const exchange = vi.spyOn(naver._oauth2, 'getOAuthAccessToken').mockImplementation((...args: unknown[]) => {
+      (args.at(-1) as (...result: unknown[]) => void)(null, 'test-access', 'test-refresh', {});
+    });
+    const profile = vi.spyOn(naver, 'userProfile').mockImplementation((...args: unknown[]) => {
+      (args.at(-1) as (...result: unknown[]) => void)(null, { id: 'naver-buyer', displayName: 'Buyer' });
+    });
+    authService.findOrCreateSocialUser.mockResolvedValue({ status: 'authenticated' });
+
+    try {
+      const start = await request(app.getHttpServer())
+        .get('/api/v1/auth/social/naver')
+        .agent(agent)
+        .query({ locale: 'en', returnTo: '/en/booking/show-1/confirm?resumeOrderId=GRP-1' });
+      const state = new URL(start.headers['location'] as string).searchParams.get('state')!;
+      const nonceCookie = ([] as string[]).concat(start.headers['set-cookie'] ?? [])
+        .find((cookie) => cookie.startsWith('grabit_oauth_state='))!.split(';')[0]!;
+
+      // Observed provider callback: state is concatenated without another URL encoding pass.
+      // URLSearchParams-shaped state must not turn its fields into top-level query parameters.
+      const callback = await request(app.getHttpServer())
+        .get(`/api/v1/auth/social/naver/callback?code=provider-code&state=${state}`)
+        .agent(agent)
+        .set('Cookie', nonceCookie);
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers['location']).toBe(
+        'http://localhost:3000/en/auth/callback?status=authenticated&returnTo=%2Fen%2Fbooking%2Fshow-1%2Fconfirm%3FresumeOrderId%3DGRP-1',
+      );
+      expect(exchange).toHaveBeenCalledOnce();
+      expect(authService.findOrCreateSocialUser).toHaveBeenCalledOnce();
+    } finally {
+      exchange.mockRestore();
+      profile.mockRestore();
+    }
   });
 
   it('rejects a captured callback opened in a browser without the nonce cookie (login CSRF)', async () => {

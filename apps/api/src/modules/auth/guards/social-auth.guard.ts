@@ -7,6 +7,7 @@ import {
   getSocialCallbackStateFromRequest,
 } from '../social-callback-url.js';
 import { getPrimaryFrontendUrl } from '../../../config/frontend-origins.js';
+import { encodeNaverOAuthState } from '../social-oauth-state-transport.js';
 import {
   SOCIAL_OAUTH_STATE_COOKIE,
   buildSignedSocialOAuthState,
@@ -121,15 +122,14 @@ function getSocialAuthenticateOptions(
   const query = req.query as Record<string, unknown> | undefined;
   const nonce = createSocialOAuthNonce();
   res.cookie(SOCIAL_OAUTH_STATE_COOKIE, nonce, socialOAuthStateCookieOptions());
-  return {
-    state: buildSignedSocialOAuthState({
-      provider: providerName,
-      nonce,
-      locale: query?.['locale'],
-      returnTo: query?.['returnTo'],
-      secret: resolveSocialOAuthStateSecret(configService),
-    }),
-  };
+  const state = buildSignedSocialOAuthState({
+    provider: providerName,
+    nonce,
+    locale: query?.['locale'],
+    returnTo: query?.['returnTo'],
+    secret: resolveSocialOAuthStateSecret(configService),
+  });
+  return { state: providerName === 'naver' ? encodeNaverOAuthState(state) : state };
 }
 
 @Injectable()

@@ -8,6 +8,7 @@ import {
   verifySignedSocialOAuthState,
 } from './social-oauth-state.js';
 import { resolveSocialCallbackState } from './social-callback-url.js';
+import { encodeNaverOAuthState } from './social-oauth-state-transport.js';
 
 const secret = 'test-state-secret';
 const issuedAt = new Date('2026-10-01T11:00:00.000Z');
@@ -24,9 +25,12 @@ function issue(overrides: Partial<Parameters<typeof buildSignedSocialOAuthState>
   });
 }
 
-describe('social OAuth state', () => {
+describe.each([
+  ['signed query state', (state: string) => state],
+  ['URL-safe Naver state', encodeNaverOAuthState],
+] as const)('social OAuth state (%s)', (_name, transport) => {
   it('accepts the state only with the same provider, nonce cookie and secret', () => {
-    const state = issue();
+    const state = transport(issue());
 
     expect(
       verifySignedSocialOAuthState(state, { provider: 'naver', nonceCookie: 'nonce-from-cookie', secret, now: issuedAt }),
@@ -46,7 +50,7 @@ describe('social OAuth state', () => {
   });
 
   it('expires exactly after the state lifetime', () => {
-    const state = issue();
+    const state = transport(issue());
     const verifyAt = (offsetMs: number) =>
       verifySignedSocialOAuthState(state, {
         provider: 'naver',
@@ -70,10 +74,24 @@ describe('social OAuth state', () => {
   });
 
   it('keeps locale and returnTo readable for existing callback redirects', () => {
-    expect(resolveSocialCallbackState(issue())).toEqual({
+    expect(resolveSocialCallbackState(transport(issue()))).toEqual({
       locale: 'th',
       returnTo: '/th/booking/show-1/confirm?resumeOrderId=GRP-1',
     });
+  });
+
+  it('rejects changed navigation hints without weakening the signature check', () => {
+    const state = transport(issue().replace('locale=th', 'locale=en'));
+    expect(verifySignedSocialOAuthState(state, {
+      provider: 'naver', nonceCookie: 'nonce-from-cookie', secret, now: issuedAt,
+    })).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it.each(['naver1.', 'naver1.@@', 'naver1._w', 'naver1.Zg=='])('rejects malformed transport %s', (state) => {
+    expect(verifySignedSocialOAuthState(state, {
+      provider: 'naver', nonceCookie: 'nonce-from-cookie', secret, now: issuedAt,
+    }).ok).toBe(false);
+    expect(resolveSocialCallbackState(state)).toEqual({ locale: null, returnTo: null });
   });
 
   it('treats a request as a provider callback whenever passport would exchange or report a code', () => {
