@@ -2,6 +2,18 @@
 
 기준일 2026-09-22 KST. #216–#222 구현과 격리 검증 뒤의 전환 준비다. **#214와 #223은 OPEN**이다. 아래 로컬 실험, 운영 읽기 전용 점검, 기술 배포, 실제 판매 오픈 준비를 구분한다.
 
+## 2026-10-30 결제창 배포·인증 알림 후속
+
+- **결제창 수정 운영 반영:** [PR #241](https://github.com/icons-hq/grapit/pull/241), 병합 `36c0fe2e`, [CI](https://github.com/icons-hq/grapit/actions/runs/41021829931) 및 [배포](https://github.com/icons-hq/grapit/actions/runs/41023349050) 성공. API `grabit-api-00270-tkc`, Web `grabit-web-00216-2nf`의 같은 SHA·트래픽 100%, 같은 worker 이미지와 worker smoke를 확인했다. API health·홈·영문 로그인·공연 상세·runtime flags 모두 200이며 예매 활성, admission 300, API DB pool 2가 유지됐다. 위젯 회귀 73개·typecheck·lint와 실제 Toss SDK iframe을 띄우는 격리 브라우저 검사도 통과했다. 이 배포 확인은 실결제 검증을 포함하지 않는다.
+- **국내 SMS 실수신·인증 통과:** 사용자 지정 수신처에 운영 `/sms/send-code`로 1회 발송했다. 사용자가 실제 받은 코드를 `/sms/verify-code`에서 확인해 HTTP 200·`verified=true`를 얻었고, Twilio Verify에서도 해당 시도가 `converted`로 조회됐다. 번호와 코드는 기록에서 제외한다.
+- **과거 국내·해외 SMS 운영 근거 보완:** 현재 운영 연결의 Twilio 서비스는 `Grabit Phone Verification`이다. 같은 계정의 2026-05~07 Usage API에서 Verify 1,850건, Authy/Verify outbound SMS 2,255건을 확인했다. 운영 DB의 일반 회원 중 휴대폰 인증 완료는 국내 국가 설정 1,212명·해외 국가 설정 543명·OTHER 4명이다. 이는 국가 설정별 계정 수이며 국가별 SMS 전달 건수와 같지 않다. 당시 코드도 서명된 전화 인증 증명을 요구하고 production mock을 거절한다. 상세 Verify Attempts는 최근 30일만 제공되므로 과거 개별 해외 수신 내역은 재조회되지 않았고, 이번에 새 해외 번호로 발송하지는 않았다. 따라서 과거 상용 운영 실적을 ‘연동 미사용’으로 표시하지 않되, 오늘의 모든 해외 통신망 재시험으로도 표시하지 않는다.
+- **메일 3종 실제 도달 통과:** 현재 운영 Resend 발신 설정을 사용하되 별도 PostgreSQL/Valkey/API의 합성 계정·예매로 실행했다. 사용자의 Gmail 받은편지함에서 인증·영문 비밀번호 재설정·명시적 TEST ONLY QR 티켓 메일을 모두 확인했다. 받은 인증코드 소비 후 원래 `/en/booking/...`에 복귀했고, reset 메일은 토큰과 같은 `returnTo`를 가진 비밀번호 양식을 열었다. 기존 계정의 비밀번호를 변경하거나 실제 결제를 만들지 않았다. QR은 합성 확정 예매의 실제 발급·수동 이메일 API를 거쳤다. 예약 발송 worker의 장애 복구나 claim 유실 문제까지 해결한 결과는 아니다.
+- **소셜 로그인:** Google·Kakao는 기존 실제 계정으로 공급자 인증 → 영문 원래 예매 주소 복귀를 확인했다. 공연은 판매 종료여서 정상적인 판매 종료 안내를 표시했다. Naver는 실제 로그인을 실행하자 `malformed_state`로 실패했다. 콜백의 state가 `v=1`만 남고 서명·nonce·locale·returnTo가 별도 쿼리로 분리된 것을 비밀 없는 요청 형태와 서버 로그로 대조했다. 동일 HTTP 실패 회귀 뒤 Naver 전용 URL-safe 포장을 추가했다. 이 수정의 CI·배포 후 실제 Naver 복귀 결과는 연결 PR/Issue의 최신 실행 기록으로 확인한다.
+
+비밀 없는 증거와 비공개 원본은 로컬 산출물 `grapit-auth-widget-2026-10-30`에 구분했다. 로컬 Next 개발 서버의 영문 경로에는 기본 언어 fallback/hydration 경고가 있어 해당 화면을 다국어 품질 합격 근거로 사용하지 않는다. 운영 영문 OAuth 복귀와 메일 본문 언어는 별도로 확인했다. 실제 단말/현장·Alipay·소액 live/은행 대조·판매 부하 gate는 계속 별도다.
+
+공식 근거: [Naver 로그인 state·callback 계약](https://developers.naver.com/docs/login/devguide), [Twilio Verify Attempts 보존 범위](https://www.twilio.com/docs/verify/api/attempts), [Twilio Usage Records](https://www.twilio.com/docs/usage/api/usage-record).
+
 ## 2026-10-30 해외 결제·웹훅 후속 검증
 
 기준 소스는 운영 병합 커밋 `0a4b8fc2`와 아래 로컬 위젯 수명주기 수정이다. 별도 PostgreSQL·Valkey·API·웹, 합성 구매자/공연/좌석, 가맹점의 **test** 키만 사용했다. 운영 배포·DB 변경·실금전 거래는 하지 않았다. 아래 결과는 이전 표의 PayPal 미실행 및 외화 test 웹훅 미등록 상태를 갱신한다.
@@ -101,7 +113,7 @@ node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000,1500 \
 | Alipay | 독립 공식 SDK 1회 호출도 `INVALID_PAYMENT_METHOD / Payment has already been requested` 재현 | 실제 test 구매자 앱/계정과 공급자 원인 확인. 요청 ID·시각·가맹점 test 조건을 마스킹한 문의 자료로 전달하고 인증→비동기 승인/취소까지 검증 |
 | PayPal | 계약/위젯 활성 확인, 실제 승인 미실행 | 사용 가능한 Personal Sandbox 계정. 격리 서버의 test flag를 켜 로그인→복귀→승인→QR→취소 대조 |
 | test webhook | Nest HTTP 정상/중복 200·입력 400·처리 실패 500 회귀 통과 | 외화 test MID 전용 HTTPS 수신 경로와 test 인증값. 전체 API 노출 없이 webhook 경로만 연결, 실제 전송·중복·지연과 원장 대조 |
-| SMS/메일/OAuth | 앱 생성·오답·재요청·실패·언어/returnTo는 실제 API, 외부 전달은 대역 | 승인된 테스트 수신 번호/메일과 공급자 로그인. 실제 도달 후 기존 주문 복귀·중복 계정 방지 |
+| SMS/메일/OAuth | 2026-10-30 국내 SMS 실수신/승인, Gmail 메일 3종, Google·Kakao 실제 복귀 확인; 과거 해외 운영 실적 대조 | 위 후속 기록과 연결 PR/Issue의 Naver 수정 후 실로그인 결과 참조. 과거 해외 실적과 당일 신규 해외 재시험은 구분 |
 | 실제 단말/현장 | viewport·키보드·대체 입력·HTTP 동시 소비·오프라인 재전송 통과 | iOS Safari, Android Chrome, 카메라 2대, 현장 담당자. 동행자 분리 입장·통신 단절/재연결·중복 스캔·실물 품목별 1회 인수 |
 | 실제 용량 | 로컬 100/500/1,000 및 장애 결과 위 표, 보완된 하네스의 병목 시나리오 | 예정 판매 동시 트래픽과 운영 동등 격리 환경. 공연 상세 동시 조회, 채워진 좌석맵, 같은 회차 prepare/confirm(PG stub 지연), 1,000 초과 WAITING, Socket.IO fan-out을 포함한 지속 부하·cold start·연결 폭주·자원 및 오류율 증거. Phase 26 k6 gate는 동시 VU 목표와 전 구매 흐름 측정 없이는 PASS가 되지 않는다(`docs/runbooks/phase26-cutover-ops.md`) |
 | 소액 live/정산 | test PG·격리 원장/CSV 재계산 완료 | 운영 테스트 공연/좌석·카드 소유자·1건 금액/수수료·환불 조건을 먼저 고정. 본인 인증 뒤 실제 PG 승인/취소와 은행·카드사 자료를 별도 대조 |

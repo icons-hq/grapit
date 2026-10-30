@@ -6,6 +6,7 @@ import {
 } from '@grabit/shared/constants/index.js';
 import type { SupportedLocale } from '@grabit/shared/types/i18n.types.js';
 import { resolveAuthReturnTo } from '@grabit/shared';
+import { decodeSocialOAuthState } from './social-oauth-state-transport.js';
 
 type SocialLocaleQueryKey = 'locale' | 'state';
 type SocialCallbackStateQueryKey = 'state';
@@ -16,7 +17,7 @@ type SocialCallbackState = {
 };
 
 export function resolveSocialCallbackLocale(value: unknown): SupportedLocale | null {
-  const rawValue = Array.isArray(value) ? value[0] : value;
+  const rawValue = decodeSocialOAuthState(value);
   if (typeof rawValue !== 'string') {
     return null;
   }
@@ -38,7 +39,7 @@ export function resolveSafeSocialReturnTo(value: unknown): string | null {
 }
 
 export function resolveSocialCallbackState(value: unknown): SocialCallbackState {
-  const rawValue = Array.isArray(value) ? value[0] : value;
+  const rawValue = decodeSocialOAuthState(value);
   if (typeof rawValue !== 'string') {
     return { locale: null, returnTo: null };
   }
