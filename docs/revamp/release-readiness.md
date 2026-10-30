@@ -2,6 +2,21 @@
 
 기준일 2026-09-22 KST. #216–#222 구현과 격리 검증 뒤의 전환 준비다. **#214와 #223은 OPEN**이다. 아래 로컬 실험, 운영 읽기 전용 점검, 기술 배포, 실제 판매 오픈 준비를 구분한다.
 
+## 2026-10-30 해외 결제·웹훅 후속 검증
+
+기준 소스는 운영 병합 커밋 `0a4b8fc2`와 아래 로컬 위젯 수명주기 수정이다. 별도 PostgreSQL·Valkey·API·웹, 합성 구매자/공연/좌석, 가맹점의 **test** 키만 사용했다. 운영 배포·DB 변경·실금전 거래는 하지 않았다. 아래 결과는 이전 표의 PayPal 미실행 및 외화 test 웹훅 미등록 상태를 갱신한다.
+
+- **PayPal 통과:** 실제 Personal Sandbox 계정으로 구매 화면 → USD 35.36 인증 → 사이트 복귀 → 예매 확정 → 좌석별 Ticket Item/QR 각 1개 → 고객 전액 취소를 수행했다. Toss 재조회는 `CANCELED`, 취소 `DONE`, 잔액 0이다. 내부 예매 `CANCELLED`, 결제 `CANCELED`, 활성 QR 0과 일치한다. 실제 pg-boss의 예정된 좌석 해제 작업을 실행해 보류 종료 후 재고 `available`도 확인했다. 이 별도 작업 호출의 현장 실시간 알림은 검증하지 않았다.
+- **외화 test 웹훅 통과:** 해당 MID의 테스트에만 임시 수신 경로를 등록했다. 공개 경로는 제한된 POST와 이 격리 DB의 주문만 API에 전달한다. Toss 전송 이력에서 PayPal 승인/취소 및 Alipay 실패의 `PAYMENT_STATUS_CHANGED` 세 건이 모두 성공이다. 공급자 재전송과 별도로 직접 재생한 중복/역순 이벤트를 구분했다. 취소 후 과거 DONE의 동일 이벤트 재생은 중복으로, 새 이벤트 ID의 과거 DONE은 `IGNORED_STALE_PROVIDER_STATE`로 200 응답했으며 취소/QR 회수가 유지됐다. Alipay 성공/취소가 없으므로 실제 `CANCEL_STATUS_CHANGED` 전달은 미검증이다.
+- **Alipay 성공 검증 미완료:** Chrome과 별도 브라우저에서 공식 SDK만으로 새 주문·한 번의 요청을 실행해 QR 전에 `INVALID_PAYMENT_METHOD / Payment has already been requested.`를 재현했다. 웹훅 등록 후 실제 구매 화면의 USD 35.36 요청도 같은 이유로 거절됐다. 공급자 `ABORTED`와 실제 실패 웹훅, 내부 예매 `FAILED`/결제 `ABORTED`, Ticket Item·QR 0을 대조했다. 실패 처리 통과를 Alipay 결제 성공으로 기록하지 않는다.
+- **현재 계약 확인:** Grabit의 외화 MID `heygrav2hj`만 대상으로 확인했다. 계약일 2026-05-21·`계약완료`, 개별 Alipay는 `이용가능`이다. 테스트 `uspay`는 대응 test MID, 라이브 `uspay`는 이 MID에 연결되고 두 화면 모두 Alipay를 표시한다. 운영 API의 `ALIPAY_CHECKOUT_ENABLED=true`도 읽기 전용으로 확인했다. `PayPay`의 `심사중`은 별개 수단이다. 따라서 현재 화면에 계약 미완료 근거는 없으며, 같은 test 상점의 PayPal은 정상 승인/취소됐다. 공개 HTTPS 페이지/복귀 주소에서도 같은 오류를 재현해 로컬 HTTP 주소 가설도 배제했다. Alipay 테스트 경로의 공급자 내부 원인은 아직 확인되지 않았다. 운영 Alipay 실결제 성공 여부까지 증명한 것은 아니다.
+- **과거 운영 MID 교차 확인:** 사용자 제보 후 운영 Grabit DB를 `READ ONLY` transaction으로 조회했다. `Girl Rules FAN MEETING IN SEOUL`의 Alipay 승인·취소 이력 42건을 운영 키의 Toss 조회 API로 전부 재조회했고, 42건 모두 주문/결제 식별자가 일치하며 wallet `알리페이`, MID `heygrav2hj`로 확인됐다. 승인 시각은 2026-06-04 19:21:32부터 2026-07-02 16:20:04 KST다. Toss 현재 상태는 DONE 26건·CANCELED 13건·PARTIAL_CANCELED 3건이다. 그중 2건은 내부 결제 상태가 CANCELED여서 이 상태 차이를 MID 확인과 별개로 증거에 보존했다. `gsangwbzqu`도 Grabit의 국내 카드·계좌이체 이력에 있는 MID이며, 해당 원화 카드 원거래 조회로 확인했다. PayPal과 USD 카드 대표 원거래는 `heygrav2hj`였다. 과거 실결제 성공은 확인됐지만, 현재 Alipay sandbox 오류의 내부 원인이나 현재 live 신규 결제 성공을 증명하는 것은 아니다.
+- **발견한 코드 결함:** 취소된 위젯 렌더가 비동기 금액 설정 후 계속 실행돼 현재 iframe을 지울 수 있었다. 실패 회귀를 확인한 뒤 각 비동기 경계의 취소 확인과 부분 생성 핸들 정리를 추가했다. 공식 SDK를 사용하는 실제 구매 화면에서 위젯 표시와 위 PayPal 흐름을 확인했다. 수정은 로컬 작업이며 미배포다.
+- **검증:** API 단위 2,701개, 위젯/결제 복구/반환 정책 104개, 웹 typecheck·변경 파일 lint·production build 통과. 실기기·운영 키 결제·실제 은행 반영은 이번 범위에 포함하지 않았다. 제품 테스트와 새 테스트 환경의 설정 보정은 구분한다.
+- **정리:** 전송 증거 저장 후 사용자 확인을 받아 이번 임시 웹훅만 삭제했다. 기존 국내 test 및 모든 live 웹훅은 변경하지 않았다. 터널·API·웹·SDK 재현 서버와 전용 DB/Valkey를 종료·삭제했다.
+
+원본 거래·자격 값은 저장소에 넣지 않는다. 비밀 제거 요약, 화면, 공급자 원본 및 재실행 도구는 로컬 검증 산출물 `grapit-foreignpay-2026-10-30`에 구분해 보관한다. 남은 직접 확인은 Alipay의 테스트 가맹점 처리/연동 경로에 대한 Toss 답변과, 정상 QR 생성 후 테스트 지갑 인증이다. 사용자 승인 후 2026-10-30 12:37 KST에 Grabit 해당 MID의 재현 자료를 Toss 기술지원으로 발송했으며 Gmail 전송 완료를 확인했다. 공급자 답변을 기다리고 있다. 독립 HTTPS 비교용 서버와 터널도 종료했다.
+
 ## 격리 부하·장애 실험
 
 `scripts/revamp/isolated-capacity.mjs`는 자체 PostgreSQL 16·Valkey 8 컨테이너와 API 프로세스를 만들고 종료 시 제거한다. 임의 대상 URL/운영 DATABASE_URL을 받지 않는다. 합성 구매자·현장 계정의 JWT/refresh family를 준비하되 실제 인증·대기열·권한 가드, HTTP, DB transaction을 통과한다. 메시지 발송, 실사용자 비밀번호/OAuth 부하는 포함하지 않는다.
