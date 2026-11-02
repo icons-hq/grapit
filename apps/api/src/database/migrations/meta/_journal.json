@@ -358,6 +358,13 @@
       "when": 1792989568714,
       "tag": "0050_venue_layout_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1793584630119,
+      "tag": "0051_qr_reminder_deliveries",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -16,6 +16,7 @@ import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
 import type { EmailService } from '../src/modules/auth/email/email.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
+import { QrReminderDeliveryStore, QR_REMINDER_LEASE_MS } from '../src/modules/ticket/qr-reminder-delivery.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
 
 const SECRET_VERSION = 'qr-it-v1';
@@ -74,7 +75,8 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       input.database ?? db,
       input.configService ?? config(),
       new JwtService(),
-      (input.emailService ?? { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true }) }) as never,
+      { qrTicketReminderPayloadHash: (to: string, email: unknown) => createHash('sha256').update(JSON.stringify({ to, email })).digest('hex'),
+        ...(input.emailService ?? { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true }) }) } as never,
       (input.pgBoss ?? { isAvailable: false }) as never,
     );
   }
@@ -320,11 +322,159 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       const afterFailure = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
       expect(afterFailure.every((ticket) => ticket.emailSentAt === null)).toBe(true);
 
+      await db.update(schema.qrReminderDeliveries).set({ nextAttemptAt: new Date(0) })
+        .where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+
       await worker.handleReminderEmailJob(payload);
       await worker.handleReminderEmailJob(payload);
       expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledTimes(2);
       const afterRetry = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
       expect(afterRetry.every((ticket) => ticket.emailSentAt instanceof Date)).toBe(true);
+    });
+
+    it('recovers a process killed after claiming, without recording an unsent reminder as delivered', async () => {
+      const f = await fixture(2);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      const abandoned = await new QrReminderDeliveryStore(db).claim(f.order.id);
+      expect(abandoned).toBeDefined();
+      const before = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
+      expect(before.every((ticket) => ticket.emailSentAt === null)).toBe(true);
+      // No release/finally runs on a killed process. Another worker takes over
+      // only when the persisted lease expires, and uses the actual database.
+      const emailService = { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'recovered-email' }) };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      const payload = { ticketId: first!.id, reservationId: f.order.id };
+      await worker.handleReminderEmailJob(payload);
+      expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+      await db.update(schema.qrReminderDeliveries).set({ leaseExpiresAt: new Date(Date.now() - QR_REMINDER_LEASE_MS) })
+        .where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      await worker.handleReminderEmailJob(payload);
+      await worker.handleReminderEmailJob(payload);
+      expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledOnce();
+      const [delivery] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(delivery).toMatchObject({ sentAt: expect.any(Date), providerMessageId: 'recovered-email', claimToken: null });
+    });
+
+    it('fences a late worker so it cannot complete or release its successor claim', async () => {
+      const f = await fixture(1);
+      const store = new QrReminderDeliveryStore(db);
+      const old = await store.claim(f.order.id);
+      await db.update(schema.qrReminderDeliveries).set({ leaseExpiresAt: new Date(0) })
+        .where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      const current = await store.claim(f.order.id);
+      expect(current!.claimToken).not.toBe(old!.claimToken);
+      await store.release(old!);
+      expect(await store.complete(old!, [], 'old-provider-id')).toBe(false);
+      expect(await store.complete(current!, [], 'current-provider-id')).toBe(true);
+    });
+
+    it('reconciles provider acceptance followed by a failed database commit without a second logical email', async () => {
+      const f = await fixture(1);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      const accepted = new Map<string, string>();
+      const emailService = { sendQrTicketReminderEmail: vi.fn(async (to: string, input: unknown, options: { idempotencyKey: string }) => {
+        const key = `${options.idempotencyKey}:${JSON.stringify({ to, input })}`;
+        if (!accepted.has(key)) accepted.set(key, randomUUID());
+        return { success: true, id: accepted.get(key) };
+      }) };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      const failCommit = vi.spyOn(QrReminderDeliveryStore.prototype, 'complete').mockRejectedValueOnce(new Error('commit response lost'));
+      try {
+        await expect(worker.handleReminderEmailJob({ ticketId: first!.id, reservationId: f.order.id })).rejects.toThrow('commit response lost');
+      } finally { failCommit.mockRestore(); }
+      const pending = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
+      expect(pending.every((row) => row.emailSentAt === null)).toBe(true);
+      await db.update(schema.qrReminderDeliveries).set({ nextAttemptAt: new Date(0) }).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      await worker.handleReminderEmailJob({ ticketId: first!.id, reservationId: f.order.id });
+      expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledTimes(2);
+      expect(accepted.size).toBe(1);
+      const [done] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(done?.sentAt).toBeInstanceOf(Date);
+      expect(done?.providerMessageId).toBe([...accepted.values()][0]);
+    });
+
+    it('keeps a lost reminder visible for review when the provider retry window has expired', async () => {
+      const f = await fixture(1);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      await db.insert(schema.qrReminderDeliveries).values({ reservationId: f.order.id,
+        firstAttemptAt: new Date(Date.now() - 24 * 60 * 60 * 1000), nextAttemptAt: new Date(0) });
+      const emailService = { sendQrTicketReminderEmail: vi.fn() };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      await worker.handleReminderEmailJob({ ticketId: first!.id, reservationId: f.order.id });
+      const [state] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(state?.attentionAt).toBeInstanceOf(Date);
+      expect(state?.sentAt).toBeNull();
+      expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('starts the retry window at the first provider request, after a previously unverified buyer verifies', async () => {
+      const f = await fixture(1);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      await db.update(schema.users).set({ isEmailVerified: false }).where(eq(schema.users.id, f.buyer.id));
+      const emailService = { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'first-real-attempt' }) };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      const payload = { ticketId: first!.id, reservationId: f.order.id };
+      await worker.handleReminderEmailJob(payload);
+      const [waiting] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(waiting?.firstAttemptAt).toBeNull();
+      expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
+        await db.update(schema.users).set({ isEmailVerified: true }).where(eq(schema.users.id, f.buyer.id));
+        await worker.handleReminderEmailJob(payload);
+        const [done] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+        expect(done?.attentionAt).toBeNull();
+        expect(done?.sentAt).toBeInstanceOf(Date);
+        expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledOnce();
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('does not resend changed content when the first provider acceptance was not committed', async () => {
+      const f = await fixture(1);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      const emailService = { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'accepted-before-crash' }) };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      const payload = { ticketId: first!.id, reservationId: f.order.id };
+      const failCommit = vi.spyOn(QrReminderDeliveryStore.prototype, 'complete').mockRejectedValueOnce(new Error('commit response lost'));
+      try { await expect(worker.handleReminderEmailJob(payload)).rejects.toThrow('commit response lost'); }
+      finally { failCommit.mockRestore(); }
+      await db.update(schema.performances).set({ title: 'Changed after provider acceptance' }).where(eq(schema.performances.id, f.event.id));
+      await db.update(schema.qrReminderDeliveries).set({ nextAttemptAt: new Date(0) }).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      await worker.handleReminderEmailJob(payload);
+      expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledOnce();
+      const [state] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(state).toMatchObject({ sentAt: null, attentionAt: expect.any(Date), attentionReason: 'payload_changed' });
+    });
+
+    it('suppresses historical sent-or-claimed rows without inventing a new provider receipt', async () => {
+      const f = await fixture(1);
+      const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      await db.update(schema.tickets).set({ emailSentAt: new Date('2026-10-01T00:00:00Z') }).where(eq(schema.tickets.id, first!.id));
+      const emailService = { sendQrTicketReminderEmail: vi.fn() };
+      const worker = createService({ emailService }) as unknown as ReminderHandler;
+      await worker.handleReminderEmailJob({ ticketId: first!.id, reservationId: f.order.id });
+      const [state] = await db.select().from(schema.qrReminderDeliveries).where(eq(schema.qrReminderDeliveries.reservationId, f.order.id));
+      expect(state).toMatchObject({ suppressedAt: expect.any(Date), sentAt: null, providerMessageId: null, firstAttemptAt: null });
+      expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('recovers a lost queue job through the sweep and excludes cancelled seats', async () => {
+      const f = await fixture(2);
+      await createService().ensureIssuedTicketsForReservation(issueInput(f));
+      await db.update(schema.tickets).set({ emailScheduledAt: new Date(0) }).where(eq(schema.tickets.reservationId, f.order.id));
+      await db.update(schema.ticketItems).set({ status: 'cancelled' }).where(eq(schema.ticketItems.id, f.items[0]!.id));
+      const emailService = { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'sweep-email' }) };
+      const worker = createService({ emailService });
+      await worker.recoverDueReminderEmails();
+      await worker.recoverDueReminderEmails();
+      expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledOnce();
+      const input = emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1] as { tickets: Array<{ token: string }> };
+      expect(input.tickets).toHaveLength(1);
+      expect(new JwtService().decode(input.tickets[0]!.token)).toMatchObject({ ticketItemId: f.items[1]!.id });
+      const credentials = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
+      expect(credentials.find((row) => row.ticketItemId === f.items[0]!.id)?.emailSentAt).toBeNull();
+      expect(credentials.find((row) => row.ticketItemId === f.items[1]!.id)?.emailSentAt).toBeInstanceOf(Date);
     });
 
     it('emails every active seat on a manual send and marks all of them sent', async () => {

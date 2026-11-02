@@ -46,6 +46,27 @@ function makeConfig(env: Record<string, string | undefined>): ConfigService {
 }
 
 describe('EmailService', () => {
+  it('reuses a stable idempotency key and rejects a changed frozen payload after a lost response and bounds each network attempt', async () => {
+    const send = (resendModule as unknown as { __sendMock: ReturnType<typeof vi.fn> }).__sendMock;
+    send.mockResolvedValue({ data: { id: 'same-provider-receipt' }, error: null });
+    const input = { reservationNumber: 'TEST-1', performanceTitle: 'TEST ONLY', showDateTime: '2099-01-01T00:00:00Z',
+      venue: 'Test', tickets: [{ seatLabel: 'A-1', token: 'synthetic-token' }], ticketUrl: 'https://example.test/ticket' };
+    const config = makeConfig({ RESEND_API_KEY: 're_test_key', RESEND_FROM_EMAIL: 'no-reply@heygrabit.com', NODE_ENV: 'test' });
+    const service = new EmailService(config);
+    const options = { idempotencyKey: 'qr-reminder/test-1', payloadHash: service.qrTicketReminderPayloadHash('delivered@example.test', input) };
+    await service.sendQrTicketReminderEmail('delivered@example.test', input, options);
+    await new EmailService(config).sendQrTicketReminderEmail('delivered@example.test', input, options);
+    const first = send.mock.calls[0]?.[1] as { idempotencyKey: string; signal: AbortSignal };
+    const second = send.mock.calls[1]?.[1] as { idempotencyKey: string; signal: AbortSignal };
+    expect(first.idempotencyKey).toBe('qr-reminder/test-1');
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(first.signal).toBeInstanceOf(AbortSignal);
+    expect(send.mock.calls[0]?.[0]).toEqual(send.mock.calls[1]?.[0]);
+    const changed = await service.sendQrTicketReminderEmail('delivered@example.test', { ...input, tickets: [] }, options);
+    expect(changed).toEqual({ success: false, error: 'QR_REMINDER_PAYLOAD_CHANGED' });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   const sentryMod = sentryModule as unknown as {
     __captureExceptionMock: ReturnType<typeof vi.fn>;
     __withScopeMock: ReturnType<typeof vi.fn>;
