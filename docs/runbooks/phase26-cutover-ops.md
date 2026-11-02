@@ -82,6 +82,8 @@ Expected evidence:
 
 ## Monitoring order
 
+현재 300명 입장·micro DB 구성의 알림 설정과 재적용은 [판매 운영 감시](launch-monitoring.md)를 따른다. 2026-11-02에 API 장애·거래 복구·worker 실패/누락·DB 연결·Valkey 이상 정책 7개를 적용했다. 실제 알림 수신과 공연별 당직 인수는 설정 readback과 구분한다.
+
 During the first 15-minute direct-deploy watch and during live ticketing, check
 signals in this order:
 
