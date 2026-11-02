@@ -1,0 +1,343 @@
+{
+  "status": "capacity_limited",
+  "startedAt": "2026-11-02T05:57:27.297Z",
+  "completedAt": "2026-11-02T05:58:45.531Z",
+  "environment": "private-cloud-run-rehearsal",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:6aad2bfd3029e9bde0652f01c8c68cbaa46f3ebf6bde3d95bce6608ded613814",
+  "apiService": "grabit-rehearsal-launch-20261102",
+  "apiRevision": "projects/grapit-491806/locations/asia-northeast3/services/grabit-rehearsal-launch-20261102/revisions/grabit-rehearsal-launch-20261102-00018-wns",
+  "apiResources": {
+    "cpu": 2,
+    "heapMiB": 256,
+    "maxInstances": 8,
+    "memoryMiB": 512,
+    "minInstances": 8
+  },
+  "topology": {
+    "admissionLimit": 300,
+    "apiInstances": 8,
+    "dbPoolMax": 8,
+    "queueSocketLimit": 0,
+    "saleSeats": 600,
+    "socketClients": 300
+  },
+  "provider": "simulated-300ms-no-provider-network",
+  "pollModel": "15-20 second per-waiter jitter, matching use-queue.ts; bounded batches only for final assertions",
+  "excludes": [
+    "real payment provider latency and charges",
+    "public edge routing",
+    "production-only bootstrap and browser secure-cookie behavior",
+    "human seat-choice time",
+    "field QR scanner contention"
+  ],
+  "workload": {
+    "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+    "confirmCadenceMs": 0,
+    "confirmPattern": "synchronized-cohort-burst",
+    "holdSeatSocketsThroughCheckout": true,
+    "httpClientThreads": 4,
+    "profilingEnabled": false,
+    "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter",
+    "socketClientThreads": 4
+  },
+  "restAffinity": "isolated",
+  "databaseProfile": {
+    "apiPoolMax": 8,
+    "connectionBudget": 82,
+    "maximum": 500,
+    "reserved": 3,
+    "tier": "db-custom-4-15360",
+    "workerPoolMax": 2
+  },
+  "workerOverlap": {
+    "expired_with_diagnostic": 25,
+    "fixtureReservations": 25,
+    "total": 25
+  },
+  "cookieDiagnostics": {
+    "affinityCookieChanges": 600,
+    "affinityCookiesReceived": 600,
+    "synchronized": true,
+    "upgradeResponses": 600
+  },
+  "warmCurrentInstances": 8,
+  "waves": [
+    {
+      "activeAdmissionLimit": 300,
+      "admitted": 300,
+      "apiInstancesObserved": 8,
+      "apiRssMiBObservedMax": [
+        188,
+        183,
+        187,
+        187,
+        186,
+        191,
+        188,
+        190
+      ],
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "cohorts": [
+        {
+          "buyers": 300,
+          "confirmInstances": {
+            "0220fa15-02fd-4d57-81fa-d7d7032d5023": 35,
+            "27be1710-3c31-4e99-9b17-28bcc0ada82e": 34,
+            "29554cf4-98a5-4aa5-8953-3ebc6781f0d9": 38,
+            "47f74bd4-5d3e-49bb-b998-e1a3df742fb0": 38,
+            "7129fd51-ae58-4253-86d3-ae16266acd60": 41,
+            "772458a5-e9a3-4a80-a0b7-d1284d66b144": 34,
+            "b2244b10-1250-4aa9-9c3a-7b72e070d529": 36,
+            "c1b4e561-8af4-4f3f-a301-da09f2ac6320": 44
+          },
+          "confirmed": 300,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 300
+        },
+        {
+          "buyers": 300,
+          "confirmInstances": {
+            "0220fa15-02fd-4d57-81fa-d7d7032d5023": 45,
+            "27be1710-3c31-4e99-9b17-28bcc0ada82e": 26,
+            "29554cf4-98a5-4aa5-8953-3ebc6781f0d9": 36,
+            "47f74bd4-5d3e-49bb-b998-e1a3df742fb0": 41,
+            "7129fd51-ae58-4253-86d3-ae16266acd60": 44,
+            "772458a5-e9a3-4a80-a0b7-d1284d66b144": 40,
+            "b2244b10-1250-4aa9-9c3a-7b72e070d529": 36,
+            "c1b4e561-8af4-4f3f-a301-da09f2ac6320": 32
+          },
+          "confirmed": 300,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 300
+        }
+      ],
+      "durationMs": 75360,
+      "finalWaiting": 900,
+      "initialWaiting": 1200,
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "maxConcurrentPolls": 101,
+      "memoryBudgetPassed": true,
+      "metrics": {
+        "checkout.confirm": {
+          "errorRate": 0,
+          "maxMs": 2834,
+          "outcomes": {
+            "none": 598
+          },
+          "p50Ms": 1931,
+          "p95Ms": 2687,
+          "requests": 598,
+          "statuses": {
+            "201": 598
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.confirm.completed": {
+          "errorRate": 0,
+          "maxMs": 2834,
+          "outcomes": {
+            "none": 598
+          },
+          "p50Ms": 1931,
+          "p95Ms": 2687,
+          "requests": 598,
+          "statuses": {
+            "201": 598
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-inflight": {
+          "errorRate": 0,
+          "maxMs": 2686,
+          "outcomes": {
+            "none": 4
+          },
+          "p50Ms": 284,
+          "p95Ms": 2686,
+          "requests": 4,
+          "statuses": {
+            "201": 2,
+            "503": 2
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-replay": {
+          "errorRate": 0,
+          "maxMs": 66,
+          "outcomes": {
+            "none": 8
+          },
+          "p50Ms": 58,
+          "p95Ms": 66,
+          "requests": 8,
+          "statuses": {
+            "201": 8
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 830,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 526,
+          "p95Ms": 744,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 641,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 386,
+          "p95Ms": 578,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 1182,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 621,
+          "p95Ms": 1001,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status": {
+          "errorRate": 0,
+          "maxMs": 1808,
+          "outcomes": {
+            "none": 3689
+          },
+          "p50Ms": 30,
+          "p95Ms": 195,
+          "requests": 3689,
+          "statuses": {
+            "200": 3689
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status.final": {
+          "errorRate": 0,
+          "maxMs": 100,
+          "outcomes": {
+            "none": 900
+          },
+          "p50Ms": 36,
+          "p95Ms": 61,
+          "requests": 900,
+          "statuses": {
+            "200": 900
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 804,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 406,
+          "p95Ms": 646,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 475,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 212,
+          "p95Ms": 363,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 756,
+          "outcomes": {
+            "none": 180000
+          },
+          "p50Ms": 480,
+          "p95Ms": 711,
+          "requests": 180000,
+          "statuses": {
+            "delivered": 180000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "paymentConfirmTargetPassed": false,
+      "peakActiveAdmissions": 300,
+      "queueSockets": {
+        "admissionEventsReceived": 0,
+        "connected": 0,
+        "expectedAdmissionEvents": 300,
+        "positionMessages": 0
+      },
+      "seats": 600,
+      "sessions": 1500,
+      "sloPassed": false,
+      "socketFanout": {
+        "clients": 300,
+        "delivered": 180000,
+        "duplicateDeliveries": 0,
+        "expectedDeliveries": 180000
+      }
+    }
+  ],
+  "execution": "grabit-load-launch-20261102-2927h"
+}
