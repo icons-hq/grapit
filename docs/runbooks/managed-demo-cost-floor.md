@@ -411,7 +411,31 @@ The following is the **historical August retention-window procedure**. It is not
 6. if the serving API revision has `EDGE_PROXY_SHARED_SECRET` bound, remove the binding and deploy the API first (the load balancer path sends no edge secret); then rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
 7. run the full smoke checklist and reconcile any writes made after the cutover. Database rollback is not a blind pointer flip if both databases accepted writes; choose a source of truth and reconcile first.
 
-## Bounded 600-seat opening preparation
+## Current 600-seat opening profile — 2026-11-02
+
+The [production cutover](../research/booking-production-cutover-2026-11-02.md) applies the [150-admission synchronized-confirm profile](../research/booking-launch-readiness-2026-11-02.md). The same `grabit-db-managed-demo` instance now runs `db-custom-4-15360` (4 vCPU/15 GiB); it is no longer micro. Its measured `max_connections=500`, administrator reserve `3`, leaves `497` application connections.
+
+- Repository variables: `API_MAX_INSTANCES=8`, `API_CPU=2`, `API_CONCURRENCY=250`, `DB_POOL_MAX=8`, `WORKER_DB_POOL_MAX=2`, `QUEUE_MAX_ACTIVE_ADMISSIONS=150`, `API_MIN_INSTANCES=0`. API memory/heap stay 512/256 MiB. Set `WEB_MAX_INSTANCES=12`, `WEB_MIN_INSTANCES=0`; Web stays 1 vCPU/1 GiB. Keep the API producer-only and the five-minute worker Scheduler enabled.
+- With pg-boss defaults one/three, the connection budget is `8 × (8 + 1) + (2 + 3) + 5 = 82 < 497`. Budget any rollout overlap and additional workers separately; a second fully populated eight-instance API revision requires another 72 connections.
+- Before a sale, run the existing Scheduler prewarm with `{"minInstances":8}` and verify service/revision maxima eight, settled service minimum eight, the current Ready revision, and eight observed instances. The live `0 → 8 → 0` Scheduler rehearsal preserved the revision. Both recurring API prewarm jobs remain paused while the sale time is unknown; the background worker schedule is independent and remains enabled. Set Web service minimum twelve separately and warm its actual routes as below.
+- Reapply [monitoring](launch-monitoring.md) with `--database-max-connections=500`. The connection alarm is `>400` for two minutes. Re-read the database limit after any resize instead of assuming the tier default.
+- Keep `MIGRATION_FREEZE=true`. A database resize requires a quiet window, a verified backup, zero in-flight orders/refunds and active queue sessions, temporary booking-gate closure, and post-change data/health verification. Restoring the pre-maintenance gate does not publish an event or approve a public ticket opening.
+
+Before opening, the Web instance count alone is insufficient: the first route import and initialization must also complete. The Web minimum is a service-level setting and does not create a new revision:
+
+```bash
+gcloud run services update grabit-web --project=grapit-491806 \
+  --region=asia-northeast3 --min=12
+node scripts/managed-demo/warm-web-routes.mjs
+```
+
+The read-only script issues 128 home and 256 runtime-flag GETs with concurrency 16, verifies fresh server time and a consistent booking flag, and checks Cloud Logging for HTTP 200 from twelve instances of the current revision **for each route**. It refuses an unsettled deployment, wrong capacity, revision change or incomplete route coverage. It does not enable booking or change schedules. Keep both API/Web minima for the sales window. After traffic drains, use the existing API step-down Scheduler and restore Web with the same command's `--min=0`. Cold arrival from zero is not a passing substitute: the measured 1,500-session queue-entry p95 was 13.8 seconds, despite zero request errors and intact admission limits.
+
+The DB compute estimate is about $256.45/month at 730 hours, approximately $246.45 above the old micro profile. API usage/prewarm, storage, backups, network and taxes are additional. See the linked measured-price record. The database is still single-zone; increasing CPU and memory does not add database failover. Actual devices, provider payment/refund, venue and event-specific gates remain separate.
+
+## Historical 300-admission profile — 2026-10-29
+
+The following procedure records the previous micro-DB profile. Do not reapply its settings over the current profile without a separately validated capacity reduction.
 
 The [300-admission follow-up](../research/booking-capacity-fix-2026-10-29.md) supersedes the earlier two-instance/200-admission profile. It selects at most four API instances at 1 vCPU/512 MiB, API pool two, producer pg-boss pool one, worker application/pg-boss pools two/three, and at most 300 buyers choosing seats or checking out. Additional visitors read queue status every 15–20 seconds. This is not a promise that 300 synchronized payment confirmations finish within two seconds; preserve the measured cadence, raw failures and latency target misses.
 

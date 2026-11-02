@@ -1,0 +1,339 @@
+{
+  "scope": "Public production GET-only requests; no authentication, purchase or database mutation",
+  "finalProfile": {
+    "apiInstances": 8,
+    "webInstances": 12,
+    "webCpu": 1,
+    "webMemoryGiB": 1,
+    "offSaleMinimums": 0
+  },
+  "attempts": [
+    {
+      "label": "single-process",
+      "evidence": {
+        "authorizationSent": false,
+        "kind": "GRABIT_PUBLIC_READ_PROBE",
+        "readOnly": true,
+        "results": [
+          {
+            "challenges": 0,
+            "cloudflareResponses": 1500,
+            "max": 12936,
+            "p50": 7136,
+            "p95": 10918,
+            "requests": 1500,
+            "startedAt": "2026-11-02T08:04:24.060Z",
+            "statuses": {
+              "200": 1500
+            },
+            "url": "https://api.heygrabit.com/api/v1/performances"
+          },
+          {
+            "challenges": 0,
+            "cloudflareResponses": 1500,
+            "max": 12218,
+            "p50": 9829,
+            "p95": 11385,
+            "requests": 1500,
+            "startedAt": "2026-11-02T08:04:37.891Z",
+            "statuses": {
+              "200": 1500
+            },
+            "url": "https://heygrabit.com/api/runtime-flags"
+          }
+        ]
+      }
+    },
+    {
+      "label": "eight-processes-web4",
+      "evidence": {
+        "execution": "grabit-public-read-probe-20261102-ksbcf",
+        "taskCount": 8,
+        "readOnly": true,
+        "authorizationSent": false,
+        "newTlsConnections": true,
+        "results": [
+          {
+            "url": "https://api.heygrabit.com/api/v1/performances",
+            "requests": 1500,
+            "latency": {
+              "p50Ms": 1446,
+              "p95Ms": 1686,
+              "maxMs": 1874
+            },
+            "tls": {
+              "p50Ms": 902,
+              "p95Ms": 1371,
+              "maxMs": 1676
+            },
+            "tcp": {
+              "p50Ms": 298,
+              "p95Ms": 512,
+              "maxMs": 593
+            },
+            "startSkewMs": 4,
+            "statuses": {
+              "200": 1500
+            },
+            "cloudflareResponses": 1500,
+            "challenges": 0,
+            "eventLoopP95Ms": [
+              549,
+              624,
+              670,
+              479,
+              834,
+              861,
+              662,
+              1006
+            ]
+          },
+          {
+            "url": "https://heygrabit.com/api/runtime-flags",
+            "requests": 1500,
+            "latency": {
+              "p50Ms": 2040,
+              "p95Ms": 3654,
+              "maxMs": 3985
+            },
+            "tls": {
+              "p50Ms": 1022,
+              "p95Ms": 2287,
+              "maxMs": 2825
+            },
+            "tcp": {
+              "p50Ms": 291,
+              "p95Ms": 656,
+              "maxMs": 2649
+            },
+            "startSkewMs": 3,
+            "statuses": {
+              "200": 1500
+            },
+            "cloudflareResponses": 1500,
+            "challenges": 0,
+            "eventLoopP95Ms": [
+              150,
+              48,
+              21,
+              21,
+              21,
+              21,
+              21,
+              21
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "label": "web8-first-route",
+      "evidence": {
+        "execution": "grabit-public-read-probe-20261102-pxl2q",
+        "readOnly": true,
+        "taskCount": 8,
+        "webInstances": 8,
+        "requests": 1500,
+        "startSkewMs": 3,
+        "statuses": {
+          "200": 1500
+        },
+        "phases": {
+          "ms": {
+            "p50Ms": 2818,
+            "p95Ms": 4628,
+            "maxMs": 5524
+          },
+          "tcp": {
+            "p50Ms": 262,
+            "p95Ms": 335,
+            "maxMs": 1529
+          },
+          "tls": {
+            "p50Ms": 779,
+            "p95Ms": 1288,
+            "maxMs": 1574
+          },
+          "ttfb": {
+            "p50Ms": 2817,
+            "p95Ms": 4628,
+            "maxMs": 5524
+          }
+        },
+        "server": {
+          "requests": 1500,
+          "p95Ms": 3383,
+          "maxMs": 4095,
+          "instances": 8
+        }
+      }
+    },
+    {
+      "label": "web8-route-warmup",
+      "evidence": {
+        "execution": "grabit-public-read-probe-20261102-q78jn",
+        "readOnly": true,
+        "taskCount": 8,
+        "newTlsConnections": true,
+        "results": [
+          {
+            "url": "https://heygrabit.com/api/runtime-flags",
+            "requests": 1500,
+            "startSkewMs": 11,
+            "statuses": {
+              "200": 1500
+            },
+            "phases": {
+              "ms": {
+                "p50Ms": 1845,
+                "p95Ms": 4528,
+                "maxMs": 4754
+              },
+              "tcp": {
+                "p50Ms": 316,
+                "p95Ms": 981,
+                "maxMs": 4390
+              },
+              "tls": {
+                "p50Ms": 1138,
+                "p95Ms": 3434,
+                "maxMs": 4590
+              },
+              "ttfb": {
+                "p50Ms": 1845,
+                "p95Ms": 4528,
+                "maxMs": 4754
+              }
+            },
+            "server": {
+              "requests": 1500,
+              "p50Ms": 254,
+              "p95Ms": 644,
+              "maxMs": 871,
+              "instances": 8
+            },
+            "cloudflareResponses": 1500,
+            "challenges": 0,
+            "warmupRequests": 256
+          }
+        ]
+      }
+    },
+    {
+      "label": "32-processes-web8",
+      "evidence": {
+        "execution": "grabit-public-read-probe-20261102-5qpzv",
+        "readOnly": true,
+        "taskCount": 32,
+        "newTlsConnections": true,
+        "results": [
+          {
+            "url": "https://heygrabit.com/api/runtime-flags",
+            "requests": 1500,
+            "startSkewMs": 6,
+            "statuses": {
+              "200": 1500
+            },
+            "phases": {
+              "ms": {
+                "p50Ms": 1275,
+                "p95Ms": 2120,
+                "maxMs": 2511
+              },
+              "tcp": {
+                "p50Ms": 71,
+                "p95Ms": 89,
+                "maxMs": 116
+              },
+              "tls": {
+                "p50Ms": 222,
+                "p95Ms": 331,
+                "maxMs": 404
+              },
+              "ttfb": {
+                "p50Ms": 1275,
+                "p95Ms": 2120,
+                "maxMs": 2511
+              }
+            },
+            "server": {
+              "requests": 1500,
+              "p50Ms": 945,
+              "p95Ms": 1701,
+              "maxMs": 2033,
+              "instances": 8
+            },
+            "cloudflareResponses": 1500,
+            "challenges": 0,
+            "warmupRequests": 256
+          }
+        ]
+      }
+    },
+    {
+      "label": "32-processes-web12",
+      "evidence": {
+        "execution": "grabit-public-read-probe-20261102-g7mcq",
+        "readOnly": true,
+        "taskCount": 32,
+        "newTlsConnections": true,
+        "results": [
+          {
+            "url": "https://heygrabit.com/api/runtime-flags",
+            "requests": 1500,
+            "startSkewMs": 10,
+            "statuses": {
+              "200": 1500
+            },
+            "phases": {
+              "ms": {
+                "p50Ms": 852,
+                "p95Ms": 1737,
+                "maxMs": 2034
+              },
+              "tcp": {
+                "p50Ms": 72,
+                "p95Ms": 95,
+                "maxMs": 126
+              },
+              "tls": {
+                "p50Ms": 224,
+                "p95Ms": 331,
+                "maxMs": 377
+              },
+              "ttfb": {
+                "p50Ms": 852,
+                "p95Ms": 1737,
+                "maxMs": 2033
+              }
+            },
+            "server": {
+              "requests": 1500,
+              "p50Ms": 530,
+              "p95Ms": 1301,
+              "maxMs": 1555,
+              "instances": 12
+            },
+            "cloudflareResponses": 1500,
+            "challenges": 0,
+            "warmupRequests": 256
+          }
+        ]
+      }
+    }
+  ],
+  "warmupVerification": {
+    "readOnly": true,
+    "runId": "Grabit-Opening-Warmup/3228f311-979c-4747-9fe7-be34557e7858",
+    "startedAt": "2026-11-02T08:46:47.613Z",
+    "completedAt": "2026-11-02T08:47:12.179Z",
+    "revision": "grabit-web-00224-nsr",
+    "completedRequests": 384,
+    "successfulInstances": 12,
+    "successfulInstancesByRoute": {
+      "/": 12,
+      "/api/runtime-flags": 12
+    },
+    "bookingEnabled": true
+  }
+}

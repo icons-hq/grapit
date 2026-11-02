@@ -7,7 +7,7 @@
 | 항목 | 현재 값 / 채울 내용 |
 | --- | --- |
 | 공연 / 회차 / 판매 시작·종료 KST | 미정 |
-| 예상 동시 방문 / 좌석 / 예매 입장 상한 | 현 운영은 300명 입장. 격리 통과 구성은 1,500명 방문 / 600석 / 150명 입장 + 별도 증설이며 운영 미적용. [결과·비용](../research/booking-launch-readiness-2026-11-02.md) 확인 후 결정 |
+| 예상 동시 방문 / 좌석 / 예매 입장 상한 | 운영에 DB 4 vCPU·15GiB / API 최대 8대·pool 8 / Web 최대 12대 / 입장 150명 적용 완료. 1,500명 방문·600석의 시험 범위와 비용은 [전환 기록](../research/booking-production-cutover-2026-11-02.md) 확인. 실제 공연 규모가 달라지면 다시 판단 |
 | iPhone 모델 / iOS / Safari 버전 | 기기 확보 후 기입 |
 | Android 모델 / OS / Chrome 버전 | 미확보. Android 합격 기록 없음 |
 | 현장 리허설 책임자 | 박상우 |
@@ -74,6 +74,6 @@
 
 1. 공개 상태, 판매 KST, 회차, 층·좌석 수, 가격·수수료, 1인 제한, 결제 수단, 한국어·영문 안내와 번역 상태를 운영 화면에서 검토한다.
 2. 지정 판매·입장 시간을 Valkey maintenance 보호 구간에 넣어 [판매 posture 검사](../../scripts/managed-demo/verify-valkey-sale-posture.mjs)를 다시 실행한다. 현재 maintenance는 수요일 18:00 UTC(목요일 03:00 KST)이므로 실제 일정과 대조해야 한다.
-3. 판매 최소 15분 전에 API 4대 예열을 실행하고 실제 최소·Ready 상태를 확인한다. 예열 Scheduler의 정기 예약은 공연 일정이 확정되기 전 일시정지 상태를 유지한다. 시험 환경의 warm 결과를 0대 cold start 통과로 간주하지 않는다.
+3. 판매 최소 15분 전에 API 8대와 Web 12대를 예열한다. [현재 용량 절차](managed-demo-cost-floor.md#current-600-seat-opening-profile--2026-11-02)에 따라 실제 최소·Ready 상태·관측 인스턴스 수를 확인하고 `node scripts/managed-demo/warm-web-routes.mjs`로 홈·예매 상태 조회가 Web 12대 각각에서 성공한 것을 확인한다. API 예열 Scheduler의 정기 예약은 공연 일정이 확정되기 전 일시정지 상태를 유지한다. 0대 cold start는 정합성을 지켰지만 진입 p95 13.8초로 지연 목표에 미달했다. 예열 완료 전 판매를 시작하지 않는다.
 4. 진행 중 결제·환불, 백업, worker 최근 성공, [운영 감시](launch-monitoring.md)의 활성·실제 수신·담당자 인수, 복구 대상 revision/worker 이미지를 확인한다. 판매 중 겹친 배포의 DB 연결 예산은 별도다.
 5. 해당 공연의 Gate Ledger에 날짜·실행자·증거·남은 예외를 연결한다. 공연이 지정되지 않은 과거 ledger나 이 문서만으로 공개 오픈을 승인하지 않는다. #214/#223은 실제 미완료 조건이 사라질 때 닫는다.

@@ -1,0 +1,423 @@
+{
+  "execution": "grabit-load-edge-20261102-bgd4m",
+  "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/rehearsal-edge@sha256:dca0984b831686c823f18817029be1eaf31403554d87d529a5ba66f608f977ab",
+  "routing": {
+    "REHEARSAL_API_URL": "https://grabit-rehearsal-edge-20261102.sangwopark19.workers.dev",
+    "REHEARSAL_ORIGIN_URL": "https://grabit-rehearsal-edge-20261102-d3c6wrfdbq-du.a.run.app"
+  },
+  "startedAt": "2026-11-02T07:53:48.889Z",
+  "completedAt": "2026-11-02T07:55:36.810Z",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:0e896ad090b57eda2ce0b1a863991a55187acb541ae45819afa6c9a59a97ce8f",
+  "provider": "simulated-300ms-no-provider-network",
+  "databaseProfile": {
+    "apiPoolMax": 8,
+    "connectionBudget": 82,
+    "maximum": 500,
+    "reserved": 3,
+    "tier": "db-custom-4-15360",
+    "workerPoolMax": 2
+  },
+  "status": "passed",
+  "apiResources": {
+    "cpu": 2,
+    "heapMiB": 256,
+    "maxInstances": 8,
+    "memoryMiB": 512,
+    "minInstances": 8
+  },
+  "topology": {
+    "admissionLimit": 150,
+    "apiInstances": 8,
+    "dbPoolMax": 8,
+    "queueSocketLimit": 0,
+    "saleSeats": 600,
+    "socketClients": 150
+  },
+  "workload": {
+    "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+    "confirmCadenceMs": 0,
+    "confirmPattern": "synchronized-cohort-burst",
+    "holdSeatSocketsThroughCheckout": true,
+    "httpClientThreads": 4,
+    "profilingEnabled": false,
+    "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter",
+    "socketClientThreads": 4
+  },
+  "waves": [
+    {
+      "activeAdmissionLimit": 150,
+      "admitted": 150,
+      "apiInstancesObserved": 8,
+      "apiRssMiBObservedMax": [
+        187,
+        187,
+        189,
+        188,
+        178,
+        194,
+        183,
+        189
+      ],
+      "checkout": {
+        "confirmed": 600,
+        "credentials": 600,
+        "items": 600,
+        "sold": 600
+      },
+      "cohorts": [
+        {
+          "buyers": 150,
+          "confirmInstances": {
+            "484d8534-df1a-4250-8df7-0003947d51f6": 24,
+            "55310bb6-033f-4a72-ac23-3a240c7cfce4": 22,
+            "65b9a429-6e7e-4506-980d-307c388e33f7": 15,
+            "6a28a82c-dff9-4aa2-b690-944719f38fdd": 19,
+            "8b7708be-0557-4f75-9ceb-6a3b4caf7012": 18,
+            "9e1f21ba-00ee-4148-859c-d469faeaaa2a": 6,
+            "f28d7d1f-5db3-4dbd-9b4a-19850bd109f6": 18,
+            "f3a51f5e-bcba-43ad-925e-c3cafd3415bb": 28
+          },
+          "confirmed": 150,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 150
+        },
+        {
+          "buyers": 150,
+          "confirmInstances": {
+            "484d8534-df1a-4250-8df7-0003947d51f6": 16,
+            "55310bb6-033f-4a72-ac23-3a240c7cfce4": 18,
+            "65b9a429-6e7e-4506-980d-307c388e33f7": 21,
+            "6a28a82c-dff9-4aa2-b690-944719f38fdd": 29,
+            "8b7708be-0557-4f75-9ceb-6a3b4caf7012": 14,
+            "9e1f21ba-00ee-4148-859c-d469faeaaa2a": 20,
+            "f28d7d1f-5db3-4dbd-9b4a-19850bd109f6": 16,
+            "f3a51f5e-bcba-43ad-925e-c3cafd3415bb": 16
+          },
+          "confirmed": 150,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              503,
+              201
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 150
+        },
+        {
+          "buyers": 150,
+          "confirmInstances": {
+            "484d8534-df1a-4250-8df7-0003947d51f6": 15,
+            "55310bb6-033f-4a72-ac23-3a240c7cfce4": 17,
+            "65b9a429-6e7e-4506-980d-307c388e33f7": 17,
+            "6a28a82c-dff9-4aa2-b690-944719f38fdd": 28,
+            "8b7708be-0557-4f75-9ceb-6a3b4caf7012": 14,
+            "9e1f21ba-00ee-4148-859c-d469faeaaa2a": 21,
+            "f28d7d1f-5db3-4dbd-9b4a-19850bd109f6": 22,
+            "f3a51f5e-bcba-43ad-925e-c3cafd3415bb": 16
+          },
+          "confirmed": 150,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 150
+        },
+        {
+          "buyers": 150,
+          "confirmInstances": {
+            "484d8534-df1a-4250-8df7-0003947d51f6": 19,
+            "55310bb6-033f-4a72-ac23-3a240c7cfce4": 22,
+            "65b9a429-6e7e-4506-980d-307c388e33f7": 18,
+            "6a28a82c-dff9-4aa2-b690-944719f38fdd": 20,
+            "8b7708be-0557-4f75-9ceb-6a3b4caf7012": 16,
+            "9e1f21ba-00ee-4148-859c-d469faeaaa2a": 18,
+            "f28d7d1f-5db3-4dbd-9b4a-19850bd109f6": 19,
+            "f3a51f5e-bcba-43ad-925e-c3cafd3415bb": 18
+          },
+          "confirmed": 150,
+          "duplicateConfirm": {
+            "initialStatuses": [
+              201,
+              503
+            ],
+            "replayStatuses": [
+              201,
+              201,
+              201,
+              201
+            ],
+            "sameReservation": true
+          },
+          "duplicateConfirmSucceeded": true,
+          "prepared": 150
+        }
+      ],
+      "durationMs": 104689,
+      "finalWaiting": 900,
+      "initialWaiting": 1350,
+      "invariantsPassed": true,
+      "latencyTargetsPassed": true,
+      "maxConcurrentPolls": 71,
+      "memoryBudgetPassed": true,
+      "metrics": {
+        "checkout.confirm": {
+          "errorRate": 0,
+          "maxMs": 1954,
+          "outcomes": {
+            "none": 596
+          },
+          "p50Ms": 1189,
+          "p95Ms": 1648,
+          "requests": 596,
+          "statuses": {
+            "201": 596
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.confirm.completed": {
+          "errorRate": 0,
+          "maxMs": 1954,
+          "outcomes": {
+            "none": 596
+          },
+          "p50Ms": 1189,
+          "p95Ms": 1648,
+          "requests": 596,
+          "statuses": {
+            "201": 596
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-inflight": {
+          "errorRate": 0,
+          "maxMs": 1290,
+          "outcomes": {
+            "none": 8
+          },
+          "p50Ms": 439,
+          "p95Ms": 1290,
+          "requests": 8,
+          "statuses": {
+            "201": 4,
+            "503": 4
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.duplicate-replay": {
+          "errorRate": 0,
+          "maxMs": 152,
+          "outcomes": {
+            "none": 16
+          },
+          "p50Ms": 126,
+          "p95Ms": 152,
+          "requests": 16,
+          "statuses": {
+            "201": 16
+          },
+          "unexpectedErrors": 0
+        },
+        "checkout.prepare": {
+          "errorRate": 0,
+          "maxMs": 704,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 418,
+          "p95Ms": 603,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "performance.detail": {
+          "errorRate": 0,
+          "maxMs": 872,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 504,
+          "p95Ms": 749,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 1335,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 765,
+          "p95Ms": 1248,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status": {
+          "errorRate": 0,
+          "maxMs": 1333,
+          "outcomes": {
+            "none": 5563
+          },
+          "p50Ms": 105,
+          "p95Ms": 280,
+          "requests": 5563,
+          "statuses": {
+            "200": 5563
+          },
+          "unexpectedErrors": 0
+        },
+        "queue.status.final": {
+          "errorRate": 0,
+          "maxMs": 908,
+          "outcomes": {
+            "none": 900
+          },
+          "p50Ms": 114,
+          "p95Ms": 213,
+          "requests": 900,
+          "statuses": {
+            "200": 900
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.lock": {
+          "errorRate": 0,
+          "maxMs": 557,
+          "outcomes": {
+            "none": 600
+          },
+          "p50Ms": 286,
+          "p95Ms": 467,
+          "requests": 600,
+          "statuses": {
+            "201": 600
+          },
+          "unexpectedErrors": 0
+        },
+        "seat.read": {
+          "errorRate": 0,
+          "maxMs": 1009,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 338,
+          "p95Ms": 563,
+          "requests": 1500,
+          "statuses": {
+            "200": 1500
+          },
+          "unexpectedErrors": 0
+        },
+        "socket.seat-update": {
+          "errorRate": 0,
+          "maxMs": 579,
+          "outcomes": {
+            "none": 90000
+          },
+          "p50Ms": 301,
+          "p95Ms": 484,
+          "requests": 90000,
+          "statuses": {
+            "delivered": 90000
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "paymentConfirmTargetPassed": true,
+      "peakActiveAdmissions": 150,
+      "queueSockets": {
+        "admissionEventsReceived": 0,
+        "connected": 0,
+        "expectedAdmissionEvents": 450,
+        "positionMessages": 0
+      },
+      "seats": 600,
+      "sessions": 1500,
+      "sloPassed": true,
+      "socketFanout": {
+        "clients": 150,
+        "delivered": 90000,
+        "duplicateDeliveries": 0,
+        "expectedDeliveries": 90000
+      }
+    }
+  ],
+  "workerOverlap": {
+    "expired_with_diagnostic": 25,
+    "fixtureReservations": 25,
+    "total": 25
+  },
+  "heldSeatObservers": [
+    {
+      "clients": 150,
+      "connectedAtEnd": 150,
+      "finalSoldStatesComplete": true
+    },
+    {
+      "clients": 150,
+      "connectedAtEnd": 150,
+      "finalSoldStatesComplete": true
+    },
+    {
+      "clients": 150,
+      "connectedAtEnd": 150,
+      "finalSoldStatesComplete": true
+    },
+    {
+      "clients": 150,
+      "connectedAtEnd": 150,
+      "finalSoldStatesComplete": true
+    }
+  ],
+  "socketRecovery": {
+    "disconnectReasons": {},
+    "reconnectFailures": 0,
+    "reconnections": 0,
+    "resyncFailures": 0,
+    "resyncs": 0
+  },
+  "confirmRecovery": {
+    "ordersRetried": 0,
+    "recoveredOrders": 0,
+    "retryAttempts": 0,
+    "unrecoveredOrders": 0
+  },
+  "note": "Original raw harness retained a private-cloud environment label; immutable execution URL above proves requests used the public Worker. Production-zone WAF and live provider are not covered."
+}

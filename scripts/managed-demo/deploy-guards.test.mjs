@@ -64,14 +64,16 @@ test('validates workflow defaults and builds fail-fast migration session options
   assert.equal(buildMigrationPgOptions(config), '-c lock_timeout=5s -c statement_timeout=60s');
 });
 
-test('API deployment updates both Cloud Run caps when resizing an existing service', async () => {
+test('API and Web deployment update both Cloud Run caps when resizing an existing service', async () => {
   const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
-  const apiDeployment = workflow.split('service: ${{ env.API_SERVICE }}')[1]?.split('env_vars:')[0];
-  assert.ok(apiDeployment, 'API deploy action must be present');
-  // Cloud Run uses the smaller cap: leaving the old service maximum at 2
-  // would silently defeat a tested revision maximum of 4.
-  assert.match(apiDeployment, /--max=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
-  assert.match(apiDeployment, /--max-instances=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
+  for (const service of ['API', 'WEB']) {
+    const deployment = workflow.split('service: ${{ env.' + service + '_SERVICE }}')[1]?.split('env_vars:')[0];
+    assert.ok(deployment, `${service} deploy action must be present`);
+    // Cloud Run uses the smaller cap. An inherited service maximum must not
+    // silently defeat the new revision maximum during a capacity increase.
+    assert.ok(deployment.includes('--max=${{ env.' + service + '_MAX_INSTANCES }}'));
+    assert.ok(deployment.includes('--max-instances=${{ env.' + service + '_MAX_INSTANCES }}'));
+  }
 });
 
 test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {

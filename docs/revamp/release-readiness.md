@@ -2,6 +2,10 @@
 
 기준일 2026-09-22 KST. #216–#222 구현과 격리 검증 뒤의 전환 준비다. **#214와 #223은 OPEN**이다. 아래 로컬 실험, 운영 읽기 전용 점검, 기술 배포, 실제 판매 오픈 준비를 구분한다.
 
+## 2026-11-02 운영 용량 전환 후속
+
+검증된 DB 4 vCPU·15GiB, API 최대 8대 × 2 vCPU·pool 8, worker pool 2, 입장 150명 구성을 운영에 적용했다. [배포 41408110841](https://github.com/icons-hq/grapit/actions/runs/41408110841), 데이터 보존·실측 연결 예산·8대 예열·알림 실제 수신과 공개망 검증 범위는 [전환 기록](../research/booking-production-cutover-2026-11-02.md)을 따른다. 아래 300명·micro 사양은 각 실행 당시의 과거 기록이다. 공연·판매 시각, 실제 휴대폰/현장·소액 live 결제 및 은행 대조는 [인수 절차](../runbooks/live-opening-handoff-2026-11-02.md)의 미완료 항목으로 유지한다.
+
 ## 2026-10-30 결제창 배포·인증 알림 후속
 
 - **결제창 수정 운영 반영:** [PR #241](https://github.com/icons-hq/grapit/pull/241), 병합 `36c0fe2e`, [CI](https://github.com/icons-hq/grapit/actions/runs/41021829931) 및 [배포](https://github.com/icons-hq/grapit/actions/runs/41023349050) 성공. API `grabit-api-00270-tkc`, Web `grabit-web-00216-2nf`의 같은 SHA·트래픽 100%, 같은 worker 이미지와 worker smoke를 확인했다. API health·홈·영문 로그인·공연 상세·runtime flags 모두 200이며 예매 활성, admission 300, API DB pool 2가 유지됐다. 위젯 회귀 73개·typecheck·lint와 실제 Toss SDK iframe을 띄우는 격리 브라우저 검사도 통과했다. 이 배포 확인은 실결제 검증을 포함하지 않는다.

@@ -1,0 +1,159 @@
+{
+  "status": "diagnostic_limited",
+  "startedAt": "2026-11-02T08:15:18.446Z",
+  "completedAt": "2026-11-02T08:15:35.708Z",
+  "sourceImage": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api@sha256:0e896ad090b57eda2ce0b1a863991a55187acb541ae45819afa6c9a59a97ce8f",
+  "apiResources": {
+    "cpu": 2,
+    "heapMiB": 256,
+    "maxInstances": 8,
+    "memoryMiB": 512,
+    "minInstances": 0
+  },
+  "apiScaling": {
+    "maxInstanceCount": 8
+  },
+  "apiRevision": "projects/grapit-491806/locations/asia-northeast3/services/grabit-rehearsal-edge-20261102/revisions/grabit-rehearsal-edge-20261102-00002-222",
+  "topology": {
+    "admissionLimit": 150,
+    "apiInstances": 8,
+    "dbPoolMax": 8,
+    "queueSocketLimit": 0,
+    "saleSeats": 600,
+    "socketClients": 150
+  },
+  "workload": {
+    "browserConfirmRetryPolicy": "current payment-return.ts: 3 retries, 1/2/4 second backoff, same order and payment key",
+    "confirmCadenceMs": 0,
+    "confirmPattern": "synchronized-cohort-burst",
+    "holdSeatSocketsThroughCheckout": true,
+    "httpClientThreads": 4,
+    "profilingEnabled": false,
+    "seatReconnectPolicy": "current socket-client.ts: 10 attempts, 1-5 seconds; rejoin and snapshot with <=3 second jitter",
+    "socketClientThreads": 4
+  },
+  "coldStart": {
+    "connectionReuse": false,
+    "noWarmupRequests": true
+  },
+  "waves": [
+    {
+      "admitted": 150,
+      "apiInstancesObserved": 8,
+      "invariantsPassed": true,
+      "latencyTargetsPassed": false,
+      "metrics": {
+        "queue.enter": {
+          "errorRate": 0,
+          "maxMs": 14247,
+          "outcomes": {
+            "none": 1500
+          },
+          "p50Ms": 12620,
+          "p95Ms": 13801,
+          "requests": 1500,
+          "statuses": {
+            "201": 1500
+          },
+          "unexpectedErrors": 0
+        }
+      },
+      "peakActiveAdmissions": 150,
+      "sessions": 1500,
+      "sloPassed": false,
+      "waiting": 1350
+    }
+  ],
+  "databaseProfile": {
+    "apiPoolMax": 8,
+    "connectionBudget": 82,
+    "maximum": 500,
+    "reserved": 3,
+    "tier": "db-custom-4-15360",
+    "workerPoolMax": 2
+  },
+  "transportDiagnostics": {
+    "queue.enter": {
+      "connectMs": {
+        "max": 3790,
+        "n": 1500,
+        "p95": 3111
+      },
+      "count": 1500,
+      "dnsMs": {
+        "max": 763,
+        "n": 1500,
+        "p95": 699
+      },
+      "enqueueMs": {
+        "max": 714,
+        "n": 1500,
+        "p95": 675
+      },
+      "parentTransferMs": {
+        "max": 8,
+        "n": 1500,
+        "p95": 1
+      },
+      "parseMs": {
+        "max": 8,
+        "n": 1500,
+        "p95": 1
+      },
+      "responseMs": {
+        "max": 14117,
+        "n": 1500,
+        "p95": 13301
+      },
+      "reused": 0,
+      "socketAssignedMs": {
+        "max": 27,
+        "n": 1500,
+        "p95": 4
+      },
+      "tlsMs": {
+        "max": 3927,
+        "n": 1500,
+        "p95": 3218
+      },
+      "ttfbMs": {
+        "max": 14116,
+        "n": 1500,
+        "p95": 13301
+      }
+    }
+  },
+  "zeroInstanceProof": [
+    {
+      "state": {
+        "state": "active"
+      },
+      "point": {
+        "interval": {
+          "startTime": "2026-11-02T08:15:00Z",
+          "endTime": "2026-11-02T08:15:00Z"
+        },
+        "value": {
+          "int64Value": "0"
+        }
+      }
+    },
+    {
+      "state": {
+        "state": "idle"
+      },
+      "point": {
+        "interval": {
+          "startTime": "2026-11-02T08:15:00Z",
+          "endTime": "2026-11-02T08:15:00Z"
+        },
+        "value": {
+          "int64Value": "0"
+        }
+      }
+    }
+  ],
+  "execution": "grabit-load-edge-20261102-5hkrw",
+  "publicEdge": "https://grabit-rehearsal-edge-20261102.sangwopark19.workers.dev",
+  "interpretation": "All 1500 requests succeeded and admission invariants held; first-arrival latency including TLS and scale-from-zero failed the 2000ms objective. Prewarm is required."
+}
