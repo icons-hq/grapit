@@ -516,6 +516,7 @@ jobs:
           flags: >-
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --min-instances=${{ env.WEB_MIN_INSTANCES }}
+            --max=${{ env.WEB_MAX_INSTANCES }}
             --max-instances=${{ env.WEB_MAX_INSTANCES }}
             --concurrency=250
             --memory=1Gi
