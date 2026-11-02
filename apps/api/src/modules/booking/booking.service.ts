@@ -21,7 +21,7 @@ import { reservationSeats } from '../../database/schema/reservation-seats.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
-import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
+import { createBuyerTicketCountReader } from '../../database/ticket-limit.js';
 import { assertShowtimeSalesOpen } from './showtime-sales-cutoff.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
@@ -452,6 +452,7 @@ return 0
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
+  private readonly buyerTicketCounts = createBuyerTicketCountReader(() => this.db);
   private readonly seatLockPolicies = coalesceFreshReads((showtimeId: string) => this.loadSeatLockPolicy(showtimeId));
   private readonly showtimeSaleSnapshots = coalesceFreshReads((showtimeId: string) => this.loadShowtimeSaleSnapshot(showtimeId));
   private readonly seatMapSnapshots = coalesceFreshReads((key: string) => {
@@ -522,7 +523,7 @@ export class BookingService {
     userId: string,
     performanceId: string,
   ): Promise<number> {
-    return countBuyerActiveTicketsForPerformance(this.db, userId, performanceId);
+    return this.buyerTicketCounts(userId, performanceId);
   }
 
   private async assertSeatExistsInShowtimeSeatMap(

@@ -23,7 +23,7 @@ import { fetchReviewedPerformanceTranslations } from '../translation/performance
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { jsonRows } from '../../database/json-rows.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
-import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
+import { createBuyerTicketCountReader } from '../../database/ticket-limit.js';
 import { restoreCancellationPendingBenefitEntitlements } from '../../database/benefit-entitlement-restoration.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import {
@@ -405,6 +405,7 @@ function isPaymentProvider(provider: string): provider is PaymentProvider {
 
 @Injectable()
 export class ReservationService {
+  private readonly buyerTicketCounts = createBuyerTicketCountReader(() => this.db);
   private readonly logger = new Logger(ReservationService.name);
   private readonly showtimeContexts = coalesceFreshReads((id: string) => this.loadShowtimeBookingContext(id));
   private readonly canonicalSeatMetadata = coalesceFreshReads((id: string) => this.loadCanonicalSeatMetadata(id));
@@ -495,7 +496,7 @@ export class ReservationService {
     userId: string,
     performanceId: string,
   ): Promise<number> {
-    return countBuyerActiveTicketsForPerformance(this.db, userId, performanceId);
+    return this.buyerTicketCounts(userId, performanceId);
   }
 
   private async assertUserTicketLimitAvailable(input: {

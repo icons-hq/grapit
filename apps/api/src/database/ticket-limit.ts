@@ -1,8 +1,9 @@
-import { NotFoundException } from '@nestjs/common';
+import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
 import { parseE164 } from '../modules/sms/phone.util.js';
 import type { DrizzleDB } from './drizzle.provider.js';
+import { FreshReadBatcher } from '../common/fresh-read-batcher.js';
 type TicketLimitExecutor = Pick<DrizzleDB, 'execute'>;
 type TicketLimitSnapshot = { performanceId: string; maxTicketsPerUser: number; activeTicketCount: number };
 type BuyerTicketCountRow = {
@@ -157,6 +158,47 @@ export async function countBuyerActiveTicketsForPerformance(
   `);
 
   return sumBuyerIdentityTickets((result.rows[0] ?? {}) as BuyerTicketCountRow);
+}
+
+/** Read-only lock/prepare prechecks; confirm keeps its transaction-bound snapshot. */
+export function createBuyerTicketCountReader(executor: () => TicketLimitExecutor) {
+  const batch = new FreshReadBatcher<string, number>(async (keys) => {
+    const requests = keys.map((requestKey) => {
+      const [userId, performanceId] = JSON.parse(requestKey) as [string, string];
+      return { request_key: requestKey, user_id: userId, performance_id: performanceId };
+    });
+    // Keep the smaller existing statement for an ordinary single-caller read.
+    if (requests.length === 1) {
+      const request = requests[0]!;
+      return new Map([[request.request_key, await countBuyerActiveTicketsForPerformance(
+        executor(), request.user_id, request.performance_id,
+      )]]);
+    }
+    const result = await executor().execute(sql`
+      SELECT request.request_key,
+        ${confirmedTicketCount({ userId: sql`request.user_id`, performanceId: sql`request.performance_id` })} AS active_ticket_count,
+        ${buyerPhoneColumns({ performanceId: sql`request.performance_id`, includeLinkedPendingSeats: true })}
+      FROM jsonb_to_recordset(${JSON.stringify(requests)}::jsonb)
+        AS request(request_key text, user_id uuid, performance_id uuid)
+      LEFT JOIN users buyer ON buyer.id = request.user_id
+    `);
+    const counts = new Map<string, number>();
+    for (const row of result.rows as Array<BuyerTicketCountRow & { request_key?: unknown }>) {
+      if (typeof row.request_key !== 'string' || counts.has(row.request_key)) {
+        throw new InternalServerErrorException('예매 매수 제한을 확인하지 못했습니다');
+      }
+      counts.set(row.request_key, sumBuyerIdentityTickets(row));
+    }
+    if (counts.size !== keys.length || keys.some(key => !counts.has(key))) {
+      throw new InternalServerErrorException('예매 매수 제한을 확인하지 못했습니다');
+    }
+    return counts;
+  });
+  return async (userId: string, performanceId: string): Promise<number> => {
+    const count = await batch.read(JSON.stringify([userId, performanceId]));
+    if (count === undefined) throw new InternalServerErrorException('예매 매수 제한을 확인하지 못했습니다');
+    return count;
+  };
 }
 
 export async function getTicketLimitSnapshot(

@@ -16,6 +16,7 @@ import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import {
   countBuyerActiveTicketsForPerformance,
+  createBuyerTicketCountReader,
   getTicketLimitSnapshot,
   lockTicketLimitScope,
 } from '../src/database/ticket-limit.js';
@@ -131,6 +132,13 @@ describe('Reservation gates — PostgreSQL', () => {
       await expect(countBuyerActiveTicketsForPerformance(db, sameNumberTrunk.id, performanceId)).resolves.toBe(1);
       await expect(countBuyerActiveTicketsForPerformance(db, unverifiedSameNumber.id, performanceId)).resolves.toBe(0);
       await expect(countBuyerActiveTicketsForPerformance(db, otherNumberSameSuffix.id, performanceId)).resolves.toBe(0);
+      const readCount = createBuyerTicketCountReader(() => db);
+      await expect(Promise.all([
+        readCount(sameNumberLocal.id, performanceId),
+        readCount(sameNumberTrunk.id, performanceId),
+        readCount(unverifiedSameNumber.id, performanceId),
+        readCount(otherNumberSameSuffix.id, performanceId),
+      ])).resolves.toEqual([1, 1, 0, 0]);
       await expect(getTicketLimitSnapshot(db, sameNumberLocal.id, randomUUID(), showtimeId))
         .resolves.toEqual({ performanceId, maxTicketsPerUser: 1, activeTicketCount: 1 });
     });

@@ -29,7 +29,7 @@ import {
   showtimeOnSaleCondition,
 } from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
-import { FreshReadBatcher } from '../../common/fresh-read-batcher.js';
+import { FreshReadBatcher, coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
   CACHE_QUEUE_CAPACITY_LUA,
   COUNT_VALID_LOCKED_SEATS_LUA,
@@ -336,6 +336,13 @@ export class QueueService {
   private readonly remainingSeatsInFlight = new Map<string, Promise<RemainingSeatsSnapshot>>();
   private readonly browserIdentities: FreshReadBatcher<string, string>;
   private readonly performanceGates: FreshReadBatcher<string, PerformanceGateSnapshot>;
+  private readonly showtimeAdmissions = coalesceFreshReads(async (showtimeId: string) => {
+    const [showtime] = await this.db
+      .select({ performanceId: showtimes.performanceId })
+      .from(showtimes)
+      .where(eq(showtimes.id, showtimeId));
+    return showtime;
+  });
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
@@ -866,12 +873,9 @@ export class QueueService {
     admissionToken: string;
     action: Exclude<QueueAction, 'confirm-payment'>;
   }): Promise<ValidatedAdmission> {
-    const [showtime] = await this.db
-      .select({
-        performanceId: showtimes.performanceId,
-      })
-      .from(showtimes)
-      .where(eq(showtimes.id, params.showtimeId));
+    // Share only callers queued before this DB snapshot starts. Each caller
+    // still validates its own browser and admission against current Redis state.
+    const showtime = await this.showtimeAdmissions(params.showtimeId);
 
     if (!showtime) {
       throw new NotFoundException('회차를 찾을 수 없습니다');
