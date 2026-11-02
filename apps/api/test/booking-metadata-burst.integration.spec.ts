@@ -45,7 +45,7 @@ describe('booking metadata burst — same SQL contracts, fresh reads', () => {
     container = pg.container;
     const pool = new Pool({ connectionString: pg.connectionString, max: 5 });
     closePool = createPostgresPoolCleanup(pool);
-    db = drizzle(pool, { schema, logger: { logQuery(query) { if (counting && /^select\b/i.test(query)) reads += 1; } } });
+    db = drizzle(pool, { schema, logger: { logQuery(query) { if (counting && /^select\b/i.test(query.trimStart())) reads += 1; } } });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
     const date = new Date(Date.now() + 3600_000);
     await db.insert(schema.performances).values({ id: performanceId, title: 'Synthetic metadata test', genre: 'concert', ageRating: 'All', startDate: date, endDate: date, status: 'selling', publishState: 'published' });
@@ -87,7 +87,7 @@ describe('booking metadata burst — same SQL contracts, fresh reads', () => {
     reads = 0; counting = true;
     await Promise.all(seatIds.map(id => locking.assertNoUnavailableSeatRecords(showtimeId, [`1F:${id}`])));
     counting = false;
-    expect(reads).toBeLessThanOrEqual(2);
+    expect(reads).toBe(2);
     await db.insert(schema.seatInventories).values([
       { showtimeId, floorKey: '1F', seatId: 'A-1', seatKey: '1F:A-1', status: 'sold' },
       { showtimeId, floorKey: '1F', seatId: 'A-2', seatKey: '1F:A-2', status: 'held_cancelled' },

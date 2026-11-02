@@ -21,7 +21,9 @@ describe('unavailable seat burst reads', () => {
   });
 
   it('fails closed on missing, duplicate or invalid status rows', async () => {
-    for (const rows of [[], [{ request_key: 'unknown', status: 'sold' }], [{ request_key: 'unknown', status: 'available' }]]) {
+    const requestKey = JSON.stringify(['first', '1F', '1F:A-1', 'A-1']);
+    for (const rows of [[], [{ request_key: requestKey, status: 'sold' }, { request_key: requestKey, status: null }],
+      [{ request_key: requestKey, status: 'available' }]]) {
       const read = createUnavailableSeatReader(() => ({ execute: vi.fn().mockResolvedValue({ rows }), select: vi.fn() }));
       const results = await Promise.allSettled([read('first', seat('1F')), read('first', seat('2F'))]);
       expect(results.every(result => result.status === 'rejected')).toBe(true);
