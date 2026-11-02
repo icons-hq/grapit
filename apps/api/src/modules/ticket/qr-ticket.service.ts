@@ -12,13 +12,14 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as Sentry from '@sentry/nestjs';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { QrTicket, QrTicketStatus } from '@grabit/shared';
 import type { TicketEmailDelivery } from '@grabit/shared/types/booking.types.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   payments,
   performances,
+  qrReminderDeliveries,
   reservations,
   showtimes,
   ticketItems,
@@ -27,6 +28,7 @@ import {
   venues,
 } from '../../database/schema/index.js';
 import { EmailService } from '../auth/email/email.service.js';
+import { QrReminderDeliveryStore, QR_REMINDER_RETRY_WINDOW_MS } from './qr-reminder-delivery.js';
 import { resolveTicketEmailDelivery } from './ticket-email-delivery.js';
 import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 import {
@@ -170,6 +172,7 @@ export interface QrTicketScannerContract {
 @Injectable()
 export class QrTicketService implements OnModuleInit {
   private readonly logger = new Logger(QrTicketService.name);
+  private readonly reminderStore: QrReminderDeliveryStore;
   private issueContextQuery?: ReturnType<QrTicketService['createIssueContextQuery']>;
 
   constructor(
@@ -178,7 +181,9 @@ export class QrTicketService implements OnModuleInit {
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
     @Inject(PG_BOSS) private readonly pgBoss: PgBossContract,
-  ) {}
+  ) {
+    this.reminderStore = new QrReminderDeliveryStore(db);
+  }
 
   async onModuleInit(): Promise<void> {
     this.reportSecretKeyringConflict();
@@ -899,7 +904,7 @@ export class QrTicketService implements OnModuleInit {
       {
         startAfter: ticketRecord.emailScheduledAt,
         // Not a dedupe guarantee: the queue uses pg-boss' standard policy, which
-        // ignores singletonKey. The email_job_id CAS below and the send claim in
+        // ignores singletonKey. The email_job_id CAS below and the delivery lease in
         // handleReminderEmailJob are what prevent duplicate reminders.
         singletonKey: ticketRecord.id,
         retryLimit: 3,
@@ -973,140 +978,92 @@ export class QrTicketService implements OnModuleInit {
     );
   }
 
-  /**
-   * One reminder per reservation, covering every active seat. The anchor ticket
-   * only identifies the reservation and the recorded job; the send right is
-   * claimed atomically on email_sent_at so duplicate jobs on other workers skip.
-   */
-  private async handleReminderEmailJob(
-    payload: QrTicketEmailJobPayload,
-    jobId?: string,
-  ): Promise<void> {
-    const [anchor] = await this.db
-      .select({
-        id: tickets.id,
-        reservationId: tickets.reservationId,
-        emailJobId: tickets.emailJobId,
-      })
-      .from(tickets)
-      .where(eq(tickets.id, payload.ticketId));
-
-    if (!anchor) {
-      this.logger.warn(`QR reminder skipped: missing ticketId=${payload.ticketId}`);
-      return;
-    }
-
-    if (jobId && anchor.emailJobId && anchor.emailJobId !== jobId) {
-      this.logger.log(
-        `QR reminder skipped: superseded job. ticketId=${anchor.id}, jobId=${jobId}`,
-      );
-      return;
-    }
-
-    const context = await this.findTicketEmailContext({
-      scope: 'system-reminder',
-      reservationId: anchor.reservationId,
-    });
-    if (!context) {
-      return;
-    }
-
-    if (context.tickets.some((ticket) => ticket.emailSentAt)) {
-      // email_sent_at is also the send claim. After a crash between claim and
-      // send, the pg-boss retry lands here: a "claimed" log for this job id with
-      // no matching "sent" log is the signal that the reminder was lost.
-      this.logger.log(
-        `QR reminder skipped: already sent or claimed. reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}`,
-      );
-      return;
-    }
-
-    const delivery = this.resolveTicketEmailDelivery(context);
-    if (!delivery.canSend) {
-      this.logger.warn(
-        `QR reminder skipped: ticket email verification required for reservationId=${context.reservation.id}`,
-      );
-      return;
-    }
-
-    const claimedAt = new Date();
-    const claimed = await this.db
-      .update(tickets)
-      .set({
-        emailSentAt: claimedAt,
-        updatedAt: claimedAt,
-      })
-      .where(
-        and(
-          inArray(tickets.id, context.tickets.map((ticket) => ticket.id)),
-          eq(tickets.status, 'active'),
-          isNull(tickets.emailSentAt),
-        ),
-      )
-      .returning({ id: tickets.id });
-
-    if (claimed.length === 0) {
-      this.logger.log(
-        `QR reminder skipped: claimed by another worker. reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}`,
-      );
-      return;
-    }
-
-    const logRef = `reservationId=${context.reservation.id}, jobId=${jobId ?? 'none'}, claimedAt=${claimedAt.toISOString()}`;
-    this.logger.log(`QR reminder claimed. ${logRef}, ticketCount=${claimed.length}`);
-
-    // The claim is the authority on what this job may send. A seat cancelled or
-    // already emailed after the context read was not claimed, so its token must
-    // not go out with this reminder.
-    const claimedIds = new Set(claimed.map((row) => row.id));
-    const claimedTickets = context.tickets.filter((ticket) => claimedIds.has(ticket.id));
-    if (claimedTickets.length !== context.tickets.length) {
-      this.logger.warn(
-        `QR reminder partial claim. ${logRef}, readTicketCount=${context.tickets.length}, claimedTicketCount=${claimedTickets.length}`,
-      );
-    }
-
-    try {
-      await this.sendTicketEmail({ ...context, tickets: claimedTickets });
-    } catch (error) {
-      // Release the claim so the pg-boss retry can send. A crash before this
-      // point leaves the claim in place (at-most-once reminder, never duplicate).
-      const releasedCount = await this.releaseReminderClaim([...claimedIds], claimedAt);
-      if (releasedCount !== null && releasedCount > 0) {
-        this.logger.warn(`QR reminder claim released after send failure. ${logRef}, releasedCount=${releasedCount}`);
-      } else if (releasedCount === 0) {
-        this.logger.warn(`QR reminder claim already superseded after send failure. ${logRef}, releasedCount=0`);
-      }
-      throw error;
-    }
-
-    this.logger.log(`QR reminder sent. ${logRef}`);
+  /** A recorded pg-boss job and the recovery sweep share the same durable reservation lease. */
+  private async handleReminderEmailJob(payload: QrTicketEmailJobPayload, jobId?: string): Promise<void> {
+    const [anchor] = await this.db.select({
+      id: tickets.id, reservationId: tickets.reservationId, emailJobId: tickets.emailJobId,
+    }).from(tickets).where(eq(tickets.id, payload.ticketId));
+    if (!anchor || (jobId && anchor.emailJobId && anchor.emailJobId !== jobId)) return;
+    await this.deliverReservationReminder(anchor.reservationId);
   }
 
-  /** Returns how many claimed rows were released, or null when the release itself failed. */
-  private async releaseReminderClaim(ticketIds: string[], claimedAt: Date): Promise<number | null> {
-    try {
-      const released = await this.db
-        .update(tickets)
-        .set({
-          emailSentAt: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            inArray(tickets.id, ticketIds),
-            eq(tickets.emailSentAt, claimedAt),
-          ),
-        )
-        .returning({ id: tickets.id });
-      return released.length;
-    } catch (error) {
-      this.logger.error(
-        `QR reminder claim release failed; email_sent_at keeps an unsent claim. ticketIds=${ticketIds.join(',')}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-      return null;
+  private async deliverReservationReminder(reservationId: string): Promise<void> {
+    // Read again after obtaining the lease: cancellations, manual sends and
+    // email verification may have changed since the sweep selected this order.
+    const claim = await this.reminderStore.claim(reservationId);
+    if (!claim) return;
+    if (claim.firstAttemptAt && Date.now() - claim.firstAttemptAt.getTime() >= QR_REMINDER_RETRY_WINDOW_MS) {
+      await this.reminderStore.requireAttention(claim);
+      const message = 'QR_REMINDER_REQUIRES_ATTENTION: provider idempotency retry window exhausted';
+      this.logger.error(`${message}. reservationId=${reservationId}`);
+      Sentry.withScope((scope) => {
+        scope.setTag('component', 'qr-reminder');
+        scope.setContext('reminder', { reservationId, attempts: claim.attempts });
+        Sentry.captureException(new Error(message));
+      });
+      return;
     }
+
+    try {
+      const context = await this.findTicketEmailContext({ scope: 'system-reminder', reservationId });
+      if (!context || !this.resolveTicketEmailDelivery(context).canSend) {
+        await this.reminderStore.release(claim);
+        return;
+      }
+      // Existing/manual sends still suppress the automatic reminder. Historical
+      // email_sent_at values are preserved; they are never blindly replayed.
+      if (context.tickets.some((ticket) => ticket.emailSentAt)) {
+        await this.reminderStore.complete(claim, []);
+        return;
+      }
+      this.logger.log(`QR reminder claimed. reservationId=${reservationId}, attempt=${claim.attempts}`);
+      const providerMessageId = await this.sendTicketEmail(context, `qr-reminder/${reservationId}`);
+      const completed = await this.reminderStore.complete(claim, context.tickets.map((ticket) => ticket.id), providerMessageId);
+      if (completed) this.logger.log(`QR reminder sent. reservationId=${reservationId}`);
+      // A stale worker cannot overwrite its successor. If the provider accepted
+      // its send, the successor uses the same provider idempotency key.
+    } catch (error) {
+      await this.reminderStore.release(claim).catch(() => {
+        this.logger.warn(`QR reminder lease release failed; recovery waits for expiry. reservationId=${reservationId}`);
+      });
+      throw error;
+    }
+  }
+
+  /** Repairs lost/failed pg-boss jobs as well as processes killed after claiming or sending. */
+  async recoverDueReminderEmails(shouldContinue: () => boolean = () => true): Promise<number> {
+    const now = new Date();
+    const due = await this.db.selectDistinctOn([tickets.reservationId], {
+      reservationId: tickets.reservationId,
+    }).from(tickets)
+      .innerJoin(reservations, eq(reservations.id, tickets.reservationId))
+      .innerJoin(ticketItems, eq(ticketItems.id, tickets.ticketItemId))
+      .innerJoin(payments, eq(payments.id, tickets.paymentId))
+      .innerJoin(showtimes, eq(showtimes.id, tickets.showtimeId))
+      .innerJoin(users, eq(users.id, reservations.userId))
+      .leftJoin(qrReminderDeliveries, eq(qrReminderDeliveries.reservationId, tickets.reservationId))
+      .where(and(
+        eq(tickets.status, 'active'), eq(ticketItems.status, 'active'),
+        eq(reservations.status, 'CONFIRMED'), eq(payments.status, 'DONE'),
+        eq(users.isEmailVerified, true), isNull(tickets.emailSentAt),
+        lte(tickets.emailScheduledAt, now), gt(showtimes.dateTime, now),
+        isNull(qrReminderDeliveries.sentAt), isNull(qrReminderDeliveries.attentionAt),
+        or(isNull(qrReminderDeliveries.nextAttemptAt), lte(qrReminderDeliveries.nextAttemptAt, now)),
+        or(isNull(qrReminderDeliveries.leaseExpiresAt), lte(qrReminderDeliveries.leaseExpiresAt, now)),
+        sql`not exists (select 1 from tickets sent where sent.reservation_id = ${tickets.reservationId} and sent.email_sent_at is not null)`,
+      )).orderBy(tickets.reservationId).limit(20);
+    let attempted = 0;
+    for (const row of due) {
+      if (!shouldContinue()) break;
+      try {
+        await this.deliverReservationReminder(row.reservationId);
+      } catch {
+        // Avoid logging provider bodies, recipient addresses or QR credentials.
+        this.logger.warn(`QR reminder recovery attempt failed; durable retry retained. reservationId=${row.reservationId}`);
+      }
+      attempted++;
+    }
+    return attempted;
   }
 
   /**
@@ -1194,7 +1151,7 @@ export class QrTicketService implements OnModuleInit {
     });
   }
 
-  private async sendTicketEmail(context: TicketEmailContext): Promise<void> {
+  private async sendTicketEmail(context: TicketEmailContext, idempotencyScope?: string): Promise<string | undefined> {
     const seatTickets = await Promise.all(
       context.tickets.map(async (ticket) => ({
         seatLabel: this.buildSeatLabels(ticket.seatIdentity).join(', '),
@@ -1203,7 +1160,7 @@ export class QrTicketService implements OnModuleInit {
     );
     const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
     const ticketUrl = `${frontendUrl}/mypage/reservations/${context.reservation.id}`;
-    const result = await this.emailService.sendQrTicketReminderEmail(context.user.email, {
+    const input = {
       reservationNumber: context.reservation.reservationNumber,
       performanceTitle: context.performance.title,
       showDateTime: context.showtime.dateTime.toISOString(),
@@ -1211,11 +1168,15 @@ export class QrTicketService implements OnModuleInit {
       tickets: seatTickets,
       ticketUrl,
       locale: context.user.preferredLocale ?? 'ko',
-    });
+    };
+    const result = idempotencyScope
+      ? await this.emailService.sendQrTicketReminderEmail(context.user.email, input, { idempotencyScope })
+      : await this.emailService.sendQrTicketReminderEmail(context.user.email, input);
 
     if (!result.success) {
       throw new Error(result.error ?? 'QR reminder email send failed');
     }
+    return result.id;
   }
 
   /** Buyer-side signing (QR display and ticket email). */

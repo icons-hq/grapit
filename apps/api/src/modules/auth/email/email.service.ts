@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
+import { createHash } from 'node:crypto';
 import * as Sentry from '@sentry/nestjs';
 import { PasswordResetEmail, getPasswordResetCopy } from './templates/password-reset.js';
 import type { SupportedLocale } from '@grabit/shared';
@@ -217,6 +218,7 @@ export class EmailService {
   async sendQrTicketReminderEmail(
     to: string,
     input: SendQrTicketReminderEmailInput,
+    options?: { idempotencyScope: string },
   ): Promise<SendEmailResult> {
     const showDateTime = new Intl.DateTimeFormat('ko-KR', {
       year: 'numeric',
@@ -255,13 +257,17 @@ export class EmailService {
 
     const toDomain = to.split('@')[1] ?? 'unknown';
 
+    const request = { from: this.from, to, subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`, html };
+    // Resend rejects reuse with a changed payload. A changed verified recipient
+    // or ticket set is a new message; identical retries keep exactly the same key.
+    const idempotencyKey = options
+      ? `${options.idempotencyScope}/${createHash('sha256').update(JSON.stringify(request)).digest('hex')}`
+      : undefined;
     for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
-      const { data, error } = await this.resend.emails.send({
-        from: this.from,
-        to,
-        subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`,
-        html,
-      });
+      // The pinned SDK forwards request options to fetch. Bound each attempt
+      // below the database lease and the bounded worker's run window.
+      const sendOptions = { idempotencyKey, signal: AbortSignal.timeout(10_000) };
+      const { data, error } = await this.resend.emails.send(request, sendOptions);
 
       if (!error) {
         if (attempt > 1) {

@@ -67,4 +67,6 @@ export const tickets = pgTable('tickets', {
     .where(sql`${table.ticketItemId} IS NULL AND ${table.status} = 'active'`),
   index('idx_tickets_ticket_item_id').on(table.ticketItemId),
   index('idx_tickets_status').on(table.status),
+  index('idx_tickets_due_reminder').on(table.emailScheduledAt, table.reservationId)
+    .where(sql`${table.status} = 'active' AND ${table.emailSentAt} IS NULL`),
 ]);
