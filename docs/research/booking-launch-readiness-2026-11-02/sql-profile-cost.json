@@ -1,0 +1,33 @@
+{
+  "source": "Google Cloud Billing Catalog API",
+  "region": "asia-northeast3",
+  "currency": "USD",
+  "rates": {
+    "cpu": {
+      "sku": "0304-17F6-DF49",
+      "usdPerHourUnit": 0.0537,
+      "effectiveTime": "2026-11-01T07:00:00Z"
+    },
+    "ram": {
+      "sku": "15DD-D826-2867",
+      "usdPerHourUnit": 0.0091,
+      "effectiveTime": "2026-11-01T07:00:00Z"
+    },
+    "micro": {
+      "sku": "9F95-D4F1-871D",
+      "usdPerHourUnit": 0.0137,
+      "effectiveTime": "2026-11-01T07:00:00Z"
+    }
+  },
+  "hoursPerMonth": 730,
+  "microComputeMonthly": 10.0,
+  "dedicated1Cpu375GiBComputeMonthly": 64.11,
+  "computeMonthlyIncrease": 54.11,
+  "storageBackupNetworkTaxExcluded": true,
+  "dedicated4Cpu15GiB": {
+    "monthlyComputeUsd": 256.45,
+    "monthlyComputeIncreaseUsd": 246.45,
+    "dailyComputeIncreaseUsd": 8.1,
+    "hourlyComputeIncreaseUsd": 0.3376
+  }
+}

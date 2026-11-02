@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, isNull, gte } from 'drizzle-orm';
+import { eq, and, or, gte } from 'drizzle-orm';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -21,7 +21,8 @@ import { reservationSeats } from '../../database/schema/reservation-seats.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
-import { countBuyerActiveTicketsForPerformance } from '../../database/ticket-limit.js';
+import { createUnavailableSeatReader } from '../../database/unavailable-seat-reader.js';
+import { createBuyerTicketCountReader } from '../../database/ticket-limit.js';
 import { assertShowtimeSalesOpen } from './showtime-sales-cutoff.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
@@ -452,6 +453,8 @@ return 0
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
+  private readonly unavailableSeats = createUnavailableSeatReader(() => this.db);
+  private readonly buyerTicketCounts = createBuyerTicketCountReader(() => this.db);
   private readonly seatLockPolicies = coalesceFreshReads((showtimeId: string) => this.loadSeatLockPolicy(showtimeId));
   private readonly showtimeSaleSnapshots = coalesceFreshReads((showtimeId: string) => this.loadShowtimeSaleSnapshot(showtimeId));
   private readonly seatMapSnapshots = coalesceFreshReads((key: string) => {
@@ -522,7 +525,7 @@ export class BookingService {
     userId: string,
     performanceId: string,
   ): Promise<number> {
-    return countBuyerActiveTicketsForPerformance(this.db, userId, performanceId);
+    return this.buyerTicketCounts(userId, performanceId);
   }
 
   private async assertSeatExistsInShowtimeSeatMap(
@@ -572,30 +575,7 @@ export class BookingService {
     await this.assertSeatExistsInShowtimeSeatMap(showtimeId, seatIdentity);
 
     // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.
-    const [unavailableRecord] = await this.db
-      .select({
-        id: seatInventories.id,
-        status: seatInventories.status,
-      })
-      .from(seatInventories)
-      .where(
-        and(
-          eq(seatInventories.showtimeId, showtimeId),
-          eq(seatInventories.floorKey, seatIdentity.floorKey),
-          or(
-            eq(seatInventories.seatKey, seatIdentity.seatKey),
-            and(
-              isNull(seatInventories.seatKey),
-              eq(seatInventories.seatId, seatIdentity.seatId),
-            ),
-          ),
-          or(
-            eq(seatInventories.status, 'sold'),
-            eq(seatInventories.status, 'held_cancelled'),
-            eq(seatInventories.status, 'disabled'),
-          ),
-        ),
-      );
+    const unavailableRecord = await this.unavailableSeats(showtimeId, seatIdentity);
 
     if (unavailableRecord) {
       throw new ConflictException(
@@ -1032,29 +1012,7 @@ export class BookingService {
   private async assertNoUnavailableSeatRecords(showtimeId: string, seatIds: string[]): Promise<void> {
     for (const seatId of seatIds) {
       const seatIdentity = parseRuntimeSeatIdentity(seatId);
-      const [unavailableRecord] = await this.db
-        .select({
-          status: seatInventories.status,
-        })
-        .from(seatInventories)
-        .where(
-          and(
-            eq(seatInventories.showtimeId, showtimeId),
-            eq(seatInventories.floorKey, seatIdentity.floorKey),
-            or(
-              eq(seatInventories.seatKey, seatIdentity.seatKey),
-              and(
-                isNull(seatInventories.seatKey),
-                eq(seatInventories.seatId, seatIdentity.seatId),
-              ),
-            ),
-            or(
-              eq(seatInventories.status, 'sold'),
-              eq(seatInventories.status, 'held_cancelled'),
-              eq(seatInventories.status, 'disabled'),
-            ),
-          ),
-        );
+      const unavailableRecord = await this.unavailableSeats(showtimeId, seatIdentity);
 
       if (!unavailableRecord) continue;
 

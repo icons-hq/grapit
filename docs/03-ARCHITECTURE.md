@@ -270,6 +270,8 @@ The buyer workspace has a compact schedule selector, floor/section availability,
 
 Fresh metadata reads for the same showtime or performance are coalesced during bursts: lock policy, publication/sales context, floor seat map, canonical prices and layout assignments. Different keys proceed independently and a caller arriving after a query starts waits for a new query. Actor permission, current sales cutoff and each requested seat are checked per caller. Consent prechecks share a fresh read only on the default DB executor; transactional consent capture always uses its own executor and snapshot. No TTL is added to these reads, and inventory, buyer ticket counts, Lua mutations and reservation/payment transactions keep their existing boundaries.
 
+Queue admission's showtime-to-performance lookup uses the same fresh-read rule. Lock/prepare prechecks batch distinct buyer/performance ticket counts and showtime/floor/seat inventory reads, at most 128 keys per SQL statement. Ordinary single-key reads retain their original query. Batch rows are matched by the complete request identity; a missing or invalid result rejects the read instead of treating it as zero tickets or an available seat. Verified-phone account aggregation, sold/held-cancelled/disabled rejection, caller error ordering and each later ownership recheck remain in place. These readers are not used for confirm's transaction or its advisory lock, and no completed result is cached.
+
 Seat locks are managed by `BookingService` and Redis/Valkey.
 
 - Lock keyspace is showtime-scoped.
@@ -625,6 +627,8 @@ Both images are built from the monorepo root so `packages/shared` can be built b
 During the no-sale managed-demo posture, Web and API use minimum instances `0` and request-based CPU; the bounded 600-seat profile caps API instances at `2` and Web instances at `4`. The API sets `BACKGROUND_PROCESSING_ENABLED=false`: pg-boss remains available for durable job enqueueing, while its scheduler, supervisor, queue workers, and the pending-payment interval do not run inside a CPU-throttled request service. Cloud Scheduler executes the bounded worker every five minutes with background processing explicitly enabled, so refund retries, payment confirm reconciles, QR reminders, cancelled-seat releases, and pending-payment expiration remain real without depending on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
 
 `apps/edge-proxy` maps only `heygrabit.com`, `www.heygrabit.com`, and `api.heygrabit.com` to stable Cloud Run service origins. It streams requests/responses, preserves WebSocket upgrades, overwrites forwarded-host metadata, and rejects unknown hosts. Production Worker Routes are a separate, explicitly authenticated cutover and are not deployed by the GCP workflow.
+
+Cloud Run session affinity remains enabled for Socket.IO polling and WebSocket upgrades. For all other API-origin requests, the edge proxy removes only the `GAESA` routing cookie from the upstream request and suppresses only that cookie in the upstream response. Stateless API calls can therefore use any API instance without overwriting the browser's socket affinity. Authentication cookies, authorization headers, request bodies, response status/body and Web-origin affinity remain unchanged.
 
 ### 8.2 CI
 

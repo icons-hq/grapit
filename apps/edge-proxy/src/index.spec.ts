@@ -18,6 +18,54 @@ afterEach(() => {
 });
 
 describe('origin routing', () => {
+  it('does not pin API requests to a socket instance or replace its affinity cookie', async () => {
+    const authCookie = 'refreshToken=test-value==; Path=/; HttpOnly; Secure; SameSite=None';
+    const headers = new Headers({ 'content-type': 'application/json' });
+    headers.append('set-cookie', 'GAESA=origin-affinity; Path=/; Secure; HttpOnly');
+    headers.append('set-cookie', authCookie);
+    headers.append('set-cookie', 'consent=1; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Path=/');
+    vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
+      expect(request.headers.get('cookie')).toBe('refreshToken=old-value==; GAESA_backup=keep');
+      expect(request.headers.get('authorization')).toBe('Bearer test-access');
+      expect(await request.text()).toBe('{"orderId":"test-order"}');
+      return new Response('{"ok":true}', { status: 201, headers });
+    }));
+    const response = await worker.fetch(new Request('https://api.heygrabit.com/api/v1/payments/confirm', {
+      method: 'POST', headers: { cookie: 'GAESA=socket-affinity; refreshToken=old-value==; GAESA_backup=keep', authorization: 'Bearer test-access' },
+      body: '{"orderId":"test-order"}',
+    }), env);
+    expect(response.status).toBe(201);
+    expect(response.headers.getSetCookie()).toEqual([authCookie, 'consent=1; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Path=/']);
+    expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it.each(['/socket.io?EIO=4&transport=websocket', '/socket.io/?EIO=4&transport=polling'])
+    ('preserves socket affinity and the original response for %s', async (path) => {
+      const upstream = new Response('socket', { headers: { 'set-cookie': 'GAESA=socket-affinity; Path=/; Secure' } });
+      vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
+        expect(request.headers.get('cookie')).toBe('GAESA=socket-affinity; socketAccessToken=test');
+        return upstream;
+      }));
+      const response = await worker.fetch(new Request('https://api.heygrabit.com' + path, {
+        headers: { cookie: 'GAESA=socket-affinity; socketAccessToken=test' },
+      }), env);
+      expect(response).toBe(upstream);
+    });
+
+  it('keeps web affinity and does not treat lookalike API paths as Socket.IO', async () => {
+    const upstream = new Response('ok', { headers: { 'set-cookie': 'GAESA=web; Path=/' } });
+    vi.stubGlobal('fetch', vi.fn(async (request: Request) => {
+      expect(request.headers.get('cookie')).toBe(request.url.startsWith(env.WEB_ORIGIN) ? 'GAESA=web' : null);
+      return upstream.clone();
+    }));
+    const web = await worker.fetch(new Request('https://heygrabit.com/', { headers: { cookie: 'GAESA=web' } }), env);
+    expect(web.headers.getSetCookie()).toEqual(['GAESA=web; Path=/']);
+    for (const path of ['/socket.io-other', '/api/v1/socket.io']) {
+      const api = await worker.fetch(new Request('https://api.heygrabit.com' + path, { headers: { cookie: 'GAESA=web' } }), env);
+      expect(api.headers.getSetCookie()).toEqual([]);
+    }
+  });
+
   it('maps only the three public Grabit hosts', () => {
     expect(resolveOrigin('heygrabit.com', '/', env)).toBe(env.WEB_ORIGIN);
     expect(resolveOrigin('WWW.HEYGRABIT.COM', '/', env)).toBe(env.WEB_ORIGIN);
