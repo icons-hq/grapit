@@ -628,6 +628,8 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0` a
 
 `apps/edge-proxy` maps only `heygrabit.com`, `www.heygrabit.com`, and `api.heygrabit.com` to stable Cloud Run service origins. It streams requests/responses, preserves WebSocket upgrades, overwrites forwarded-host metadata, and rejects unknown hosts. Production Worker Routes are a separate, explicitly authenticated cutover and are not deployed by the GCP workflow.
 
+Cloud Run session affinity remains enabled for Socket.IO polling and WebSocket upgrades. For all other API-origin requests, the edge proxy removes only the `GAESA` routing cookie from the upstream request and suppresses only that cookie in the upstream response. Stateless API calls can therefore use any API instance without overwriting the browser's socket affinity. Authentication cookies, authorization headers, request bodies, response status/body and Web-origin affinity remain unchanged.
+
 ### 8.2 CI
 
 `.github/workflows/ci.yml` runs on pull requests and manual dispatch:

@@ -5,6 +5,37 @@ const LOCAL_STAGING_HOSTS = new Set(['localhost', '127.0.0.1']);
 // EDGE_PROXY_SHARED_SECRET (apps/api/src/common/request-ip.ts).
 export const EDGE_SECRET_HEADER = 'x-grabit-edge-secret';
 export const EDGE_CLIENT_IP_HEADER = 'x-grabit-client-ip';
+const CLOUD_RUN_AFFINITY_COOKIE = 'GAESA';
+
+function isSocketPath(pathname: string): boolean {
+  return pathname === '/socket.io' || pathname.startsWith('/socket.io/');
+}
+
+function isAffinityCookie(cookie: string): boolean {
+  return cookie.slice(0, cookie.indexOf('=')).trim() === CLOUD_RUN_AFFINITY_COOKIE;
+}
+
+function removeApiAffinity(request: Request): void {
+  const cookie = request.headers.get('cookie');
+  if (!cookie) return;
+  const retained = cookie.split(';').map(part => part.trim()).filter(part => !isAffinityCookie(part));
+  if (retained.length > 0) request.headers.set('cookie', retained.join('; '));
+  else request.headers.delete('cookie');
+}
+
+function preserveSocketAffinityCookie(response: Response): Response {
+  const cookies = response.headers.getSetCookie();
+  const retained = cookies.filter(cookie => !isAffinityCookie(cookie));
+  if (cookies.length === retained.length) return response;
+  const headers = new Headers(response.headers);
+  headers.delete('set-cookie');
+  for (const cookie of retained) headers.append('set-cookie', cookie);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 function isApiPath(pathname: string): boolean {
   return (
@@ -111,8 +142,14 @@ async function proxy(request: Request, env: Env): Promise<Response> {
 
   // Only the API consumes the edge identity headers; keep the secret off the Web origin.
   const edgeSecret = origin === env.API_ORIGIN ? env.EDGE_PROXY_SHARED_SECRET : undefined;
-  const response = await fetch(buildOriginRequest(request, origin, edgeSecret));
-  return rewriteOriginRedirect(response, origin, incomingUrl.origin);
+  const originRequest = buildOriginRequest(request, origin, edgeSecret);
+  // Stateless API calls may use any instance. Only Socket.IO polling/upgrade
+  // needs Cloud Run affinity; API responses must not replace that socket cookie.
+  const isolateApi = origin === env.API_ORIGIN && !isSocketPath(incomingUrl.pathname);
+  if (isolateApi) removeApiAffinity(originRequest);
+  const response = await fetch(originRequest);
+  const routedResponse = isolateApi ? preserveSocketAffinityCookie(response) : response;
+  return rewriteOriginRedirect(routedResponse, origin, incomingUrl.origin);
 }
 
 export default {
