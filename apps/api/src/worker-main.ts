@@ -10,6 +10,7 @@ import {
 } from './background-worker-runtime.js';
 import { boundedByRunDeadline, setRunDeadline } from './common/run-deadline.js';
 import { PendingPaymentExpirationWorker } from './modules/jobs/pending-payment-expiration.worker.js';
+import { QrReminderRecoveryWorker } from './modules/ticket/qr-reminder-recovery.worker.js';
 import { DRIZZLE, type DrizzleDB } from './database/drizzle.provider.js';
 import { REDIS_CLIENT } from './modules/booking/providers/redis.provider.js';
 import {
@@ -33,6 +34,7 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.createApplicationContext(BackgroundWorkerModule);
   const pendingPaymentWorker = app.get(PendingPaymentExpirationWorker);
+  const qrReminderWorker = app.get(QrReminderRecoveryWorker);
   const pgBoss = app.get<PgBossContract>(PG_BOSS);
   const redis = app.get<{ quit?(): Promise<unknown> }>(REDIS_CLIENT);
   const database = app.get<DrizzleDB & { $client: { end(): Promise<void> } }>(DRIZZLE);
@@ -42,7 +44,10 @@ async function bootstrap(): Promise<void> {
 
   const result = await runBackgroundWorkerWindow(
     {
-      sweepPendingPayments: () => pendingPaymentWorker.sweepExpiredPendingPayments(),
+      sweepPendingPayments: async () => {
+        try { return await pendingPaymentWorker.sweepExpiredPendingPayments(); }
+        finally { await qrReminderWorker.waitForInitialSweep(); }
+      },
       onSweepFailure: (error) => {
         logger.error(
           'Pending payment expiration sweep failed; continuing the queue processing window',

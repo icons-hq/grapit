@@ -28,7 +28,7 @@ import {
   venues,
 } from '../../database/schema/index.js';
 import { EmailService } from '../auth/email/email.service.js';
-import { QrReminderDeliveryStore, QR_REMINDER_RETRY_WINDOW_MS } from './qr-reminder-delivery.js';
+import { QrReminderDeliveryStore } from './qr-reminder-delivery.js';
 import { resolveTicketEmailDelivery } from './ticket-email-delivery.js';
 import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 import {
@@ -992,17 +992,6 @@ export class QrTicketService implements OnModuleInit {
     // email verification may have changed since the sweep selected this order.
     const claim = await this.reminderStore.claim(reservationId);
     if (!claim) return;
-    if (claim.firstAttemptAt && Date.now() - claim.firstAttemptAt.getTime() >= QR_REMINDER_RETRY_WINDOW_MS) {
-      await this.reminderStore.requireAttention(claim);
-      const message = 'QR_REMINDER_REQUIRES_ATTENTION: provider idempotency retry window exhausted';
-      this.logger.error(`${message}. reservationId=${reservationId}`);
-      Sentry.withScope((scope) => {
-        scope.setTag('component', 'qr-reminder');
-        scope.setContext('reminder', { reservationId, attempts: claim.attempts });
-        Sentry.captureException(new Error(message));
-      });
-      return;
-    }
 
     try {
       const context = await this.findTicketEmailContext({ scope: 'system-reminder', reservationId });
@@ -1013,11 +1002,30 @@ export class QrTicketService implements OnModuleInit {
       // Existing/manual sends still suppress the automatic reminder. Historical
       // email_sent_at values are preserved; they are never blindly replayed.
       if (context.tickets.some((ticket) => ticket.emailSentAt)) {
-        await this.reminderStore.complete(claim, []);
+        await this.reminderStore.suppress(claim);
         return;
       }
       this.logger.log(`QR reminder claimed. reservationId=${reservationId}, attempt=${claim.attempts}`);
-      const providerMessageId = await this.sendTicketEmail(context, `qr-reminder/${reservationId}`);
+      const input = await this.buildTicketEmailInput(context);
+      const payloadHash = this.emailService.qrTicketReminderPayloadHash(context.user.email, input);
+      const ready = await this.reminderStore.beginSend(claim, payloadHash);
+      if (ready !== 'ready') {
+        if (ready !== 'lost_lease') {
+          const message = `QR_REMINDER_REQUIRES_ATTENTION: ${ready}`;
+          this.logger.error(`${message}. reservationId=${reservationId}`);
+          Sentry.withScope((scope) => {
+            scope.setTag('component', 'qr-reminder');
+            scope.setContext('reminder', { reservationId, attempts: claim.attempts });
+            Sentry.captureException(new Error(message));
+          });
+        }
+        return;
+      }
+      const result = await this.emailService.sendQrTicketReminderEmail(context.user.email, input, {
+        idempotencyKey: `qr-reminder/${reservationId}`, payloadHash,
+      });
+      if (!result.success) throw new Error(result.error ?? 'QR reminder email send failed');
+      const providerMessageId = result.id;
       const completed = await this.reminderStore.complete(claim, context.tickets.map((ticket) => ticket.id), providerMessageId);
       if (completed) this.logger.log(`QR reminder sent. reservationId=${reservationId}`);
       // A stale worker cannot overwrite its successor. If the provider accepted
@@ -1047,7 +1055,7 @@ export class QrTicketService implements OnModuleInit {
         eq(reservations.status, 'CONFIRMED'), eq(payments.status, 'DONE'),
         eq(users.isEmailVerified, true), isNull(tickets.emailSentAt),
         lte(tickets.emailScheduledAt, now), gt(showtimes.dateTime, now),
-        isNull(qrReminderDeliveries.sentAt), isNull(qrReminderDeliveries.attentionAt),
+        isNull(qrReminderDeliveries.sentAt), isNull(qrReminderDeliveries.attentionAt), isNull(qrReminderDeliveries.suppressedAt),
         or(isNull(qrReminderDeliveries.nextAttemptAt), lte(qrReminderDeliveries.nextAttemptAt, now)),
         or(isNull(qrReminderDeliveries.leaseExpiresAt), lte(qrReminderDeliveries.leaseExpiresAt, now)),
         sql`not exists (select 1 from tickets sent where sent.reservation_id = ${tickets.reservationId} and sent.email_sent_at is not null)`,
@@ -1151,7 +1159,7 @@ export class QrTicketService implements OnModuleInit {
     });
   }
 
-  private async sendTicketEmail(context: TicketEmailContext, idempotencyScope?: string): Promise<string | undefined> {
+  private async buildTicketEmailInput(context: TicketEmailContext) {
     const seatTickets = await Promise.all(
       context.tickets.map(async (ticket) => ({
         seatLabel: this.buildSeatLabels(ticket.seatIdentity).join(', '),
@@ -1160,7 +1168,7 @@ export class QrTicketService implements OnModuleInit {
     );
     const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
     const ticketUrl = `${frontendUrl}/mypage/reservations/${context.reservation.id}`;
-    const input = {
+    return {
       reservationNumber: context.reservation.reservationNumber,
       performanceTitle: context.performance.title,
       showDateTime: context.showtime.dateTime.toISOString(),
@@ -1169,9 +1177,11 @@ export class QrTicketService implements OnModuleInit {
       ticketUrl,
       locale: context.user.preferredLocale ?? 'ko',
     };
-    const result = idempotencyScope
-      ? await this.emailService.sendQrTicketReminderEmail(context.user.email, input, { idempotencyScope })
-      : await this.emailService.sendQrTicketReminderEmail(context.user.email, input);
+  }
+
+  private async sendTicketEmail(context: TicketEmailContext): Promise<string | undefined> {
+    const input = await this.buildTicketEmailInput(context);
+    const result = await this.emailService.sendQrTicketReminderEmail(context.user.email, input);
 
     if (!result.success) {
       throw new Error(result.error ?? 'QR reminder email send failed');

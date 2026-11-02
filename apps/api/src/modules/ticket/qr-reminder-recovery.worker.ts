@@ -32,4 +32,9 @@ export class QrReminderRecoveryWorker implements OnModuleInit, OnModuleDestroy {
     if (this.interval) clearInterval(this.interval);
     if (this.running) await waitWithinRunDeadline(this.running, 30_000);
   }
+
+  /** A bounded worker with no queue window must still let its startup sweep make progress. */
+  async waitForInitialSweep(): Promise<void> {
+    if (this.running) await waitWithinRunDeadline(this.running, 30_000);
+  }
 }

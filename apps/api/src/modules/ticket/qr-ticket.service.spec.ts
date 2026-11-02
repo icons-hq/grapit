@@ -1478,14 +1478,16 @@ describe('QrTicketService', () => {
       const db = { select: vi.fn().mockReturnValueOnce(chainResult([{
         id: 'ticket-a1', reservationId: 'reservation-1', emailJobId: options.jobId ?? 'job-1',
       }])).mockReturnValueOnce(chainResult(rows)), update: vi.fn() };
-      const email = { sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'provider-email-1' }) };
+      const email = { qrTicketReminderPayloadHash: vi.fn().mockReturnValue('a'.repeat(64)),
+        sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true, id: 'provider-email-1' }) };
       const service = new QrTicketService(db as never, { get: (key: string) => ({
         QR_TICKET_SECRET: 'current-secret', QR_TICKET_SECRET_VERSION: '2026-07', FRONTEND_URL: 'https://heygrabit.com',
       })[key] } as never, new JwtService(), email as never, { isAvailable: false } as never);
       const claim = { reservationId: 'reservation-1', claimToken: 'claim-1', attempts: 1,
         firstAttemptAt: options.expired ? new Date(now.getTime() - 24 * 60 * 60 * 1000) : now };
       const store = { claim: vi.fn().mockResolvedValue(options.leaseAvailable === false ? undefined : claim),
-        complete: vi.fn().mockResolvedValue(true), release: vi.fn().mockResolvedValue(undefined), requireAttention: vi.fn() };
+        complete: vi.fn().mockResolvedValue(true), release: vi.fn().mockResolvedValue(undefined), suppress: vi.fn(),
+        beginSend: vi.fn().mockResolvedValue(options.expired ? 'retry_window_expired' : 'ready') };
       Object.assign(service, { reminderStore: store });
       const run = () => (service as unknown as { handleReminderEmailJob(payload: unknown, jobId: string): Promise<void> })
         .handleReminderEmailJob({ ticketId: 'ticket-a1' }, 'job-1');
@@ -1503,7 +1505,7 @@ describe('QrTicketService', () => {
       expect(h.store.complete).toHaveBeenCalledWith(h.claim, ['ticket-a1', 'ticket-a2'], 'provider-email-1');
       expect(h.email.sendQrTicketReminderEmail).toHaveBeenCalledWith('buyer@example.com', expect.objectContaining({
         tickets: [expect.objectContaining({ seatLabel: '1층 · VIP A열 1번' }), expect.objectContaining({ seatLabel: '1층 · VIP A열 2번' })],
-      }), { idempotencyScope: 'qr-reminder/reservation-1' });
+      }), { idempotencyKey: 'qr-reminder/reservation-1', payloadHash: 'a'.repeat(64) });
     });
     it('leaves another worker with a live lease in control', async () => {
       const h = harness({ leaseAvailable: false }); await h.run();
@@ -1516,7 +1518,8 @@ describe('QrTicketService', () => {
     it('preserves previously sent and historical timestamps without replaying them', async () => {
       const h = harness({ sent: true }); await h.run();
       expect(h.email.sendQrTicketReminderEmail).not.toHaveBeenCalled();
-      expect(h.store.complete).toHaveBeenCalledWith(h.claim, []);
+      expect(h.store.suppress).toHaveBeenCalledWith(h.claim);
+      expect(h.store.complete).not.toHaveBeenCalled();
     });
     it('retains the unsent record and schedules recovery after a provider failure', async () => {
       const h = harness(); h.email.sendQrTicketReminderEmail.mockResolvedValue({ success: false, error: 'provider unavailable' } as never);
@@ -1531,7 +1534,7 @@ describe('QrTicketService', () => {
     });
     it('requires reconciliation instead of sending beyond the provider deduplication window', async () => {
       const h = harness({ expired: true }); await h.run();
-      expect(h.store.requireAttention).toHaveBeenCalledWith(h.claim);
+      expect(h.store.beginSend).toHaveBeenCalledWith(h.claim, 'a'.repeat(64));
       expect(h.email.sendQrTicketReminderEmail).not.toHaveBeenCalled();
     });
   });

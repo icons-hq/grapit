@@ -1,5 +1,5 @@
 {
-  "id": "b94d8f05-33e5-4958-8a5a-bdb938064de6",
+  "id": "27974425-faf2-4e46-b8bf-9b67bca63c31",
   "prevId": "6f790d9a-2886-4f7c-875c-396fc9ccf79c",
   "version": "7",
   "dialect": "postgresql",
@@ -9174,6 +9174,12 @@
           "notNull": true,
           "default": 0
         },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sent_at": {
           "name": "sent_at",
           "type": "timestamp with time zone",
@@ -9188,6 +9194,18 @@
         },
         "attention_at": {
           "name": "attention_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attention_reason": {
+          "name": "attention_reason",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "suppressed_at": {
+          "name": "suppressed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

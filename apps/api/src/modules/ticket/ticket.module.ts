@@ -10,6 +10,6 @@ import { QrReminderRecoveryWorker } from './qr-reminder-recovery.worker.js';
   imports: [JwtModule.register({}), EmailModule, PgbossModule],
   controllers: [TicketController],
   providers: [QrTicketService, QrReminderRecoveryWorker],
-  exports: [QrTicketService],
+  exports: [QrTicketService, QrReminderRecoveryWorker],
 })
 export class TicketModule {}

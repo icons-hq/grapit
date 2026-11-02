@@ -5,9 +5,12 @@ CREATE TABLE "qr_reminder_deliveries" (
 	"first_attempt_at" timestamp with time zone,
 	"next_attempt_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"attempts" integer DEFAULT 0 NOT NULL,
+	"payload_hash" varchar(64),
 	"sent_at" timestamp with time zone,
 	"provider_message_id" varchar(200),
 	"attention_at" timestamp with time zone,
+	"attention_reason" varchar(100),
+	"suppressed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

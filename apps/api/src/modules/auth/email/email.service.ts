@@ -215,37 +215,19 @@ export class EmailService {
     throw new Error('email verification retry loop exited unexpectedly');
   }
 
+  qrTicketReminderPayloadHash(to: string, input: SendQrTicketReminderEmailInput): string {
+    return hashQrTicketReminderRequest(buildQrTicketReminderRequest(this.from, to, input));
+  }
+
   async sendQrTicketReminderEmail(
     to: string,
     input: SendQrTicketReminderEmailInput,
-    options?: { idempotencyScope: string },
+    options?: { idempotencyKey: string; payloadHash: string },
   ): Promise<SendEmailResult> {
-    const showDateTime = new Intl.DateTimeFormat('ko-KR', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Seoul',
-    }).format(new Date(input.showDateTime));
-
-    const html = [
-      '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827">',
-      '<h1 style="font-size:20px;margin:0 0 16px">QR 티켓 안내</h1>',
-      `<p style="margin:0 0 12px"><strong>${escapeHtml(input.performanceTitle)}</strong> 공연의 QR 티켓을 다시 보내드립니다.</p>`,
-      `<p style="margin:0 0 4px">예매번호: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
-      `<p style="margin:0 0 4px">공연일시: ${escapeHtml(showDateTime)}</p>`,
-      `<p style="margin:0 0 16px">장소: ${escapeHtml(input.venue)}</p>`,
-      `<p style="margin:0 0 8px">마이페이지에서 좌석별 QR 확인:</p>`,
-      `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
-      `<p style="margin:0 0 8px">좌석별 QR 토큰 (${input.tickets.length}매)</p>`,
-      ...input.tickets.map((ticket) => [
-        `<p style="margin:12px 0 4px"><strong>${escapeHtml(ticket.seatLabel)}</strong></p>`,
-        `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px;margin:0">${escapeHtml(ticket.token)}</pre>`,
-      ].join('')),
-      '</div>',
-    ].join('');
+    const request = buildQrTicketReminderRequest(this.from, to, input);
+    if (options && hashQrTicketReminderRequest(request) !== options.payloadHash) {
+      return { success: false, error: 'QR_REMINDER_PAYLOAD_CHANGED' };
+    }
 
     if (this.resend === null) {
       const toDomain = to.split('@')[1] ?? 'unknown';
@@ -257,12 +239,7 @@ export class EmailService {
 
     const toDomain = to.split('@')[1] ?? 'unknown';
 
-    const request = { from: this.from, to, subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`, html };
-    // Resend rejects reuse with a changed payload. A changed verified recipient
-    // or ticket set is a new message; identical retries keep exactly the same key.
-    const idempotencyKey = options
-      ? `${options.idempotencyScope}/${createHash('sha256').update(JSON.stringify(request)).digest('hex')}`
-      : undefined;
+    const idempotencyKey = options?.idempotencyKey;
     for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
       // The pinned SDK forwards request options to fetch. Bound each attempt
       // below the database lease and the bounded worker's run window.
@@ -307,6 +284,41 @@ export class EmailService {
 
     throw new Error('qr reminder retry loop exited unexpectedly');
   }
+}
+
+function buildQrTicketReminderRequest(from: string, to: string, input: SendQrTicketReminderEmailInput) {
+    const showDateTime = new Intl.DateTimeFormat('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Seoul',
+    }).format(new Date(input.showDateTime));
+
+    const html = [
+      '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827">',
+      '<h1 style="font-size:20px;margin:0 0 16px">QR 티켓 안내</h1>',
+      `<p style="margin:0 0 12px"><strong>${escapeHtml(input.performanceTitle)}</strong> 공연의 QR 티켓을 다시 보내드립니다.</p>`,
+      `<p style="margin:0 0 4px">예매번호: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
+      `<p style="margin:0 0 4px">공연일시: ${escapeHtml(showDateTime)}</p>`,
+      `<p style="margin:0 0 16px">장소: ${escapeHtml(input.venue)}</p>`,
+      `<p style="margin:0 0 8px">마이페이지에서 좌석별 QR 확인:</p>`,
+      `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
+      `<p style="margin:0 0 8px">좌석별 QR 토큰 (${input.tickets.length}매)</p>`,
+      ...input.tickets.map((ticket) => [
+        `<p style="margin:12px 0 4px"><strong>${escapeHtml(ticket.seatLabel)}</strong></p>`,
+        `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px;margin:0">${escapeHtml(ticket.token)}</pre>`,
+      ].join('')),
+      '</div>',
+    ].join('');
+
+  return { from, to, subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`, html };
+}
+
+function hashQrTicketReminderRequest(request: ReturnType<typeof buildQrTicketReminderRequest>): string {
+  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
 function resolveEmailVerificationLocale(locale: string): EmailVerificationLocale {

@@ -42,4 +42,20 @@ describe('QrReminderRecoveryWorker', () => {
     expect((recoverDueReminderEmails.mock.calls[1]![0] as () => boolean)()).toBe(false);
     await worker.onModuleDestroy();
   });
+
+  it('lets the initial sweep finish before a queue-unavailable worker starts shutdown', async () => {
+    let finish!: () => void;
+    const recoverDueReminderEmails = vi.fn().mockImplementation(async (shouldContinue: () => boolean) => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      expect(shouldContinue()).toBe(true);
+    });
+    const worker = new QrReminderRecoveryWorker({ recoverDueReminderEmails } as never, new ConfigService());
+    worker.onModuleInit();
+    let drained = false;
+    const initial = worker.waitForInitialSweep().then(() => { drained = true; });
+    await Promise.resolve(); expect(drained).toBe(false);
+    finish(); await initial;
+    expect(drained).toBe(true);
+    await worker.onModuleDestroy();
+  });
 });

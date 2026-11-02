@@ -18,17 +18,38 @@ export class QrReminderDeliveryStore {
     const [claimed] = await this.db.update(qrReminderDeliveries).set({
       claimToken,
       leaseExpiresAt: new Date(now.getTime() + QR_REMINDER_LEASE_MS),
-      firstAttemptAt: sql`coalesce(${qrReminderDeliveries.firstAttemptAt}, ${now.toISOString()}::timestamptz)`,
       attempts: sql`${qrReminderDeliveries.attempts} + 1`,
       updatedAt: now,
     }).where(and(
       eq(qrReminderDeliveries.reservationId, reservationId),
       isNull(qrReminderDeliveries.sentAt),
       isNull(qrReminderDeliveries.attentionAt),
+      isNull(qrReminderDeliveries.suppressedAt),
       lte(qrReminderDeliveries.nextAttemptAt, now),
       or(isNull(qrReminderDeliveries.leaseExpiresAt), lte(qrReminderDeliveries.leaseExpiresAt, now)),
     )).returning();
     return claimed ? { ...claimed, claimToken } : undefined;
+  }
+
+  /** Freeze the request identity only once an eligible recipient and payload are ready. */
+  async beginSend(claim: QrReminderClaim, payloadHash: string): Promise<'ready' | 'lost_lease' | 'payload_changed' | 'retry_window_expired'> {
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(qrReminderDeliveries).where(this.owns(claim)).for('update');
+      const now = new Date();
+      if (!current?.leaseExpiresAt || current.leaseExpiresAt <= now) return 'lost_lease';
+      const reason = current.payloadHash && current.payloadHash !== payloadHash
+        ? 'payload_changed'
+        : current.firstAttemptAt && now.getTime() - current.firstAttemptAt.getTime() >= QR_REMINDER_RETRY_WINDOW_MS
+          ? 'retry_window_expired' : null;
+      if (reason) {
+        await tx.update(qrReminderDeliveries).set({ attentionAt: now, attentionReason: reason,
+          claimToken: null, leaseExpiresAt: null, updatedAt: now }).where(this.owns(claim));
+        return reason;
+      }
+      await tx.update(qrReminderDeliveries).set({ payloadHash,
+        firstAttemptAt: current.firstAttemptAt ?? now, updatedAt: now }).where(this.owns(claim));
+      return 'ready';
+    });
   }
 
   async complete(claim: QrReminderClaim, ticketIds: string[], providerMessageId?: string): Promise<boolean> {
@@ -57,10 +78,11 @@ export class QrReminderDeliveryStore {
     }).where(this.owns(claim));
   }
 
-  async requireAttention(claim: QrReminderClaim): Promise<void> {
+  /** Existing/manual timestamps suppress replay but are not new provider receipts. */
+  async suppress(claim: QrReminderClaim): Promise<void> {
     const now = new Date();
     await this.db.update(qrReminderDeliveries).set({
-      attentionAt: now, claimToken: null, leaseExpiresAt: null, updatedAt: now,
+      suppressedAt: now, claimToken: null, leaseExpiresAt: null, updatedAt: now,
     }).where(this.owns(claim));
   }
 
