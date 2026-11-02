@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -16,6 +16,7 @@ import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
 type LockReaders = {
+  assertNoUnavailableSeatRecords(id: string, seats: string[]): Promise<void>;
   assertShowtimeBookingOpen(id: string, actor: { id: string; role?: string; adminCapabilityBundle?: string | null; adminCapabilities?: string[] }): Promise<void>;
   assertSeatExistsInShowtimeSeatMap(id: string, seat: { floorKey: string; seatId: string; seatKey: string; runtimeSeatId: string }): Promise<void>;
   getSeatLockPolicy(id: string): Promise<{ maxTicketsPerUser: number; lockTtlSeconds: number }>;
@@ -80,6 +81,24 @@ describe('booking metadata burst — same SQL contracts, fresh reads', () => {
     expect(results.map((rows) => rows[0]!.seatId)).toEqual(seatIds);
     expect(results.every((rows) => rows[0]!.price === 50000)).toBe(true);
     expect(reads).toBeLessThanOrEqual(6);
+  });
+
+  it('bounds distinct inventory prechecks and reads new sold/held/disabled states without mixing floors', async () => {
+    reads = 0; counting = true;
+    await Promise.all(seatIds.map(id => locking.assertNoUnavailableSeatRecords(showtimeId, [`1F:${id}`])));
+    counting = false;
+    expect(reads).toBeLessThanOrEqual(2);
+    await db.insert(schema.seatInventories).values([
+      { showtimeId, floorKey: '1F', seatId: 'A-1', seatKey: '1F:A-1', status: 'sold' },
+      { showtimeId, floorKey: '1F', seatId: 'A-2', seatKey: '1F:A-2', status: 'held_cancelled' },
+      { showtimeId, floorKey: '1F', seatId: 'A-3', seatKey: '1F:A-3', status: 'disabled' },
+    ]);
+    const results = await Promise.allSettled(['1F:A-1', '1F:A-2', '1F:A-3', '2F:A-1', '1F:A-4']
+      .map(id => locking.assertNoUnavailableSeatRecords(showtimeId, [id])));
+    expect(results.slice(0, 3).every(result => result.status === 'rejected' && result.reason instanceof ConflictException)).toBe(true);
+    expect(results.slice(3).every(result => result.status === 'fulfilled')).toBe(true);
+    await db.update(schema.seatInventories).set({ status: 'available' });
+    await expect(locking.assertNoUnavailableSeatRecords(showtimeId, ['1F:A-1'])).resolves.toBeUndefined();
   });
 
   it('coalesces consent prechecks but keeps transaction reads on their own executor', async () => {
