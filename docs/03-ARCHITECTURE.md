@@ -270,6 +270,8 @@ The buyer workspace has a compact schedule selector, floor/section availability,
 
 Fresh metadata reads for the same showtime or performance are coalesced during bursts: lock policy, publication/sales context, floor seat map, canonical prices and layout assignments. Different keys proceed independently and a caller arriving after a query starts waits for a new query. Actor permission, current sales cutoff and each requested seat are checked per caller. Consent prechecks share a fresh read only on the default DB executor; transactional consent capture always uses its own executor and snapshot. No TTL is added to these reads, and inventory, buyer ticket counts, Lua mutations and reservation/payment transactions keep their existing boundaries.
 
+Queue admission's showtime-to-performance lookup uses the same fresh-read rule. Lock/prepare prechecks batch distinct buyer/performance ticket counts and showtime/floor/seat inventory reads, at most 128 keys per SQL statement. Ordinary single-key reads retain their original query. Batch rows are matched by the complete request identity; a missing or invalid result rejects the read instead of treating it as zero tickets or an available seat. Verified-phone account aggregation, sold/held-cancelled/disabled rejection, caller error ordering and each later ownership recheck remain in place. These readers are not used for confirm's transaction or its advisory lock, and no completed result is cached.
+
 Seat locks are managed by `BookingService` and Redis/Valkey.
 
 - Lock keyspace is showtime-scoped.
