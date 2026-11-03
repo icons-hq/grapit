@@ -441,7 +441,7 @@ body {
   .ticket-container { width: calc(100% - 40px); }
   .ticket-header-inner { height: 56px; gap: 14px; }
   .ticket-logo { font-size: 25px; letter-spacing: -1px; }.ticket-header-search { flex: 1; min-width: 0; height: 42px; padding-inline: 14px 8px; }
-  .ticket-header-search input { font-size: 12px; }.ticket-header-search button { min-width: 28px; }
+  .ticket-header-search input { font-size: 16px; }.ticket-header-search button { min-width: 28px; }
   .ticket-search-scope, .ticket-header-actions { display: none; }.ticket-mobile-locale { display: block; flex-shrink: 0; }
   .ticket-header-context .ticket-header-inner { gap: 12px; }
   .ticket-header-context .ticket-menu-icon, .ticket-header-context .ticket-header-search { display: none; }
