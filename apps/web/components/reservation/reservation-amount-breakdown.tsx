@@ -17,6 +17,13 @@ export function ReservationAmountBreakdown({ reservation, locale }: {
   const seatTotal = reservation.seats.reduce((sum, seat) => sum + seat.price, 0);
   const addons = reservation.addons ?? [];
   const addonTotal = addons.reduce((sum, addon) => sum + addon.price, 0);
+  const addonGroups = new Map<string, { addon: (typeof addons)[number]; quantity: number; amount: number }>();
+  for (const addon of addons) {
+    const key = `${addon.addonId}:${addon.seatKey}`;
+    const group = addonGroups.get(key);
+    if (group) { group.quantity += 1; group.amount += addon.price; }
+    else addonGroups.set(key, { addon, quantity: 1, amount: addon.price });
+  }
   const fees = reservation.ticketItems.length === reservation.seats.length && reservation.ticketItems.length > 0
     ? reservation.ticketItems.reduce((sum, item) => sum + item.serviceFee, 0)
     : reservation.seats.length * TICKET_SERVICE_FEE_KRW;
@@ -29,10 +36,10 @@ export function ReservationAmountBreakdown({ reservation, locale }: {
   return (
     <dl>
       {row(copy.ticketAmount, seatTotal, 'tickets')}
-      {addons.map(addon => {
+      {[...addonGroups.entries()].map(([key, { addon, quantity, amount }]) => {
         const seat = reservation.seats.find(item => item.seatKey === addon.seatKey);
         const label = seat ? copy.seat.replace(/\{(\w+)\}/g, (_, key: string) => String(seat[key as keyof typeof seat] ?? '')) : addon.seatKey;
-        return row(`${addon.displayCopy[locale]?.name ?? addon.displayCopy.en.name} · ${label}`, addon.price, `${addon.addonId}:${addon.seatKey}`);
+        return row(`${addon.displayCopy[locale]?.name ?? addon.displayCopy.en.name} × ${quantity} · ${label}`, amount, key);
       })}
       {row(copy.serviceFee, fees, 'fee')}
       <div className="border-t">{row(copy.orderTotal, reservation.totalAmount, 'total')}</div>

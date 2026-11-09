@@ -1319,3 +1319,17 @@ it('offers an honest recovery action for an Alipay handoff with no result', () =
   expect(screen.getByText('결제 상태 확인이 지연되고 있어요')).toBeInTheDocument();
   expect(screen.queryByText('보통 수 분 이내')).not.toBeInTheDocument();
 });
+
+
+it('groups additional units on one ticket without hiding their charged total', () => {
+  const displayCopy = Object.fromEntries(['ko', 'en', 'th', 'zh-CN'].map(locale => [locale, { name: '하이터치 추가 구매', description: '' }])) as BenefitEntitlement['displayCopy'];
+  render(<ReservationDetailView reservation={createReservation({
+    status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [],
+    seats: [{ seatId: 'A-20', seatKey: '1F:A-20', floorKey: '1F', floorLabel: '1층', tierName: 'SVIP', row: 'A', number: '20', price: 380000 }],
+    totalAmount: 542000,
+    addons: [1, 2].map(unitIndex => ({ addonId: 'high-touch', seatKey: '1F:A-20', unitIndex, price: 80000, displayCopy, expiresAt: '2099-01-01T00:00:00Z' })),
+  })} onCancel={vi.fn()} isCancelling={false} />);
+  expect(screen.getByText(/하이터치 추가 구매 × 2/)).toBeInTheDocument();
+  expect(screen.getByText('160,000원')).toBeInTheDocument();
+  expect(screen.getByText('542,000원')).toBeInTheDocument();
+});
