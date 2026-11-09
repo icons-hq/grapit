@@ -36,7 +36,7 @@ const get = vi.mocked(apiClient.get);
 let client: QueryClient;
 
 function response(data: PerformanceCardData[]) {
-  return { data, total: data.length, page: 1, limit: 100, totalPages: 1 };
+  return { data, total: data.length, page: 1, limit: 20, totalPages: 1 };
 }
 
 function renderHome() {
@@ -58,14 +58,18 @@ describe('admin private performance discovery from home', () => {
       draft,
       { ...draft, id: 'published', title: 'Published show', publishState: 'published' },
       { ...draft, id: 'ended', title: 'Ended rehearsal', status: 'ended' },
+      { ...draft, id: 'review', title: 'Under review', publishState: 'review' },
+      { ...draft, id: 'ready', title: 'Ready to publish', publishState: 'publish_ready' },
     ]));
     renderHome();
     expect(await screen.findByRole('link', { name: draft.title })).toHaveAttribute('href', `/booking/${draft.id}`);
     expect(screen.getByRole('link', { name: `${draft.title} · 구매 테스트` })).toHaveAttribute('href', `/booking/${draft.id}`);
-    expect(screen.getByText('Rehearsal Hall')).toBeVisible();
+    expect(screen.getAllByText('Rehearsal Hall')[0]).toBeVisible();
     expect(screen.queryByText('Published show')).not.toBeInTheDocument();
     expect(screen.queryByText('Ended rehearsal')).not.toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith('/api/v1/admin/performances?status=upcoming&page=1&limit=100', { showErrorToast: false });
+    expect(screen.getByRole('link', { name: 'Under review' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Ready to publish' })).toBeVisible();
+    expect(get).toHaveBeenCalledWith('/api/v1/admin/performances?status=upcoming&publication=unpublished&sort=latest&page=1&limit=20', { showErrorToast: false });
   });
 
   it.each([

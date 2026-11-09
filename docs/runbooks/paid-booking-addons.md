@@ -27,7 +27,7 @@ DB statement timestamp의 마이크로초 `revision`으로 서로 다른 인스�
 
 ## 등록 API와 제한
 
-전체 관리자는 로그인 후 홈 상단의 `관리자 전용 공연`에서 비공개·오픈 예정 공연을 찾고 `구매 테스트`로 좌석 선택에 진입한다. 목록은 기존 인증된 관리자 API로 별도 조회하며 공개 카탈로그나 공유 캐시에 비공개 데이터를 넣지 않는다. 계정별 query key를 사용하고 로그아웃·권한 변경 시 영역을 즉시 제거한다. 공연 준비 화면의 구매 테스트 링크와 직접 구매 URL도 계속 사용할 수 있다.
+전체 관리자는 로그인 후 홈 상단의 `관리자 전용 공연`에서 최신 비공개·오픈 예정 공연 20개를 찾고 `구매 테스트`로 좌석 선택에 진입한다. 전체 목록은 같은 영역의 `공연 관리`로 접근한다. 인증된 관리자 목록 API의 `publication=unpublished&sort=latest`는 DB에서 공개 여부를 먼저 필터링한 뒤 최신순으로 페이지를 나누므로 공개 공연이 앞 페이지를 채워도 새 비공개 공연이 누락되지 않는다. 비공개에는 `draft/review/publish_ready`가 포함된다. 공개 카탈로그나 공유 캐시에 비공개 데이터를 넣지 않으며 계정별 query key를 사용하고 로그아웃·권한 변경 시 영역을 즉시 제거한다. 공연 준비 화면의 구매 테스트 링크와 직접 구매 URL도 계속 사용할 수 있다.
 
 - `PUT /api/v1/admin/showtimes/:showtimeId/addons`: `event.write` 권한. `identity`로 upsert하며 감사 로그를 남긴다. 본문은 `bookingAddonDefinitionSchema`를 따른다.
 - `GET /api/v1/booking/addons/:showtimeId`: 인증 필요. 비공개 공연은 전체 관리자만 조회할 수 있다.

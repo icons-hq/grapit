@@ -8,7 +8,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, eq, ne, sql, ilike, inArray } from 'drizzle-orm';
+import { and, desc, eq, ne, sql, ilike, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -1602,10 +1602,12 @@ export class AdminService {
   async listPerformances(query: {
     status?: string;
     search?: string;
+    publication?: 'published' | 'unpublished';
+    sort?: 'oldest' | 'latest';
     page: number;
     limit: number;
   }): Promise<PerformanceListResponse> {
-    const { status, search, page = 1, limit = 20 } = query;
+    const { status, search, publication, sort, page = 1, limit = 20 } = query;
     const offset = (page - 1) * limit;
 
     const conditions: ReturnType<typeof eq>[] = [];
@@ -1618,6 +1620,12 @@ export class AdminService {
 
     if (search) {
       conditions.push(ilike(performances.title, `%${search}%`));
+    }
+
+    if (publication) {
+      conditions.push(publication === 'published'
+        ? eq(performances.publishState, 'published')
+        : ne(performances.publishState, 'published'));
     }
 
     const whereClause = conditions.length > 0
@@ -1640,7 +1648,7 @@ export class AdminService {
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .where(whereClause)
-        .orderBy(performances.createdAt)
+        .orderBy(sort === 'latest' ? desc(performances.createdAt) : performances.createdAt, performances.id)
         .limit(limit)
         .offset(offset),
       this.db

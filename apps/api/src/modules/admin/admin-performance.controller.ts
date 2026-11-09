@@ -93,10 +93,16 @@ export class AdminPerformanceController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('publication', new ZodValidationPipe(z.enum(['published', 'unpublished']).optional()))
+    publication?: 'published' | 'unpublished',
+    @Query('sort', new ZodValidationPipe(z.enum(['oldest', 'latest']).optional()))
+    sort?: 'oldest' | 'latest',
   ) {
     return this.adminService.listPerformances({
       status,
       search,
+      publication,
+      sort,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
     });

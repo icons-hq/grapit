@@ -33,14 +33,15 @@ function AdminBookingPreviewList({ userId }: { userId: string }) {
   const query = useQuery({
     queryKey: ['admin', 'performances', 'booking-previews', userId],
     queryFn: () => apiClient.get<PerformanceListResponse>(
-      '/api/v1/admin/performances?status=upcoming&page=1&limit=100',
+      '/api/v1/admin/performances?status=upcoming&publication=unpublished&sort=latest&page=1&limit=20',
       { showErrorToast: false },
     ),
     staleTime: 0,
     refetchOnWindowFocus: true,
   });
   const performances = (query.data?.data ?? []).filter(
-    (performance) => performance.publishState === 'draft' && performance.status === 'upcoming',
+    (performance) => ['draft', 'review', 'publish_ready'].includes(performance.publishState ?? '')
+      && performance.status === 'upcoming',
   );
   if (!query.isPending && !query.isError && performances.length === 0) return null;
 
