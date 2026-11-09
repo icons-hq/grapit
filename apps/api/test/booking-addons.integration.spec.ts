@@ -18,6 +18,7 @@ import { RefundService } from '../src/modules/refund/refund.service.js';
 import { BenefitRunnerService } from '../src/modules/admin/benefit-runner.service.js';
 import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
 import { FinanceLedgerService } from '../src/modules/admin/finance-ledger.service.js';
+import { AdminService } from '../src/modules/admin/admin.service.js';
 import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 
@@ -160,6 +161,47 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const f = await fixture();
     await expect(f.service.snapshot(f.showtimeId, { ...f.actors[0]!, role: 'user' })).rejects.toThrow();
     await expect(f.service.snapshot(f.showtimeId, { ...f.actors[0]!, adminCapabilityBundle: 'scanner' })).rejects.toThrow();
+  });
+
+  it.each([false, true])('removes an unused private performance with addon settings (unbound hold: %s)', async (hasHold) => {
+    const f = await fixture(); const actor = f.actors[0]!;
+    if (hasHold) await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    const admin = new AdminService(db, { invalidatePerformance: vi.fn() } as never, { write: vi.fn() } as never);
+    await admin.deletePerformance(f.performanceId, { actorUserId: actor.id });
+    expect(await db.select().from(schema.bookingAddons).where(eq(schema.bookingAddons.id, f.addonId))).toHaveLength(0);
+    expect(await db.select().from(schema.bookingAddonHolds).where(eq(schema.bookingAddonHolds.addonId, f.addonId))).toHaveLength(0);
+  });
+
+  it('preserves configured products and their bound allocations when a purchase prevents deletion', async () => {
+    const f = await fixture(); const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    const order = await pending(f, 0);
+    const admin = new AdminService(db, { invalidatePerformance: vi.fn() } as never, { write: vi.fn() } as never);
+    await expect(admin.deletePerformance(f.performanceId, { actorUserId: actor.id })).rejects.toThrow('운영 이력');
+    await expect(db.delete(schema.bookingAddons).where(eq(schema.bookingAddons.id, f.addonId))).rejects.toThrow();
+    expect(await reservationAddonTotal(db, order.id)).toBe(150000);
+  });
+
+  it('removes addon settings when an unused showtime is removed from a retained performance', async () => {
+    const f = await fixture(); const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    const [kept] = await db.insert(schema.showtimes).values({ performanceId: f.performanceId, dateTime: new Date('2099-01-02T06:00:00Z') }).returning();
+    const admin = new AdminService(db, { invalidatePerformance: vi.fn() } as never, { write: vi.fn() } as never);
+    await admin.updatePerformance(f.performanceId, { showtimes: [{ showtimeId: kept!.id, dateTime: '2099-01-02T15:00:00' }] }, { actorUserId: actor.id });
+    expect(await db.select().from(schema.showtimes).where(eq(schema.showtimes.performanceId, f.performanceId))).toMatchObject([{ id: kept!.id }]);
+    expect(await db.select().from(schema.bookingAddons).where(eq(schema.bookingAddons.id, f.addonId))).toHaveLength(0);
+    expect(await db.select().from(schema.bookingAddonHolds).where(eq(schema.bookingAddonHolds.addonId, f.addonId))).toHaveLength(0);
+  });
+
+  it('allows releasing a held option after its product is paused but refuses a new selection', async () => {
+    const f = await fixture(); const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    await f.service.save(f.showtimeId, { identity: 'photo', displayCopy: copy, price: 150000, capacity: 1,
+      eligibleTierNames: ['SVIP'], active: false, sortOrder: 0 }, actor);
+    await expect(f.service.setHold(f.showtimeId, f.addonId, seat(2).seatKey, true, f.actors[1]!)).rejects.toThrow();
+    const released = await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, false, actor);
+    expect(released.selections).toHaveLength(0);
+    expect(released.addons[0]).toMatchObject({ available: 1, active: false });
   });
 
   it('prepares and resumes the combined checkout atomically, rejecting changed selections and already-bound holds', async () => {

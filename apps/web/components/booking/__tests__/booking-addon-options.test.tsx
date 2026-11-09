@@ -28,6 +28,19 @@ describe('limited paid options and checkout amounts', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByText('선택한 좌석 등급에서는 구매할 수 없습니다.')).toBeInTheDocument();
   });
+  it('keeps a paused option visible and lets its current holder deselect it', () => {
+    const onChange = vi.fn();
+    const paused = { ...snapshot, addons: snapshot.addons.map((addon) => ({ ...addon, active: false })),
+      selections: [{ addonId: 'photo', seatKey: seat.seatKey, price: 150000, displayCopy, expiresAt: new Date().toISOString() }] };
+    const { rerender } = render(<BookingAddonOptions snapshot={paused} seats={[seat]} pending={false} onChange={onChange} />);
+    expect(screen.getByText('판매가 중단된 옵션입니다. 선택을 해제한 뒤 계속해주세요.')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(screen.getByRole('checkbox')).toBeEnabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(onChange).toHaveBeenCalledWith({ addonId: 'photo', seatKey: seat.seatKey, selected: false });
+    rerender(<BookingAddonOptions snapshot={{ ...paused, selections: [] }} seats={[seat]} pending={false} onChange={onChange} />);
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
   it('shows the separate add-on amount and the combined ticket payment', () => {
     render(<CheckoutAmountSummary seats={[seat]} totalPrice={532000} addons={[
       { addonId: 'photo', seatKey: seat.seatKey, price: 150000, displayCopy, expiresAt: new Date().toISOString() },

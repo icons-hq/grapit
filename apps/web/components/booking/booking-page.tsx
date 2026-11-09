@@ -660,6 +660,10 @@ export function BookingPage({
   const refetchAddons = addons.refetch;
   const addonSelectionPending = addons.selectionPending;
   const addonSnapshotUnavailable = addons.isLoading || addons.isError;
+  const hasPausedAddonSelection = Boolean(addons.data?.selections.some((selection) =>
+    selectedSeats.some((seat) => seat.seatKey === selection.seatKey)
+    && addons.data?.addons.some((addon) => addon.id === selection.addonId && !addon.active)));
+  const pausedAddonMessage = activeLocale === 'ko' ? '판매가 중단된 추가 옵션을 해제해주세요.' : 'Remove the paused add-on to continue.';
   const hasAddonProducts = Boolean(addons.data?.addons.length);
 
   const floorOptions = useMemo(() => {
@@ -1059,6 +1063,7 @@ export function BookingPage({
 
   const handleProceed = useCallback(async () => {
     if (addonSelectionPending || addonSnapshotUnavailable) return;
+    if (hasPausedAddonSelection) { toast.error(pausedAddonMessage); return; }
     if (!activeShowtimeId || !activeShowtime || !performance) {
       return;
     }
@@ -1106,6 +1111,11 @@ export function BookingPage({
         const current = useBookingStore.getState();
         const keys = new Set(current.selectedSeats.map((s) => s.seatKey));
         const selections = fresh.data.selections.filter((a) => keys.has(a.seatKey));
+        if (selections.some((selection) => !fresh.data.addons.find((addon) => addon.id === selection.addonId)?.active)) {
+          current.setAddons(selections);
+          toast.error(pausedAddonMessage);
+          return;
+        }
         if (addonKey(selections) !== requestedAddonKeys || addonKey(current.selectedAddons) !== requestedAddonKeys) {
           current.setAddons(selections);
           toast.info(activeLocale === 'ko' ? '애드온 선점 상태가 변경되었습니다. 선택을 다시 확인해주세요.' : 'Your add-on selection changed. Please review it.');
@@ -1140,6 +1150,8 @@ export function BookingPage({
   }, [
     addonSelectionPending,
     addonSnapshotUnavailable,
+    hasPausedAddonSelection,
+    pausedAddonMessage,
     hasAddonProducts,
     refetchAddons,
     activeLocale,
@@ -1390,7 +1402,8 @@ export function BookingPage({
           {activeShowtimeId ? <BookingSelectionBar tierSummaries={tierSummaries} seats={sortedSelections} onRemove={handleRemoveSeat}
             selectedSeatCount={selectedSeats.length} totalPrice={totalPrice} canClear={selectedSeats.length > 0}
             onClear={handleClearSeats} onProceed={() => { void handleProceed(); }}
-            isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection || addons.selectionPending || addonSnapshotUnavailable} disabledReason={bookingDisabledReason} /> : null}
+            isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection || addons.selectionPending || addonSnapshotUnavailable}
+            disabledReason={bookingDisabledReason ?? (hasPausedAddonSelection ? pausedAddonMessage : null)} /> : null}
         </div>
       </main>
 

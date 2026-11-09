@@ -6,6 +6,23 @@ import type { DrizzleDB } from './drizzle.provider.js';
 type Db = Pick<DrizzleDB, 'execute'>;
 type Hold = { id: string; addon_id: string; seat_key: string; price: number; display_copy: unknown; reservation_id: string | null };
 
+/** The caller already checked removal policy; bound allocations remain protected by their FK. */
+export async function deleteUnusedBookingAddons(db: Db, performanceId: string, ids?: string[]) {
+  if (ids?.length === 0) return;
+  // Parent-before-product order matches configuration writes and order FKs.
+  // A concurrent order either commits first (and blocks deletion by FK) or
+  // waits for this removal. Never cascade-delete a bound purchase allocation.
+  const scope = sql`s.performance_id = ${performanceId}${ids
+    ? sql` AND s.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}`;
+  await db.execute(sql`SELECT s.id FROM showtimes s WHERE ${scope} ORDER BY s.id FOR UPDATE`);
+  await db.execute(sql`SELECT a.id FROM booking_addons a JOIN showtimes s ON s.id = a.showtime_id
+    WHERE ${scope} ORDER BY a.id FOR UPDATE OF a`);
+  await db.execute(sql`DELETE FROM booking_addon_holds h USING booking_addons a, showtimes s
+    WHERE h.addon_id = a.id AND a.showtime_id = s.id AND ${scope} AND h.reservation_id IS NULL`);
+  await db.execute(sql`DELETE FROM booking_addons a USING showtimes s
+    WHERE a.showtime_id = s.id AND ${scope}`);
+}
+
 /** Pending provider handoffs reserve stock until their existing recovery flow resolves them. */
 export const consumingAddonHold = sql`(
   (h.reservation_id IS NULL AND h.expires_at > clock_timestamp())
