@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { ArrowUp, ChevronRight } from 'lucide-react';
 import type { Genre } from '@grabit/shared';
+import { AdminBookingPreviews } from '@/components/home/admin-booking-previews';
 import { BannerCarousel } from '@/components/home/banner-carousel';
 import { GenreGrid } from '@/components/home/genre-grid';
 import { TicketShelf } from '@/components/home/ticket-shelf';
@@ -29,6 +30,7 @@ export default function HomePage() {
   const href = (path: string) => getLocalizedPathname(path, locale);
   return <main className="ticket-home">
     <h1 className="sr-only">Grabit {copy.ticket}</h1>
+    <AdminBookingPreviews />
     <BannerCarousel banners={banners.data?.filter((banner) => banner.placement === 'home_hero') ?? []}
       performances={latest.data?.data} isLoading={banners.isLoading && latest.isLoading} locale={locale} />
     <div className="ticket-container">
