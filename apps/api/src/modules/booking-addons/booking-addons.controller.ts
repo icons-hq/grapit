@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { bookingAddonDefinitionSchema, type BookingAddonDefinition } from '@grabit/shared';
+import { bookingAddonDefinitionSchema, bookingAddonSelectionSchema, type BookingAddonDefinition } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
@@ -10,7 +10,7 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { BookingAddonsService, type AddonActor } from './booking-addons.service.js';
 
-const holdSchema = z.object({ showtimeId: z.string().uuid(), addonId: z.string().uuid(), seatKey: z.string().min(1).max(120), selected: z.boolean() }).strict();
+const holdSchema = bookingAddonSelectionSchema.extend({ showtimeId: z.string().uuid(), selected: z.boolean() }).strict();
 type ActorRequest = Request & { user: AddonActor };
 
 @Controller()
@@ -25,7 +25,7 @@ export class BookingAddonsController {
   @Put('booking/addons/holds')
   @UseGuards(AdmissionGuard)
   hold(@Body(new ZodValidationPipe(holdSchema)) body: z.infer<typeof holdSchema>, @Req() req: ActorRequest) {
-    return this.addons.setHold(body.showtimeId, body.addonId, body.seatKey, body.selected, req.user);
+    return this.addons.setHold(body.showtimeId, body.addonId, body.seatKey, body.selected, req.user, body.unitIndex);
   }
 
   @Put('admin/showtimes/:showtimeId/addons')

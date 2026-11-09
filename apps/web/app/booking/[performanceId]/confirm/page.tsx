@@ -479,7 +479,7 @@ function ConfirmPageContent() {
         orderId,
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats.map(toFloorAwareSeatSelection),
-        addons: selectedAddons.map(({ addonId, seatKey }) => ({ addonId, seatKey })),
+        addons: selectedAddons.map(({ addonId, seatKey, unitIndex }) => ({ addonId, seatKey, unitIndex: unitIndex ?? 1 })),
         amount: totalPrice,
         // Only the rows TermsAgreement shows, in the document language it renders.
         consentItems: BOOKING_CONSENT_ITEM_KEYS.map((key) => ({

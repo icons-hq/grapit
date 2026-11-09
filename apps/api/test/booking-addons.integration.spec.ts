@@ -41,7 +41,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
   }, 120000);
   afterAll(async () => { await closePool?.(); await container?.stop(); });
 
-  async function fixture(capacity = 1, count = 2) {
+  async function fixture(capacity = 1, count = 2, maxPerTicket = 1) {
     const [performance] = await db.insert(schema.performances).values({ title: randomUUID(), genre: 'artist_celebrity',
       ageRating: '만 15세 이상', startDate: new Date('2099-01-01'), endDate: new Date('2099-01-02'),
       status: 'upcoming', publishState: 'draft' }).returning();
@@ -68,7 +68,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const gateway = { publishAddonStockChanged: vi.fn().mockResolvedValue(true) };
     const service = new BookingAddonsService(db, booking as never, gateway as never, { assertBookingEnabled: vi.fn() } as never);
     const snapshot = await service.save(showtime!.id, { identity: 'photo', displayCopy: copy, price: 150000,
-      capacity, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actors[0]!);
+      capacity, maxPerTicket, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actors[0]!);
     return { service, gateway, booking, actors, locks, performanceId: performance!.id, showtimeId: showtime!.id, addonId: snapshot.addons[0]!.id };
   }
   async function pending(f: Awaited<ReturnType<typeof fixture>>, index: number) {
@@ -314,4 +314,108 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       capacity: 2, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, { ...f.actors[0]!, adminCapabilityBundle: 'operator' }))
       .resolves.toMatchObject({ addons: [{ capacity: 2 }] });
   });
+
+  it('holds photo 4 / hi-touch 8 for four tickets and issues twelve independent benefits exactly once', async () => {
+    const f = await fixture(58, 4); const actor = f.actors[0]!;
+    const seats = [1, 2, 3, 4].map((number) => seat(number));
+    f.locks.set(actor.id, seats.map((item) => item.seatKey));
+    const configured = await f.service.save(f.showtimeId, { identity: 'hi-touch', displayCopy: copy,
+      price: 80000, capacity: 430, maxPerTicket: 2, eligibleTierNames: ['SVIP'], active: true, sortOrder: 1 }, actor);
+    const hiTouchId = configured.addons.find((addon) => addon.identity === 'hi-touch')!.id;
+    const selections = seats.flatMap((item) => [
+      { addonId: f.addonId, seatKey: item.seatKey, unitIndex: 1 },
+      { addonId: hiTouchId, seatKey: item.seatKey, unitIndex: 1 },
+      { addonId: hiTouchId, seatKey: item.seatKey, unitIndex: 2 },
+    ]);
+    await Promise.all(selections.map((selection) => f.service.setHold(f.showtimeId, selection.addonId,
+      selection.seatKey, true, actor, selection.unitIndex)));
+    const held = await f.service.snapshot(f.showtimeId, actor);
+    expect(held.selections).toHaveLength(12);
+    expect(held.addons.find((addon) => addon.id === f.addonId)).toMatchObject({ maxPerTicket: 1, held: 4, available: 54 });
+    expect(held.addons.find((addon) => addon.id === hiTouchId)).toMatchObject({ maxPerTicket: 2, held: 8, available: 422 });
+    await expect(f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor, 2)).rejects.toThrow('초과');
+    await expect(f.service.setHold(f.showtimeId, hiTouchId, seat(1).seatKey, true, actor, 3)).rejects.toThrow('초과');
+
+    const addonAmount = 4 * 150000 + 8 * 80000;
+    const totalAmount = 4 * 382000 + addonAmount;
+    const [order] = await db.insert(schema.reservations).values({ userId: actor.id, showtimeId: f.showtimeId,
+      reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount, addonAmount,
+      paymentDeadlineAt: new Date(Date.now() + 420000), cancelDeadline: new Date('2098-12-31') }).returning();
+    await db.insert(schema.reservationSeats).values(seats.map((item) => ({ reservationId: order!.id,
+      seatId: item.seatKey, tierName: item.tierName, price: item.price, row: item.row, number: item.number })));
+    await db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: actor.id, showtimeId: f.showtimeId,
+      seats, selections, reservationId: order!.id, expectedTotal: addonAmount }));
+    expect(await reservationAddonTotal(db, order!.id, selections)).toBe(1240000);
+    await expect(reservationAddonTotal(db, order!.id, selections.slice(0, -1))).rejects.toThrow('선택');
+    await db.transaction(async (tx) => {
+      await tx.update(schema.reservations).set({ status: 'CONFIRMED' }).where(eq(schema.reservations.id, order!.id));
+      const [payment] = await tx.insert(schema.payments).values({ reservationId: order!.id, paymentKey: randomUUID(),
+        tossOrderId: order!.tossOrderId!, method: 'CARD', amount: totalAmount, status: 'DONE', paidAt: new Date() }).returning();
+      await tx.insert(schema.ticketItems).values(seats.map((item) => ({ ...item, reservationId: order!.id,
+        paymentId: payment!.id, showtimeId: f.showtimeId })));
+      await finalizeReservationAddons(tx, order!.id);
+      await finalizeReservationAddons(tx, order!.id);
+    });
+    const benefits = await db.select().from(schema.ticketBenefitEntitlements)
+      .where(eq(schema.ticketBenefitEntitlements.showtimeId, f.showtimeId));
+    expect(benefits).toHaveLength(12);
+    expect(new Set(benefits.map((benefit) => benefit.bookingAddonHoldId)).size).toBe(12);
+    const tickets = await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.reservationId, order!.id));
+    expect(tickets).toHaveLength(4);
+    for (const ticket of tickets) {
+      expect(ticket.addonAmount).toBe(310000);
+      expect(benefits.filter((benefit) => benefit.ticketItemId === ticket.id)).toHaveLength(3);
+    }
+    // Real cancellation finalizer preserves stock until provider cancellation succeeds.
+    await db.insert(schema.seatInventories).values(tickets.map((ticket) => ({ showtimeId: f.showtimeId,
+      seatId: ticket.seatId, seatKey: ticket.seatKey, floorKey: ticket.floorKey, status: 'sold' as const })));
+    const provider = { cancelPayment: vi.fn().mockImplementation(async (_key, reason) => ({ status: 'CANCELED', totalAmount, balanceAmount: 0,
+      cancels: [{ cancelReason: reason, cancelAmount: totalAmount, cancelStatus: 'DONE', transactionKey: randomUUID() }] })),
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount, balanceAmount: totalAmount, isPartialCancelable: true }) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    await new RefundService(db, provider as never, finalizer).requestRefund(order!.id, actor.id, 'Cancel all twelve options');
+    const released = await f.service.snapshot(f.showtimeId, actor);
+    expect(released.addons.find((addon) => addon.id === f.addonId)).toMatchObject({ available: 58, sold: 0 });
+    expect(released.addons.find((addon) => addon.id === hiTouchId)).toMatchObject({ available: 430, sold: 0 });
+    expect((await db.select().from(schema.ticketBenefitEntitlements)
+      .where(eq(schema.ticketBenefitEntitlements.showtimeId, f.showtimeId))).every((benefit) => benefit.state === 'inactive')).toBe(true);
+  });
+
+  it('keeps two slots independent and rejects reducing a live ticket limit below an existing slot', async () => {
+    const f = await fixture(2, 2, 2); const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor, 2);
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, false, actor);
+    expect((await f.service.snapshot(f.showtimeId, actor)).selections).toMatchObject([{ unitIndex: 2 }]);
+    await expect(f.service.save(f.showtimeId, { identity: 'photo', displayCopy: copy, price: 150000,
+      capacity: 2, maxPerTicket: 1, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actor)).rejects.toThrow('한도');
+    await releaseUnboundAddonHolds(db, actor.id, f.showtimeId, seat(1).seatKey);
+    expect((await f.service.snapshot(f.showtimeId, actor)).selections).toHaveLength(0);
+    await expect(f.service.save(f.showtimeId, { identity: 'photo', displayCopy: copy, price: 150000,
+      capacity: 2, maxPerTicket: 1, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actor))
+      .resolves.toMatchObject({ addons: [{ maxPerTicket: 1, available: 2 }] });
+  });
+
+  it('serializes competing first and second units against the same last inventory unit', async () => {
+    const f = await fixture(1, 2, 2);
+    const attempts = f.actors.flatMap((actor, i) => [1, 2].map((unitIndex) =>
+      f.service.setHold(f.showtimeId, f.addonId, seat(i + 1).seatKey, true, actor, unitIndex)));
+    const results = await Promise.allSettled(attempts);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect((await f.service.snapshot(f.showtimeId, f.actors[0]!)).addons[0]).toMatchObject({ held: 1, available: 0 });
+  });
+
+  it('rejects forged over-limit and duplicated unit selections again at the order transaction boundary', async () => {
+    const f = await fixture(4, 2, 2); const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    await db.insert(schema.bookingAddonHolds).values({ addonId: f.addonId, userId: actor.id, seatKey: seat(1).seatKey,
+      unitIndex: 3, expiresAt: new Date(Date.now() + 600000), price: 150000, displayCopy: copy });
+    await expect(db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: actor.id, showtimeId: f.showtimeId,
+      seats: [seat(1)], selections: [{ addonId: f.addonId, seatKey: seat(1).seatKey, unitIndex: 3 }] }))).rejects.toThrow('초과');
+    await expect(db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: actor.id, showtimeId: f.showtimeId,
+      seats: [seat(1)], selections: [{ addonId: f.addonId, seatKey: seat(1).seatKey },
+        { addonId: f.addonId, seatKey: seat(1).seatKey, unitIndex: 1 }] }))).rejects.toThrow('중복');
+    await expect(f.service.setHold(f.showtimeId, f.addonId, seat(2).seatKey, true, actor, 2)).rejects.toThrow('Seat lock');
+  });
+
 });

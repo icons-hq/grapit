@@ -21,7 +21,7 @@ describe('limited paid options and checkout amounts', () => {
     rerender(<BookingAddonOptions snapshot={held} seats={[seat]} pending={false} onChange={onChange} />);
     expect(screen.getByRole('checkbox')).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(onChange).toHaveBeenCalledWith({ addonId: 'photo', seatKey: seat.seatKey, selected: false });
+    expect(onChange).toHaveBeenCalledWith({ addonId: 'photo', seatKey: seat.seatKey, unitIndex: 1, selected: false });
   });
   it('does not offer the SVIP photo option to a VIP seat', () => {
     render(<BookingAddonOptions snapshot={snapshot} seats={[{ ...seat, tierName: 'VIP' }]} pending={false} onChange={vi.fn()} />);
@@ -37,7 +37,7 @@ describe('limited paid options and checkout amounts', () => {
     expect(screen.getByRole('checkbox')).toBeChecked();
     expect(screen.getByRole('checkbox')).toBeEnabled();
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(onChange).toHaveBeenCalledWith({ addonId: 'photo', seatKey: seat.seatKey, selected: false });
+    expect(onChange).toHaveBeenCalledWith({ addonId: 'photo', seatKey: seat.seatKey, unitIndex: 1, selected: false });
     rerender(<BookingAddonOptions snapshot={{ ...paused, selections: [] }} seats={[seat]} pending={false} onChange={onChange} />);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
@@ -49,5 +49,46 @@ describe('limited paid options and checkout amounts', () => {
     expect(screen.getByText('KRW 150,000')).toBeInTheDocument();
     expect(screen.getByText('KRW 2,000')).toBeInTheDocument();
     expect(screen.getByText('KRW 532,000')).toBeInTheDocument();
+  });
+});
+
+
+describe('per-ticket addon quantities', () => {
+  it('offers four photos and eight high-touch units for four eligible tickets', () => {
+    const seats = [1, 2, 3, 4].map((number) => ({ ...seat, seatId: `A-${number}`, seatKey: `1F:A-${number}`, number: String(number) }));
+    const photo = { ...snapshot.addons[0]!, maxPerTicket: 1, available: 58 };
+    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 2, price: 80000, displayCopy: { ...displayCopy, ko: { name: '하이터치 추가 구매', description: '' } } };
+    const onChange = vi.fn();
+    render(<BookingAddonOptions snapshot={{ ...snapshot, addons: [photo, highTouch] }} seats={seats} pending={false} onChange={onChange} />);
+    expect(screen.getAllByRole('checkbox', { name: /PHOTO/ })).toHaveLength(4);
+    expect(screen.getAllByRole('checkbox', { name: /하이터치/ })).toHaveLength(8);
+    expect(screen.getByText('티켓 1매당 최대 1개 · 선택 좌석 기준 최대 4개')).toBeInTheDocument();
+    expect(screen.getByText('티켓 1매당 최대 2개 · 선택 좌석 기준 최대 8개')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: '하이터치 추가 구매 · 1층 A-4 · 2/2' }));
+    expect(onChange).toHaveBeenCalledWith({ addonId: 'high-touch', seatKey: '1F:A-4', unitIndex: 2, selected: true });
+  });
+
+  it('counts only eligible seats for photo but all tiers for high-touch', () => {
+    const seats = [seat, { ...seat, seatKey: '1F:B-1', row: 'B', tierName: 'VIP' }];
+    const photo = { ...snapshot.addons[0]!, maxPerTicket: 1, available: 58 };
+    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 2, eligibleTierNames: ['SVIP', 'VIP'] };
+    render(<BookingAddonOptions snapshot={{ ...snapshot, addons: [photo, highTouch] }} seats={seats} pending={false} onChange={vi.fn()} />);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(5);
+    expect(screen.getByText('티켓 1매당 최대 1개 · 선택 좌석 기준 최대 1개')).toBeInTheDocument();
+    expect(screen.getByText('티켓 1매당 최대 2개 · 선택 좌석 기준 최대 4개')).toBeInTheDocument();
+  });
+
+  it('shows an independent pending state and allows another unit to be selected', () => {
+    const addon = { ...snapshot.addons[0]!, maxPerTicket: 2, available: 10 };
+    render(<BookingAddonOptions snapshot={{ ...snapshot, addons: [addon] }} seats={[seat]} pending={false}
+      pendingSelections={[{ addonId: 'photo', seatKey: seat.seatKey, unitIndex: 1, selected: true }]} onChange={vi.fn()} />);
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes[0]).toBeChecked();
+    expect(boxes[0]).toBeDisabled();
+    expect(boxes[0]).toHaveAttribute('aria-busy', 'true');
+    expect(boxes[1]).not.toBeChecked();
+    expect(boxes[1]).toBeEnabled();
+    expect(screen.getByText('선점 중…')).toBeInTheDocument();
+    expect(screen.queryByText('선점 완료')).not.toBeInTheDocument();
   });
 });

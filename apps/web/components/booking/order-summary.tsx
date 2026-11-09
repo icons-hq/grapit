@@ -65,18 +65,29 @@ export function CheckoutAmountSummary({ seats, addons = [], totalPrice, quote }:
 }) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const copy = getCheckoutCopy(locale);
+  const addonGroups = new Map<string, { addon: (typeof addons)[number]; quantity: number; amount: number }>();
+  for (const addon of addons) {
+    const key = `${addon.addonId}:${addon.seatKey}`;
+    const group = addonGroups.get(key);
+    if (group) {
+      group.quantity += 1;
+      group.amount += addon.price;
+    } else {
+      addonGroups.set(key, { addon, quantity: 1, amount: addon.price });
+    }
+  }
   return (
     <section aria-label={copy.paymentTitle} className="space-y-4">
       <h2 className="text-xl font-semibold">{copy.paymentTitle}</h2>
       <dl className="space-y-3 text-sm md:text-base">
         <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.ticketAmount}</dt><dd className="tabular-nums">{formatKrw(seats.reduce((sum, seat) => sum + seat.price, 0))}</dd></div>
         <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.serviceFee}</dt><dd className="tabular-nums">{formatKrw(seats.length * TICKET_SERVICE_FEE_KRW)}</dd></div>
-        {addons.map((addon) => {
+        {[...addonGroups.entries()].map(([key, { addon, quantity, amount }]) => {
           const seat = seats.find((item) => item.seatKey === addon.seatKey);
           const seatLabel = seat ? copy.seat.replace(/\{(\w+)\}/g, (_, key: string) => String(seat[key as keyof CheckoutSeat] ?? '')) : addon.seatKey;
-          return <div key={`${addon.addonId}:${addon.seatKey}`} className="flex justify-between gap-4">
-          <dt className="text-muted-foreground">{addon.displayCopy[locale]?.name ?? addon.displayCopy.en.name} · {seatLabel}</dt>
-          <dd className="tabular-nums">{formatKrw(addon.price)}</dd>
+          return <div key={key} className="flex justify-between gap-4">
+          <dt className="text-muted-foreground">{addon.displayCopy[locale]?.name ?? addon.displayCopy.en.name} × {quantity} · {seatLabel}</dt>
+          <dd className="tabular-nums">{formatKrw(amount)}</dd>
         </div>; })}
         <div className="flex justify-between gap-4 border-t border-border pt-4 font-semibold"><dt>{copy.orderTotal}</dt><dd className="tabular-nums">{formatKrw(totalPrice)}</dd></div>
       </dl>

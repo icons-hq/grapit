@@ -587,6 +587,8 @@ The API `entryStatus`/`enteredAt` fields on a QR ticket are derived values (from
 
 Scanner-only access is represented through admin capability bundles, not a separate auth stack.
 
+Customer-phone benefit confirmation uses the separate authenticated `POST /tickets/benefits/redeem` route. It verifies Reservation Owner access before receipt replay and again after acquiring the shared redemption locks; the scanner route still requires its existing admin capability. Both paths consume one entitlement atomically and share cancellation, credential validity and attempt-id guards. `ticket_benefit_redemption_records.redemption_channel` distinguishes `buyer_device` (the authenticated owner account, not an authenticated staff identity) from `scanner_qr`. The buyer UI requires a separate confirmation with all four supported language warnings, distinguishes an existing redemption from a new success, and refreshes reservation detail on return to the screen after five seconds of staleness. See the [field handoff runbook](runbooks/benefit-physical-handoff.md).
+
 The `/field/check-in` web client keeps these device-side rules ([runbook](runbooks/seat-level-field-operations.md)):
 
 - the scanner's showtime choice is stored per account in localStorage. It is restored in camera-opened tabs only when it is at most 12 hours old, still listed with the same start time, and today in KST, starting within the next 12 hours or started at most 6 hours ago (last night's show is not restored the next morning). A restore, or a listed `?showtimeId=` in the link, saves the choice again with a new selection time.

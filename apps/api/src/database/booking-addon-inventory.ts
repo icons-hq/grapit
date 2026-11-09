@@ -4,7 +4,7 @@ import type { BookingAddonSelection, FloorAwareSeatSelection } from '@grabit/sha
 import type { DrizzleDB } from './drizzle.provider.js';
 
 type Db = Pick<DrizzleDB, 'execute'>;
-type Hold = { id: string; addon_id: string; seat_key: string; price: number; display_copy: unknown; reservation_id: string | null };
+type Hold = { id: string; addon_id: string; seat_key: string; unit_index: number; price: number; display_copy: unknown; reservation_id: string | null };
 
 /** The caller already checked removal policy; bound allocations remain protected by their FK. */
 export async function deleteUnusedBookingAddons(db: Db, performanceId: string, ids?: string[]) {
@@ -42,8 +42,8 @@ export async function countAddonConsumption(db: Db, addonId: string, exceptReser
 }
 
 function selectionsMatch(rows: Hold[], selections: BookingAddonSelection[]) {
-  const keys = (items: BookingAddonSelection[]) => items.map((x) => `${x.addonId}:${x.seatKey}`).sort().join('|');
-  return rows.length === selections.length && keys(rows.map((r) => ({ addonId: r.addon_id, seatKey: r.seat_key }))) === keys(selections);
+  const keys = (items: BookingAddonSelection[]) => items.map((x) => `${x.addonId}:${x.seatKey}:${x.unitIndex ?? 1}`).sort().join('|');
+  return rows.length === selections.length && keys(rows.map((r) => ({ addonId: r.addon_id, seatKey: r.seat_key, unitIndex: r.unit_index }))) === keys(selections);
 }
 
 export async function releaseUnboundAddonHolds(db: DrizzleDB, userId: string, showtimeId: string, seatKey: string) {
@@ -56,16 +56,16 @@ export async function releaseUnboundAddonHolds(db: DrizzleDB, userId: string, sh
 }
 
 export async function reservationAddonChoices(db: Db, reservationId: string) {
-  const result = await db.execute(sql`SELECT h.addon_id, h.seat_key, h.price, h.display_copy, r.payment_deadline_at
+  const result = await db.execute(sql`SELECT h.addon_id, h.seat_key, h.unit_index, h.price, h.display_copy, r.payment_deadline_at
     FROM booking_addon_holds h JOIN reservations r ON r.id = h.reservation_id WHERE h.reservation_id = ${reservationId}
-    ORDER BY h.addon_id, h.seat_key`);
-  return result.rows.map((r) => ({ addonId: String(r['addon_id']), seatKey: String(r['seat_key']), price: Number(r['price']),
+    ORDER BY h.addon_id, h.seat_key, h.unit_index`);
+  return result.rows.map((r) => ({ addonId: String(r['addon_id']), seatKey: String(r['seat_key']), unitIndex: Number(r['unit_index']), price: Number(r['price']),
     displayCopy: r['display_copy'] as import('@grabit/shared').BookingAddonChoice['displayCopy'],
     expiresAt: new Date(String(r['payment_deadline_at'])).toISOString() }));
 }
 
 export async function reservationAddonTotal(db: Db, reservationId: string, selections?: BookingAddonSelection[]): Promise<number> {
-  const result = await db.execute(sql`SELECT id, addon_id, seat_key, price, display_copy, reservation_id
+  const result = await db.execute(sql`SELECT id, addon_id, seat_key, unit_index, price, display_copy, reservation_id
     FROM booking_addon_holds WHERE reservation_id = ${reservationId}`);
   const rows = result.rows as unknown as Hold[];
   if (selections && !selectionsMatch(rows, selections)) throw new ConflictException('기존 주문의 애드온 선택과 다릅니다.');
@@ -78,7 +78,7 @@ export async function selectAddonHoldsForOrder(db: Db, input: {
   seats: FloorAwareSeatSelection[]; reservationId?: string; expectedTotal?: number;
 }): Promise<number> {
   if (!input.selections.length) return 0;
-  if (new Set(input.selections.map((s) => `${s.addonId}:${s.seatKey}`)).size !== input.selections.length) {
+  if (new Set(input.selections.map((s) => `${s.addonId}:${s.seatKey}:${s.unitIndex ?? 1}`)).size !== input.selections.length) {
     throw new BadRequestException('중복된 애드온 선택입니다.');
   }
   const ids = [...new Set(input.selections.map((s) => s.addonId))].sort();
@@ -87,15 +87,19 @@ export async function selectAddonHoldsForOrder(db: Db, input: {
   if (definitions.rows.length !== ids.length) throw new ConflictException('애드온을 찾을 수 없습니다.');
   const rows: Hold[] = [];
   for (const selection of input.selections) {
+    const unitIndex = selection.unitIndex ?? 1;
     const definition = definitions.rows.find((d) => d['id'] === selection.addonId)!;
+    if (!Number.isInteger(unitIndex) || unitIndex < 1 || unitIndex > Number(definition['max_per_ticket'])) {
+      throw new BadRequestException('티켓당 구매 가능한 애드온 수량을 초과했습니다.');
+    }
     const seat = input.seats.find((s) => s.seatKey === selection.seatKey);
     const tiers = definition['eligible_tier_names'] as string[];
     if (definition['showtime_id'] !== input.showtimeId || !definition['active'] || !seat || !tiers.includes(seat.tierName)) {
       throw new ConflictException('선택한 좌석에서 구매할 수 없는 애드온입니다.');
     }
-    const hold = await db.execute(sql`SELECT id, addon_id, seat_key, price, display_copy, reservation_id
+    const hold = await db.execute(sql`SELECT id, addon_id, seat_key, unit_index, price, display_copy, reservation_id
       FROM booking_addon_holds WHERE addon_id = ${selection.addonId} AND seat_key = ${selection.seatKey}
-      AND user_id = ${input.userId} AND reservation_id IS NULL AND expires_at > clock_timestamp() FOR UPDATE`);
+      AND user_id = ${input.userId} AND unit_index = ${unitIndex} AND reservation_id IS NULL AND expires_at > clock_timestamp() FOR UPDATE`);
     const row = hold.rows[0] as unknown as Hold | undefined;
     if (!row || Number(row.price) !== Number(definition['price'])) throw new ConflictException('애드온 선점이 만료되거나 가격이 변경되었습니다. 다시 선택해주세요.');
     rows.push(row);
@@ -112,8 +116,8 @@ export async function selectAddonHoldsForOrder(db: Db, input: {
 
 /** Must run in the SAME payment finalization transaction as the tickets and payment. */
 export async function finalizeReservationAddons(db: Db, reservationId: string): Promise<void> {
-  const holdsResult = await db.execute(sql`SELECT id, addon_id, seat_key, price, display_copy, reservation_id
-    FROM booking_addon_holds WHERE reservation_id = ${reservationId} ORDER BY addon_id, seat_key`);
+  const holdsResult = await db.execute(sql`SELECT id, addon_id, seat_key, unit_index, price, display_copy, reservation_id
+    FROM booking_addon_holds WHERE reservation_id = ${reservationId} ORDER BY addon_id, seat_key, unit_index`);
   const holds = holdsResult.rows as unknown as Hold[];
   if (!holds.length) return;
   const ids = [...new Set(holds.map((h) => h.addon_id))].sort();

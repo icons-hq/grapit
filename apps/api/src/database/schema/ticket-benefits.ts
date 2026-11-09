@@ -1,6 +1,7 @@
 import { desc, sql } from 'drizzle-orm';
 import {
   foreignKey,
+  check,
   index,
   integer,
   jsonb,
@@ -278,6 +279,12 @@ export const ticketBenefitRedemptionRecords = pgTable(
     ticketItemId: uuid('ticket_item_id').notNull(),
     benefitEntitlementId: uuid('benefit_entitlement_id').notNull(),
     scannerUserId: uuid('scanner_user_id').notNull(),
+    // The actor is a verified scanner only for scanner_qr. buyer_device records
+    // the authenticated reservation owner; physical staff presence is not proven.
+    redemptionChannel: varchar('redemption_channel', { length: 24 })
+      .$type<'scanner_qr' | 'buyer_device'>()
+      .notNull()
+      .default('scanner_qr'),
     deviceAttemptId: varchar('device_attempt_id', { length: 120 }).notNull(),
     redactedTokenRef: varchar('redacted_token_ref', { length: 160 }).notNull(),
     result: ticketBenefitRedemptionResultEnum('result').notNull(),
@@ -291,6 +298,7 @@ export const ticketBenefitRedemptionRecords = pgTable(
   },
   // Migration 0029 names these FKs explicitly; keep the names so drizzle-kit diffs match.
   (table) => [
+    check('tbrr_redemption_channel_check', sql`${table.redemptionChannel} IN ('scanner_qr', 'buyer_device')`),
     foreignKey({
       name: 'tbrr_showtime_id_fk',
       columns: [table.showtimeId],

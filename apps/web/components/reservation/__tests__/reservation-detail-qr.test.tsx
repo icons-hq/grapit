@@ -442,7 +442,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText('안내 메일 예약')).not.toBeInTheDocument();
   });
 
-  it('shows buyer benefit entitlements under each ticket item QR card without actions or outbound copy', () => {
+  it('shows buyer benefits with a confirmation action only for an active entitlement', () => {
     const reservation = createReservation();
     render(
       <ReservationDetailView
@@ -502,7 +502,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(within(activeBenefits).getByText('사용 가능')).toBeInTheDocument();
     expect(within(activeBenefits).getByText('사용됨')).toBeInTheDocument();
     expect(within(activeBenefits).getByText(/^사용 일시:/)).toBeInTheDocument();
-    expect(within(activeBenefits).queryAllByRole('button')).toHaveLength(0);
+    expect(within(activeBenefits).getByRole('button', { name: `${longBenefitName} 현장 사용` })).toBeEnabled();
     expect(within(activeBenefits).queryByText(/메일|문자|알림|발송/)).not.toBeInTheDocument();
 
     const cancelledCard = screen.getByTestId(`qr-ticket-card-${secondTicketItemId}`);

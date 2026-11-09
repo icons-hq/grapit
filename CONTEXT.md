@@ -73,15 +73,19 @@ The durable record of an operator change to Benefit Configuration, including wha
 _Avoid_: Unsaved draft, informal admin note.
 
 **Benefit Entitlement**:
-A Ticket Item's usable right to one Ticket Benefit. Field Scanner Staff can verify and mark a Benefit Entitlement as used so the same Ticket Item cannot use that benefit again.
+A Ticket Item's individually usable right to one unit of a Ticket Benefit. Multiple purchased units create separate entitlements, each of which can be used once.
 _Avoid_: Admission State, QR Credential, Benefit Assignment.
 
 **Benefit Redemption**:
-The online, QR-based field operation of marking one Benefit Entitlement as used for a Ticket Item. It is processed one Benefit Entitlement at a time, separate from Venue Entry, and does not change Admission State.
+The online field operation of marking one Benefit Entitlement as used for a Ticket Item, through staff QR scanning or confirmation on the Buyer's device. It is processed one Benefit Entitlement at a time, separate from Venue Entry, and does not change Admission State.
 _Avoid_: Venue Entry, manual lookup, admission processing.
 
+**Buyer Device Benefit Confirmation**:
+The field workflow in which staff confirm one Benefit Redemption on the signed-in Reservation Owner's phone after a multilingual warning. The record identifies the authenticated Buyer Account and confirmation channel, not the identity of the person who physically pressed the button.
+_Avoid_: Authenticated staff action, QR scan, proof of physical handoff.
+
 **Benefit Redemption Record**:
-The durable record of a Benefit Redemption attempt, including the Benefit Entitlement, Ticket Item, scanner, timing, device attempt, redacted QR reference, and result.
+The durable record of a Benefit Redemption attempt, including the Benefit Entitlement, Ticket Item, authenticated account, confirmation channel, timing, device attempt, and result. A QR-based attempt also includes a redacted QR reference.
 _Avoid_: Raw QR token, informal staff note.
 
 **Duplicate Benefit Redemption**:

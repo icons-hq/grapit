@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMyReservations, useReservationDetail, useRefundPreview, useCancelTicketItem } from '../use-reservations';
 import { useAuthStore } from '@/stores/use-auth-store';
 
@@ -15,6 +15,26 @@ describe('Buyer reservation cache isolation', () => {
     put.mockReset();
     window.history.replaceState({}, '', '/');
     useAuthStore.setState({ user: { id: 'buyer-a' } as never, accessToken: 'test-a' });
+  });
+  afterEach(() => { focusManager.setFocused(undefined); vi.useRealTimers(); });
+
+  it('refreshes stale ticket benefits on window focus despite the app-wide no-focus-refetch default', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60000, refetchOnWindowFocus: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const active = { id: 'order-a', ticketItems: [{ id: 'seat-a', benefitEntitlements: [{ id: 'benefit-a', state: 'active' }] }] };
+    const used = { id: 'order-a', ticketItems: [{ id: 'seat-a', benefitEntitlements: [{ id: 'benefit-a', state: 'redeemed' }] }] };
+    get.mockResolvedValueOnce(active).mockResolvedValueOnce(used);
+    const { result, unmount } = renderHook(() => useReservationDetail('order-a'), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual(active));
+    act(() => {
+      focusManager.setFocused(false);
+      vi.setSystemTime(Date.now() + 6000);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(result.current.data).toEqual(used));
+    expect(get).toHaveBeenCalledTimes(2);
+    unmount(); client.clear();
   });
 
   it('does not refetch an obsolete refund quote after the seat cancellation succeeds', async () => {

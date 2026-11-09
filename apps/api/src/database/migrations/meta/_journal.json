@@ -372,6 +372,13 @@
       "when": 1794195842608,
       "tag": "0052_paid_booking_addons",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1794207577484,
+      "tag": "0053_addon_units_and_benefit_coupons",
+      "breakpoints": true
     }
   ]
 }
