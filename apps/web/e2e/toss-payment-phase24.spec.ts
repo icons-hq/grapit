@@ -175,6 +175,7 @@ test.describe('toss-payment phase24 recovery states', () => {
 
   test('provider processing remains pending after the local deadline without a second confirm', async ({ page }) => {
     let confirmCount = 0;
+    let statusChecks = 0;
     await enableBooking(page);
     await mockAuthenticatedSession(page);
     // `?locale=` rides on the confirm request, so the guard matches any query.
@@ -191,11 +192,16 @@ test.describe('toss-payment phase24 recovery states', () => {
         }),
       ) });
     });
+    await page.route('**/api/v1/payments/status-check', async (route: Route) => {
+      statusChecks += 1;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ outcome: 'checked' }) });
+    });
     await page.goto('/booking/phase24-test-performance/complete?pending=true&orderId=phase24-order-processing');
     await expect(page.getByRole('heading', { name: '결제 상태 확인이 지연되고 있어요' })).toBeVisible();
     await expect(page.getByText('아직 최종 결과를 받지 못했습니다. 결제 상태를 다시 확인하거나 고객센터에 문의해 주세요.')).toBeVisible();
     await page.getByRole('button', { name: '결제 상태 다시 확인' }).click();
     await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
+    await expect.poll(() => statusChecks).toBe(1);
     expect(confirmCount).toBe(0);
   });
 
