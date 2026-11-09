@@ -31,6 +31,9 @@ const ko = {
   showMore: '더보기', toTop: '맨 위로', untitledPoster: '포스터 준비중',
   priceFrom: '원부터', feeSeparate: '예매 수수료 별도', categoryHeading: '모든 티켓',
   accountTitle: '마이페이지', ticketGuide: '예매·입장 안내',
+  adminBookingHeading: '관리자 전용 공연', privatePerformance: '비공개 · 관리자만 표시',
+  adminBookingDescription: '공개 전 공연을 관리자 계정으로 확인하고 구매할 수 있습니다. 결제 시 실제 금액이 청구됩니다.',
+  adminBookingTest: '구매 테스트', adminPerformances: '공연 관리', adminBookingLoading: '비공개 공연을 확인하고 있습니다.',
 };
 type TicketCopy = { [K in keyof typeof ko]: string };
 const en: TicketCopy = {
@@ -57,9 +60,16 @@ const en: TicketCopy = {
   searchHint: 'Search by show name.', loginForWishlist: 'Sign in to save your favorite shows.', login: 'Sign in', showMore: 'Show more',
   toTop: 'Back to top', untitledPoster: 'Poster coming soon', priceFrom: 'KRW and up', feeSeparate: 'Booking fee extra',
   categoryHeading: 'All tickets', accountTitle: 'My page', ticketGuide: 'Booking & entry guide',
+  adminBookingHeading: 'Admin-only shows', privatePerformance: 'Private · admins only',
+  adminBookingDescription: 'Preview and book unpublished shows with your admin account. Payments are charged at the actual price.',
+  adminBookingTest: 'Test booking', adminPerformances: 'Manage shows', adminBookingLoading: 'Loading private shows.',
 };
 const th: TicketCopy = {
-  ...en, ticket:'บัตร',allCategories:'หมวดหมู่ทั้งหมด',all:'ทั้งหมด',browse:'สำรวจ',upcoming:'เร็ว ๆ นี้',ranking:'อันดับ',rankingTitle:'ยอดนิยมตามประเภท',
+  ...en,
+  adminBookingHeading: 'การแสดงสำหรับผู้ดูแล', privatePerformance: 'ส่วนตัว · เฉพาะผู้ดูแล',
+  adminBookingDescription: 'ตรวจสอบและจองการแสดงที่ยังไม่เผยแพร่ด้วยบัญชีผู้ดูแล การชำระเงินจะเรียกเก็บตามราคาจริง',
+  adminBookingTest: 'ทดสอบการจอง', adminPerformances: 'จัดการการแสดง', adminBookingLoading: 'กำลังโหลดการแสดงส่วนตัว',
+  ticket:'บัตร',allCategories:'หมวดหมู่ทั้งหมด',all:'ทั้งหมด',browse:'สำรวจ',upcoming:'เร็ว ๆ นี้',ranking:'อันดับ',rankingTitle:'ยอดนิยมตามประเภท',
   rankingBasis:'ยอดเข้าชมทั้งหมด รวมการแสดงที่สิ้นสุด',newShows:'สำรวจการแสดง',venues:'สถานที่จัดงาน',venueTitle:'สำรวจตามสถานที่',venueSearch:'ค้นหาสถานที่',venueEmpty:'ยังไม่มีสถานที่',
   wishlist:'ถูกใจ',wishlistTitle:'การแสดงที่ถูกใจ',recent:'ดูล่าสุด',my:'ของฉัน',myTickets:'บัตรของฉัน',searchPlaceholder:'ค้นหาการแสดง',search:'ค้นหา',guide:'คู่มือ',
   notice:'ประกาศ',noticeText:'คู่มือ Grabit ตั้งแต่จองบัตรจนถึงสแกน QR เข้างาน',viewAll:'ดูทั้งหมด',previous:'ก่อนหน้า',next:'ถัดไป',pause:'หยุดเล่นอัตโนมัติ',play:'เล่นอัตโนมัติ',allBanners:'โปรโมชั่นทั้งหมด',close:'ปิด',
@@ -70,7 +80,11 @@ const th: TicketCopy = {
   details:'รายละเอียด',cast:'นักแสดง',prices:'ราคา',information:'ข้อมูลการเข้าชม',venue:'สถานที่',selectDate:'เลือกวัน',selectTime:'เลือกรอบ',selectTimePrompt:'เลือกวันและรอบการแสดง',dateTbd:'รอประกาศกำหนดการ',noFutureShowtime:'ไม่มีรอบที่จองได้',book:'จองบัตร',selectedTime:'รอบที่เลือก',tickets:'บัตร',searchPrompt:'กำลังมองหาการแสดงไหม?',searchHint:'ค้นหาด้วยชื่อการแสดง',loginForWishlist:'เข้าสู่ระบบเพื่อบันทึกการแสดงที่ชอบ',login:'เข้าสู่ระบบ',showMore:'ดูเพิ่มเติม',toTop:'กลับด้านบน',untitledPoster:'กำลังเตรียมโปสเตอร์',priceFrom:'วอนขึ้นไป',feeSeparate:'ไม่รวมค่าธรรมเนียม',categoryHeading:'บัตรทั้งหมด',accountTitle:'หน้าของฉัน',ticketGuide:'คู่มือการจองและเข้างาน',
 };
 const zh: TicketCopy = {
-  ...en,ticket:'门票',allCategories:'全部分类',all:'全部',browse:'浏览',upcoming:'即将开售',ranking:'排行榜',rankingTitle:'分类人气排行',rankingBasis:'累计浏览量 · 含已结束演出',newShows:'探索演出',venues:'演出场馆',venueTitle:'按场馆探索',venueSearch:'搜索场馆',venueEmpty:'暂无场馆。',
+  ...en,
+  adminBookingHeading: '管理员专属演出', privatePerformance: '未公开 · 仅管理员可见',
+  adminBookingDescription: '使用管理员账号查看并预订尚未公开的演出。付款将按实际价格扣款。',
+  adminBookingTest: '测试预订', adminPerformances: '管理演出', adminBookingLoading: '正在加载未公开演出。',
+  ticket:'门票',allCategories:'全部分类',all:'全部',browse:'浏览',upcoming:'即将开售',ranking:'排行榜',rankingTitle:'分类人气排行',rankingBasis:'累计浏览量 · 含已结束演出',newShows:'探索演出',venues:'演出场馆',venueTitle:'按场馆探索',venueSearch:'搜索场馆',venueEmpty:'暂无场馆。',
   wishlist:'收藏',wishlistTitle:'收藏的演出',recent:'最近浏览',my:'我的',myTickets:'我的门票',searchPlaceholder:'寻找下一场演出',search:'搜索',guide:'使用指南',notice:'公告',noticeText:'从预订到扫码入场：Grabit 使用指南',viewAll:'查看全部',previous:'上一个',next:'下一个',pause:'暂停自动播放',play:'开始自动播放',allBanners:'全部推广',close:'关闭',
   filters:'筛选',reset:'重置',apply:'应用',genre:'类型',region:'地区',date:'演出日期',dateFrom:'开始日期',dateTo:'结束日期',status:'销售状态',selling:'售票中',ended:'已结束',latest:'最新',popular:'浏览量',openingOrder:'开售时间',dateOrder:'演出时间',relevance:'相关度',includeEnded:'包含已结束演出',
   noShows:'暂无演出',noShowsBody:'试试其他类型或调整筛选条件。',noUpcoming:'新演出正在准备中',noUpcomingBody:'探索现在可预订的演出。',loadError:'无法加载演出。',retry:'重试',results:'个搜索结果',savedEmpty:'收藏喜欢的演出',savedEmptyBody:'点击演出详情中的爱心即可收藏。',recentEmpty:'暂无最近浏览的演出',recentEmptyBody:'寻找喜欢的演出吧。',recentNote:'此设备最近 30 天浏览的演出。',clearRecent:'清空浏览记录',

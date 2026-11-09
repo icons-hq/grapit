@@ -175,6 +175,44 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     expect(listed.body.data).toHaveLength(1);
   });
 
+  it('filters unpublished shows before pagination and returns the newest private previews first', async () => {
+    const prefix = `Preview ${randomUUID()}`;
+    const base = {
+      genre: 'artist_celebrity' as const, status: 'upcoming' as const,
+      startDate: new Date('2099-01-01T09:00:00Z'), endDate: new Date('2099-01-01T11:00:00Z'),
+      ageRating: '15+',
+    };
+    const privateRows = [
+      { id: randomUUID(), title: `${prefix} old draft`, publishState: 'draft' as const, createdAt: new Date('2026-02-01T00:00:00Z') },
+      { id: randomUUID(), title: `${prefix} review`, publishState: 'review' as const, createdAt: new Date('2026-03-01T00:00:00Z') },
+      { id: randomUUID(), title: `${prefix} ready`, publishState: 'publish_ready' as const, createdAt: new Date('2026-04-01T00:00:00Z') },
+      { id: randomUUID(), title: `${prefix} new draft`, publishState: 'draft' as const, createdAt: new Date('2026-05-01T00:00:00Z') },
+    ];
+    await db.insert(schema.performances).values([
+      ...Array.from({ length: 101 }, (_, index) => ({ ...base, title: `${prefix} public ${index}`,
+        publishState: 'published' as const, createdAt: new Date('2026-01-01T00:00:00Z') })),
+      ...privateRows.map((row) => ({ ...base, ...row })),
+      { ...base, title: `${prefix} ended`, status: 'ended' as const, publishState: 'draft' as const, createdAt: new Date('2026-06-01T00:00:00Z') },
+    ]);
+    const query = { search: prefix, status: 'upcoming', publication: 'unpublished', sort: 'latest', limit: 2 };
+    const first = await request(app.getHttpServer()).get('/admin/performances').query({ ...query, page: 1 });
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ total: 4, totalPages: 2 });
+    expect(first.body.data.map((row: { id: string }) => row.id)).toEqual([privateRows[3]!.id, privateRows[2]!.id]);
+    const second = await request(app.getHttpServer()).get('/admin/performances').query({ ...query, page: 2 });
+    expect(second.body.data.map((row: { id: string }) => row.id)).toEqual([privateRows[1]!.id, privateRows[0]!.id]);
+    const publicPage = await request(app.getHttpServer()).get('/admin/performances')
+      .query({ search: prefix, publication: 'published', limit: 1 });
+    expect(publicPage.body.total).toBe(101);
+    expect(publicPage.body.data[0].publishState).toBe('published');
+  });
+
+  it('rejects unknown publication and ordering filters at the HTTP boundary', async () => {
+    for (const query of [{ publication: 'anything' }, { sort: 'anything' }]) {
+      expect((await request(app.getHttpServer()).get('/admin/performances').query(query)).status).toBe(400);
+    }
+  });
+
   it('allows a banner-only operator to upload banners without granting access to performance assets', async () => {
     const upload = (folder: string) => request(app.getHttpServer()).post('/admin/upload/presigned')
       .set('x-test-capabilities', 'banner.manage').send({ folder, contentType: 'image/png', extension: 'png' });
