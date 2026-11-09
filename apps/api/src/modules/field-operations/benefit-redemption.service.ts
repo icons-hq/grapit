@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -20,6 +21,8 @@ import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   ticketBenefitEntitlements,
   ticketBenefitRedemptionRecords,
+  ticketItems,
+  reservations,
 } from '../../database/schema/index.js';
 import { BENEFIT_MUTATION_LOCK_TIMEOUT } from '../admin/admin-benefits.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
@@ -37,6 +40,8 @@ const PG_QUERY_CANCELED = '57014';
 
 export interface BenefitRedemptionContext {
   scannerUserId: string;
+  /** buyer_device identifies the owner account, never a verified staff member. */
+  redemptionChannel?: 'scanner_qr' | 'buyer_device';
   ipAddress?: string | null;
   userAgent?: string | null;
   requestId?: string | null;
@@ -51,6 +56,7 @@ type PriorRedemptionRow = {
   deviceAttemptId: string;
 };
 type ExistingRedemptionRow = PriorRedemptionRow & {
+  redemptionChannel?: 'scanner_qr' | 'buyer_device';
   showtimeId: string;
   requestedShowtimeId: string | null;
   ticketItemId: string;
@@ -67,6 +73,13 @@ export class BenefitRedemptionService {
     private readonly qrTicketService: QrTicketService,
   ) {}
 
+  async redeemForBuyer(
+    input: BenefitRedemptionRequest,
+    buyerUserId: string,
+  ): Promise<BenefitRedemptionResponse> {
+    return this.redeem(input, { scannerUserId: buyerUserId, redemptionChannel: 'buyer_device' });
+  }
+
   async redeem(
     input: BenefitRedemptionRequest,
     context: BenefitRedemptionContext,
@@ -78,6 +91,9 @@ export class BenefitRedemptionService {
             set_config('statement_timeout', ${FIELD_REDEMPTION_STATEMENT_TIMEOUT}, true)
         `);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`benefit:${input.deviceAttemptId}`}, 0))`);
+        if (context.redemptionChannel === 'buyer_device') {
+          await this.assertBuyerOwnsEntitlement(tx, input.benefitEntitlementId, context.scannerUserId);
+        }
         // A retry of a recorded attempt answers its first result without waiting
         // for the showtime lock: the advisory lock serializes this attempt and its
         // record is never changed, so a payment holding the showtime cannot turn
@@ -97,6 +113,11 @@ export class BenefitRedemptionService {
             INNER JOIN payments p ON p.reservation_id = r.id
             INNER JOIN ticket_items ti ON ti.reservation_id = r.id AND ti.payment_id = p.id
             WHERE ti.id = ${entitlement.ticketItemId} FOR UPDATE OF r, p, ti`);
+          // Ownership may have changed while the transaction waited for a
+          // cancellation/account operation. Recheck under the same ticket locks.
+          if (context.redemptionChannel === 'buyer_device') {
+            await this.assertBuyerOwnsEntitlement(tx, input.benefitEntitlementId, context.scannerUserId);
+          }
         }
         return this.redeemLocked(input, context, tx);
       });
@@ -105,6 +126,16 @@ export class BenefitRedemptionService {
       // the same request can be retried.
       throw translateRedemptionDbError(error);
     }
+  }
+
+  private async assertBuyerOwnsEntitlement(db: RedemptionDb, entitlementId: string, buyerUserId: string) {
+    const [owned] = await db.select({ id: ticketBenefitEntitlements.id })
+      .from(ticketBenefitEntitlements)
+      .innerJoin(ticketItems, eq(ticketItems.id, ticketBenefitEntitlements.ticketItemId))
+      .innerJoin(reservations, eq(reservations.id, ticketItems.reservationId))
+      .where(and(eq(ticketBenefitEntitlements.id, entitlementId), eq(reservations.userId, buyerUserId)))
+      .limit(1);
+    if (!owned) throw new NotFoundException('베네핏을 찾을 수 없습니다.');
   }
 
   private async redeemLocked(
@@ -291,6 +322,7 @@ export class BenefitRedemptionService {
         id: ticketBenefitRedemptionRecords.id,
         createdAt: ticketBenefitRedemptionRecords.createdAt,
         scannerUserId: ticketBenefitRedemptionRecords.scannerUserId,
+        redemptionChannel: ticketBenefitRedemptionRecords.redemptionChannel,
         deviceAttemptId: ticketBenefitRedemptionRecords.deviceAttemptId,
       })
       .from(ticketBenefitRedemptionRecords)
@@ -317,6 +349,7 @@ export class BenefitRedemptionService {
         ticketItemId: ticketBenefitRedemptionRecords.ticketItemId,
         benefitEntitlementId: ticketBenefitRedemptionRecords.benefitEntitlementId,
         scannerUserId: ticketBenefitRedemptionRecords.scannerUserId,
+        redemptionChannel: ticketBenefitRedemptionRecords.redemptionChannel,
         deviceAttemptId: ticketBenefitRedemptionRecords.deviceAttemptId,
         result: ticketBenefitRedemptionRecords.result,
         redactedTokenRef: ticketBenefitRedemptionRecords.redactedTokenRef,
@@ -350,6 +383,7 @@ export class BenefitRedemptionService {
         ticketItemId: input.entitlement.ticketItemId,
         benefitEntitlementId: input.entitlement.id,
         scannerUserId: input.context.scannerUserId,
+        redemptionChannel: input.context.redemptionChannel ?? 'scanner_qr',
         deviceAttemptId: input.input.deviceAttemptId,
         redactedTokenRef: redactedTokenRef(input.token),
         result: input.result,
@@ -419,6 +453,7 @@ function responseForMatchingAttempt(
   if (existingAttempt.benefitEntitlementId !== entitlement.id || existingAttempt.ticketItemId !== entitlement.ticketItemId
     || existingAttempt.showtimeId !== entitlement.showtimeId || existingAttempt.scannerUserId !== context.scannerUserId
     || existingAttempt.redactedTokenRef !== redactedTokenRef(input.token)
+    || (existingAttempt.redemptionChannel ?? 'scanner_qr') !== (context.redemptionChannel ?? 'scanner_qr')
     || (existingAttempt.requestedShowtimeId ?? existingAttempt.showtimeId) !== input.showtimeId) {
     throw new ConflictException('다른 특전 지급에 사용된 요청입니다. 다시 확인해주세요.');
   }

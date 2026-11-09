@@ -4,15 +4,19 @@ import { ticketBenefitDisplayCopySchema } from './benefit.schema';
 export const bookingAddonSelectionSchema = z.object({
   addonId: z.string().uuid(),
   seatKey: z.string().min(1).max(120),
+  /** Stable unit within a ticket/product pair. Legacy clients select unit 1. */
+  unitIndex: z.number().int().min(1).max(10).optional(),
 }).strict();
 export const bookingAddonSelectionsSchema = z.array(bookingAddonSelectionSchema).max(40)
-  .refine((items) => new Set(items.map((x) => `${x.addonId}:${x.seatKey}`)).size === items.length,
+  .refine((items) => new Set(items.map((x) => `${x.addonId}:${x.seatKey}:${x.unitIndex ?? 1}`)).size === items.length,
     '중복된 애드온 선택입니다.');
 export const bookingAddonDefinitionSchema = z.object({
   identity: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
   displayCopy: ticketBenefitDisplayCopySchema,
   price: z.number().int().positive().max(10000000),
   capacity: z.number().int().positive().max(50000),
+  /** Omitted by legacy callers; normalized to 1 by the server. */
+  maxPerTicket: z.number().int().min(1).max(10).optional(),
   eligibleTierNames: z.array(z.string().trim().min(1).max(50)).min(1).max(20),
   active: z.boolean().default(true),
   sortOrder: z.number().int().min(0).default(0),

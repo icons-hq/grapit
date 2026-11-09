@@ -27,6 +27,7 @@ import { FieldCheckInService } from '../src/modules/field-operations/field-check
 import { FieldCheckInController } from '../src/modules/field-operations/field-check-in.controller.js';
 import { BenefitRedemptionService } from '../src/modules/field-operations/benefit-redemption.service.js';
 import { BenefitRedemptionController } from '../src/modules/field-operations/benefit-redemption.controller.js';
+import { BuyerBenefitRedemptionController } from '../src/modules/field-operations/buyer-benefit-redemption.controller.js';
 import { OfflineSyncService } from '../src/modules/field-operations/offline-sync.service.js';
 import { OfflineSyncController } from '../src/modules/field-operations/offline-sync.controller.js';
 import { AdminBenefitsService } from '../src/modules/admin/admin-benefits.service.js';
@@ -58,10 +59,11 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
     const field = new FieldCheckInService(db, qr, audit);
     Reflect.defineMetadata('design:paramtypes', [FieldCheckInService], FieldCheckInController);
     Reflect.defineMetadata('design:paramtypes', [BenefitRedemptionService], BenefitRedemptionController);
+    Reflect.defineMetadata('design:paramtypes', [BenefitRedemptionService], BuyerBenefitRedemptionController);
     Reflect.defineMetadata('design:paramtypes', [OfflineSyncService], OfflineSyncController);
     Reflect.defineMetadata('design:paramtypes', [FieldMonitorService], FieldMonitorController);
     const module = await Test.createTestingModule({
-      controllers: [FieldCheckInController, BenefitRedemptionController, OfflineSyncController, FieldMonitorController],
+      controllers: [FieldCheckInController, BenefitRedemptionController, BuyerBenefitRedemptionController, OfflineSyncController, FieldMonitorController],
       providers: [
         { provide: FieldCheckInService, useValue: field },
         { provide: BenefitRedemptionService, useValue: new BenefitRedemptionService(db, qr) },
@@ -72,7 +74,7 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
       .overrideGuard(AdminCapabilitiesGuard).useValue(new AdminCapabilitiesGuard(new Reflector())).compile();
     app = module.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => {
-      Object.assign(req, { user: { id: actorId, role: 'admin', adminCapabilityBundle: req.get('x-test-bundle') ?? 'scanner',
+      Object.assign(req, { user: { id: req.get('x-test-user-id') ?? actorId, role: req.get('x-test-role') ?? 'admin', adminCapabilityBundle: req.get('x-test-bundle') ?? 'scanner',
         ...(req.get('x-test-capabilities') ? { adminCapabilities: req.get('x-test-capabilities')!.split(',') } : {}),
       } }); next();
     });
@@ -197,6 +199,95 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
     const responses = await Promise.all([1, 2].map(() => request(app.getHttpServer()).post('/field/benefits/redeem').send({ ...input, deviceAttemptId: randomUUID() })));
     expect(responses.map((x) => x.body.outcome).sort()).toEqual(['duplicate', 'redeemed']);
     expect((await states(f)).every((x) => x.admissionState === 'not_entered')).toBe(true);
+  });
+
+  function buyerRedeem(f: Awaited<ReturnType<typeof fixture>>, entitlementId: string, attemptId = randomUUID(), overrides = {}) {
+    return request(app.getHttpServer()).post('/tickets/benefits/redeem')
+      .set('x-test-role', 'user').set('x-test-user-id', f.buyer.id)
+      .send({ token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: entitlementId,
+        deviceAttemptId: attemptId, confirmed: true, ...overrides });
+  }
+
+  it('redeems included and individual purchased units on the owner device after entry with explicit actor audit', async () => {
+    const f = await fixture();
+    const [included] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const paid = await db.insert(schema.ticketBenefitEntitlements).values([1, 2].map(() => ({
+      showtimeId: f.show.id, ticketItemId: f.items[0]!.id, benefitIdentity: 'paid-hi-touch', benefitKind: 'paid' as const,
+      displayCopySnapshot: included!.displayCopySnapshot, source: 'purchase' as const, state: 'active' as const,
+    }))).returning();
+    await consume(f);
+    const first = await buyerRedeem(f, paid[0]!.id);
+    expect(first.status).toBe(201); expect(first.body.outcome).toBe('redeemed');
+    let rights = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    expect(rights.find((r) => r.id === paid[0]!.id)?.state).toBe('redeemed');
+    expect(rights.find((r) => r.id === paid[1]!.id)?.state).toBe('active');
+    expect(rights.find((r) => r.id === included!.id)?.state).toBe('active');
+    const attempt = randomUUID();
+    const second = await buyerRedeem(f, included!.id, attempt);
+    const retry = await buyerRedeem(f, included!.id, attempt);
+    expect(second.body.outcome).toBe('redeemed');
+    expect(retry.body.redemptionEventId).toBe(second.body.redemptionEventId);
+    const records = await db.select().from(schema.ticketBenefitRedemptionRecords).where(eq(schema.ticketBenefitRedemptionRecords.showtimeId, f.show.id));
+    expect(records).toHaveLength(2);
+    expect(records.every((record) => record.redemptionChannel === 'buyer_device' && record.scannerUserId === f.buyer.id)).toBe(true);
+    expect(JSON.stringify(records)).not.toContain(f.credentials[0]!.token);
+    expect((await states(f)).map((item) => item.admissionState)).toEqual(['entered', 'not_entered']);
+    rights = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[1]!.id));
+    expect(rights.every((right) => right.state === 'active')).toBe(true);
+    const verified = await request(app.getHttpServer()).post('/field/check-in/verify').send({ token: f.credentials[0]!.token, showtimeId: f.show.id });
+    expect(verified.body.ticket.benefitEntitlements).toHaveLength(3);
+  });
+
+  it('serializes simultaneous owner-device taps and scanner redemption of one coupon', async () => {
+    const f = await fixture();
+    const [benefit] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const replies = await Promise.all([
+      buyerRedeem(f, benefit!.id), buyerRedeem(f, benefit!.id),
+      request(app.getHttpServer()).post('/field/benefits/redeem').send({ token: f.credentials[0]!.token, showtimeId: f.show.id,
+        benefitEntitlementId: benefit!.id, deviceAttemptId: randomUUID(), confirmed: true }),
+    ]);
+    expect(replies.map((reply) => reply.body.outcome).sort()).toEqual(['duplicate', 'duplicate', 'redeemed']);
+    const records = await db.select().from(schema.ticketBenefitRedemptionRecords).where(eq(schema.ticketBenefitRedemptionRecords.benefitEntitlementId, benefit!.id));
+    expect(records.filter((record) => record.result === 'redeemed')).toHaveLength(1);
+    expect((await states(f)).every((item) => item.admissionState === 'not_entered')).toBe(true);
+  });
+
+  it('rejects another owner even with their valid token, keeps scanner role restrictions, and requires confirmation', async () => {
+    const f = await fixture(); const other = await fixture();
+    const [benefit] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const forbidden = await request(app.getHttpServer()).post('/tickets/benefits/redeem')
+      .set('x-test-role', 'user').set('x-test-user-id', other.buyer.id)
+      .send({ token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: benefit!.id, deviceAttemptId: randomUUID(), confirmed: true });
+    expect(forbidden.status).toBe(404);
+    expect((await buyerRedeem(f, benefit!.id, randomUUID(), { confirmed: false })).status).toBe(400);
+    const scanner = await request(app.getHttpServer()).post('/field/benefits/redeem')
+      .set('x-test-role', 'user').set('x-test-user-id', f.buyer.id)
+      .send({ token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: benefit!.id, deviceAttemptId: randomUUID(), confirmed: true });
+    expect(scanner.status).toBe(403);
+    expect(await db.select().from(schema.ticketBenefitRedemptionRecords).where(eq(schema.ticketBenefitRedemptionRecords.showtimeId, f.show.id))).toHaveLength(0);
+  });
+
+  it.each(['cancelled', 'cancellation_pending', 'expired'] as const)('rejects owner-device use of %s tickets', async (status) => {
+    const f = await fixture();
+    const [benefit] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    await db.update(schema.ticketItems).set({ status }).where(eq(schema.ticketItems.id, f.items[0]!.id));
+    const reply = await buyerRedeem(f, benefit!.id);
+    expect(reply.body.outcome).toBe('inactive');
+    expect((await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.id, benefit!.id)))[0]!.state).toBe('active');
+  });
+
+  it('binds replay to the owner device channel and checks ownership before returning an old receipt', async () => {
+    const f = await fixture(); const other = await fixture();
+    const [benefit] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const attempt = randomUUID();
+    const first = await buyerRedeem(f, benefit!.id, attempt);
+    expect(first.body.outcome).toBe('redeemed');
+    const scannerReplay = await request(app.getHttpServer()).post('/field/benefits/redeem')
+      .set('x-test-user-id', f.buyer.id)
+      .send({ token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: benefit!.id, deviceAttemptId: attempt, confirmed: true });
+    expect(scannerReplay.status).toBe(409);
+    await db.update(schema.reservations).set({ userId: other.buyer.id }).where(eq(schema.reservations.id, f.order.id));
+    expect((await buyerRedeem(f, benefit!.id, attempt)).status).toBe(404);
   });
   async function waitForLock(fragment: string) {
     for (let i = 0; i < 150; i += 1) {

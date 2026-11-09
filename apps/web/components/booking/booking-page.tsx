@@ -1079,7 +1079,7 @@ export function BookingPage({
     // Hand off only seats the server still holds for this user, with the
     // server's deadline.
     const requestedSeatKeys = toSelectionKey(useBookingStore.getState().selectedSeats);
-    const addonKey = (items: typeof selectedAddons) => items.map((a) => `${a.addonId}:${a.seatKey}`).sort().join('|');
+    const addonKey = (items: typeof selectedAddons) => items.map((a) => `${a.addonId}:${a.seatKey}:${a.unitIndex ?? 1}`).sort().join('|');
     const requestedAddonKeys = addonKey(useBookingStore.getState().selectedAddons);
     setIsVerifyingSelection(true);
     try {
@@ -1391,7 +1391,8 @@ export function BookingPage({
               </div>}
               {addons.isLoading && <p role="status" className="text-sm text-muted-foreground">{activeLocale === 'ko' ? '추가 옵션을 확인하고 있습니다.' : 'Loading optional add-ons.'}</p>}
               <BookingAddonOptions snapshot={addons.data} seats={sortedSelections}
-                pending={addons.selectionPending || seatLocks.pendingLockCount > 0 || isVerifyingSelection}
+                pending={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection}
+                pendingSelections={addons.pendingSelections}
                 onChange={addons.setSelection} />
               <section className="rounded-xl bg-gray-50 px-4 py-3 text-xs leading-relaxed text-gray-600">
                 <p className="font-semibold text-gray-800">{ticketLimitCopy}</p><p>{seatChangePolicyCopy}</p>

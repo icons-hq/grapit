@@ -151,6 +151,31 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
     boundary.requestPayment.mockImplementation(() => new Promise(() => {}));
   });
 
+  it('sends both purchased units on one seat to prepare without collapsing the selection', async () => {
+    const user = userEvent.setup();
+    const displayCopy = Object.fromEntries(['ko', 'en', 'zh-CN', 'th'].map((locale) =>
+      [locale, { name: 'Hi-touch', description: 'Additional benefit' }])) as import('@grabit/shared').BookingAddonChoice['displayCopy'];
+    const selectedAddons = [1, 2].map((unitIndex) => ({
+      addonId: '10000000-0000-4000-8000-000000000001', seatKey: seats[0]!.seatKey,
+      unitIndex, price: 80000, displayCopy, expiresAt: booking.paymentDeadlineAt,
+    }));
+    boundary.prepare.mockImplementation(async ({ orderId, paymentMethod }: { orderId: string; paymentMethod: PaymentMethod }) => ({
+      reservationId: booking.id, orderId, paymentMethod, paymentDeadlineAt: booking.paymentDeadlineAt,
+    }));
+    boundary.read.mockResolvedValue(null);
+    useBookingStore.getState().setBookingData({
+      ...booking, selectedSeats: seats, selectedAddons, expiresAt: Date.parse(booking.paymentDeadlineAt),
+    });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getByRole('button', { name: 'Choose card' }));
+    await user.click(payButton('paymentDisclaimer.payNow'));
+
+    await waitFor(() => expect(boundary.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      addons: selectedAddons.map(({ addonId, seatKey, unitIndex }) => ({ addonId, seatKey, unitIndex })),
+    })));
+  });
+
   it('keeps the seats and lets the buyer switch methods after prepare rejects the method', async () => {
     const user = userEvent.setup();
     boundary.prepare

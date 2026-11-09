@@ -63,6 +63,11 @@ export function useReservationDetail(id: string) {
     queryFn: () =>
       apiClient.get<ReservationDetail>(`/api/v1/reservations/${id}?locale=${locale}`),
     enabled: !!id && !!userId,
+    // Venue staff may use the same coupon on another device while this ticket
+    // screen is backgrounded. Override the app's 60 s/no-focus-refetch defaults
+    // here without polling all reservation screens.
+    staleTime: 5000,
+    refetchOnWindowFocus: true,
   });
 }
 

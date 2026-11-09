@@ -4,6 +4,7 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { AdminAuditService } from '../admin/admin-audit.service.js';
 import { TicketModule } from '../ticket/ticket.module.js';
 import { BenefitRedemptionController } from './benefit-redemption.controller.js';
+import { BuyerBenefitRedemptionController } from './buyer-benefit-redemption.controller.js';
 import { BenefitRedemptionService } from './benefit-redemption.service.js';
 import { FieldCheckInController } from './field-check-in.controller.js';
 import { FieldCheckInService } from './field-check-in.service.js';
@@ -17,6 +18,7 @@ import { OfflineSyncService } from './offline-sync.service.js';
   controllers: [
     FieldCheckInController,
     BenefitRedemptionController,
+    BuyerBenefitRedemptionController,
     OfflineSyncController,
     FieldMonitorController,
   ],
