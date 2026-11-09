@@ -269,6 +269,26 @@ async function stubFloorBrowserRoutes(
   const performanceDetail = createFloorBrowserPerformanceDetail();
   const lockedSeatKeys = new Set<string>();
 
+  // This seat-only fixture has no paid options. Keep the newly required
+  // inventory read inside the mock rather than hitting the real API.
+  await page.route(
+    `**/api/v1/booking/addons/${FLOOR_BROWSER_SHOWTIME_ID}`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          showtimeId: FLOOR_BROWSER_SHOWTIME_ID,
+          revision: Date.now() * 1000,
+          generatedAt: new Date().toISOString(),
+          nextExpiryAt: null,
+          addons: [],
+          selections: [],
+        }),
+      });
+    },
+  );
+
   await page.route(
     `**/api/v1/queue/performances/${FLOOR_BROWSER_PERFORMANCE_ID}/enter`,
     async (route: Route) => {
@@ -549,7 +569,7 @@ test.describe('booking floor-browser seat selection', () => {
     await clickExcludedSeat(page, 'A-99');
     await expect(getNextButton(page)).toBeDisabled();
     await clickSeatLabelCenter(page);
-    expect(lockRequests[0]?.seatId).toBe('1F:A-1');
+    await expect.poll(() => lockRequests[0]?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
     await clickSeatLabelCenter(page);
     await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toHaveCount(0);
