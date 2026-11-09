@@ -4,11 +4,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BenefitEntitlement, BenefitRedemptionResponse } from '@grabit/shared';
-import { TicketBenefitCoupons, BENEFIT_USE_WARNINGS } from '../ticket-benefit-coupons';
+import { TicketBenefitCoupons, BENEFIT_USE_WARNINGS, BENEFIT_UNCERTAIN_WARNINGS } from '../ticket-benefit-coupons';
 import { apiClient } from '@/lib/api-client';
+import { useReservationDetail } from '@/hooks/use-reservations';
+import { useAuthStore } from '@/stores/use-auth-store';
 
-vi.mock('@/lib/api-client', () => ({ apiClient: { post: vi.fn() } }));
+vi.mock('@/lib/api-client', () => ({ apiClient: { post: vi.fn(), get: vi.fn() } }));
 const post = vi.mocked(apiClient.post);
+const get = vi.mocked(apiClient.get);
 const firstId = '00000000-0000-4000-8000-000000000811';
 const secondId = '00000000-0000-4000-8000-000000000812';
 const ticketItemId = '00000000-0000-4000-8000-000000000101';
@@ -32,7 +35,10 @@ function show(props: Partial<React.ComponentProps<typeof TicketBenefitCoupons>> 
     ticketStatus="ACTIVE" token="private-test-token" seatLabel="1층 A-1" locale="ko" {...props} />, { wrapper });
 }
 
-beforeEach(() => { post.mockReset(); window.history.replaceState({}, '', '/'); });
+beforeEach(() => {
+  post.mockReset(); get.mockReset(); window.history.replaceState({}, '', '/');
+  useAuthStore.setState({ user: { id: 'buyer-a' } as never, accessToken: 'test-buyer-a' });
+});
 
 describe('Buyer benefit coupons', () => {
   it.each(['ko', 'en', 'zh-CN', 'th'] as const)('shows all four warnings every time in %s and defaults focus to cancel', async (locale) => {
@@ -76,13 +82,72 @@ describe('Buyer benefit coupons', () => {
     show();
     fireEvent.click(within(screen.getByTestId(`benefit-coupon-${firstId}`)).getByRole('button'));
     fireEvent.click(screen.getByRole('button', { name: '직원이 확인하고 1개 사용 처리' }));
-    await screen.findByRole('alert');
+    await waitFor(() => expect(screen.getByRole('button', { name: '같은 시도의 결과 다시 확인' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     fireEvent.click(within(screen.getByTestId(`benefit-coupon-${firstId}`)).getByRole('button'));
-    fireEvent.click(screen.getByRole('button', { name: '직원이 확인하고 1개 사용 처리' }));
+    fireEvent.click(screen.getByRole('button', { name: '같은 시도의 결과 다시 확인' }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1]);
     await screen.findByText('사용 완료 · Used · 已使用 · ใช้แล้ว');
+  });
+
+  it.each(['redeemed', 'duplicate'] as const)('recovers the same uncertain receipt after automatic refetch shows used (%s)', async (outcome) => {
+    let serverUsed = false;
+    get.mockImplementation(async () => ({ id: 'reservation-a', ticketItems: [{ id: ticketItemId, status: 'ACTIVE',
+      qrCredential: { status: 'ACTIVE', token: serverUsed ? 'rotated-ticket-token' : 'private-test-token' },
+      benefitEntitlements: [serverUsed ? redeemed().benefitEntitlement : benefit(), benefit(secondId)],
+    }] }));
+    post.mockImplementationOnce(async () => { serverUsed = true; throw new TypeError('Response lost after server commit'); });
+    post.mockResolvedValueOnce(outcome === 'redeemed' ? redeemed() : { outcome: 'duplicate',
+      benefitEntitlement: redeemed().benefitEntitlement, redemptionEventId: null,
+      redeemedAt: '2026-11-09T07:00:00.000Z', priorRedemption: { redeemedAt: '2026-11-09T07:00:00.000Z' } });
+    function LiveTicket() {
+      const detail = useReservationDetail('reservation-a');
+      const ticket = detail.data?.ticketItems[0];
+      return ticket ? <TicketBenefitCoupons reservationId="reservation-a" ticketItemId={ticketItemId}
+        benefits={ticket.benefitEntitlements} ticketStatus={ticket.status} token={ticket.qrCredential?.token ?? null}
+        seatLabel="1층 A-1" locale="ko" /> : <p>Loading ticket</p>;
+    }
+    render(<LiveTicket />, { wrapper });
+    const coupon = await screen.findByTestId(`benefit-coupon-${firstId}`);
+    fireEvent.click(within(coupon).getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: '직원이 확인하고 1개 사용 처리' }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(within(coupon).getByText('사용됨')).toBeInTheDocument());
+    const retry = screen.getByRole('button', { name: '같은 시도의 결과 다시 확인' });
+    expect(retry).toBeEnabled();
+    const holdWarning = screen.getByTestId('benefit-uncertain-warning');
+    for (const warning of BENEFIT_UNCERTAIN_WARNINGS) expect(within(holdWarning).getByText(warning.text)).toHaveAttribute('lang', warning.lang);
+    expect(screen.queryByText('사용 완료 · Used · 已使用 · ใช้แล้ว')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('benefit-duplicate-warning')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    fireEvent.click(within(coupon).getByRole('button', { name: /같은 시도의 결과 다시 확인/ }));
+    fireEvent.click(screen.getByRole('button', { name: '같은 시도의 결과 다시 확인' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1]);
+    expect(post.mock.calls[1]?.[1]).toMatchObject({ token: 'private-test-token' });
+    if (outcome === 'redeemed') await screen.findByText('사용 완료 · Used · 已使用 · ใช้แล้ว');
+    else await screen.findByText('이미 사용된 베네핏입니다. 다시 제공하지 마세요.');
+    expect(screen.queryByRole('button', { name: '같은 시도의 결과 다시 확인' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+    expect(within(coupon).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId(`benefit-coupon-${secondId}`)).getByRole('button')).toBeEnabled();
+  });
+
+  it.each(['account', 'reservation', 'ticket'] as const)('does not transfer an uncertain receipt across a changed %s', async (scope) => {
+    post.mockRejectedValueOnce(new TypeError('network'));
+    const { rerender } = show({ benefits: [benefit()] });
+    fireEvent.click(within(screen.getByTestId(`benefit-coupon-${firstId}`)).getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: '직원이 확인하고 1개 사용 처리' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '같은 시도의 결과 다시 확인' })).toBeEnabled());
+    if (scope === 'account') act(() => useAuthStore.setState({ user: { id: 'buyer-b' } as never, accessToken: 'test-buyer-b' }));
+    rerender(<TicketBenefitCoupons reservationId={scope === 'reservation' ? 'reservation-b' : 'reservation-a'}
+      ticketItemId={scope === 'ticket' ? 'another-ticket' : ticketItemId}
+      benefits={[{ ...benefit(), state: 'redeemed', redeemedAt: '2026-11-09T07:00:00.000Z' }]}
+      ticketStatus="ACTIVE" token="another-token" seatLabel="1층 A-1" locale="ko" />);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it('warns against another handover when a stale coupon was already used on another device', async () => {

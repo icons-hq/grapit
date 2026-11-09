@@ -2,12 +2,13 @@
 
 import { useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Gift, Loader2 } from 'lucide-react';
-import type { BenefitEntitlement, BenefitRedemptionResponse, TicketItem } from '@grabit/shared';
+import type { BenefitEntitlement, BenefitRedemptionRequest, BenefitRedemptionResponse, TicketItem } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { useBuyerBenefitRedeem } from '@/hooks/use-buyer-benefit-redeem';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 type Locale = keyof BenefitEntitlement['displayCopy'];
 type State = 'available' | 'used' | 'inactive';
@@ -26,6 +27,20 @@ export const BENEFIT_DUPLICATE_WARNINGS = [
   { lang: 'zh-CN', text: '此权益已使用，请勿重复提供。' },
   { lang: 'th', text: 'สิทธิ์นี้ถูกใช้แล้ว ห้ามมอบสิทธิ์ซ้ำ' },
 ] as const;
+
+export const BENEFIT_UNCERTAIN_WARNINGS = [
+  { lang: 'ko', text: '사용 결과를 아직 확인하지 못했습니다. 확인될 때까지 베네핏을 제공하지 마세요. 같은 시도의 결과를 다시 확인해주세요.' },
+  { lang: 'en', text: 'The result of this attempt is not yet confirmed. Do not provide the benefit until it is confirmed. Check the same attempt again.' },
+  { lang: 'zh-CN', text: '本次操作的结果尚未确认。确认前请勿提供权益。请再次查询同一次操作的结果。' },
+  { lang: 'th', text: 'ยังยืนยันผลของรายการนี้ไม่ได้ ห้ามมอบสิทธิ์จนกว่าจะยืนยันผล โปรดตรวจสอบผลของรายการเดิมอีกครั้ง' },
+] as const;
+
+const RECOVERY_COPY = {
+  ko: { title: '사용 결과 확인이 필요합니다', retry: '같은 시도의 결과 다시 확인' },
+  en: { title: 'Confirm this attempt’s result', retry: 'Check the same attempt again' },
+  'zh-CN': { title: '请确认本次操作结果', retry: '再次查询同一次操作的结果' },
+  th: { title: 'ต้องยืนยันผลของรายการนี้', retry: 'ตรวจสอบผลของรายการเดิมอีกครั้ง' },
+} as const;
 
 const DUPLICATE_COPY = {
   ko: { title: '이미 사용된 베네핏', previousUse: '이전 사용 시각' },
@@ -50,7 +65,7 @@ function usedAt(value: string, locale: Locale) {
   return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }).format(new Date(value)) + ' KST';
 }
 
-export function TicketBenefitCoupons({ reservationId, ticketItemId, benefits, ticketStatus, token, seatLabel, locale }: {
+interface TicketBenefitCouponsProps {
   reservationId: string;
   ticketItemId: string;
   benefits: BenefitEntitlement[];
@@ -58,14 +73,24 @@ export function TicketBenefitCoupons({ reservationId, ticketItemId, benefits, ti
   token: string | null;
   seatLabel: string;
   locale: Locale;
-}) {
+}
+
+export function TicketBenefitCoupons(props: TicketBenefitCouponsProps) {
+  const userId = useAuthStore((state) => state.user?.id);
+  // A pending receipt belongs to one authenticated owner and ticket. Never
+  // carry an old account's request into a newly selected account/reservation.
+  return <TicketBenefitCouponList key={`${userId ?? ''}:${props.reservationId}:${props.ticketItemId}`} {...props} />;
+}
+
+function TicketBenefitCouponList({ reservationId, ticketItemId, benefits, ticketStatus, token, seatLabel, locale }: TicketBenefitCouponsProps) {
   const copy = COPY[locale];
   const labels = getVisibleCopy(locale).bookingExtra.completeCard.benefits;
   const mutation = useBuyerBenefitRedeem(reservationId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, BenefitRedemptionResponse>>({});
   const [error, setError] = useState<string | null>(null);
-  const attempts = useRef(new Map<string, string>());
+  const attempts = useRef(new Map<string, BenefitRedemptionRequest>());
+  const [unresolvedAttempts, setUnresolvedAttempts] = useState<Record<string, BenefitRedemptionRequest>>({});
   const submitting = useRef(false);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const currentBenefits = benefits.map((benefit) => {
@@ -78,30 +103,36 @@ export function TicketBenefitCoupons({ reservationId, ticketItemId, benefits, ti
   });
   const selected = currentBenefits.find((benefit) => benefit.id === selectedId);
   const selectedState = selected ? stateOf(selected, ticketStatus) : 'inactive';
+  const unresolvedAttempt = selectedId ? unresolvedAttempts[selectedId] : undefined;
   // Only this device's successful receipt proves a new handover. A refresh may
   // discover that another device already used the coupon while this dialog was
   // open; that state must never look like a newly successful confirmation.
   const confirmedHere = selectedId !== null && results[selectedId]?.outcome === 'redeemed';
-  const showAlreadyUsed = selectedState === 'used' && !confirmedHere;
+  const showAlreadyUsed = selectedState === 'used' && !confirmedHere && !unresolvedAttempt;
   const kindLabel = (benefit: BenefitEntitlement) => benefit.kind === 'paid' ? copy.paid : benefit.kind === 'included' ? labels.included : labels.limited;
   const stateLabel = (state: State) => state === 'used' ? labels.used : state === 'inactive' ? labels.inactive : labels.available;
 
   async function confirmUse() {
-    if (!selected || selectedState !== 'available' || submitting.current) return;
-    if (!token) { setError(copy.missing); return; }
+    if (!selected || submitting.current) return;
+    let request = attempts.current.get(selected.id);
+    if (!request) {
+      if (selectedState !== 'available') return;
+      if (!token) { setError(copy.missing); return; }
+      request = { token, showtimeId: selected.showtimeId, benefitEntitlementId: selected.id, deviceAttemptId: crypto.randomUUID(), confirmed: true };
+      attempts.current.set(selected.id, request);
+      setUnresolvedAttempts((previous) => ({ ...previous, [selected.id]: request! }));
+    }
     submitting.current = true;
     setError(null);
-    let deviceAttemptId = attempts.current.get(selected.id);
-    if (!deviceAttemptId) {
-      deviceAttemptId = crypto.randomUUID();
-      attempts.current.set(selected.id, deviceAttemptId);
-    }
     try {
-      const result = await mutation.mutateAsync({ token, showtimeId: selected.showtimeId, benefitEntitlementId: selected.id, deviceAttemptId, confirmed: true });
+      // Preserve the entire original request: a refetch can rotate/remove the
+      // QR token after an accepted request, but replay is bound to its token too.
+      const result = await mutation.mutateAsync(request);
+      attempts.current.delete(selected.id);
+      setUnresolvedAttempts((previous) => { const next = { ...previous }; delete next[selected.id]; return next; });
       if (result.outcome === 'redeemed' || result.outcome === 'duplicate') {
         setResults((previous) => ({ ...previous, [selected.id]: result }));
       } else {
-        attempts.current.delete(selected.id);
         setError(copy.inactive);
       }
     } catch {
@@ -127,18 +158,21 @@ export function TicketBenefitCoupons({ reservationId, ticketItemId, benefits, ti
             <div className="flex flex-wrap gap-1 text-xs"><Badge variant="outline">{kindLabel(benefit)}</Badge><Badge variant={state === 'available' ? 'default' : state === 'used' ? 'secondary' : 'outline'}>{stateLabel(state)}</Badge></div>
           </div>
           {state === 'used' && benefit.redeemedAt && <p className="mt-2 text-xs text-muted-foreground">{labels.redeemedAt.replace('{date}', usedAt(benefit.redeemedAt, locale))}</p>}
-          {state === 'available' && <Button type="button" variant="outline" size="sm" className="mt-3 min-h-11 w-full" disabled={!token}
-            aria-label={`${name}${unit} ${copy.open}`} onClick={() => { setError(null); setSelectedId(benefit.id); }}>{copy.open}</Button>}
+          {(state === 'available' || unresolvedAttempts[benefit.id]) && <Button type="button" variant="outline" size="sm" className="mt-3 min-h-11 w-full" disabled={!token && !unresolvedAttempts[benefit.id]}
+            aria-label={`${name}${unit} ${unresolvedAttempts[benefit.id] ? RECOVERY_COPY[locale].retry : copy.open}`} onClick={() => { setError(null); setSelectedId(benefit.id); }}>{unresolvedAttempts[benefit.id] ? RECOVERY_COPY[locale].retry : copy.open}</Button>}
         </li>;
       })}
     </ul>}
     <AlertDialog open={Boolean(selectedId)} onOpenChange={(open) => { if (!open && !submitting.current) setSelectedId(null); }}>
       <AlertDialogContent className="max-h-[92dvh] max-w-[calc(100%-2rem)] overflow-y-auto rounded-2xl p-5 sm:max-w-lg" onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }}>
         <AlertDialogHeader>
-          <AlertDialogTitle className="pr-5 leading-7">{showAlreadyUsed ? DUPLICATE_COPY[locale].title : selectedState === 'used' ? copy.used : copy.title}</AlertDialogTitle>
+          <AlertDialogTitle className="pr-5 leading-7">{unresolvedAttempt ? RECOVERY_COPY[locale].title : showAlreadyUsed ? DUPLICATE_COPY[locale].title : selectedState === 'used' ? copy.used : copy.title}</AlertDialogTitle>
           <AlertDialogDescription className="break-words text-left">{selected?.displayCopy[locale].name} · {seatLabel}</AlertDialogDescription>
         </AlertDialogHeader>
-        {showAlreadyUsed ? <div role="alert" data-testid="benefit-duplicate-warning" className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-foreground">
+        {unresolvedAttempt ? <div role="alert" data-testid="benefit-uncertain-warning" className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-foreground">
+          <AlertTriangle className="h-7 w-7 text-destructive" aria-hidden="true" />
+          {BENEFIT_UNCERTAIN_WARNINGS.map((warning) => <p key={warning.lang} lang={warning.lang} className="text-sm font-semibold leading-relaxed">{warning.text}</p>)}
+        </div> : showAlreadyUsed ? <div role="alert" data-testid="benefit-duplicate-warning" className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-foreground">
           <AlertTriangle className="h-7 w-7 text-destructive" aria-hidden="true" />
           {BENEFIT_DUPLICATE_WARNINGS.map((warning) => <p key={warning.lang} lang={warning.lang} className="text-sm font-semibold leading-relaxed">{warning.text}</p>)}
           {selected?.redeemedAt && <p className="text-sm">{DUPLICATE_COPY[locale].previousUse}: {usedAt(selected.redeemedAt, locale)}</p>}
@@ -149,12 +183,12 @@ export function TicketBenefitCoupons({ reservationId, ticketItemId, benefits, ti
         </div> : <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4" data-testid="benefit-use-warning">
           {BENEFIT_USE_WARNINGS.map((warning) => <p key={warning.lang} lang={warning.lang} className="text-sm leading-relaxed text-foreground"><strong className="mb-0.5 block text-xs">{warning.label}</strong>{warning.text}</p>)}
         </div>}
-        {error && selectedState !== 'used' && <p role="alert" className="text-sm font-semibold text-destructive">{error}</p>}
-        {selectedState === 'inactive' && !error && <p role="alert" className="text-sm text-muted-foreground">{copy.inactive}</p>}
+        {error && selectedState !== 'used' && !unresolvedAttempt && <p role="alert" className="text-sm font-semibold text-destructive">{error}</p>}
+        {selectedState === 'inactive' && !error && !unresolvedAttempt && <p role="alert" className="text-sm text-muted-foreground">{copy.inactive}</p>}
         <AlertDialogFooter className="sticky -bottom-5 -mx-5 -mb-5 gap-2 border-t bg-background p-5 sm:flex-col">
-          {selectedState === 'used' ? <AlertDialogCancel ref={cancelButton} className="min-h-11 w-full">{copy.close}</AlertDialogCancel> : <>
-            <Button type="button" className="min-h-12 w-full whitespace-normal" disabled={mutation.isPending || selectedState !== 'available' || !token} onClick={() => { void confirmUse(); }}>
-              {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}{copy.confirm}
+          {selectedState === 'used' && !unresolvedAttempt ? <AlertDialogCancel ref={cancelButton} className="min-h-11 w-full">{copy.close}</AlertDialogCancel> : <>
+            <Button type="button" className="min-h-12 w-full whitespace-normal" disabled={mutation.isPending || (!unresolvedAttempt && (selectedState !== 'available' || !token))} onClick={() => { void confirmUse(); }}>
+              {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}{unresolvedAttempt ? RECOVERY_COPY[locale].retry : copy.confirm}
             </Button>
             <AlertDialogCancel ref={cancelButton} className="min-h-11 w-full" disabled={mutation.isPending}>{copy.cancel}</AlertDialogCancel>
           </>}
