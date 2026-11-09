@@ -981,6 +981,41 @@ export class PaymentService {
     };
   }
 
+  /** Refresh provider evidence without ever cancelling or releasing an unknown handoff. */
+  async checkPaymentStatus(input: { orderId: string; userId: string }): Promise<{
+    outcome: 'checked' | 'unavailable' | 'not_needed';
+  }> {
+    const [reservation] = await this.db.select({
+      id: reservations.id, status: reservations.status,
+      checkoutStartedAt: reservations.checkoutStartedAt,
+      checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+    }).from(reservations).where(and(
+      eq(reservations.tossOrderId, input.orderId), eq(reservations.userId, input.userId),
+    ));
+    if (!reservation) throw new NotFoundException('예매 정보를 찾을 수 없습니다.');
+    if (reservation.status !== 'PENDING_PAYMENT' || !reservation.checkoutStartedAt
+      || reservation.checkoutPaymentMethod?.method !== 'FOREIGN_EASY_PAY'
+      || !isAsyncApprovalForeignEasyPayProvider(reservation.checkoutPaymentMethod.provider)) {
+      return { outcome: 'not_needed' };
+    }
+    if (!this.tossClient) return { outcome: 'unavailable' };
+    const [payment] = await this.db.select({ paymentKey: payments.paymentKey })
+      .from(payments).where(eq(payments.reservationId, reservation.id));
+    try {
+      // A full-document back navigation can lose pendingUrl and its paymentKey.
+      // Order lookup is best effort: unsupported MID, 404 and timeout all stay unknown.
+      const paymentKey = payment?.paymentKey ?? (await this.tossClient.queryPaymentByOrderId(
+        input.orderId, { secretKeyScope: 'foreign-easy-pay' },
+      )).paymentKey;
+      // Re-read by key, validate order/amount/method, and use the same locked,
+      // idempotent finalization/compensation path as a provider return.
+      await this.reconcileAsyncPaymentReturn({ ...input, paymentKey });
+      return { outcome: 'checked' };
+    } catch {
+      return { outcome: 'unavailable' };
+    }
+  }
+
   async reconcileAsyncPaymentReturn(input: TossPaymentAsyncReturnRequest): Promise<void> {
     if (!this.tossClient) {
       throw new InternalServerErrorException('Toss 결제 상태 조회 클라이언트가 설정되지 않았습니다');

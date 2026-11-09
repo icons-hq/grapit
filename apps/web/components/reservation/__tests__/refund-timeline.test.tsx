@@ -58,7 +58,7 @@ function createReservation(
         price: 77000,
       },
     ],
-    totalAmount: 77000,
+    totalAmount: 79000,
     createdAt: '2026-05-08T09:00:00.000Z',
     paymentMethod: '카드',
     paidAt: '2026-05-08T09:05:00.000Z',
@@ -69,7 +69,7 @@ function createReservation(
     paymentInfo: {
       paymentKey: 'payment-key-1',
       method: 'CARD',
-      amount: 77000,
+      amount: 79000,
       status: 'DONE',
       paidAt: '2026-05-08T09:05:00.000Z',
       paymentDeadlineAt: '2026-05-08T09:15:00.000Z',

@@ -409,6 +409,21 @@ export class TossPaymentsClient {
     return data as TossPaymentResponse;
   }
 
+  /** Some widget MIDs do not support order lookup. An error is never non-payment evidence. */
+  async queryPaymentByOrderId(orderId: string, options: TossPaymentRequestOptions = {}): Promise<TossPaymentResponse> {
+    const response = await fetch(`${this.baseUrl}/payments/orders/${encodeURIComponent(orderId)}`, {
+      method: 'GET', signal: AbortSignal.timeout(TOSS_QUERY_TIMEOUT_MS),
+      headers: { Authorization: this.getAuthHeader(options.secretKeyScope) },
+    });
+    const data: unknown = await response.json();
+    if (!response.ok) throw this.toPaymentError(data, '결제 상태 조회에 실패했습니다', response.status);
+    const payment = parseTossPaymentResponse(data);
+    if (!payment || payment.orderId !== orderId) {
+      throw new TossPaymentError('INVALID_PROVIDER_RESPONSE', '결제 상태 응답을 확인할 수 없습니다', 502);
+    }
+    return payment;
+  }
+
   async queryPayment(
     paymentKey: string,
     options: TossPaymentRequestOptions = {},

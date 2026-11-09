@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
-import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { ReservationAmountBreakdown } from '@/components/reservation/reservation-amount-breakdown';
 import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
@@ -405,10 +405,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
         <CardContent className="space-y-3">
           <h2 className="text-base font-semibold">{copy.paymentInfo}</h2>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">{getCheckoutCopy(locale).orderTotal}</span>
-              <span className="font-semibold text-primary">{formatPrice(booking.totalAmount, locale)}</span>
-            </div>
+            <ReservationAmountBreakdown reservation={booking} locale={locale} />
             <ProviderChargeAmount quote={booking.paymentInfo?.providerChargeQuote ?? booking.providerChargeQuote} locale={locale} />
             <div className="flex justify-between">
               <span className="text-gray-500">{copy.paymentMethod}</span>

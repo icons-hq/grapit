@@ -107,6 +107,16 @@ export class PaymentController {
     });
   }
 
+  /** Owner-scoped provider refresh. Never abandons an unknown handoff. */
+  @Post('status-check')
+  @HttpCode(200)
+  checkPaymentStatus(
+    @Body(new ZodValidationPipe(paymentBranchReleaseSchema)) body: PaymentBranchReleaseDto,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.paymentService.checkPaymentStatus({ orderId: body.orderId, userId: req.user.id });
+  }
+
   /** Pending return of an asynchronously approved foreign wallet order (others get 409). */
   @Post('async-return')
   async reconcileAsyncPaymentReturn(

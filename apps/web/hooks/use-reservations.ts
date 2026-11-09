@@ -68,6 +68,8 @@ export function useReservationDetail(id: string) {
     // here without polling all reservation screens.
     staleTime: 5000,
     refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.data?.status === 'PENDING_PAYMENT' ? 3000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 

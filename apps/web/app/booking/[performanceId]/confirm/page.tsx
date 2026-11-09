@@ -27,6 +27,8 @@ import {
   useCancelPendingReservation,
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
+import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
 import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import {
@@ -47,6 +49,7 @@ import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-cop
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { apiClient } from '@/lib/api-client';
+import { isPaymentCheckoutDismissal } from '@/lib/booking/payment-return';
 import {
   BOOKING_CONSENT_ITEM_KEYS,
   CONSENT_DOCUMENT_VERSIONS,
@@ -198,14 +201,28 @@ function ConfirmPageContent() {
   const orderId = returnOrderId ?? newOrderId;
   const recovery = useCheckoutRecovery(returnOrderId, performanceId, isProcessing);
   const { refetch: refetchRecovery } = recovery;
+  const paymentCheck = useCheckPaymentStatus(returnOrderId, refetchRecovery);
   const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
   const ticketsPath = `${getLocalizedPathname('/mypage', locale)}?tab=reservations`;
+
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted || !returnOrderId) return;
+      // BFCache preserves the unresolved SDK Promise and our processing flag.
+      // Restore lookup on browser Back; the server still controls retry safety.
+      paymentRequestInFlightRef.current = false;
+      setIsProcessing(false);
+      void refetchRecovery();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [returnOrderId, refetchRecovery]);
 
   useEffect(() => {
     if (recovery.reservation) reservationIdRef.current = recovery.reservation.id;
     if (
       !paymentRequestInFlightRef.current
-      && (recovery.state === 'confirmed' || recovery.state === 'processing')
+      && recovery.state === 'confirmed'
     ) {
       router.replace(`${bookingPath}/complete?pending=true&orderId=${encodeURIComponent(orderId)}`);
     }
@@ -255,11 +272,11 @@ function ConfirmPageContent() {
     paymentRequestInFlightRef.current = false;
     queueMicrotask(() => {
       setIsProcessing(false);
-      setPaymentReturnError(failureGuidance);
+      setPaymentReturnError(isPaymentCheckoutDismissal(code) && returnOrderId ? null : failureGuidance);
 
     });
 
-    toast.error(failureGuidance.title, {
+    if (!isPaymentCheckoutDismissal(code)) toast.error(failureGuidance.title, {
       description: failureGuidance.body,
     });
 
@@ -574,6 +591,10 @@ function ConfirmPageContent() {
         }
       }
       if (mountedRef.current) setIsProcessing(false);
+      if (isPaymentCheckoutDismissal((err as { code?: unknown } | null)?.code)) {
+        if (returnOrderId) void refetchRecovery();
+        return;
+      }
       if (resumedWithoutPrepare && isQueueAccessRejectionError(err)) {
         // The handoff refused this browser session for the order before any provider
         // checkout; the order stays payable from the session bound to it.
@@ -601,6 +622,23 @@ function ConfirmPageContent() {
           : confirmCopy.paymentRequestFailed));
       if (returnOrderId) void refetchRecovery();
     }
+  }
+
+  // A browser back/BFCache return retains the order context instead of sending
+  // the buyer to a generic completion/error screen. Only provider evidence ends it.
+  if (returnOrderId && !isProcessing && recovery.state === 'processing' && recovery.reservation) {
+    const saved = recovery.reservation;
+    return <main className="mx-auto w-full max-w-2xl space-y-6 px-4 py-8 md:px-6">
+      <h1 className="text-2xl font-semibold">{checkoutCopy.title}</h1>
+      <OrderSummary performanceTitle={saved.performanceTitle} posterUrl={saved.posterUrl}
+        showDateTime={saved.showDateTime} venue={saved.venue} seats={saved.seats} />
+      <PaymentRecoveryPanel reservation={saved} locale={locale} onCheck={paymentCheck.check}
+        checking={paymentCheck.checking} checkedAt={recovery.checkedAt} providerUnavailable={paymentCheck.providerUnavailable} />
+      <CheckoutAmountSummary seats={saved.seats} addons={saved.addons ?? []} totalPrice={saved.totalAmount}
+        quote={saved.paymentInfo?.providerChargeQuote ?? saved.providerChargeQuote} awaitingResult
+        paid={['DONE', 'PARTIAL_CANCELED'].includes(saved.paymentInfo?.status ?? '')} />
+      <Button variant="ghost" onClick={() => router.replace(ticketsPath)}>{checkoutCopy.tickets}</Button>
+    </main>;
   }
 
   const awaitingPreparedSnapshot = recovery.state === 'loading' && preparedReview?.orderId === returnOrderId;

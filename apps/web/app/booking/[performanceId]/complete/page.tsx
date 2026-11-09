@@ -6,6 +6,8 @@ import { useLocale, useTranslations } from 'next-intl';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthGuard } from '@/components/auth/auth-guard';
+import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
+import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
 import { BookingComplete } from '@/components/booking/booking-complete';
 import Link from 'next/link';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
@@ -336,6 +338,7 @@ function CompletePageContent() {
   ]);
 
   const { refetch: refetchPaymentRecovery } = paymentRecovery;
+  const paymentCheck = useCheckPaymentStatus(orderId, refetchPaymentRecovery);
   const retryConfirmPayment = useCallback(async () => {
     hasConfirmedRef.current = false;
     if (!(await confirmPayment())) {
@@ -500,6 +503,15 @@ function CompletePageContent() {
     icon: 'refresh' as const,
     disabled: isConfirming,
   };
+
+  if (paymentRecovery.paymentStatus === 'pending' && paymentRecovery.reservation && !canRetryConfirm && !pendingConfirmRefusal) {
+    return <main className="mx-auto w-full max-w-2xl space-y-5 px-4 py-10">
+      <PaymentRecoveryPanel reservation={paymentRecovery.reservation} locale={locale}
+        onCheck={paymentCheck.check} checking={paymentCheck.checking}
+        checkedAt={paymentRecovery.dataUpdatedAt} providerUnavailable={paymentCheck.providerUnavailable} />
+      <button className="w-full text-sm underline" onClick={() => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`)}>{completeCopy.checkReservations}</button>
+    </main>;
+  }
 
   if (paymentRecovery.paymentStatus === 'pending') {
     return (

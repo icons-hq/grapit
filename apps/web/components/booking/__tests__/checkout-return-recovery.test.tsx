@@ -105,10 +105,39 @@ describe('Checkout document return recovery', () => {
       ...savedBooking, tossOrderId: 'GRP-unknown', checkoutStartedAt: '2026-09-21T01:00:00.000Z',
     });
     mountPage();
-    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(
-      '/booking/performance-return/complete?pending=true&orderId=GRP-unknown',
-    ));
+    await screen.findByRole('heading', { name: '결제 상태 확인이 지연되고 있어요' });
+    expect(boundary.replace).not.toHaveBeenCalled();
+    expect(screen.getByText('Return Test')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '다른 결제수단 선택' })).toBeDisabled();
     expect(screen.queryByText('Provider widget')).not.toBeInTheDocument();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it('recovers a BFCache back navigation while the original SDK promise remains unresolved', async () => {
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-bfcache');
+    boundary.read.mockResolvedValue({ ...savedBooking, tossOrderId: 'GRP-bfcache' });
+    boundary.prepare.mockResolvedValue({ reservationId: savedBooking.id, orderId: 'GRP-bfcache', paymentDeadlineAt: savedBooking.paymentDeadlineAt });
+    const user = userEvent.setup();
+    mountPage();
+    await screen.findByText('Return Test');
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
+    await waitFor(() => expect(boundary.requestPayment).toHaveBeenCalledTimes(1));
+    boundary.read.mockResolvedValue({ ...savedBooking, tossOrderId: 'GRP-bfcache', checkoutStartedAt: new Date().toISOString() });
+    await act(async () => {
+      const restored = new Event('pageshow');
+      Object.defineProperty(restored, 'persisted', { value: true });
+      window.dispatchEvent(restored);
+    });
+    expect(await screen.findByRole('heading', { name: '결제 완료 여부를 확인하고 있어요' })).toBeInTheDocument();
+    expect(boundary.requestPayment).toHaveBeenCalledTimes(1);
+    expect(boundary.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps a recovery exit when a dismissed checkout has lost its order identity', async () => {
+    boundary.search = new URLSearchParams('error=true&code=USER_CANCEL');
+    mountPage();
+    expect(await screen.findByRole('button', { name: 'paymentRecovery.reselectCta' })).toBeInTheDocument();
     expect(boundary.requestPayment).not.toHaveBeenCalled();
   });
 
@@ -287,7 +316,7 @@ describe('Checkout document return recovery', () => {
     await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
     await user.click(screen.getByRole('checkbox', { name: '해외 결제 및 환불 유의사항에 동의합니다' }));
     await user.click(screen.getAllByRole('button', { name: /paymentDisclaimer.payNow|최종 청구 금액 확인/ })[0]!);
-    expect(within(await screen.findByRole('region', { name: '실제 청구 금액' })).getByText('USD 35.36')).toBeInTheDocument();
+    expect(within(await screen.findByRole('region', { name: '결제 예정 금액' })).getByText('USD 35.36')).toBeInTheDocument();
     expect(boundary.requestPayment).not.toHaveBeenCalled();
     await user.click(screen.getAllByRole('button', { name: 'USD 35.36 결제하기' })[0]!);
     await waitFor(() => expect(boundary.requestPayment).toHaveBeenCalledWith(expect.objectContaining({ providerChargeQuote: quote })));

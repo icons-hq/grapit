@@ -22,6 +22,9 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
     ),
     enabled: Boolean(orderId && userId && !paused),
     retry: false,
+    refetchInterval: (query) => !paused && query.state.data?.checkoutStartedAt
+      && query.state.data.status === 'PENDING_PAYMENT' ? 3000 : false,
+    refetchIntervalInBackground: false,
   });
   const reservation = query.data;
   const matchesOrder = reservation?.tossOrderId === orderId
@@ -64,5 +67,5 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
     store.applyPaymentDeadline(reservation.paymentDeadlineAt);
   }, [performanceId, reservation, state]);
 
-  return { state, reservation: matchesOrder ? reservation : null, refetch: query.refetch, isFetching: query.isFetching };
+  return { state, reservation: matchesOrder ? reservation : null, refetch: query.refetch, isFetching: query.isFetching, checkedAt: query.dataUpdatedAt };
 }

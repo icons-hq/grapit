@@ -914,7 +914,9 @@ describe('runtime booking disabled UI', () => {
       id: 'reservation-1', tossOrderId: preparedOrderIds[0], status: 'PENDING_PAYMENT',
       performanceId: 'performance-disabled', showtimeId: 'showtime-disabled',
       checkoutStartedAt: new Date().toISOString(), paymentDeadlineAt: '2099-01-01T00:00:00.000Z',
-      paymentInfo: null,
+      paymentInfo: null, seats: [{ seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
+      totalAmount: 52000, performanceTitle: 'Recovery test', posterUrl: null,
+      showDateTime: '2099-01-02T00:00:00Z', venue: 'Test hall',
     });
     searchParamsRef.current = new URLSearchParams({
       error: 'true',
@@ -924,9 +926,8 @@ describe('runtime booking disabled UI', () => {
     });
     view.rerender(<ConfirmPage />);
 
-    await waitFor(() => expect(routerReplaceMock).toHaveBeenCalledWith(
-      `/booking/performance-disabled/complete?pending=true&orderId=${preparedOrderIds[0]}`,
-    ));
+    expect(await screen.findByRole('heading', { name: '결제 완료 여부를 확인하고 있어요' })).toBeInTheDocument();
+    expect(routerReplaceMock).not.toHaveBeenCalled();
     expect(prepareReservationMock).toHaveBeenCalledTimes(1);
     expect(cancelPendingReservationMock).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '결제하기' })).not.toBeInTheDocument();

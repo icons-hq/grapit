@@ -452,3 +452,12 @@ it('shows the original KRW order and the stored USD charge without recalculating
   expect(screen.getByText('USD 104.72')).toBeInTheDocument();
   expect(screen.getByText('실제 청구 금액')).toBeInTheDocument();
 });
+
+it('keeps the completion receipt and legacy QR visible when ticketItems is absent', () => {
+  const legacy: Partial<ReservationDetail> = createReservation();
+  delete legacy.ticketItems;
+  render(<BookingComplete booking={legacy as ReservationDetail} />);
+  expect(screen.getByRole('heading', { name: '예매가 완료되었습니다' })).toBeInTheDocument();
+  expect(screen.getByTestId('qr-ticket-image')).toBeInTheDocument();
+  expect(screen.queryByText('상세 금액과 주문 금액이 일치하지 않습니다. 고객센터에 확인해 주세요.')).not.toBeInTheDocument();
+});
