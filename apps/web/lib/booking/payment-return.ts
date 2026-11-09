@@ -1,5 +1,10 @@
 import type { ConfirmPaymentRequest } from '@grabit/shared';
 
+/** A normal checkout dismissal affects messaging only, never payment authority. */
+export function isPaymentCheckoutDismissal(code: unknown): boolean {
+  return typeof code === 'string' && ['USER_CANCEL', 'PAY_PROCESS_CANCELED', 'PAYMENT_REQUEST_ABORTED'].includes(code);
+}
+
 interface ConfirmPaymentReturnParams {
   paymentKey: string;
   orderId: string;

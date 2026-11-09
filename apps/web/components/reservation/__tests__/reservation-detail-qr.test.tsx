@@ -523,13 +523,13 @@ describe('ReservationDetailView QR ticket card', () => {
       <ReservationDetailView
         reservation={createReservation({
           status: 'PENDING_PAYMENT',
-          paidAt: null,
+          paidAt: null, totalAmount: 158000,
           paymentMethod: null,
           paymentKey: null,
           paymentInfo: {
             paymentKey: rawPaymentKey,
             method: 'CARD',
-            amount: 160000,
+            amount: 158000,
             status: 'READY',
             paidAt: null,
             paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
@@ -558,7 +558,7 @@ describe('ReservationDetailView QR ticket card', () => {
 
     expect(screen.getByText('결제대기')).toBeInTheDocument();
     expect(screen.getByText('결제 전')).toBeInTheDocument();
-    expect(screen.getByText('160,000원')).toBeInTheDocument();
+    expect(screen.getByText('158,000원')).toBeInTheDocument();
     expect(screen.getByText('현재 단계')).toBeInTheDocument();
     expect(screen.getByText('결제 대기 중')).toBeInTheDocument();
     expect(screen.getByText('다음 절차')).toBeInTheDocument();
@@ -624,7 +624,7 @@ describe('ReservationDetailView QR ticket card', () => {
       checkoutStartedAt: '2020-01-01T00:00:00.000Z', paymentDeadlineAt: '2020-01-01T00:07:00.000Z',
       ticketItems: [],
     })} onCancel={vi.fn()} isCancelling={false} onResumePayment={vi.fn()} />);
-    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
+    expect(screen.getByText('결제 상태 확인이 지연되고 있어요')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
   });
 
@@ -663,10 +663,10 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
-    expect(screen.getByText('결제가 확인되면 예매와 QR 티켓이 자동으로 확정됩니다.')).toBeInTheDocument();
-    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
-    expect(screen.getByText('보통 수 분 이내')).toBeInTheDocument();
+    expect(screen.getByText('결제 결과를 기다리고 있어요')).toBeInTheDocument();
+    expect(screen.getByText('결제사에서 처리 중입니다. 결과가 도착하면 이 화면이 자동으로 갱신됩니다.')).toBeInTheDocument();
+    expect(screen.getByText('이전 결제의 종료가 확인되면 변경할 수 있습니다. 뒤로가기만으로 결제가 취소되지는 않습니다.')).toBeInTheDocument();
+    expect(screen.queryByText('보통 수 분 이내')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
     expect(screen.queryByText(/webhook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/FOREIGN_EASY_PAY/)).not.toBeInTheDocument();
@@ -710,8 +710,8 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
-    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('결제 완료 · 예매 확정 중')).toBeInTheDocument();
+    expect(screen.getByText('결제 승인이 확인되었습니다. 예매와 QR 티켓을 준비하고 있습니다.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
     expect(onResumePayment).not.toHaveBeenCalled();
     expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
@@ -752,8 +752,8 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
-    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('결제 완료 · 예매 확정 중')).toBeInTheDocument();
+    expect(screen.getByText('결제 승인이 확인되었습니다. 예매와 QR 티켓을 준비하고 있습니다.')).toBeInTheDocument();
     expect(screen.queryByText('결제를 완료할 수 없음')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
   });
@@ -1159,7 +1159,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByText('₩107,800')).toBeInTheDocument();
     expect(screen.getByText('총 결제금액')).toBeInTheDocument();
     expect(screen.getByText('₩158,000')).toBeInTheDocument();
-    expect(screen.getByText('티켓 금액')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText('티켓 금액')).toBeInTheDocument();
     expect(screen.getByText('₩154,000')).toBeInTheDocument();
     expect(screen.getByText('-₩46,200')).toBeInTheDocument();
     expect(screen.getByText('서비스수수료 환불')).toBeInTheDocument();
@@ -1282,4 +1282,40 @@ it.each(['reservation', 'ticket'] as const)('checks a pending %s cancellation th
   fireEvent.click(screen.getByRole('button', { name: '취소 상태 확인' }));
   expect(onCancel).toHaveBeenCalledWith('취소 상태 확인', kind === 'ticket' ? original.ticketItems[0]!.id : undefined);
   expect(screen.queryByRole('button', { name: '예매 취소' })).not.toBeInTheDocument();
+});
+
+
+it('shows every stored add-on and booking fee behind the unpaid 612000 KRW total', () => {
+  const addonCopy = (name: string) => Object.fromEntries(['ko', 'en', 'th', 'zh-CN'].map(locale => [locale, { name, description: '' }])) as BenefitEntitlement['displayCopy'];
+  render(<ReservationDetailView reservation={createReservation({
+    status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [],
+    seats: [{ seatId: 'A-20', seatKey: '1F:A-20', floorKey: '1F', floorLabel: '1층', tierName: 'SVIP', row: 'A', number: '20', price: 380000 }],
+    totalAmount: 612000,
+    addons: [
+      { addonId: 'high-touch', seatKey: '1F:A-20', price: 80000, displayCopy: addonCopy('하이터치 추가 구매'), expiresAt: '2099-01-01T00:00:00Z' },
+      { addonId: 'photo', seatKey: '1F:A-20', price: 150000, displayCopy: addonCopy('PHOTO 2:1 추가 구매'), expiresAt: '2099-01-01T00:00:00Z' },
+    ],
+    providerChargeQuote: { currency: 'USD', amountMinor: 41616, amountDecimal: '416.16', rate: '0.00068', quotedAt: '2026-11-09T07:00:00Z' },
+  })} onCancel={vi.fn()} isCancelling={false} />);
+  expect(screen.getByText(/하이터치 추가 구매/)).toBeInTheDocument();
+  expect(screen.getByText(/PHOTO 2:1 추가 구매/)).toBeInTheDocument();
+  expect(screen.getByText('80,000원')).toBeInTheDocument();
+  expect(screen.getByText('150,000원')).toBeInTheDocument();
+  expect(screen.getByText('2,000원')).toBeInTheDocument();
+  expect(screen.getByText('612,000원')).toBeInTheDocument();
+  expect(screen.getByText('결제 예정 금액')).toBeInTheDocument();
+  expect(screen.queryByText('실제 청구 금액')).not.toBeInTheDocument();
+});
+
+it('offers an honest recovery action for an Alipay handoff with no result', () => {
+  render(<ReservationDetailView reservation={createReservation({
+    status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [],
+    checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD' },
+    checkoutStartedAt: '2020-01-01T00:00:00Z', paymentDeadlineAt: '2020-01-01T00:07:00Z',
+  })} onCancel={vi.fn()} isCancelling={false} onResumePayment={vi.fn()} />);
+  expect(screen.getByRole('button', { name: '결제 상태 다시 확인' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '다른 결제수단 선택' })).toBeDisabled();
+  expect(screen.getByRole('link', { name: '고객센터' })).toBeInTheDocument();
+  expect(screen.getByText('결제 상태 확인이 지연되고 있어요')).toBeInTheDocument();
+  expect(screen.queryByText('보통 수 분 이내')).not.toBeInTheDocument();
 });

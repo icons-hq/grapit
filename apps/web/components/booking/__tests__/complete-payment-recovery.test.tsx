@@ -35,7 +35,7 @@ describe('Provider return recovery actions', () => {
       checkoutStartedAt: '2020-01-01T00:00:00.000Z', paymentDeadlineAt: '2020-01-01T00:07:00.000Z',
     });
     mountPage();
-    expect(await screen.findByRole('heading', { name: 'Checking your existing booking' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Payment status is taking longer to confirm' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Help centre' })).toHaveAttribute('href', '/en/support');
     expect(screen.queryByRole('button', { name: 'reselectCta' })).not.toBeInTheDocument();
     expect(boundary.post).not.toHaveBeenCalled();

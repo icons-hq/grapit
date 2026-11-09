@@ -15,6 +15,7 @@ import {
 } from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
+import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail, CancellationExpectation } from '@grabit/shared';
 import { toast } from 'sonner';
@@ -28,7 +29,8 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const { id } = use(params);
   const router = useRouter();
   const locale = getClientLocale();
-  const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
+  const { data: reservation, isLoading, isError, refetch, dataUpdatedAt } = useReservationDetail(id);
+  const paymentCheck = useCheckPaymentStatus(reservation?.tossOrderId, refetch);
   const cancelMutation = useCancelReservation();
   const cancelTicketMutation = useCancelTicketItem();
   const cancellationCopy = getCancellationCopy(locale);
@@ -58,6 +60,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
 
     useBookingStore.getState().setBookingData({
       selectedSeats: target.seats,
+      selectedAddons: target.addons ?? [],
       showtimeId: target.showtimeId,
       performanceId: target.performanceId,
       performanceTitle: target.performanceTitle,
@@ -93,6 +96,14 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
             onCancel={handleCancel}
             isCancelling={cancelMutation.isPending || cancelTicketMutation.isPending}
             onResumePayment={handleResumePayment}
+            onCheckPayment={paymentCheck.check}
+            isCheckingPayment={paymentCheck.checking}
+            providerUnavailable={paymentCheck.providerUnavailable}
+            paymentCheckedAt={dataUpdatedAt}
+            onReselectSeats={reservation.performanceId ? () => {
+              useBookingStore.getState().clearBooking();
+              router.push(getLocalizedPathname(`/booking/${reservation.performanceId}`, locale));
+            } : undefined}
           />
         )}
       </main>

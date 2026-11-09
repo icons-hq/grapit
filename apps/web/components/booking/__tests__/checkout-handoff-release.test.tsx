@@ -132,6 +132,7 @@ async function payOnce() {
 describe('Provider SDK rejection before checkout opens', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    boundary.sdkRequestPayment.mockReset();
     process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY = 'test-client-key';
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT';
     boundary.agreementHandlers.length = 0;
@@ -189,15 +190,23 @@ describe('Provider SDK rejection before checkout opens', () => {
     expect(boundary.server.checkoutStartedAt).not.toBeNull();
   });
 
+  it('treats closing checkout as a normal return without an error toast', async () => {
+    boundary.sdkRequestPayment.mockReset().mockRejectedValueOnce({ code: 'USER_CANCEL', message: 'closed' });
+    mountPage();
+    await payOnce();
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    await waitFor(() => expect(boundary.server.checkoutStartedAt).toBeNull());
+    expect(boundary.toastError).not.toHaveBeenCalled();
+  });
+
   it('falls back to status review when the server keeps the handoff', async () => {
     boundary.server.releaseRefused = true;
     mountPage();
 
     await payOnce();
 
-    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(
-      `/booking/performance-return/complete?pending=true&orderId=${ORDER_ID}`,
-    ));
+    await screen.findByRole('heading', { name: '결제 완료 여부를 확인하고 있어요' });
+    expect(boundary.replace).not.toHaveBeenCalled();
     expect(releaseCalls()).toHaveLength(1);
     expect(boundary.server.checkoutStartedAt).not.toBeNull();
   });

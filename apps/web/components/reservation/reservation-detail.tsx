@@ -17,6 +17,8 @@ import {
 } from '@/components/ui/tooltip';
 import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-modal';
 import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
+import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
+import { ReservationAmountBreakdown } from '@/components/reservation/reservation-amount-breakdown';
 import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
@@ -565,6 +567,11 @@ interface ReservationDetailProps {
   onCancel: (reason: string, ticketItemId?: string, expected?: import('@grabit/shared').CancellationExpectation) => Promise<void> | void;
   isCancelling: boolean;
   onResumePayment?: (reservation: ReservationDetailType) => void;
+  onCheckPayment?: () => void | Promise<unknown>;
+  isCheckingPayment?: boolean;
+  paymentCheckedAt?: number;
+  providerUnavailable?: boolean;
+  onReselectSeats?: () => void;
 }
 
 export function ReservationDetailView({
@@ -572,6 +579,7 @@ export function ReservationDetailView({
   onCancel,
   isCancelling,
   onResumePayment,
+  onCheckPayment, isCheckingPayment, paymentCheckedAt, providerUnavailable, onReselectSeats,
 }: ReservationDetailProps) {
   const router = useRouter();
   const locale = getClientLocale();
@@ -593,7 +601,6 @@ export function ReservationDetailView({
     paymentMethodLabel === detailCopy.paymentMethods.unselected
       ? detailCopy.paymentMethods.fallback
       : paymentMethodLabel;
-  const paymentAmount = reservation.paymentInfo?.amount ?? reservation.totalAmount;
   const paymentPaidAt = reservation.paymentInfo?.paidAt ?? reservation.paidAt;
   const hasCompletedPayment = reservation.status === 'CONFIRMED'
     || ['DONE', 'PARTIAL_CANCELED', 'CANCELED'].includes(reservation.paymentInfo?.status ?? '');
@@ -669,6 +676,7 @@ export function ReservationDetailView({
         providerMessagePrefix: visibleCopy.booking.paymentRecovery.providerMessagePrefix,
       })
     : null;
+  const showPaymentRecovery = progressGuidance?.kind === 'payment-processing';
   const canResumePayment =
     progressGuidance?.kind === 'payment-pending' &&
     Boolean(onResumePayment);
@@ -758,12 +766,9 @@ export function ReservationDetailView({
           <h2 className="mb-3 text-base font-semibold text-gray-900">
             {copy.detail.paymentInfo}
           </h2>
-          <InfoRow
-            label={getCheckoutCopy(locale).orderTotal}
-            value={formatPrice(paymentAmount, locale)}
-          />
+          <ReservationAmountBreakdown reservation={reservation} locale={locale} />
           <Separator />
-          <ProviderChargeAmount quote={reservation.paymentInfo?.providerChargeQuote ?? reservation.providerChargeQuote} locale={locale} />
+          <ProviderChargeAmount quote={reservation.paymentInfo?.providerChargeQuote ?? reservation.providerChargeQuote} locale={locale} paid={hasCompletedPayment} />
           <InfoRow label={copy.detail.paymentMethod} value={paymentMethodLabel} />
           <Separator />
           <InfoRow
@@ -773,7 +778,11 @@ export function ReservationDetailView({
         </CardContent>
       </Card>
 
-      {progressGuidance && (
+      {showPaymentRecovery && <div className="mt-4"><PaymentRecoveryPanel reservation={reservation} locale={locale}
+        onCheck={onCheckPayment} checking={isCheckingPayment} checkedAt={paymentCheckedAt}
+        providerUnavailable={providerUnavailable} onReselect={onReselectSeats} /></div>}
+
+      {progressGuidance && !showPaymentRecovery && (
         <Card className={`mt-4 ${progressGuidance.cardClassName} py-4`}>
           <CardContent className="space-y-4">
             <div className="flex items-start justify-between gap-3">
@@ -818,6 +827,7 @@ export function ReservationDetailView({
                 )}
               </div>
             )}
+            {progressGuidance.kind === 'payment-failed' && onReselectSeats && <Button onClick={onReselectSeats}>{getCheckoutCopy(locale).reselect}</Button>}
             {canResumePayment && (
               <Button
                 type="button"
@@ -1058,8 +1068,8 @@ export function ReservationDetailView({
         />
       )}
 
-      {/* Cancel info: deadline and cancellation time, not the refund notice above */}
-      <Card className="mt-4 py-4">
+      {/* Cancellation deadlines apply only after a completed payment. */}
+      {hasCompletedPayment && <Card className="mt-4 py-4">
         <CardContent>
           <h2 className="mb-3 text-base font-semibold text-gray-900">
             {copy.cancel.deadlineTitle}
@@ -1097,7 +1107,7 @@ export function ReservationDetailView({
             </>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Cancel button */}
       {showCancelButton && (

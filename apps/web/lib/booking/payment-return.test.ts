@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isPaymentCheckoutDismissal,
   CONFIRM_PAYMENT_MAX_RETRIES,
   getConfirmPaymentRetryDelayMs,
   isRetryableConfirmPaymentError,
@@ -41,4 +42,9 @@ describe('confirm payment retry policy', () => {
     expect(getConfirmPaymentRetryDelayMs(10)).toBe(8_000);
     expect(delays.reduce((sum, delay) => sum + delay, 0)).toBeLessThan(60_000);
   });
+});
+
+it('distinguishes normal checkout dismissal from payment failure without changing payment state', () => {
+  for (const code of ['USER_CANCEL', 'PAY_PROCESS_CANCELED', 'PAYMENT_REQUEST_ABORTED']) expect(isPaymentCheckoutDismissal(code)).toBe(true);
+  for (const code of ['REJECT_CARD_COMPANY', 'PROVIDER_TIMEOUT', undefined]) expect(isPaymentCheckoutDismissal(code)).toBe(false);
 });

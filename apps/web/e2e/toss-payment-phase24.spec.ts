@@ -192,9 +192,9 @@ test.describe('toss-payment phase24 recovery states', () => {
       ) });
     });
     await page.goto('/booking/phase24-test-performance/complete?pending=true&orderId=phase24-order-processing');
-    await expect(page.getByRole('heading', { name: '기존 예매를 확인하고 있어요' })).toBeVisible();
-    await expect(page.getByText('결제 여부와 선택한 좌석을 확인합니다. 새 결제를 시작하지 마세요.')).toBeVisible();
-    await page.getByRole('button', { name: '상태 다시 확인' }).click();
+    await expect(page.getByRole('heading', { name: '결제 상태 확인이 지연되고 있어요' })).toBeVisible();
+    await expect(page.getByText('아직 최종 결과를 받지 못했습니다. 결제 상태를 다시 확인하거나 고객센터에 문의해 주세요.')).toBeVisible();
+    await page.getByRole('button', { name: '결제 상태 다시 확인' }).click();
     await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
     expect(confirmCount).toBe(0);
   });

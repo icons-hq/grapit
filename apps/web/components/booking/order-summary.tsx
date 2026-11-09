@@ -5,6 +5,7 @@ import { useLocale } from 'next-intl';
 import { Ticket } from 'lucide-react';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getPaymentRecoveryCopy } from '@/lib/booking/payment-recovery-copy';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { Separator } from '@/components/ui/separator';
 import { TICKET_SERVICE_FEE_KRW, type ProviderChargeQuote, type SeatSelection } from '@grabit/shared';
@@ -57,11 +58,13 @@ export function OrderSummary({ performanceTitle, posterUrl, showDateTime, venue,
   );
 }
 
-export function CheckoutAmountSummary({ seats, addons = [], totalPrice, quote }: {
+export function CheckoutAmountSummary({ seats, addons = [], totalPrice, quote, awaitingResult = false, paid = false }: {
   seats: CheckoutSeat[];
   addons?: import('@grabit/shared').BookingAddonChoice[];
   totalPrice: number;
   quote?: ProviderChargeQuote;
+  awaitingResult?: boolean;
+  paid?: boolean;
 }) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const copy = getCheckoutCopy(locale);
@@ -92,10 +95,10 @@ export function CheckoutAmountSummary({ seats, addons = [], totalPrice, quote }:
         <div className="flex justify-between gap-4 border-t border-border pt-4 font-semibold"><dt>{copy.orderTotal}</dt><dd className="tabular-nums">{formatKrw(totalPrice)}</dd></div>
       </dl>
       {quote && (
-        <section aria-label={copy.charge} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary/5 p-4 text-primary">
-          <h3 className="text-sm font-semibold">{copy.charge}</h3>
+        <section aria-label={paid ? copy.charge : getPaymentRecoveryCopy(locale).pendingCharge} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary/5 p-4 text-primary">
+          <h3 className="text-sm font-semibold">{paid ? copy.charge : getPaymentRecoveryCopy(locale).pendingCharge}</h3>
           <p className="text-2xl font-bold tabular-nums">{quote.currency} {quote.amountDecimal}</p>
-          <p className="w-full text-xs text-muted-foreground">{copy.quoteReady}</p>
+          {!awaitingResult && <p className="w-full text-xs text-muted-foreground">{copy.quoteReady}</p>}
         </section>
       )}
     </section>

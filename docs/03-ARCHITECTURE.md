@@ -431,6 +431,39 @@ handoff without a new prepare (§6.2), so in the browser session that prepared t
 session is refused at the handoff, before the provider checkout. A fail URL alone never cancels or replaces an order. See
 [the prepared checkout ADR](adr/0010-preserve-prepared-checkout-across-provider-returns.md).
 
+Buyer payment-return recovery (2026-11-09):
+
+- Browser Back keeps the saved order, seats, add-ons and charge quote on checkout. A
+  `pageshow.persisted` event clears the browser's stale SDK-in-flight flag and resumes
+  server lookup; it never clears `checkout_started_at`. Normal SDK/redirect dismissal
+  codes are not shown as payment-error toasts. Confirmed orders still open their tickets.
+- Unknown handoff, provider processing, approved-but-not-finalized, and delayed result
+  have distinct guidance. Checkout and reservation detail poll pending local state every
+  three seconds while visible. Only a resolved failed/expired order offers seat reselection;
+  a pre-handoff order can resume with another method. The original seat/queue deadline is
+  not extended by viewing or checking status. Ten minutes is a delay-notice threshold,
+  not authority to cancel, release seats or start another payment.
+- `POST /api/v1/payments/status-check` accepts only `orderId` and authenticates its owner.
+  For a pending asynchronous-wallet handoff it reuses the stored payment key; when missing,
+  it attempts `/v1/payments/orders/{orderId}` with the foreign-easy-pay key only. Some widget
+  MIDs do not support that lookup: 404, `NOT_FOUND_MERCHANT`, malformed responses and network
+  errors return `outcome: unavailable` without releasing the handoff. A discovered key is
+  re-read and verified through the existing async-return reconciliation path, including
+  its locked finalization and late-payment compensation rules. Other orders return
+  `not_needed`. Provider calls happen on manual check, not every local polling tick.
+- The [Toss cancellation API](https://docs.tosspayments.com/reference#결제-취소) documents
+  cancellation of approved payments. [SDK destroy](https://docs.tosspayments.com/sdk/v2/js/payment#paymentdestroy)
+  closes an iframe and aborts the browser request; it is not documented as final closure of
+  an external Alipay QR transaction. The [foreign-wallet guide](https://docs.tosspayments.com/guides/v2/payment-window/integration-foreignpay)
+  requires asynchronous final-result handling. Immediate method switching for an unresolved
+  Alipay checkout therefore remains blocked; no unverified termination API is invoked.
+- Reservation detail and completion itemize frozen seat prices, each add-on, booking fees,
+  and order total. A 380,000 KRW seat plus 80,000 and 150,000 KRW add-ons and a 2,000 KRW
+  booking fee totals 612,000 KRW; add-ons must not disappear from the receipt. Before approval,
+  the foreign quote is labeled an amount to be charged, not an amount already charged.
+  Cancellation deadlines are shown only after completed payment. Historical order amounts
+  and quotes are never recomputed from today's catalog or FX rate.
+
 The browser validates the live widget selection and payment-terms status before handoff.
 When the Toss SDK rejects `requestPayment` for any reason (a pre-checkout validation error
 such as `NEED_CARD_PAYMENT_DETAIL`, or a checkout the buyer opened and closed), or the branch
