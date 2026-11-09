@@ -69,6 +69,9 @@ function createBookingService(redis: Cluster, maxTicketsPerUser = 1): BookingSer
   }
 
   const mockDb = {
+    // This suite exercises real Valkey only; the fixture has no paid add-ons.
+    transaction: async (run: (tx: { execute: () => Promise<{ rows: unknown[] }> }) => Promise<unknown>) =>
+      run({ execute: async () => ({ rows: [] }) }),
     select: (selection?: Record<string, unknown>) => ({
       from: () => ({
         where: () => queryRows(unavailableRows),

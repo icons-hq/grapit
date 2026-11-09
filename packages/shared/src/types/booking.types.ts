@@ -177,6 +177,7 @@ export type CancellationQuoteItem = TicketItemCancellationPreview;
 export interface CancellationQuote {
   originalPaymentAmount: number;
   ticketSubtotal: number;
+  addonSubtotal?: number;
   ticketServiceFeeTotal: number;
   cancellationFeeTotal: number;
   serviceFeeRefundTotal: number;
@@ -298,6 +299,7 @@ export interface ReservationListItem {
 }
 
 export interface ReservationDetail extends ReservationListItem {
+  addons?: import('../schemas/booking-addon.schema').BookingAddonChoice[];
   performanceId?: string;
   showtimeId?: string;
   tossOrderId?: string | null;
@@ -515,6 +517,7 @@ export interface AdminBookingSupportEvidence {
 }
 
 export interface PrepareReservationRequest {
+  addons?: import('../schemas/booking-addon.schema').BookingAddonSelection[];
   orderId: string;
   showtimeId: string;
   seats: FloorAwareSeatSelection[];

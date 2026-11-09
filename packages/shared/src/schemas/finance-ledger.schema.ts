@@ -45,6 +45,7 @@ export interface FinanceTicket {
   seat: string;
   state: 'active' | 'cancellation_pending' | 'cancelled' | 'expired' | 'unknown';
   priceKrw: number;
+  addonKrw?: number;
   serviceFeeKrw: number;
   refundKrw: number | null;
   cancellationFeeKrw: number | null;

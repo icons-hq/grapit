@@ -364,6 +364,7 @@ function getBenefitUiState(
 }
 
 function getBenefitKindLabel(kind: FieldBenefitEntitlement['kind']): string {
+  if (kind === 'paid') return '추가 구매';
   return kind === 'included' ? 'ALL' : '한정';
 }
 

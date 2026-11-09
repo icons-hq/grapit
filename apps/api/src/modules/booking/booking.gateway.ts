@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Inject, Logger, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
-import type { SeatState, SeatUpdateEvent } from '@grabit/shared';
+import type { BookingAddonStockUpdate, SeatState, SeatUpdateEvent } from '@grabit/shared';
 import { allowSocketIoFrontendOrigin } from '../../config/frontend-origins.js';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import {
@@ -183,5 +183,16 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
         );
       }
     }
+  }
+
+  async publishAddonStockChanged(showtimeId: string, stock?: BookingAddonStockUpdate): Promise<boolean> {
+    const room = showtimeRoom(showtimeId);
+    const payload = stock ?? { showtimeId };
+    if (this.server) { this.server.to(room).emit('addon-stock-changed', payload); return true; }
+    if (!this.redisPublisher) return false;
+    try {
+      await publishSocketIoRoomEvents(this.redisPublisher, BOOKING_SOCKET_NAMESPACE, room, ['addon-stock-changed'], payload);
+      return true;
+    } catch { return false; }
   }
 }

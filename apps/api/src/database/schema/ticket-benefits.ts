@@ -17,6 +17,7 @@ import { adminAuditLogs } from './admin-audit-logs.js';
 import { showtimes } from './showtimes.js';
 import { ticketItems } from './ticket-items.js';
 import { users } from './users.js';
+import { bookingAddonHolds } from './booking-addons.js';
 
 type JsonRecord = Record<string, unknown>;
 type BenefitDisplayCopy = Record<string, { name: string; description: string }>;
@@ -24,6 +25,7 @@ type BenefitDisplayCopy = Record<string, { name: string; description: string }>;
 export const ticketBenefitKindEnum = pgEnum('ticket_benefit_kind', [
   'included',
   'limited',
+  'paid',
 ]);
 
 export const ticketBenefitConfigurationChangeActionEnum = pgEnum(
@@ -43,7 +45,7 @@ export const ticketBenefitRunStatusEnum = pgEnum(
 
 export const ticketBenefitEntitlementSourceEnum = pgEnum(
   'ticket_benefit_entitlement_source',
-  ['configuration', 'live_run', 'test_run', 'rollback'],
+  ['configuration', 'live_run', 'test_run', 'rollback', 'purchase'],
 );
 
 export const ticketBenefitEntitlementStateEnum = pgEnum(
@@ -221,6 +223,7 @@ export const ticketBenefitEntitlements = pgTable(
       .notNull()
       .references(() => ticketItems.id, { onDelete: 'restrict' }),
     benefitIdentity: varchar('benefit_identity', { length: 120 }).notNull(),
+    bookingAddonHoldId: uuid('booking_addon_hold_id').references(() => bookingAddonHolds.id),
     benefitKind: ticketBenefitKindEnum('benefit_kind').notNull(),
     displayCopySnapshot: jsonb('display_copy_snapshot')
       .$type<BenefitDisplayCopy>()
@@ -256,6 +259,7 @@ export const ticketBenefitEntitlements = pgTable(
       table.showtimeId,
       table.ticketItemId,
     ),
+    uniqueIndex('idx_tbe_booking_addon_hold').on(table.bookingAddonHoldId),
     uniqueIndex('idx_ticket_benefit_entitlements_active_limited_ticket_item')
       .on(table.ticketItemId)
       .where(sql`${table.benefitKind} = 'limited' AND ${table.state} = 'active'`),

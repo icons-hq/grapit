@@ -1423,11 +1423,11 @@ function entitlementRowToExportRow(row: BenefitEntitlementRow): BenefitEntitleme
     redeemedAt: row.redeemedAt?.toISOString() ?? null,
   };
 
-  if (row.source === 'configuration') {
+  if (row.source === 'configuration' || row.source === 'purchase') {
     return benefitEntitlementExportRowSchema.parse({
       ...base,
       runId: null,
-      benefitKind: 'included',
+      benefitKind: row.source === 'purchase' ? 'paid' : 'included',
       attachedToTicket: true,
     });
   }

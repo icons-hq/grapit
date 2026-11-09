@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookingAddonSelectionsSchema } from './booking-addon.schema';
 
 import { benefitEntitlementSchema } from './benefit.schema';
 import { consentCaptureItemSchema } from './consent.schema';
@@ -159,6 +160,7 @@ export const refundTimelineSchema = z.object({
 export const cancellationQuoteSchema = z.object({
   originalPaymentAmount: z.number().int().min(0),
   ticketSubtotal: z.number().int().min(0),
+  addonSubtotal: z.number().int().min(0).optional(),
   ticketServiceFeeTotal: z.number().int().min(0),
   cancellationFeeTotal: z.number().int().min(0),
   serviceFeeRefundTotal: z.number().int().min(0),
@@ -263,6 +265,7 @@ export const ticketEmailDeliverySchema = z.object({
 });
 
 export const prepareReservationSchema = z.object({
+  addons: bookingAddonSelectionsSchema.optional(),
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
   showtimeId: z.string().uuid('유효한 회차 ID가 필요합니다'),
   seats: z
@@ -542,6 +545,8 @@ export const reservationListItemSchema = z.object({
 });
 
 export const reservationDetailSchema = reservationListItemSchema.extend({
+  addons: z.array(z.object({ addonId: z.string().uuid(), seatKey: z.string(), price: z.number().int().positive(),
+    displayCopy: z.record(z.object({ name: z.string(), description: z.string() })), expiresAt: z.string().datetime() })).optional(),
   performanceId: z.string().uuid('유효한 performance ID가 필요합니다').optional(),
   showtimeId: z.string().uuid('유효한 showtime ID가 필요합니다').optional(),
   tossOrderId: z.string().min(1, 'Toss 주문 ID가 필요합니다').nullable().optional(),
@@ -593,6 +598,7 @@ export const adminBookingListItemSchema = z.object({
 });
 
 export const adminTicketItemSchema = floorAwareSeatSelectionSchema.extend({
+  addonAmount: z.number().int().min(0).optional(),
   id: z.string().uuid('유효한 ticket item ID가 필요합니다'),
   reservationId: z.string().uuid('유효한 reservation ID가 필요합니다'),
   paymentId: z.string().uuid('유효한 payment ID가 필요합니다'),

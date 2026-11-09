@@ -1379,16 +1379,17 @@ export class RefundService {
         return {
           ticketItemId: ticketItem.id,
           ticketPrice: ticketItem.price,
+          ...((ticketItem.addonAmount ?? 0) > 0 ? { addonAmount: ticketItem.addonAmount } : {}),
           serviceFee,
           cancellationFee: 0,
           serviceFeeRefund: serviceFee,
-          refundableAmount: ticketItem.price + serviceFee,
+          refundableAmount: ticketItem.price + (ticketItem.addonAmount ?? 0) + serviceFee,
           policyCode: 'ADMIN_FULL_REFUND_OVERRIDE' as const,
         };
       }
 
       const quote = this.calculateTicketItemCancellationQuote({
-        price: ticketItem.price,
+        price: ticketItem.price + (ticketItem.addonAmount ?? 0),
         serviceFee,
         bookedAt: resolveBookingConfirmedAt(context),
         showtimeAt: context.showtime.dateTime,
@@ -1397,6 +1398,7 @@ export class RefundService {
       return {
         ticketItemId: ticketItem.id,
         ticketPrice: ticketItem.price,
+        ...((ticketItem.addonAmount ?? 0) > 0 ? { addonAmount: ticketItem.addonAmount } : {}),
         serviceFee,
         cancellationFee: quote.cancellationFee,
         serviceFeeRefund: quote.serviceFeeRefund,
@@ -1409,6 +1411,8 @@ export class RefundService {
     return {
       originalPaymentAmount: context.payment.amount,
       ticketSubtotal: items.reduce((total, item) => total + item.ticketPrice, 0),
+      ...(activeTicketItems.some((item) => item.addonAmount > 0)
+        ? { addonSubtotal: activeTicketItems.reduce((sum, item) => sum + (item.addonAmount ?? 0), 0) } : {}),
       ticketServiceFeeTotal: items.reduce((total, item) => total + item.serviceFee, 0),
       cancellationFeeTotal: items.reduce((total, item) => total + item.cancellationFee, 0),
       serviceFeeRefundTotal: items.reduce((total, item) => total + item.serviceFeeRefund, 0),
@@ -1606,6 +1610,7 @@ export class RefundService {
     context: ReservationRefundContext,
     seats: ReservationSeatRecord[],
   ): Promise<TicketItemRecord[]> {
+    if ((context.reservation.addonAmount ?? 0) > 0) throw new ConflictException('애드온 구매 내역을 확인해야 합니다. 고객센터로 문의해주세요.');
     const now = new Date();
     const seatTotal = context.seats.reduce((total, seat) => total + seat.price, 0);
     const serviceFeePerTicket =
@@ -1635,6 +1640,7 @@ export class RefundService {
         row: seat.row,
         number: seat.number,
         price: seat.price,
+        addonAmount: 0,
         serviceFee: serviceFeePerTicket,
         status: 'active' as const,
         admissionState,
@@ -1672,6 +1678,7 @@ export class RefundService {
     context: ReservationRefundContext,
     seats: ReservationSeatRecord[] = context.seats,
   ): Promise<void> {
+    if ((context.reservation.addonAmount ?? 0) > 0) throw new ConflictException('애드온 구매 내역을 확인해야 합니다. 고객센터로 문의해주세요.');
     const now = new Date();
     const seatTotal = context.seats.reduce((total, seat) => total + seat.price, 0);
     const serviceFeePerTicket =

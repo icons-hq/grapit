@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { describeSaleOpening } from './event-publish-confirmation-dialog';
+import { canUseAdminBookingBypass } from '@/lib/booking/admin-booking-bypass';
 
 export function PerformancePreparationWorkspace({ id }: { id: string }) {
   const user = useAuthStore((state) => state.user);
@@ -64,6 +65,12 @@ export function PerformancePreparationWorkspace({ id }: { id: string }) {
         <p className="font-semibold">게시와 판매 시작은 구분됩니다.</p><p className="mt-2 text-gray-600">공개 후에도 판매 상태, 판매 시작 시각과 예매 허용 설정이 충족되어야 구매할 수 있습니다.</p>
         <dl className="my-5 border-y border-gray-200 py-4"><dt className="text-gray-500">현재 공개 상태</dt><dd className="font-semibold">{data.publishState === 'published' ? '공개됨' : '비공개 준비 중'}</dd><dt className="mt-3 text-gray-500">{data.publishState === 'published' ? '판매 시작 · 한국 시간' : '공개 시 판매 개시 · 한국 시간'}</dt><dd>{data.publishState !== 'published' && data.saleOpening ? describeSaleOpening({ saleOpening: data.saleOpening }) : data.bookingStartsAt ? `${formatAdminKstDateTime(data.bookingStartsAt).replace('T', ' ')} KST` : '시각 미지정'}</dd></dl>
         {data.publishState === 'published' ? <Link href={`/performance/${id}`} className="font-semibold text-violet-700">구매자 화면 보기 ↗</Link> : <p className="text-gray-600">준비 중인 공연은 공개 승인 후 구매자 화면에 나타납니다.</p>}
+        {canUseAdminBookingBypass(user) && data.status !== 'ended' && (
+          <div className="mt-4 border-t border-gray-200 pt-4">
+            <Link href={`/booking/${id}`} className="block font-semibold text-violet-700">관리자 구매 테스트 ↗</Link>
+            <p className="mt-2 text-gray-600">비공개·판매 시작 전에도 최고 관리자는 예매할 수 있습니다. 실제 금액으로 결제되므로 테스트 후 예매 취소를 확인해주세요.</p>
+          </div>
+        )}
         {(capability.superuser || capability.capabilities.includes('benefits.manage')) && <Link href={href('/admin/benefits')} className="mt-3 block font-semibold text-violet-700">회차별 특전 설정 확인 ›</Link>}
       </aside>
     </div>

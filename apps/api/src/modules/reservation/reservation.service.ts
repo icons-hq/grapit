@@ -1,3 +1,4 @@
+import { reservationAddonChoices, reservationAddonTotal, selectAddonHoldsForOrder } from '../../database/booking-addon-inventory.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
   Injectable,
@@ -1191,6 +1192,7 @@ export class ReservationService {
         status: reservations.status,
         tossOrderId: reservations.tossOrderId,
         totalAmount: reservations.totalAmount,
+        addonAmount: reservations.addonAmount,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
         checkoutPaymentMethod: reservations.checkoutPaymentMethod,
         checkoutStartedAt: reservations.checkoutStartedAt,
@@ -1252,7 +1254,9 @@ export class ReservationService {
         requestedSeatCount: canonicalSeats.length,
         maxTicketsPerUser: existingShowtime.maxTicketsPerUser,
       });
-      const expectedAmount = this.calculatePayableTotal(canonicalSeats);
+      const expectedAmount = this.calculatePayableTotal(canonicalSeats)
+        + ((existing.addonAmount ?? 0) > 0 || dto.addons?.length
+          ? await reservationAddonTotal(this.db, existing.id, dto.addons ?? []) : 0);
       if (existing.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
@@ -1351,7 +1355,10 @@ export class ReservationService {
       requestedSeatCount: canonicalSeats.length,
       maxTicketsPerUser: showtime.maxTicketsPerUser,
     });
-    const expectedAmount = this.calculatePayableTotal(canonicalSeats);
+    const addonTotal = dto.addons?.length ? await this.db.transaction((tx) => selectAddonHoldsForOrder(tx, {
+      userId, showtimeId: dto.showtimeId, selections: dto.addons ?? [], seats: canonicalSeats,
+    })) : 0;
+    const expectedAmount = this.calculatePayableTotal(canonicalSeats) + addonTotal;
 
     if (expectedAmount !== dto.amount) {
       throw new BadRequestException('금액이 일치하지 않습니다');
@@ -1392,6 +1399,7 @@ export class ReservationService {
           reservationNumber,
           status: 'PENDING_PAYMENT',
           totalAmount: expectedAmount,
+          addonAmount: addonTotal,
           checkoutPaymentMethod: dto.paymentMethod,
           queueSessionId: dto.queueAdmission?.queueSessionId,
           // The admission token is a cookie-only bearer value; it is never persisted.
@@ -1418,6 +1426,9 @@ export class ReservationService {
           number: seat.number,
         })),
       );
+
+      await selectAddonHoldsForOrder(tx, { userId, showtimeId: dto.showtimeId,
+        selections: dto.addons ?? [], seats: canonicalSeats, reservationId, expectedTotal: addonTotal });
 
       await this.consentService.captureConsent(
         userId,
@@ -1616,6 +1627,7 @@ export class ReservationService {
           status: reservations.status,
           totalAmount: reservations.totalAmount,
           queueSessionId: reservations.queueSessionId,
+          addonAmount: reservations.addonAmount,
           refreshFamilyId: reservations.refreshFamilyId,
           deviceSlotKey: reservations.deviceSlotKey,
           admittedAt: reservations.admittedAt,
@@ -1830,6 +1842,7 @@ export class ReservationService {
       }),
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       ticketItems: ticketItemDtos,
+      addons: (row.reservation.addonAmount ?? 0) > 0 ? await reservationAddonChoices(this.db, reservationId) : [],
     };
   }
 
@@ -1849,6 +1862,8 @@ export class ReservationService {
     };
 
     switch (row.source) {
+      case 'purchase':
+        return { ...base, source: 'purchase', kind: 'paid', runId: null, attachedToTicket: true };
       case 'configuration':
         return {
           ...base,
@@ -1976,6 +1991,7 @@ export class ReservationService {
       tierColor: tierColorByName.get(row.tierName),
       price: row.price,
       serviceFee: row.serviceFee === 0 ? 0 : TICKET_SERVICE_FEE_KRW,
+      addonAmount: row.addonAmount ?? 0,
       status: this.mapTicketItemStatus(row.status),
       admissionState: this.mapTicketItemAdmissionState(row.admissionState),
       enteredAt: row.enteredAt?.toISOString() ?? null,
@@ -2159,7 +2175,7 @@ export class ReservationService {
       seatId: String(row['seat_id']),
       seatKey: String(row['seat_key']),
       floorKey: String(row['floor_key']),
-      price: Number(row['price']),
+      price: Number(row['price']) + Number(row['addon_amount'] ?? 0),
       serviceFee: Number(row['service_fee'] ?? 0),
       cancelledAt: row['cancelled_at']
         ? this.toDate(row['cancelled_at'] as Date | string, 'cancelled_at')
@@ -2543,7 +2559,7 @@ export class ReservationService {
     const [payment] = await this.db.select().from(payments).where(eq(payments.reservationId, reservationId));
     if (!payment || payment.status !== 'DONE') throw new BadRequestException('취소할 수 없는 결제 상태입니다');
     const rows = await this.db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservationId));
-    const quote = this.calculateTicketItemCancellationQuote({ price: selected.price, serviceFee: selected.serviceFee,
+    const quote = this.calculateTicketItemCancellationQuote({ price: selected.price + (selected.addonAmount ?? 0), serviceFee: selected.serviceFee,
       bookedAt: payment.paidAt ?? new Date(detail.createdAt), showtimeAt: new Date(detail.showDateTime) });
     const snapshot = withCompletedRefunds(payment, rows);
     // Nothing refundable means no provider command and no provider balance requirement.
@@ -2577,9 +2593,10 @@ export class ReservationService {
       providerRefund: { currency, amountMinor, amountDecimal: (amountMinor / scale).toFixed(currency === 'USD' ? 2 : 0) },
       cancelledSeatHoldWindowMinutes: { min: policy?.min ?? 1, max: policy?.max ?? 10 }, refundTimeline: detail.refundTimeline,
       cancellationQuote: { originalPaymentAmount: payment.amount, ticketSubtotal: selected.price,
+        ...((selected.addonAmount ?? 0) > 0 ? { addonSubtotal: selected.addonAmount } : {}),
         ticketServiceFeeTotal: selected.serviceFee, cancellationFeeTotal: quote.cancellationFee,
         serviceFeeRefundTotal: quote.serviceFeeRefund, refundableAmount: quote.refundableAmount,
-        policyCodes: [quote.policyCode!], items: [{ ticketItemId, ticketPrice: selected.price, serviceFee: selected.serviceFee,
+        policyCodes: [quote.policyCode!], items: [{ ticketItemId, ticketPrice: selected.price, addonAmount: selected.addonAmount ?? 0, serviceFee: selected.serviceFee,
           cancellationFee: quote.cancellationFee, serviceFeeRefund: quote.serviceFeeRefund,
           refundableAmount: quote.refundableAmount, policyCode: quote.policyCode! }] },
     };
@@ -2629,6 +2646,7 @@ export class ReservationService {
             ti.seat_key,
             ti.floor_key,
             ti.price,
+            ti.addon_amount,
             ti.service_fee,
             ti.cancelled_at,
             ti.cancel_reason,

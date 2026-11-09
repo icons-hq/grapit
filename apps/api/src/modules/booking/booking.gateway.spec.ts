@@ -60,6 +60,20 @@ describe('BookingGateway', () => {
     vi.restoreAllMocks();
   });
 
+  it('broadcasts addon invalidation without buyer identity through the shared room adapter', async () => {
+    const redis = { publish: vi.fn().mockResolvedValue(2), eval: vi.fn(), duplicate: vi.fn() };
+    const gateway = new BookingGateway(redis);
+    const live = createServerStub();
+    gateway.server = live.server as never;
+    await gateway.publishAddonStockChanged(SHOWTIME_ID);
+    expect(live.emit.mock.calls).toEqual([['addon-stock-changed', { showtimeId: SHOWTIME_ID }]]);
+    gateway.server = undefined;
+    await gateway.publishAddonStockChanged(SHOWTIME_ID);
+    const [channel, buffer] = redis.publish.mock.calls[0]!;
+    const delivered = deliverToApiInstance(channel, buffer, ROOM);
+    expect(delivered[0]?.[0].data).toEqual(['addon-stock-changed', { showtimeId: SHOWTIME_ID }]);
+  });
+
   it('skips broadcasts when running without a Socket.IO server or Redis publisher', async () => {
     const gateway = new BookingGateway();
 

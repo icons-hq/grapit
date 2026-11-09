@@ -129,7 +129,7 @@ function ConfirmPageContent() {
   const paymentProviderMessagePrefix = visibleCopy.booking.paymentRecovery.providerMessagePrefix;
   const performanceId = params.performanceId as string;
 
-  const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
+  const { selectedSeats, selectedAddons, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
     useBookingStore();
   const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
   // Prepare needs the queue access window on the server, whatever the seat
@@ -213,8 +213,9 @@ function ConfirmPageContent() {
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
-      + selectedSeats.length * TICKET_SERVICE_FEE_KRW,
-    [selectedSeats],
+      + selectedSeats.length * TICKET_SERVICE_FEE_KRW
+      + selectedAddons.reduce((sum, addon) => sum + addon.price, 0),
+    [selectedSeats, selectedAddons],
   );
 
   const orderName = useMemo(() => {
@@ -443,7 +444,8 @@ function ConfirmPageContent() {
       return mountedRef.current
         && current.performanceId === requestedBooking.performanceId
         && current.selectedShowtimeId === requestedBooking.selectedShowtimeId
-        && JSON.stringify(current.selectedSeats) === JSON.stringify(requestedBooking.selectedSeats);
+        && JSON.stringify(current.selectedSeats) === JSON.stringify(requestedBooking.selectedSeats)
+        && JSON.stringify(current.selectedAddons) === JSON.stringify(requestedBooking.selectedAddons);
     };
     try {
       // Persist the identity before the request: the server may commit even if
@@ -477,6 +479,7 @@ function ConfirmPageContent() {
         orderId,
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats.map(toFloorAwareSeatSelection),
+        addons: selectedAddons.map(({ addonId, seatKey }) => ({ addonId, seatKey })),
         amount: totalPrice,
         // Only the rows TermsAgreement shows, in the document language it renders.
         consentItems: BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
@@ -718,7 +721,7 @@ function ConfirmPageContent() {
         <Card className="gap-5 border-border bg-white shadow-sm lg:sticky lg:top-6">
           <CardHeader className="gap-5 px-4 sm:px-6">
             <PaymentDeadlineBanner paymentDeadlineAt={paymentDeadlineAt} lockExpiresAt={lockExpiresAt} />
-            <CheckoutAmountSummary seats={selectedSeats} totalPrice={totalPrice} quote={visibleQuote ?? undefined} />
+            <CheckoutAmountSummary seats={selectedSeats} addons={selectedAddons} totalPrice={totalPrice} quote={visibleQuote ?? undefined} />
           </CardHeader>
           <CardContent className="space-y-5 px-4 sm:px-6">
         {paymentReturnError && (

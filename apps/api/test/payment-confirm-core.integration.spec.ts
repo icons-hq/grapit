@@ -252,6 +252,58 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(toss.cancelPayment).not.toHaveBeenCalled();
   });
 
+  it('charges seat and paid add-on together and issues its paid entitlement in the same transaction', async () => {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01') });
+    const displayCopy = Object.fromEntries(['ko', 'en', 'zh-CN', 'th'].map((lang) => [lang, { name: 'Hi-touch add-on', description: 'Paid option' }])) as never;
+    const [addon] = await db.insert(schema.bookingAddons).values({ showtimeId: reservation.showtimeId, identity: 'hi-touch',
+      displayCopy, price: 80000, capacity: 1, eligibleTierNames: ['VIP'] }).returning();
+    await db.insert(schema.bookingAddonHolds).values({ addonId: addon!.id, userId, seatKey: '1F:A-1',
+      reservationId: reservation.id, expiresAt: new Date(Date.now() + 600000), price: 80000, displayCopy });
+    await db.update(reservations).set({ totalAmount: 132000, addonAmount: 80000 }).where(eq(reservations.id, reservation.id));
+    const paymentKey = `pay-${randomUUID()}`;
+    const toss = { confirmPayment: vi.fn().mockResolvedValue({ paymentKey, orderId: reservation.tossOrderId, status: 'DONE',
+      currency: 'KRW', method: '카드', totalAmount: 132000, approvedAt: new Date().toISOString() }), queryPayment: vi.fn(), cancelPayment: vi.fn() };
+    await expect(finalization(toss).confirmAndCreateReservation({ paymentKey, orderId: reservation.tossOrderId!, amount: 132000 }, userId))
+      .resolves.toEqual({ reservationId: reservation.id });
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id))).toMatchObject([{ amount: 132000, status: 'DONE' }]);
+    const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id));
+    expect(items).toMatchObject([{ price: 50000, addonAmount: 80000, status: 'active' }]);
+    expect(await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, items[0]!.id)))
+      .toMatchObject([{ source: 'purchase', benefitKind: 'paid', state: 'active' }]);
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it.each(['PENDING_PAYMENT', 'FAILED'] as const)('issues one paid option on async DONE from %s, including webhook replay', async (status) => {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01'),
+      checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD', pendingUrlRequired: true } });
+    const displayCopy = Object.fromEntries(['ko', 'en', 'zh-CN', 'th'].map((lang) => [lang, { name: 'Hi-touch add-on', description: 'Paid option' }])) as never;
+    const [addon] = await db.insert(schema.bookingAddons).values({ showtimeId: reservation.showtimeId, identity: 'hi-touch',
+      displayCopy, price: 80000, capacity: 1, eligibleTierNames: ['VIP'] }).returning();
+    await db.insert(schema.bookingAddonHolds).values({ addonId: addon!.id, userId, seatKey: '1F:A-1', reservationId: reservation.id,
+      expiresAt: new Date(Date.now() - 60000), price: 80000, displayCopy });
+    await db.update(reservations).set({ status, totalAmount: 132000, addonAmount: 80000 }).where(eq(reservations.id, reservation.id));
+    const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never);
+    Object.assign(service, { bookingService: {
+      acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true, releasePaymentConfirmLock: async () => {},
+      extendOwnedSeatLocks: status === 'PENDING_PAYMENT' ? vi.fn().mockResolvedValue(undefined)
+        : vi.fn().mockRejectedValue(new ConflictException('Seat lock expired')),
+      getMyLocks: vi.fn().mockResolvedValue({ seatIds: [], expiresAt: null }),
+      acquireRecoverySeatLocks: vi.fn().mockResolvedValue({ acquired: true }), releaseRecoverySeatLocks: vi.fn(),
+    } });
+    const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
+      paymentKey: `test-${randomUUID()}`, orderId: reservation.tossOrderId!, status: 'DONE',
+      provider: 'ALIPAY_PLUS' as const, easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'KRW', totalAmount: 132000,
+    } };
+    await service.upsertAsyncPaymentProgress(payload, 'DONE', 'payment_status_changed:done');
+    await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
+    const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, reservation.id));
+    expect(items).toMatchObject([{ addonAmount: 80000, status: 'active' }]);
+    expect(await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, items[0]!.id)))
+      .toMatchObject([{ source: 'purchase', benefitKind: 'paid', state: 'active' }]);
+    expect(await db.select().from(payments).where(eq(payments.reservationId, reservation.id)))
+      .toMatchObject([{ amount: 132000, status: 'DONE' }]);
+  });
+
   it('claims, cancels and records a PayPal approval settled in KRW without issuing it (pay-server-4)', async () => {
     const { userId, reservation } = await pendingOrder({
       showtimeAt: new Date('2099-01-01'),

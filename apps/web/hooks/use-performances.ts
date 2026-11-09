@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { canUseAdminBookingBypass } from '@/lib/booking/admin-booking-bypass';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { getCatalogListBookingStartRefetchInterval } from '@/components/performance/performance-display-status';
 import {
@@ -112,12 +114,31 @@ export function usePerformances(genre: string) {
 
 export function usePerformanceDetail(id: string) {
   const locale = resolveVisibleCopyLocale(useLocale());
+  const adminPreviewUserId = useAuthStore((state) =>
+    state.isInitialized && state.accessToken && canUseAdminBookingBypass(state.user)
+      ? state.user!.id
+      : null,
+  );
   return useQuery({
-    queryKey: ['performance', id, locale],
-    queryFn: () =>
-      apiClient.get<PerformanceWithDetails>(
-        `/api/v1/performances/${id}?locale=${encodeURIComponent(locale)}`,
-      ),
+    // Private responses must never be reused by a buyer after logout/account change.
+    queryKey: adminPreviewUserId
+      ? ['performance', id, locale, 'admin-preview', adminPreviewUserId]
+      : ['performance', id, locale],
+    queryFn: async () => {
+      try {
+        // Keep published, localized buyer copy even for admins.
+        return await apiClient.get<PerformanceWithDetails>(
+          `/api/v1/performances/${id}?locale=${encodeURIComponent(locale)}`,
+          adminPreviewUserId ? { showErrorToast: false } : undefined,
+        );
+      } catch (error) {
+        if (!adminPreviewUserId || !(error instanceof Error)
+          || !('statusCode' in error) || error.statusCode !== 404) throw error;
+        // The existing admin API independently authenticates and authorizes this read.
+        // Public catalog/detail endpoints and server-side purchase gates stay unchanged.
+        return apiClient.get<PerformanceWithDetails>(`/api/v1/admin/performances/${id}`);
+      }
+    },
     enabled: !!id,
   });
 }

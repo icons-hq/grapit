@@ -54,6 +54,8 @@ const fieldBenefitEntitlementBaseSchema = benefitEntitlementBaseSchema.pick({
 });
 
 export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
+  fieldBenefitEntitlementBaseSchema.extend({ source: z.literal('purchase'), kind: z.literal('paid'),
+    runId: z.null(), attachedToTicket: z.literal(true), runMode: z.never().optional() }).strict(),
   fieldBenefitEntitlementBaseSchema
     .extend({
       source: z.literal('configuration'),

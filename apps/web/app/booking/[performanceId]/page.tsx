@@ -115,12 +115,15 @@ export default function BookingRoute({
     bookingAvailable,
     verificationRequiredForBooking,
     isAdminBookingBypassActive,
+    isAdmin,
     isResolved: runtimeFlagsResolved,
     isError: runtimeFlagsError,
     refetch: refetchRuntimeFlags,
   } = useBookingAvailability();
   const { isInitialized: authInitialized, accessToken, user } = useAuthStore();
-  const queueGated = bookingAvailable && !isAdminBookingBypassActive;
+  // The API exempts full admins even when the sitewide gate is open. This
+  // route has no performance data yet, so the scheduled-sale flag alone is insufficient.
+  const queueGated = bookingAvailable && !isAdmin && !isAdminBookingBypassActive;
   const queue = useQueue({
     performanceId,
     enabled:

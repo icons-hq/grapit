@@ -9,6 +9,8 @@ import {
   type SeatState,
   type SeatStatusResponse,
   type SeatUpdateEvent,
+  type BookingAddonSnapshot,
+  type BookingAddonStockUpdate,
 } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
 import { attachSocketSessionRecovery } from '@/lib/socket-session';
@@ -17,6 +19,7 @@ import { clearSeatUpdateEvents, recordSeatUpdateEvent } from '@/lib/booking/seat
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { applyAddonStock } from '@/lib/booking/addon-stock';
 
 /**
  * Legacy seat update event. The API sends it for every state except `locked`,
@@ -200,6 +203,7 @@ export function useBookingSocket(showtimeId: string | null): void {
     };
 
     socket.on('connect', () => {
+      void queryClient.invalidateQueries({ queryKey: ['booking-addons', showtimeId] });
       useBookingStore.getState().setConnected(true);
       socket.emit('join-showtime', showtimeId);
 
@@ -247,6 +251,16 @@ export function useBookingSocket(showtimeId: string | null): void {
     });
 
     socket.on(SEAT_UPDATE_V2_EVENT, handleSeatUpdateV2);
+    socket.on('addon-stock-changed', (data?: BookingAddonStockUpdate) => {
+      if (data?.showtimeId && data.showtimeId !== showtimeId) return;
+      if (data?.revision && Array.isArray(data.stocks)) {
+        queryClient.setQueriesData<BookingAddonSnapshot>({ queryKey: ['booking-addons', showtimeId] },
+          (snapshot) => applyAddonStock(snapshot, data));
+      } else {
+        // Configuration edits and pre-upgrade emitters request a full refresh.
+        void queryClient.invalidateQueries({ queryKey: ['booking-addons', showtimeId] });
+      }
+    });
     socket.on(SEAT_UPDATE_EVENT, handleLegacySeatUpdate);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 

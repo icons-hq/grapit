@@ -120,3 +120,4 @@ export {
   supportNoticeStatusEnum,
 } from './support-notices.js';
 export * from './qr-reminder-deliveries.js';
+export * from './booking-addons.js';

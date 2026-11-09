@@ -1,3 +1,4 @@
+import { finalizeReservationAddons } from '../../database/booking-addon-inventory.js';
 import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   isSameCheckoutPaymentMethod,
@@ -279,6 +280,7 @@ type WebhookReservationSnapshot = {
   showtimeId: string;
   status: ReservationStatus;
   totalAmount: number;
+  addonAmount?: number;
   checkoutPaymentMethod?: PaymentMethod | null;
   /** The performance's stored `booking_policies.allowed_payment_methods`. */
   allowedPaymentMethods?: unknown;
@@ -1457,6 +1459,7 @@ export class PaymentService {
         showtimeId: reservations.showtimeId,
         status: reservations.status,
         totalAmount: reservations.totalAmount,
+        addonAmount: reservations.addonAmount,
         providerChargeCurrency: reservations.providerChargeCurrency,
         providerChargeAmountMinor: reservations.providerChargeAmountMinor,
         providerChargeRate: reservations.providerChargeRate,
@@ -1566,7 +1569,7 @@ export class PaymentService {
         // PayPal is issued by synchronous confirm, but the provider-verified
         // charge must still be the quoted USD amount, never a same-number KRW charge.
         const pendingSeats = await this.getReservationSeatSelections(reservation.id);
-        const expectedAmount = this.calculatePayableTotal(pendingSeats);
+        const expectedAmount = this.calculatePayableTotal(pendingSeats) + (reservation.addonAmount ?? 0);
         if (
           reservation.totalAmount !== expectedAmount
           || !this.providerReportedChargeMatches(payload, usesProviderChargeQuote, providerChargeQuote, expectedAmount)
@@ -1588,7 +1591,7 @@ export class PaymentService {
       });
 
       const pendingSeats = await this.getReservationSeatSelections(reservation.id);
-      const expectedAmount = this.calculatePayableTotal(pendingSeats);
+      const expectedAmount = this.calculatePayableTotal(pendingSeats) + (reservation.addonAmount ?? 0);
       const unsupportedProvider = UNSUPPORTED_TOSS_CHECKOUT_PROVIDERS.has(provider);
       const providerChargeAmountMatches = !unsupportedProvider
         && this.providerReportedChargeMatches(payload, usesProviderChargeQuote, providerChargeQuote, expectedAmount);
@@ -2676,6 +2679,7 @@ export class PaymentService {
           await syncIncludedBenefitEntitlementsForTicketItems(
             tx, reservation.showtimeId, insertedTicketItems, new Date(),
           );
+          if ((reservation.addonAmount ?? 0) > 0) await finalizeReservationAddons(tx, reservation.id);
         } catch (error) {
           if (isActiveSeatUniqueViolation(error)) {
             throw new ConflictException('판매 불가능한 좌석입니다');

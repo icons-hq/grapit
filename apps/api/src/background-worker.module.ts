@@ -4,6 +4,7 @@ import { redisConfig } from './config/redis.config.js';
 import { DrizzleModule } from './database/drizzle.module.js';
 import { JobsModule } from './modules/jobs/jobs.module.js';
 import { ReservationFinalizationModule } from './modules/reservation/reservation-finalization.module.js';
+import { BookingAddonsModule } from './modules/booking-addons/booking-addons.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ReservationFinalizationModule } from './modules/reservation/reservation
     JobsModule,
     // Payment confirm reconcile jobs (audit #18).
     ReservationFinalizationModule,
+    BookingAddonsModule,
   ],
 })
 export class BackgroundWorkerModule {}

@@ -509,6 +509,8 @@ function toFieldBenefitEntitlement(
   };
 
   switch (row.source) {
+    case 'purchase':
+      return { ...base, source: 'purchase', kind: 'paid', runId: null, attachedToTicket: true };
     case 'configuration':
       return {
         ...base,

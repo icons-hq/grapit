@@ -77,6 +77,7 @@ export const ticketItems = pgTable(
     row: varchar('row', { length: 50 }).notNull(),
     number: varchar('number', { length: 50 }).notNull(),
     price: integer('price').notNull(),
+    addonAmount: integer('addon_amount').notNull().default(0),
     serviceFee: integer('service_fee').notNull().default(2000),
     status: ticketItemStatusEnum('status').notNull().default('active'),
     admissionState: ticketItemAdmissionStateEnum('admission_state')

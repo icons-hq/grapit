@@ -57,6 +57,7 @@ export const ticketItemSchema = z.object({
   tierName: z.string().min(1),
   tierColor: z.string().min(1).optional(),
   price: z.number().int().min(0),
+  addonAmount: z.number().int().min(0).optional(),
   serviceFee: ticketItemServiceFeeSchema,
   status: ticketItemStatusSchema,
   admissionState: admissionStateSchema,
@@ -80,6 +81,7 @@ export const ticketItemCancellationPolicyCodeSchema = z.enum([
 export const ticketItemCancellationPreviewSchema = z.object({
   ticketItemId: z.string().uuid(),
   ticketPrice: z.number().int().min(0),
+  addonAmount: z.number().int().min(0).optional(),
   serviceFee: ticketItemServiceFeeSchema,
   cancellationFee: z.number().int().min(0),
   serviceFeeRefund: z.number().int().min(0),
