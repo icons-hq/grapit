@@ -24,8 +24,13 @@ export function ReservationAmountBreakdown({ reservation, locale }: {
     if (group) { group.quantity += 1; group.amount += addon.price; }
     else addonGroups.set(key, { addon, quantity: 1, amount: addon.price });
   }
-  const fees = reservation.ticketItems.length === reservation.seats.length && reservation.ticketItems.length > 0
-    ? reservation.ticketItems.reduce((sum, item) => sum + item.serviceFee, 0)
+  // Legacy receipts have one reservation QR and may omit ticketItems entirely.
+  // They can also predate the booking fee; do not add today's fee to an old receipt.
+  const ticketItems = Array.isArray(reservation.ticketItems) ? reservation.ticketItems : [];
+  const hasStoredFees = ticketItems.length === reservation.seats.length && ticketItems.length > 0
+    && ticketItems.every(item => Number.isFinite(item.serviceFee));
+  const fees = hasStoredFees ? ticketItems.reduce((sum, item) => sum + item.serviceFee, 0)
+    : reservation.totalAmount === seatTotal + addonTotal ? 0
     : reservation.seats.length * TICKET_SERVICE_FEE_KRW;
   const row = (label: string, amount: number, key: string) => (
     <div key={key} className="flex items-start justify-between gap-4 py-2 text-sm">
