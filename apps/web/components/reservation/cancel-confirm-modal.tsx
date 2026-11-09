@@ -240,6 +240,10 @@ export function CancelConfirmModal({
                       {formatCurrency(cancellationQuote.ticketSubtotal)}
                     </span>
                   </div>
+                  {(cancellationQuote.addonSubtotal ?? 0) > 0 && <div className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-gray-600">{locale === 'ko' ? '유료 애드온' : 'Paid add-ons'}</span>
+                    <span>{formatCurrency(cancellationQuote.addonSubtotal!)}</span>
+                  </div>}
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm text-gray-600">{copy.cancellationFee}</span>
                     <span className="text-sm font-semibold text-[#C62828]">

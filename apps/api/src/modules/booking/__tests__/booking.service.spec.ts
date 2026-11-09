@@ -59,6 +59,7 @@ function createMockDb() {
     select: vi.fn(),
     insert: vi.fn(),
     execute: vi.fn().mockResolvedValue({ rows: [{ active_ticket_count: 0 }] }),
+    transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work({ execute: vi.fn().mockResolvedValue({ rows: [] }) })),
   };
 }
 

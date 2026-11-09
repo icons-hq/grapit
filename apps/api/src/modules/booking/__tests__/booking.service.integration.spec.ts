@@ -52,6 +52,9 @@ function createBookingService(
   }
 
   const mockDb = {
+    // Valkey-only fixture: there are no paid option rows to release.
+    transaction: async (run: (tx: { execute: () => Promise<{ rows: unknown[] }> }) => Promise<unknown>) =>
+      run({ execute: async () => ({ rows: [] }) }),
     select: (selection?: Record<string, unknown>) => ({
       from: () => ({
         where: () => queryRows(unavailableRows),

@@ -46,10 +46,12 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
     const sameSelection = store.performanceId === performanceId
       && store.selectedShowtimeId === reservation.showtimeId
       && store.performanceTitle === reservation.performanceTitle
-      && JSON.stringify(store.selectedSeats) === JSON.stringify(reservation.seats);
+      && JSON.stringify(store.selectedSeats) === JSON.stringify(reservation.seats)
+      && JSON.stringify(store.selectedAddons) === JSON.stringify(reservation.addons ?? []);
     if (!sameSelection) {
       store.setBookingData({
         selectedSeats: reservation.seats,
+        selectedAddons: reservation.addons ?? [],
         showtimeId: reservation.showtimeId,
         performanceId,
         performanceTitle: reservation.performanceTitle,

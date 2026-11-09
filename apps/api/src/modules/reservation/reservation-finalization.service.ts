@@ -1,3 +1,4 @@
+import { finalizeReservationAddons } from '../../database/booking-addon-inventory.js';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import {
   ASYNC_DONE_COMPENSATION_METADATA_KEY,
@@ -958,7 +959,7 @@ export class ReservationFinalizationService {
     }
 
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
-    const expectedAmount = this.calculatePayableTotal(pendingSeats);
+    const expectedAmount = this.calculatePayableTotal(pendingSeats) + (reservation.addonAmount ?? 0);
     let paypalProviderCharge: PaypalResolvedProviderCharge | null = null;
     const isOverseasCardConfirm = isOverseasCardConfirmPaymentRequest(dto);
     let overseasCardProviderCharge: PaypalResolvedProviderCharge | null = null;
@@ -2818,7 +2819,7 @@ export class ReservationFinalizationService {
     tx: Parameters<Parameters<DrizzleDB['transaction']>[0]>[0],
     input: {
       userId: string;
-      reservation: { id: string; showtimeId: string };
+      reservation: { id: string; showtimeId: string; addonAmount?: number };
       pendingSeats: FloorAwareSeatSelection[];
       performanceId: string;
       approvedPayment: ApprovedPaymentSnapshot;
@@ -2929,6 +2930,8 @@ export class ReservationFinalizationService {
       insertedTicketItems,
       new Date(),
     );
+
+    if ((reservation.addonAmount ?? 0) > 0) await finalizeReservationAddons(tx, reservation.id);
 
     for (const seat of pendingSeats) {
       const updated = await tx

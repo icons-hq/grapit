@@ -1,3 +1,4 @@
+import { BookingAddonsModule } from './modules/booking-addons/booking-addons.module.js';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -69,6 +70,7 @@ import { redisConfig } from './config/redis.config.js';
     BookingModule,
     PaymentModule,
     ReservationModule,
+    BookingAddonsModule,
     FeatureFlagsModule,
     TranslationModule,
     ConsentModule,

@@ -1466,6 +1466,7 @@ describe('PaymentCancellationFinalizerService', () => {
         floorKey: ticketItems.floorKey,
         seatKey: ticketItems.seatKey,
         price: ticketItems.price,
+        addonAmount: ticketItems.addonAmount,
         serviceFee: ticketItems.serviceFee,
       });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);

@@ -17,6 +17,8 @@ import type {
 } from '@grabit/shared';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
+import { useBookingAddons } from '@/hooks/use-booking-addons';
+import { BookingAddonOptions } from './booking-addon-options';
 import {
   useSeatStatus,
   useMyLocks,
@@ -344,6 +346,7 @@ export function BookingPage({
     selectedDate,
     selectedShowtimeId,
     selectedSeats,
+    selectedAddons,
     timerExpiresAt,
     isTimerExpired,
     setDate,
@@ -649,9 +652,19 @@ export function BookingPage({
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, seat) => sum + seat.price, 0)
-      + selectedSeats.length * TICKET_SERVICE_FEE_KRW,
-    [selectedSeats],
+      + selectedSeats.length * TICKET_SERVICE_FEE_KRW
+      + selectedAddons.reduce((sum, addon) => sum + addon.price, 0),
+    [selectedSeats, selectedAddons],
   );
+  const addons = useBookingAddons(activeShowtimeId);
+  const refetchAddons = addons.refetch;
+  const addonSelectionPending = addons.selectionPending;
+  const addonSnapshotUnavailable = addons.isLoading || addons.isError;
+  const hasPausedAddonSelection = Boolean(addons.data?.selections.some((selection) =>
+    selectedSeats.some((seat) => seat.seatKey === selection.seatKey)
+    && addons.data?.addons.some((addon) => addon.id === selection.addonId && !addon.active)));
+  const pausedAddonMessage = activeLocale === 'ko' ? '판매가 중단된 추가 옵션을 해제해주세요.' : 'Remove the paused add-on to continue.';
+  const hasAddonProducts = Boolean(addons.data?.addons.length);
 
   const floorOptions = useMemo(() => {
     return availableSeatMaps.map((seatMap) => {
@@ -1049,6 +1062,8 @@ export function BookingPage({
   }, [activeShowtimeId, seatLocks, selectedSeats.length]);
 
   const handleProceed = useCallback(async () => {
+    if (addonSelectionPending || addonSnapshotUnavailable) return;
+    if (hasPausedAddonSelection) { toast.error(pausedAddonMessage); return; }
     if (!activeShowtimeId || !activeShowtime || !performance) {
       return;
     }
@@ -1064,6 +1079,8 @@ export function BookingPage({
     // Hand off only seats the server still holds for this user, with the
     // server's deadline.
     const requestedSeatKeys = toSelectionKey(useBookingStore.getState().selectedSeats);
+    const addonKey = (items: typeof selectedAddons) => items.map((a) => `${a.addonId}:${a.seatKey}`).sort().join('|');
+    const requestedAddonKeys = addonKey(useBookingStore.getState().selectedAddons);
     setIsVerifyingSelection(true);
     try {
       const snapshot = await fetchFreshMyLocks();
@@ -1085,6 +1102,26 @@ export function BookingPage({
         return;
       }
 
+      if (hasAddonProducts || requestedAddonKeys) {
+        const fresh = await refetchAddons();
+        if (fresh.isError || !fresh.data) {
+          toast.error(activeLocale === 'ko' ? '애드온 선점 상태를 확인하지 못했습니다. 다시 시도해주세요.' : 'Could not verify add-on holds. Please retry.');
+          return;
+        }
+        const current = useBookingStore.getState();
+        const keys = new Set(current.selectedSeats.map((s) => s.seatKey));
+        const selections = fresh.data.selections.filter((a) => keys.has(a.seatKey));
+        if (selections.some((selection) => !fresh.data.addons.find((addon) => addon.id === selection.addonId)?.active)) {
+          current.setAddons(selections);
+          toast.error(pausedAddonMessage);
+          return;
+        }
+        if (addonKey(selections) !== requestedAddonKeys || addonKey(current.selectedAddons) !== requestedAddonKeys) {
+          current.setAddons(selections);
+          toast.info(activeLocale === 'ko' ? '애드온 선점 상태가 변경되었습니다. 선택을 다시 확인해주세요.' : 'Your add-on selection changed. Please review it.');
+          return;
+        }
+      }
       const state = useBookingStore.getState();
       if (state.selectedSeats.length === 0 || toSelectionKey(state.selectedSeats) !== requestedSeatKeys) {
         // The user changed the selection while it was being verified.
@@ -1093,6 +1130,7 @@ export function BookingPage({
 
       useBookingStore.getState().setBookingData({
         selectedSeats: state.selectedSeats,
+        selectedAddons: state.selectedAddons,
         showtimeId: activeShowtimeId,
         performanceId,
         performanceTitle: performance.title,
@@ -1110,6 +1148,12 @@ export function BookingPage({
       setIsVerifyingSelection(false);
     }
   }, [
+    addonSelectionPending,
+    addonSnapshotUnavailable,
+    hasPausedAddonSelection,
+    pausedAddonMessage,
+    hasAddonProducts,
+    refetchAddons,
     activeLocale,
     activeShowtime,
     activeShowtimeId,
@@ -1341,6 +1385,14 @@ export function BookingPage({
                   focusedSectionKey={sectionFocus && sectionFocus.floorKey === currentSeatMap.floorKey ? sectionFocus.sectionKey : null} />
               </div>
               <SeatLegend tiers={legendTiers} showExcluded />
+              {addons.isError && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+                <p>{activeLocale === 'ko' ? '추가 옵션의 수량을 확인하지 못했습니다. 다시 조회해주세요.' : 'Could not load optional add-ons. Please retry.'}</p>
+                <Button className="mt-2" variant="outline" onClick={() => { void addons.refetch(); }}>{activeLocale === 'ko' ? '다시 조회' : 'Retry'}</Button>
+              </div>}
+              {addons.isLoading && <p role="status" className="text-sm text-muted-foreground">{activeLocale === 'ko' ? '추가 옵션을 확인하고 있습니다.' : 'Loading optional add-ons.'}</p>}
+              <BookingAddonOptions snapshot={addons.data} seats={sortedSelections}
+                pending={addons.selectionPending || seatLocks.pendingLockCount > 0 || isVerifyingSelection}
+                onChange={addons.setSelection} />
               <section className="rounded-xl bg-gray-50 px-4 py-3 text-xs leading-relaxed text-gray-600">
                 <p className="font-semibold text-gray-800">{ticketLimitCopy}</p><p>{seatChangePolicyCopy}</p>
                 {currentFloorOption?.isSoldOut ? <p className="mt-1 font-semibold text-amber-800">{seatCopy.noFloorSeats}</p> : null}
@@ -1350,7 +1402,8 @@ export function BookingPage({
           {activeShowtimeId ? <BookingSelectionBar tierSummaries={tierSummaries} seats={sortedSelections} onRemove={handleRemoveSeat}
             selectedSeatCount={selectedSeats.length} totalPrice={totalPrice} canClear={selectedSeats.length > 0}
             onClear={handleClearSeats} onProceed={() => { void handleProceed(); }}
-            isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection} disabledReason={bookingDisabledReason} /> : null}
+            isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection || addons.selectionPending || addonSnapshotUnavailable}
+            disabledReason={bookingDisabledReason ?? (hasPausedAddonSelection ? pausedAddonMessage : null)} /> : null}
         </div>
       </main>
 

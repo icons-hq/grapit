@@ -23,6 +23,7 @@ export const INCLUDED_BENEFIT_CONFIGURATION_CHANGED_REASON = 'configuration_chan
  *   completed live run; otherwise it stays inactive as replaced;
  * - an included right returns only when the current configuration still
  *   includes that identity for the item's tier;
+ * - a purchased right returns with its paid ticket, independently of later product edits;
  * - included rights added meanwhile are created for the restored items.
  *
  * Call inside the restoring transaction after the Ticket Items are active
@@ -75,6 +76,7 @@ async function restoreShowtimeEntitlements(
       benefitKind: ticketBenefitEntitlements.benefitKind,
       source: ticketBenefitEntitlements.source,
       runId: ticketBenefitEntitlements.runId,
+      bookingAddonHoldId: ticketBenefitEntitlements.bookingAddonHoldId,
     })
     .from(ticketBenefitEntitlements)
     .where(and(
@@ -98,6 +100,12 @@ async function restoreShowtimeEntitlements(
     const tierByItemId = new Map(items.map((item) => [item.id, item.tierName]));
 
     for (const entitlement of pendingEntitlements) {
+      if (entitlement.source === 'purchase' && entitlement.benefitKind === 'paid' && entitlement.bookingAddonHoldId) {
+        await db.update(ticketBenefitEntitlements)
+          .set({ state: 'active', inactiveReason: null, updatedAt: now })
+          .where(eq(ticketBenefitEntitlements.id, entitlement.id));
+        continue;
+      }
       if (entitlement.benefitKind === 'limited') {
         const stillCurrent = latestLiveRun !== undefined && entitlement.runId === latestLiveRun.id;
         await db

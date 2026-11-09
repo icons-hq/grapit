@@ -162,6 +162,21 @@ describe('RefundService', () => {
     vi.restoreAllMocks();
   });
 
+  it('refunds paid add-ons with their seat, including the same-day full amount and later policy fee', () => {
+    const service = new RefundService({} as never, {} as never, {} as never, {} as never);
+    const context = createContext();
+    const withAddon = { ...context, payment: { ...context.payment, amount: 212000 },
+      reservation: { ...context.reservation, totalAmount: 212000, addonAmount: 80000 },
+      ticketItems: context.ticketItems.map((item) => ({ ...item, addonAmount: 80000 })) };
+    expect(service['buildFullReservationCancellationQuote'](withAddon as never)).toMatchObject({
+      ticketSubtotal: 130000, addonSubtotal: 80000, refundableAmount: 212000, cancellationFeeTotal: 0,
+      items: [{ ticketPrice: 130000, addonAmount: 80000, refundableAmount: 212000 }],
+    });
+    vi.setSystemTime(new Date('2026-07-16T03:00:00Z'));
+    const nearShow = { ...withAddon, showtime: { ...withAddon.showtime, dateTime: new Date('2026-07-18T10:00:00Z') } };
+    expect(service['buildFullReservationCancellationQuote'](nearShow as never)).toMatchObject({ cancellationFeeTotal: 63000, refundableAmount: 147000 });
+  });
+
   it('does not expose a legacy synthetic deposit date as a bank/card refund promise', () => {
     const timeline = toRefundTimeline(createRefund({ status: 'completed' }) as never);
     expect(timeline.expectedDepositAt).toBeNull();

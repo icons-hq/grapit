@@ -233,6 +233,7 @@ function getTicketItemQrUnavailableCopy(
 }
 
 function getBenefitKindLabel(kind: BenefitEntitlement['kind'], copy: BenefitCopy): string {
+  if (kind === 'paid') return 'ADD-ON';
   return kind === 'included' ? copy.included : copy.limited;
 }
 

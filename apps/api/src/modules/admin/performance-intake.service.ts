@@ -9,6 +9,7 @@ import type {
 } from '@grabit/shared';
 
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
+import { deleteUnusedBookingAddons } from '../../database/booking-addon-inventory.js';
 import {
   bookingPolicies,
   performanceSeatAssignments,
@@ -475,6 +476,7 @@ export class PerformanceIntakeService {
       });
     }
 
+    await deleteUnusedBookingAddons(tx, performanceId, removedShowtimeIds);
     await tx
       .delete(showtimes)
       .where(

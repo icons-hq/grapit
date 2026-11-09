@@ -13,7 +13,7 @@ const benefitConfigurationIdSchema = z
   .string()
   .uuid('유효한 benefit configuration ID가 필요합니다');
 
-export const BENEFIT_KINDS = ['included', 'limited'] as const;
+export const BENEFIT_KINDS = ['included', 'limited', 'paid'] as const;
 export interface BenefitOperationState {
   showtimeId: string;
   resultLockedAt: string | null;
@@ -26,6 +26,7 @@ export const BENEFIT_ENTITLEMENT_SOURCES = [
   'live_run',
   'test_run',
   'rollback',
+  'purchase',
 ] as const;
 export const BENEFIT_ENTITLEMENT_STATES = ['active', 'inactive', 'redeemed'] as const;
 export const BENEFIT_REDEMPTION_OUTCOMES = [
@@ -260,6 +261,8 @@ const rollbackBenefitEntitlementSchema = benefitEntitlementBaseSchema
   .strict();
 
 export const benefitEntitlementSchema = z.discriminatedUnion('source', [
+  benefitEntitlementBaseSchema.extend({ source: z.literal('purchase'), kind: z.literal('paid'),
+    runId: z.null(), attachedToTicket: z.literal(true), runMode: z.never().optional() }).strict(),
   configurationBenefitEntitlementSchema,
   liveRunBenefitEntitlementSchema,
   testRunBenefitEntitlementSchema,
@@ -382,6 +385,8 @@ const benefitEntitlementExportRowBaseSchema = z
   .strict();
 
 export const benefitEntitlementExportRowSchema = z.discriminatedUnion('source', [
+  benefitEntitlementExportRowBaseSchema.extend({ source: z.literal('purchase'), runId: z.null(),
+    benefitKind: z.literal('paid'), attachedToTicket: z.literal(true), runMode: z.never().optional() }).strict(),
   benefitEntitlementExportRowBaseSchema
     .extend({
       source: z.literal('configuration'),

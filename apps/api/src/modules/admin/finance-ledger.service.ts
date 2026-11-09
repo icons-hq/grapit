@@ -215,6 +215,7 @@ function describePayment(source: PaymentSource, items: Item[], query: FinanceLed
       id: item.id, seat: `${item.floorLabel} · ${item.tierName} · ${item.row}-${item.number}`,
       state: historicalUncertain ? 'unknown' : isCompleted ? 'cancelled' : isRequested ? 'cancellation_pending' : item.status === 'expired' ? 'expired' : 'active',
       priceKrw: item.price, serviceFeeKrw: item.serviceFee, refundKrw: valueAtRequest('refundableAmount'),
+      ...((item.addonAmount ?? 0) > 0 ? { addonKrw: item.addonAmount } : {}),
       cancellationFeeKrw: valueAtRequest('cancellationFee'), serviceFeeRefundKrw: valueAtRequest('serviceFeeRefund'),
       requestedAt: isRequested ? requestedAt : null, completedAt: isCompleted ? completedAt : null,
       enteredAt: item.enteredAt && before(item.enteredAt.toISOString(), cutoff) ? item.enteredAt.toISOString() : null,
@@ -228,7 +229,7 @@ function describePayment(source: PaymentSource, items: Item[], query: FinanceLed
   const amounts = { ...emptyAmounts(), originalOrderKrw: reservation.totalAmount, confirmedPaymentKrw,
     periodApprovedKrw: within(payment.paidAt!.toISOString(), query) ? confirmedPaymentKrw : 0 };
   for (const item of tickets) {
-    if (item.state === 'active') amounts.remainingTicketKrw = addKnown(amounts.remainingTicketKrw, item.priceKrw + item.serviceFeeKrw);
+    if (item.state === 'active') amounts.remainingTicketKrw = addKnown(amounts.remainingTicketKrw, item.priceKrw + (item.addonKrw ?? 0) + item.serviceFeeKrw);
     if (item.state === 'cancellation_pending') amounts.pendingRefundKrw = addKnown(amounts.pendingRefundKrw, item.refundKrw);
     if (item.state === 'cancelled') {
       amounts.confirmedRefundKrw = addKnown(amounts.confirmedRefundKrw, item.refundKrw);

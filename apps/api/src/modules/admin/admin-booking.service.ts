@@ -111,6 +111,7 @@ const RESERVATION_EXPORT_HEADERS = [
   'Service Fee Refund',
   'Refundable Amount',
   'Reopen State',
+  'Add-on Amount',
 ] as const;
 const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'User Name',
@@ -198,6 +199,7 @@ type AdminTicketItemDto = FloorAwareSeatSelection & {
   paymentId: string;
   showtimeId: string;
   serviceFee: number;
+  addonAmount?: number;
   status: AdminTicketItemStatus;
   admissionState: AdminTicketItemAdmissionState;
   enteredAt: string | null;
@@ -360,7 +362,7 @@ type AdminTicketItemRow = Pick<
   | 'refundableAmount'
   | 'reopenState'
   | 'reopenHoldUntil'
->;
+> & { addonAmount?: number };
 
 type ReservationExportRow = {
   reservation: {
@@ -797,7 +799,7 @@ function hasNonActiveTicketItemsSql(): SQL {
 
 function activeTicketItemRevenueSql(): SQL<number> {
   return sql<number>`coalesce((
-    select sum(admin_revenue_ti.price + admin_revenue_ti.service_fee)::int
+    select sum(admin_revenue_ti.price + admin_revenue_ti.addon_amount + admin_revenue_ti.service_fee)::int
     from ticket_items admin_revenue_ti
     where admin_revenue_ti.reservation_id = ${reservations.id}
       and admin_revenue_ti.status = 'active'
@@ -1511,7 +1513,7 @@ export class AdminBookingService {
           case
             when ${ticketItems.status} = 'active'
               and ${completedRevenueEligibleConditionSql()}
-            then ${ticketItems.price} + ${ticketItems.serviceFee}
+            then ${ticketItems.price} + ${ticketItems.addonAmount} + ${ticketItems.serviceFee}
             else 0
           end
         ), 0)::int`,
@@ -2007,6 +2009,7 @@ export class AdminBookingService {
           row: ticketItems.row,
           number: ticketItems.number,
           price: ticketItems.price,
+          addonAmount: ticketItems.addonAmount,
           serviceFee: ticketItems.serviceFee,
           status: ticketItems.status,
           admissionState: ticketItems.admissionState,
@@ -2391,11 +2394,12 @@ function reservationExportRowToCsvValues(row: ReservationExportRow): readonly un
     ticketItem?.cancelReason ?? '',
     ticketItem?.price ?? '',
     ticketItem?.serviceFee ?? '',
-    ticketItem ? ticketItem.price + ticketItem.serviceFee : '',
+    ticketItem ? ticketItem.price + (ticketItem.addonAmount ?? 0) + ticketItem.serviceFee : '',
     ticketItem?.cancellationFee ?? '',
     ticketItem?.serviceFeeRefund ?? '',
     ticketItem?.refundableAmount ?? '',
     ticketItem?.reopenState ?? '',
+    ticketItem?.addonAmount ?? 0,
   ];
 }
 
@@ -2861,6 +2865,7 @@ function mapTicketItemToAdminTicketItem(item: AdminTicketItemRow): AdminTicketIt
     paymentId: item.paymentId,
     showtimeId: item.showtimeId,
     serviceFee: item.serviceFee,
+    ...((item.addonAmount ?? 0) > 0 ? { addonAmount: item.addonAmount } : {}),
     status: mapAdminTicketItemStatus(item.status),
     admissionState: mapAdminTicketItemAdmissionState(item.admissionState),
     enteredAt: dateToIsoOrNull(item.enteredAt),

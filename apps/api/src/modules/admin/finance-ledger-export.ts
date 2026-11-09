@@ -25,6 +25,7 @@ export function financeLedgerCsv(ledger: FinanceLedger, dataset: FinanceLedgerEx
     ticket_item_id: item.id, seat: item.seat, state_as_of: item.state, price_krw: item.priceKrw, service_fee_krw: item.serviceFeeKrw,
     refund_krw: item.refundKrw, cancellation_fee_krw: item.cancellationFeeKrw, service_fee_refund_krw: item.serviceFeeRefundKrw,
     cancellation_requested_at: item.requestedAt, cancellation_completed_at: item.completedAt, entered_at: item.enteredAt,
+    addon_krw: item.addonKrw ?? 0,
     warnings: row.warnings.join(' | '),
   }))) : ledger.provider.rows.map((row) => ({ record_type: 'provider_settlement', reservation_number: row.reservationNumber,
     payment_id: row.paymentId, transaction_key: row.transactionKey, pg_currency: row.currency,

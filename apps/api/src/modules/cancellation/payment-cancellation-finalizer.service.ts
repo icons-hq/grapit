@@ -462,7 +462,7 @@ export class PaymentCancellationFinalizerService {
               cancelReason: input.reason,
               cancellationFee: 0,
               serviceFeeRefund: sql`${ticketItems.serviceFee}`,
-              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+              refundableAmount: sql`${ticketItems.price} + ${ticketItems.addonAmount} + ${ticketItems.serviceFee}`,
               reopenState: 'not_required' as const,
               reopenHoldUntil: null,
               reopenJobId: null,
@@ -483,6 +483,7 @@ export class PaymentCancellationFinalizerService {
               floorKey: ticketItems.floorKey,
               seatKey: ticketItems.seatKey,
               price: ticketItems.price,
+              addonAmount: ticketItems.addonAmount,
               serviceFee: ticketItems.serviceFee,
             });
           const cancelledTicketItems = await tx
@@ -768,7 +769,7 @@ export class PaymentCancellationFinalizerService {
     tx: DrizzleDB,
     input: FinalizeFullPaymentCancellationInput,
     now: Date,
-    newlyCancelled: Array<{ id: string; price: number; serviceFee: number }>,
+    newlyCancelled: Array<{ id: string; price: number; addonAmount?: number; serviceFee: number }>,
     earlierCancelled: Array<{ refundableAmount: number }>,
   ): Promise<void> {
     if (newlyCancelled.length === 0 || input.localOnly) {
@@ -776,7 +777,7 @@ export class PaymentCancellationFinalizerService {
     }
 
     const response = input.providerResponse;
-    const faceValueAmount = newlyCancelled.reduce((total, item) => total + item.price + item.serviceFee, 0);
+    const faceValueAmount = newlyCancelled.reduce((total, item) => total + item.price + (item.addonAmount ?? 0) + item.serviceFee, 0);
     const knownKrwAmounts = response?.currency === 'KRW'
       && typeof response.totalAmount === 'number'
       && typeof response.balanceAmount === 'number';
@@ -794,8 +795,9 @@ export class PaymentCancellationFinalizerService {
           && providerCancelAmount > 0;
         if (attributable) {
           const item = newlyCancelled[0]!;
-          const cancellationFee = Math.max(0, item.price - providerCancelAmount);
-          const serviceFeeRefund = Math.min(item.serviceFee, Math.max(0, providerCancelAmount - item.price));
+          const itemSubtotal = item.price + (item.addonAmount ?? 0);
+          const cancellationFee = Math.max(0, itemSubtotal - providerCancelAmount);
+          const serviceFeeRefund = Math.min(item.serviceFee, Math.max(0, providerCancelAmount - itemSubtotal));
           await tx.update(ticketItems).set({
             cancellationFee,
             serviceFeeRefund,

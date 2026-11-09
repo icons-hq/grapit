@@ -1,3 +1,4 @@
+import { deleteUnusedBookingAddons } from '../../database/booking-addon-inventory.js';
 import {
   BadRequestException,
   ConflictException,
@@ -1475,6 +1476,7 @@ export class AdminService {
 
       // Drafts belong to the intentionally deleted, unused performance. Keep
       // their cleanup atomic so another FK rejection cannot erase saved work.
+      await deleteUnusedBookingAddons(tx, id);
       await tx.delete(performanceDrafts).where(eq(performanceDrafts.performanceId, id));
       await tx.delete(performances).where(eq(performances.id, id));
       // Every deletion is attributable: there is no unaudited caller.

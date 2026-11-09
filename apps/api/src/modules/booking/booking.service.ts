@@ -25,6 +25,7 @@ import { createUnavailableSeatReader } from '../../database/unavailable-seat-rea
 import { createBuyerTicketCountReader } from '../../database/ticket-limit.js';
 import { assertShowtimeSalesOpen } from './showtime-sales-cutoff.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
+import { releaseUnboundAddonHolds } from '../../database/booking-addon-inventory.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   decodeSeatRuntimeId,
@@ -648,7 +649,7 @@ export class BookingService {
     };
   }
 
-  private async assertShowtimeBookingOpen(
+  async assertShowtimeBookingOpen(
     showtimeId: string,
     actor: BookingActor,
   ): Promise<void> {
@@ -764,6 +765,7 @@ export class BookingService {
     }
 
     this.recordSeatStatusChange(showtimeId, seatId, 'available');
+    await releaseUnboundAddonHolds(this.db, userId, showtimeId, seatIdentity.seatKey);
     this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
     return true;
   }

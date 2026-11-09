@@ -36,6 +36,7 @@ type MockQuery = { state: { fetchStatus: 'fetching' | 'idle' }; promise?: Promis
 const mockFindQuery = vi.fn<() => MockQuery | undefined>(() => undefined);
 const mockQueryClient = {
   setQueryData: vi.fn(),
+  setQueriesData: vi.fn(),
   invalidateQueries: vi.fn(),
   getQueryCache: vi.fn(() => ({ find: mockFindQuery })),
 };
@@ -407,7 +408,7 @@ describe('useBookingSocket', () => {
 
     socketHandler('connect')();
 
-    expect(mockQueryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(seatInvalidations()).toHaveLength(1);
     expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith(
       { queryKey: ['seat-status', 'test-showtime-id'] },
       { cancelRefetch: false },
@@ -424,10 +425,10 @@ describe('useBookingSocket', () => {
 
     socketHandler('connect')();
     await Promise.resolve();
-    expect(mockQueryClient.invalidateQueries).not.toHaveBeenCalled();
+    expect(seatInvalidations()).toHaveLength(0);
 
     finishLoad();
-    await vi.waitFor(() => expect(mockQueryClient.invalidateQueries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(seatInvalidations()).toHaveLength(1));
     expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith(
       { queryKey: ['seat-status', 'test-showtime-id'] },
       { cancelRefetch: false },
@@ -449,7 +450,7 @@ describe('useBookingSocket', () => {
       await Promise.resolve();
     }
 
-    expect(mockQueryClient.invalidateQueries).not.toHaveBeenCalled();
+    expect(seatInvalidations()).toHaveLength(0);
   });
 
   it('spreads the seat-status reload after a reconnect with a random delay (audit #8)', () => {
@@ -464,9 +465,9 @@ describe('useBookingSocket', () => {
       socketHandler('disconnect')('transport close');
       connect();
 
-      expect(mockQueryClient.invalidateQueries).not.toHaveBeenCalled();
+      expect(seatInvalidations()).toHaveLength(0);
       vi.advanceTimersByTime(SEAT_STATUS_RECONNECT_JITTER_MS / 2 - 1);
-      expect(mockQueryClient.invalidateQueries).not.toHaveBeenCalled();
+      expect(seatInvalidations()).toHaveLength(0);
       vi.advanceTimersByTime(1);
       expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({
         queryKey: ['seat-status', 'test-showtime-id'],
@@ -476,7 +477,32 @@ describe('useBookingSocket', () => {
       vi.useRealTimers();
     }
   });
+  it('refreshes limited add-on stock on broadcasts and every reconnect', () => {
+    renderHook(() => useBookingSocket('test-showtime-id'));
+    socketHandler('connect')();
+    expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['booking-addons', 'test-showtime-id'] });
+    mockQueryClient.invalidateQueries.mockClear();
+    socketHandler('addon-stock-changed')();
+    expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['booking-addons', 'test-showtime-id'] });
+    mockQueryClient.invalidateQueries.mockClear();
+    socketHandler('disconnect')('transport close');
+    socketHandler('connect')();
+    expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['booking-addons', 'test-showtime-id'] });
+  });
+
+  it('applies counter broadcasts without a request from every viewer', () => {
+    renderHook(() => useBookingSocket('test-showtime-id'));
+    const update = { showtimeId: 'test-showtime-id', revision: 2, generatedAt: new Date().toISOString(), nextExpiryAt: null,
+      stocks: [{ id: 'photo', available: 57, held: 1, sold: 0, capacity: 58, active: true }] };
+    socketHandler('addon-stock-changed')(update);
+    expect(mockQueryClient.invalidateQueries).not.toHaveBeenCalled();
+    expect(mockQueryClient.setQueriesData).toHaveBeenCalledWith({ queryKey: ['booking-addons', 'test-showtime-id'] }, expect.any(Function));
+  });
 });
+
+function seatInvalidations() {
+  return mockQueryClient.invalidateQueries.mock.calls.filter(([options]) => options.queryKey[0] === 'seat-status');
+}
 
 function socketHandler(event: string) {
   const call = (mockSocket.on as Mock).mock.calls.find(

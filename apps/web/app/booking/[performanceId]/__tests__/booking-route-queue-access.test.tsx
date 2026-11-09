@@ -152,6 +152,7 @@ describe('BookingRoute queue access window (audit #32)', () => {
     useBookingStore.getState().resetBooking();
     useBookingAvailabilityMock.mockReturnValue({
       bookingAvailable: true,
+      isAdmin: false,
       isAdminBookingBypassActive: false,
       isResolved: true,
       isError: false,
@@ -178,6 +179,15 @@ describe('BookingRoute queue access window (audit #32)', () => {
       screen.getByText(`booking page performance-queue until ${ACTIVE_UNTIL}`),
     ).toBeInTheDocument();
     expect(toastWarningMock).not.toHaveBeenCalled();
+  });
+
+  it('lets a full admin preview a private show without joining the queue while public booking is enabled', () => {
+    useBookingAvailabilityMock.mockReturnValue({ bookingAvailable: true, isAdmin: true,
+      isAdminBookingBypassActive: false, isResolved: true, isError: false, refetch: refetchRuntimeFlagsMock });
+    useQueueMock.mockReturnValue(admittedQueue({ status: 'idle', isReady: false, activeUntilAt: null }));
+    renderBookingRoute();
+    expect(screen.getByText('booking page performance-queue until none')).toBeInTheDocument();
+    expect(useQueueMock).toHaveBeenLastCalledWith({ performanceId: 'performance-queue', enabled: false });
   });
 
   it('warns two minutes before access ends and then shows the re-entry screen', () => {

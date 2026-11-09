@@ -134,13 +134,14 @@ describe('ticket benefit schema contracts', () => {
     expect(schemaBarrel).toHaveProperty('ticketBenefitKindEnum');
     expect(schemaBarrel).toHaveProperty('ticketBenefitRunModeEnum');
 
-    expect(ticketBenefitKindEnum.enumValues).toEqual(['included', 'limited']);
+    expect(ticketBenefitKindEnum.enumValues).toEqual(['included', 'limited', 'paid']);
     expect(ticketBenefitRunModeEnum.enumValues).toEqual(['live', 'test']);
     expect(ticketBenefitEntitlementSourceEnum.enumValues).toEqual([
       'configuration',
       'live_run',
       'test_run',
       'rollback',
+      'purchase',
     ]);
   });
 

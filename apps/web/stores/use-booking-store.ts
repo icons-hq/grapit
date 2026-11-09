@@ -1,7 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
-import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
+import type { BookingAddonChoice, FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 import { getServerNowMs } from '@/lib/server-clock';
 
 /**
@@ -34,6 +34,8 @@ interface BookingState {
   selectedDate: Date | null;
   selectedShowtimeId: string | null;
   selectedSeats: FloorAwareSeatSelection[];
+  selectedAddons: BookingAddonChoice[];
+  setAddons: (items: BookingAddonChoice[]) => void;
   timerExpiresAt: number | null;
   isTimerExpired: boolean;
   isConnected: boolean;
@@ -60,6 +62,7 @@ interface BookingState {
   setConnected: (connected: boolean) => void;
   setBookingData: (data: {
     selectedSeats: Array<FloorAwareSeatSelection | SeatSelection>;
+    selectedAddons?: BookingAddonChoice[];
     showtimeId: string | null;
     performanceId: string | null;
     performanceTitle: string | null;
@@ -77,6 +80,7 @@ const initialState = {
   selectedDate: null,
   selectedShowtimeId: null,
   selectedSeats: [] as FloorAwareSeatSelection[],
+  selectedAddons: [] as BookingAddonChoice[],
   timerExpiresAt: null,
   isTimerExpired: false,
   isConnected: false,
@@ -94,6 +98,7 @@ export const useBookingStore = create<BookingState>((set) => ({
   ...initialState,
 
   setDate: (date) => set({ selectedDate: date }),
+  setAddons: (items) => set((state) => JSON.stringify(state.selectedAddons) === JSON.stringify(items) ? state : { selectedAddons: items }),
 
   // Re-selecting the current showtime must keep the selection: clearing it
   // would orphan the server locks behind it.
@@ -103,6 +108,7 @@ export const useBookingStore = create<BookingState>((set) => ({
       : {
         selectedShowtimeId: id,
         selectedSeats: [],
+        selectedAddons: [],
         timerExpiresAt: null,
         isTimerExpired: false,
       })),
@@ -128,11 +134,11 @@ export const useBookingStore = create<BookingState>((set) => ({
       // No held seat means no server deadline: a later first lock gets a fresh
       // TTL. An expiry notice already shown stays (see setTimerExpiry).
       return selectedSeats.length === 0
-        ? { selectedSeats, timerExpiresAt: null }
-        : { selectedSeats };
+        ? { selectedSeats, selectedAddons: [], timerExpiresAt: null }
+        : { selectedSeats, selectedAddons: state.selectedAddons.filter((a) => a.seatKey !== seatKey) };
     }),
 
-  clearSeats: () => set({ selectedSeats: [], timerExpiresAt: null, isTimerExpired: false }),
+  clearSeats: () => set({ selectedSeats: [], selectedAddons: [], timerExpiresAt: null, isTimerExpired: false }),
 
   // Always follow the latest server deadline (lock response or my-locks).
   // Seats held together share the user's TTL, so overwriting is safe. An
@@ -171,6 +177,7 @@ export const useBookingStore = create<BookingState>((set) => ({
   setBookingData: (data) =>
     set({
       selectedSeats: data.selectedSeats.map(normalizeSeatSelection),
+      selectedAddons: data.selectedAddons ?? [],
       selectedShowtimeId: data.showtimeId,
       performanceId: data.performanceId,
       performanceTitle: data.performanceTitle,
