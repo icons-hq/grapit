@@ -11,6 +11,7 @@ import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translati
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { formatBookingOpensAtKst, parseBookingStartMs, resolveBookingStartPerformanceStatus } from '@/components/performance/performance-display-status';
 import { PerformancePeriod } from '@/components/performance/performance-period';
+import { SalesInfo } from '@/components/performance/sales-info';
 import { TicketActions } from '@/components/performance/ticket-actions';
 import { TicketBookingPanel } from '@/components/performance/ticket-booking-panel';
 import { usePerformanceDetail } from '@/hooks/use-performances';
@@ -81,7 +82,7 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
         <p className="ticket-fee-note">{copy.home.feeSeparate}</p>
       </section>
       {showSales && <section id="sales-copy" className="ticket-detail-section"><h2>{copy.performance.salesTab}</h2>
-        {performance.salesInfo ? <p className="whitespace-pre-wrap">{performance.salesInfo}</p> : <><h3>{copy.performance.refundTitle}</h3><ul className="list-disc pl-5">{copy.performance.refundItems.map((item) => <li key={item}>{item}</li>)}</ul></>}
+        {performance.salesInfo ? <SalesInfo text={performance.salesInfo} label={copy.performance.salesTab} /> : <><h3>{copy.performance.refundTitle}</h3><ul className="list-disc pl-5">{copy.performance.refundItems.map((item) => <li key={item}>{item}</li>)}</ul></>}
       </section>}
       {performance.venue && <section id="venue" className="ticket-detail-section"><h2>{ticket.venue}</h2><h3>{performance.venue.name}</h3>
         {performance.venue.address && <p className="flex items-start gap-2"><MapPin size={18} className="mt-1 shrink-0" />{performance.venue.address}</p>}

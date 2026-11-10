@@ -400,6 +400,15 @@ body {
 .ticket-detail-section h2 { font-size: 20px; line-height: 1.4; font-weight: 700; margin-bottom: 24px; }
 .ticket-detail-section h3 { font-size: 16px; font-weight: 650; margin-bottom: 12px; }
 .ticket-detail-section p + p { margin-top: 16px; }
+.ticket-sales-info { display: grid; gap: 16px; min-width: 0; }
+.ticket-sales-info > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ticket-sales-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--color-border); border-radius: 12px; }
+.ticket-sales-table-scroll:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.ticket-sales-table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: 14px; line-height: 1.65; }
+.ticket-sales-table th, .ticket-sales-table td { padding: 12px 14px; vertical-align: top; border-bottom: 1px solid var(--color-border); white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+.ticket-sales-table th { background: var(--ticket-weak); color: var(--ticket-ink); font-weight: 650; }
+.ticket-sales-table th + th, .ticket-sales-table td + td { border-left: 1px solid var(--color-border); }
+.ticket-sales-table tbody tr:last-child td { border-bottom: 0; }
 .ticket-detail-images { display: flex; flex-direction: column; gap: 20px; }.ticket-detail-images img { width: 100%; height: auto; }
 .ticket-price-list { display: grid; gap: 14px; }.ticket-price-list > div { display: flex; justify-content: space-between; gap: 16px; }.ticket-price-list dd { font-weight: 650; }
 .ticket-fee-note { font-size: 12px; color: var(--ticket-gray); margin-top: 20px; }

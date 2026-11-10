@@ -193,6 +193,22 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByText('Hidden public sales body')).toBeNull();
   });
 
+  it('renders the stored sales rows as a named table without replacing their wording', async () => {
+    localeMock.activeLocale = 'ko';
+    fixturePerformance.salesInfo = '취소일 | 취소수수료\n예매 당일 23:59까지 | 없음';
+    const params = Object.assign(Promise.resolve({ id: 'perf-23-14' }), {
+      status: 'fulfilled' as const,
+      value: { id: 'perf-23-14' },
+    });
+
+    render(<Suspense fallback={<div>loading</div>}><PerformanceDetailPage params={params} /></Suspense>);
+
+    expect(await screen.findByRole('table', { name: '판매정보' })).toBeDefined();
+    expect(screen.getByRole('columnheader', { name: '취소수수료' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: '예매 당일 23:59까지' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: '없음' })).toBeDefined();
+  });
+
   it('localizes the upcoming badge and keeps the performance period for upcoming performances', async () => {
     fixturePerformance.status = 'upcoming';
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
