@@ -79,7 +79,7 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
     <Swiper key={slides.map((slide) => slide.id).join(',')} modules={[Autoplay, A11y, Keyboard]} slidesPerView={1} autoHeight
       spaceBetween={20} loop={slides.length > 2} rewind={slides.length <= 2} watchOverflow keyboard={{ enabled: true, onlyInViewport: true }}
       autoplay={slides.length > 1 && !paused && !reducedMotion && !allOpen ? { delay: 5500, disableOnInteraction: false, pauseOnMouseEnter: true } : false}
-      onSwiper={(instance) => { swiper.current = instance; }} onSlideChange={(instance) => setIndex(instance.realIndex)}
+      onSwiper={(instance) => { swiper.current = instance; setIndex(instance.realIndex); }} onSlideChange={(instance) => setIndex(instance.realIndex)}
       className="ticket-hero-swiper">
       {slides.map((slide, i) => <SwiperSlide key={slide.id}>
         {slide.href ? <a href={slide.href} className="ticket-hero-link">{artwork(slide, i === 0)}</a> : artwork(slide, i === 0)}
