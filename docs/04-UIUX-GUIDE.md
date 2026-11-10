@@ -470,7 +470,7 @@ font-family: -apple-system, "system-ui", "Apple SD Gothic Neo",
 - **Tab 순서:** 논리적 탭 순서 보장 (GNB → 콘텐츠 → Footer)
 - **좌석 선택:** 방향키(↑↓←→)로 좌석 이동, Enter/Space로 선택
 - **캘린더:** 방향키로 날짜 이동, Enter로 선택
-- **모달:** Escape로 닫기, 포커스 트랩 적용
+- **모달:** Escape로 닫기, 포커스 트랩 적용. 배너 전체보기는 Escape 또는 닫기 버튼으로 닫으면 열었던 전체보기 버튼으로 포커스를 돌려준다.
 - **Skip Navigation:** "본문 바로가기" 링크 제공
 
 ### 6.3 스크린리더 대응

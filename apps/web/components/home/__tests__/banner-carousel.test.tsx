@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Banner } from '@grabit/shared';
 import { BannerCarousel } from '../banner-carousel';
 
@@ -57,6 +58,23 @@ function banner(): Banner {
 describe('BannerCarousel', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
+  });
+
+  it.each(['Escape', 'close button'] as const)('returns focus to the opener after closing all banners with %s', async (closeWith) => {
+    const user = userEvent.setup();
+    render(<BannerCarousel banners={[banner(), { ...banner(), id: 'banner-2' }]} />);
+    const opener = screen.getByRole('button', { name: '배너 전체보기' });
+
+    await user.click(opener);
+    expect(screen.getByRole('dialog', { name: '배너 전체보기' })).toBeDefined();
+
+    if (closeWith === 'Escape') await user.keyboard('{Escape}');
+    else await user.click(screen.getByRole('button', { name: '닫기' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    });
   });
   it.each(['en', 'th', 'zh-CN'] as const)('keeps %s when following a stored absolute Grabit promotion link', (locale) => {
     render(<BannerCarousel locale={locale} banners={[{...banner(), linkUrl: 'https://heygrabit.com/performance/event?campaign=fall#detail-copy'}]} />);
