@@ -58,7 +58,7 @@ import type {
   EndCheckoutResponse,
 } from '@grabit/shared';
 import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
-import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
+import { TossPaymentsClient, TOSS_TRANSACTION_PAGE_SIZE, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 import {
   PaymentCancellationFinalizerService,
@@ -128,7 +128,7 @@ import {
   readTossEasyPayProvider,
   resolveEnforcedAllowedPaymentMethods,
 } from './payment-method-policy.js';
-import { AbandonedPaymentHandoffService } from './abandoned-payment-handoff.service.js';
+import { AbandonedPaymentHandoffService, formatTossKstDateTime } from './abandoned-payment-handoff.service.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -1084,7 +1084,7 @@ export class PaymentService {
     outcome: 'checked' | 'unavailable' | 'not_needed';
   }> {
     const [reservation] = await this.db.select({
-      id: reservations.id, status: reservations.status,
+      id: reservations.id, status: reservations.status, createdAt: reservations.createdAt,
       checkoutStartedAt: reservations.checkoutStartedAt,
       checkoutPaymentMethod: reservations.checkoutPaymentMethod,
     }).from(reservations).where(and(
@@ -1104,11 +1104,13 @@ export class PaymentService {
     const [payment] = await this.db.select({ paymentKey: payments.paymentKey })
       .from(payments).where(eq(payments.reservationId, reservation.id));
     try {
-      // A full-document back navigation can lose pendingUrl and its paymentKey.
-      // Order lookup is best effort: unsupported MID, 404 and timeout all stay unknown.
-      const paymentKey = payment?.paymentKey ?? (await this.tossClient.queryPaymentByOrderId(
-        input.orderId, { secretKeyScope: 'foreign-easy-pay' },
-      )).paymentKey;
+      // Widget keys support transaction lookup and paymentKey lookup, but not
+      // order-ID lookup. Browser Back can lose pendingUrl and its paymentKey.
+      const paymentKey = payment?.paymentKey
+        ?? await this.findAsyncCheckoutPaymentKey(input.orderId, reservation.createdAt);
+      // A successfully queried but empty ledger does not prove an async wallet
+      // is unpaid. Leave the order protected without claiming the lookup failed.
+      if (!paymentKey) return { outcome: 'checked' };
       // Re-read by key, validate order/amount/method, and use the same locked,
       // idempotent finalization/compensation path as a provider return.
       await this.reconcileAsyncPaymentReturn({ ...input, paymentKey });
@@ -1116,6 +1118,28 @@ export class PaymentService {
     } catch {
       return { outcome: 'unavailable' };
     }
+  }
+
+  private async findAsyncCheckoutPaymentKey(orderId: string, createdAt: Date | null): Promise<string | null> {
+    const now = new Date();
+    if (!this.isValidDate(createdAt) || createdAt > now) throw new Error('Invalid checkout date');
+    const rows = await this.tossClient!.queryTransactions({
+      startDate: formatTossKstDateTime(new Date(createdAt.getTime() - 10 * 60_000)),
+      endDate: formatTossKstDateTime(now),
+      secretKeyScope: 'foreign-easy-pay',
+      limit: TOSS_TRANSACTION_PAGE_SIZE,
+    });
+    // Bound an interactive request to one provider page (up to 65s). A full page
+    // can hide a later approval or another key: incomplete evidence stays unknown.
+    if (rows.length >= TOSS_TRANSACTION_PAGE_SIZE) throw new Error('Incomplete payment ledger');
+    const keys = new Set<string>();
+    for (const row of rows) {
+      if (row.orderId !== orderId) continue;
+      if (typeof row.paymentKey !== 'string' || !row.paymentKey.trim()) throw new Error('Missing payment key');
+      keys.add(row.paymentKey);
+    }
+    if (keys.size > 1) throw new Error('Ambiguous payment keys');
+    return keys.values().next().value ?? null;
   }
 
   async reconcileAsyncPaymentReturn(input: TossPaymentAsyncReturnRequest): Promise<void> {
