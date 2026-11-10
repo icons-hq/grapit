@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -17,9 +18,18 @@ export function StepIndicator({
   ariaLabel = '회원가입 진행 상태',
 }: StepIndicatorProps) {
   const steps = [1, 2, 3] as const;
+  const progressRef = useRef<HTMLDivElement>(null);
+  const previousStep = useRef(currentStep);
+
+  useEffect(() => {
+    if (previousStep.current === currentStep) return;
+    previousStep.current = currentStep;
+    progressRef.current?.focus({ preventScroll: true });
+    progressRef.current?.scrollIntoView?.({ block: 'start', behavior: 'instant' });
+  }, [currentStep]);
 
   return (
-    <div className="flex w-full items-center justify-center" role="navigation" aria-label={ariaLabel}>
+    <div ref={progressRef} tabIndex={-1} className="flex w-full scroll-mt-40 items-center justify-center outline-none" role="navigation" aria-label={ariaLabel}>
       {steps.map((step, index) => {
         const isCompleted = step < currentStep;
         const isActive = step === currentStep;

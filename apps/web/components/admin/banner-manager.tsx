@@ -102,10 +102,10 @@ export function BannerForm({
   // The public home shows a scheduled banner from its start time; without one, never.
   const scheduledWithoutStart = status === 'scheduled' && !startsAt;
   const isMobileTarget = deviceTarget === 'mobile';
-  const uploadRatioClass = isMobileTarget ? 'aspect-[1290/600]' : 'aspect-video';
+  const uploadRatioClass = isMobileTarget ? 'aspect-[1290/600]' : 'aspect-[2400/780]';
   const uploadGuidance = isMobileTarget
     ? '모바일 1290 x 600px 권장'
-    : '데스크톱 16:9 비율 권장';
+    : '데스크톱 2400 x 780px 권장';
 
   const handleImageUpload = useCallback(
     async (file: File) => {
@@ -168,7 +168,7 @@ export function BannerForm({
           <img
             src={imageUrl}
             alt="배너 미리보기"
-            className={`${uploadRatioClass} w-full rounded-lg object-cover`}
+            className="h-auto max-h-96 w-full rounded-lg bg-gray-50 object-contain"
           />
           <Button
             type="button"

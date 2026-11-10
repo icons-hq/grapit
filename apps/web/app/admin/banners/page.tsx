@@ -188,13 +188,13 @@ function BannerCard({
   }
 
   return (
-    <div className="flex items-center gap-4 rounded-lg bg-white p-4 shadow-sm">
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg bg-white p-4 shadow-sm sm:flex sm:gap-4">
       {/* Reorder buttons */}
       <div className="flex flex-col gap-1">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="h-11 w-11 sm:h-6 sm:w-6"
           onClick={onMoveUp}
           disabled={index === 0}
           aria-label="위로 이동"
@@ -204,7 +204,7 @@ function BannerCard({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="h-11 w-11 sm:h-6 sm:w-6"
           onClick={onMoveDown}
           disabled={index >= totalCount - 1}
           aria-label="아래로 이동"
@@ -217,11 +217,11 @@ function BannerCard({
       <img
         src={banner.imageUrl}
         alt={`배너 ${banner.sortOrder + 1}`}
-        className="aspect-video h-14 rounded object-cover sm:h-20"
+        className="h-20 w-full shrink-0 rounded bg-gray-50 object-contain sm:aspect-video sm:w-auto"
       />
 
       {/* Info */}
-      <div className="min-w-0 flex-1">
+      <div className="col-span-3 min-w-0 sm:flex-1">
         <p className="text-sm font-semibold">
           순서: {banner.sortOrder + 1}
         </p>
@@ -235,10 +235,11 @@ function BannerCard({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-1">
+      <div className="col-start-3 row-start-1 flex gap-1">
         <Button
           variant="ghost"
           size="icon"
+          className="h-11 w-11 sm:h-9 sm:w-9"
           onClick={onEdit}
           aria-label="배너 수정"
         >
@@ -249,7 +250,7 @@ function BannerCard({
             <Button
               variant="ghost"
               size="icon"
-              className="text-gray-400 hover:text-red-600"
+              className="h-11 w-11 text-gray-400 hover:text-red-600 sm:h-9 sm:w-9"
               aria-label="배너 삭제"
             >
               <Trash2 className="h-4 w-4" />

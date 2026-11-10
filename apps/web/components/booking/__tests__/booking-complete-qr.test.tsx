@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, it, vi } from 'vitest';
 import { BookingComplete } from '@/components/booking/booking-complete';
@@ -242,6 +242,27 @@ function createReservation(
 }
 
 describe('BookingComplete QR ticket card', () => {
+  it('shows localized payment labels for saved and legacy payment methods', () => {
+    const { rerender } = render(<BookingComplete booking={createReservation()} />);
+    expect(screen.getByText('국내 카드')).toBeInTheDocument();
+    expect(screen.queryByText('CARD', { exact: true })).not.toBeInTheDocument();
+
+    rerender(<BookingComplete booking={createReservation({ paymentInfo: undefined, paymentMethod: 'CARD' })} />);
+    expect(screen.getByText('카드', { exact: true })).toBeInTheDocument();
+  });
+
+  it('moves the QR action directly to the first displayed ticket', () => {
+    render(<BookingComplete booking={createReservation()} />);
+    const firstTicket = screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`);
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(firstTicket, 'scrollIntoView', { value: scrollIntoView });
+
+    fireEvent.click(screen.getByRole('button', { name: 'QR 티켓' }));
+
+    expect(firstTicket).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+  });
+
   it('renders one QR image per active ticket item without visible raw secrets', () => {
     render(<BookingComplete booking={createReservation()} />);
 

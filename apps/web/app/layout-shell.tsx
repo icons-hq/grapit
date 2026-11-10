@@ -15,12 +15,11 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     pathname.startsWith('/booking') && !pathname.endsWith('/complete');
   const isFieldCheckIn = pathname.startsWith('/field/check-in');
   const isPerformanceDetail = pathname.startsWith('/performance/');
-  const isTicketSubpage = pathname.startsWith('/genre/') || pathname === '/ranking' || pathname === '/upcoming';
   const hideShell = isAdmin || isBookingCheckout || isFieldCheckIn;
-  const showMobileTabs = !hideShell && !isPerformanceDetail && !isTicketSubpage;
+  const showMobileTabs = !hideShell && !isPerformanceDetail;
 
   return (
-    <div className={!isAdmin && !isFieldCheckIn ? 'ticket-storefront flex min-h-screen flex-1 flex-col' : 'flex min-h-screen flex-1 flex-col'}>
+    <div className={`${!isAdmin && !isFieldCheckIn ? 'ticket-storefront ' : ''}flex min-h-screen flex-1 flex-col${isPerformanceDetail ? ' ticket-detail-shell' : ''}`}>
       {!hideShell && <LocaleSuggestion />}
       {!hideShell && <GNB />}
       <div

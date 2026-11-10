@@ -55,7 +55,7 @@ export function LocaleSwitcher({
           type="button"
           aria-label={`${controlLabel}: ${LOCALE_LABELS[activeLocale].native}`}
           className={cn(
-            'inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary',
+            'inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-semibold text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary',
             className,
           )}
         >

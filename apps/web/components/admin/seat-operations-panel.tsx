@@ -247,7 +247,18 @@ export function SeatOperationsPanel({
             좌석 운영 이력
           </h3>
         </div>
-        <Table>
+        {!historyQuery.isLoading && !historyQuery.isError && (!showtimeId || historyRows.length === 0) ? (
+          <div role="status" className="px-4 py-12 text-center">
+            <p className="text-base font-semibold text-gray-900">
+              {showtimeId ? '좌석 운영 이력이 없습니다' : context ? '공연과 회차를 선택하세요' : '회차 ID와 좌석 키를 입력하세요'}
+            </p>
+            <p className="mt-1 text-sm text-gray-600">
+              {showtimeId
+                ? '비활성화, 재활성화, 즉시 개방 기록이 생기면 여기에 표시됩니다.'
+                : '좌석 운영 작업과 이력 조회에 모두 필요합니다.'}
+            </p>
+          </div>
+        ) : <Table>
           <TableHeader>
             <TableRow className="bg-[#F5F5F7]">
               <TableHead className="text-sm font-semibold text-gray-600">
@@ -289,38 +300,12 @@ export function SeatOperationsPanel({
                 </TableRow>
               ))}
 
-            {!historyQuery.isLoading && !historyQuery.isError && !showtimeId && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center">
-                  <p className="text-base font-semibold text-gray-900">
-                    {context ? '공연과 회차를 선택하세요' : '회차 ID와 좌석 키를 입력하세요'}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    좌석 운영 작업과 이력 조회에 모두 필요합니다.
-                  </p>
-                </TableCell>
-              </TableRow>
-            )}
-
-            {!historyQuery.isLoading && !historyQuery.isError && showtimeId && historyRows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center">
-                  <p className="text-base font-semibold text-gray-900">
-                    좌석 운영 이력이 없습니다
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    비활성화, 재활성화, 즉시 개방 기록이 생기면 여기에 표시됩니다.
-                  </p>
-                </TableCell>
-              </TableRow>
-            )}
-
             {!historyQuery.isLoading &&
               historyRows.map((row) => (
                 <HistoryRow key={row.id} row={row} />
               ))}
           </TableBody>
-        </Table>
+        </Table>}
       </div>
 
       <Dialog open={action !== null} onOpenChange={closeConfirmation}>

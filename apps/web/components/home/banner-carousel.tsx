@@ -61,6 +61,14 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
   if (isLoading) return <div className="ticket-hero-loading"><Skeleton className="h-full w-full rounded-3xl" /></div>;
   if (!slides.length) return null;
   function artwork(slide: typeof slides[number], eager = false) {
+    if (!slide.title) {
+      return <div className="ticket-hero-art ticket-hero-banner">
+        <Image src={slide.image} alt={copy.promotionAlt} width={1240} height={400}
+          sizes="(max-width: 1279px) calc(100vw - 40px), 1240px" priority={eager}
+          className="ticket-hero-banner-image" style={{ width: '100%', height: 'auto' }}
+          onLoad={() => swiper.current?.updateAutoHeight(0)} />
+      </div>;
+    }
     return <div className={`ticket-hero-art ${slide.title ? 'ticket-hero-poster' : ''}`}>
       <Image src={slide.image} alt="" fill sizes="1240px" className="ticket-hero-backdrop" aria-hidden="true" />
       <Image src={slide.image} alt={slide.title || copy.promotionAlt} fill sizes="(max-width: 767px) 85vw, 1240px" priority={eager} className="ticket-hero-image" />
@@ -68,9 +76,9 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
     </div>;
   }
   return <section className="ticket-hero" aria-label={copy.promotionAlt}>
-    <Swiper key={slides.map((slide) => slide.id).join(',')} modules={[Autoplay, A11y, Keyboard]} slidesPerView="auto" centeredSlides
+    <Swiper key={slides.map((slide) => slide.id).join(',')} modules={[Autoplay, A11y, Keyboard]} slidesPerView={1} autoHeight
       spaceBetween={20} loop={slides.length > 2} rewind={slides.length <= 2} watchOverflow keyboard={{ enabled: true, onlyInViewport: true }}
-      autoplay={slides.length > 1 && !reducedMotion ? { delay: 5500, disableOnInteraction: false, pauseOnMouseEnter: true } : false}
+      autoplay={slides.length > 1 && !paused && !reducedMotion && !allOpen ? { delay: 5500, disableOnInteraction: false, pauseOnMouseEnter: true } : false}
       onSwiper={(instance) => { swiper.current = instance; }} onSlideChange={(instance) => setIndex(instance.realIndex)}
       className="ticket-hero-swiper">
       {slides.map((slide, i) => <SwiperSlide key={slide.id}>
@@ -79,11 +87,11 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
     </Swiper>
     {slides.length > 1 && <div className="ticket-hero-controls">
       <button type="button" className="ticket-hero-arrow prev" aria-label={copy.previousBanner} onClick={() => swiper.current?.slidePrev()}><ChevronLeft /></button>
-      <button type="button" className="ticket-hero-arrow next" aria-label={copy.nextBanner} onClick={() => swiper.current?.slideNext()}><ChevronRight /></button>
       <div className="ticket-hero-counter">
         <button type="button" aria-label={paused || reducedMotion ? ticket.play : ticket.pause} onClick={() => { if (paused || reducedMotion) { setReducedMotion(false); setPaused(false); } else setPaused(true); }}>{paused || reducedMotion ? <Play size={13} /> : <Pause size={13} />}</button>
         <button type="button" aria-label={ticket.allBanners} onClick={() => setAllOpen(true)}><span>{Math.min(index + 1, slides.length)} / {slides.length}</span><Plus size={13} /></button>
       </div>
+      <button type="button" className="ticket-hero-arrow next" aria-label={copy.nextBanner} onClick={() => swiper.current?.slideNext()}><ChevronRight /></button>
     </div>}
     <Dialog open={allOpen} onOpenChange={setAllOpen}><DialogContent className="ticket-dialog ticket-banners-dialog" aria-describedby={undefined}>
       <DialogTitle>{ticket.allBanners}</DialogTitle>

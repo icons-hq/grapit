@@ -146,11 +146,12 @@ export function SignupStep3({
           render={({ field }) => (
             <FormItem>
               <FormLabel>{signupCopy.genderLabel} <span className="text-error">*</span></FormLabel>
-              <div className="flex gap-2">
+              <div role="group" aria-label={signupCopy.genderLabel} className="flex gap-2">
                 {GENDER_OPTIONS.map((option) => (
                   <button
                     key={option}
                     type="button"
+                    aria-pressed={selectedGender === option}
                     onClick={() => field.onChange(option)}
                     className={cn(
                       'flex h-10 flex-1 items-center justify-center rounded-lg border text-base transition-colors',

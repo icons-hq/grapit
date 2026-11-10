@@ -482,7 +482,7 @@ function ResultBand({
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 h-6 w-6 shrink-0" />
         <div className="min-w-0 flex-1">
-          <p className="text-[28px] font-semibold leading-[1.2]">{label}</p>
+          <p className="break-keep text-balance text-2xl font-semibold leading-[1.2] [overflow-wrap:anywhere] sm:text-[28px]">{label}</p>
           {rejectionReason && (
             <p className="mt-2 text-base leading-[1.5]">{rejectionReason}</p>
           )}

@@ -14,7 +14,7 @@ export function MobileTabBar() {
   const locale = resolveVisibleCopyLocale(useLocale());
   const copy = getTicketCopy(locale);
   const tabs = [
-    { href: '/categories', label: copy.allCategories, icon: LayoutGrid, active: path === '/categories' || path.startsWith('/genre') },
+    { href: '/categories', label: copy.allCategories, icon: LayoutGrid, active: ['/categories', '/ranking', '/upcoming', '/venues'].includes(path) || path.startsWith('/genre/') },
     { href: '/search', label: copy.search, icon: Search, active: path === '/search' },
     { href: '/', label: getVisibleCopy(locale).nav.home, icon: Home, active: path === '/' || path === '/ticket' },
     { href: '/wishlist', label: copy.wishlist, icon: Heart, active: path === '/wishlist' },
