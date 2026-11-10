@@ -26,6 +26,8 @@ The [widget-key API scope](https://docs.tosspayments.com/reference/using-api/api
 
 Manual asynchronous-wallet checks use a stored payment key when available. When browser Back lost the return key, they query the foreign-payment MID's transaction ledger from ten minutes before order creation, then pass the unique matching key through the same verified async-return reconciliation. A successful empty ledger is a completed check with the order still pending, not a provider outage or permission to cancel. A full 5,000-row page, conflicting keys, a malformed match or a provider error remains unavailable; interactive requests do not scan unbounded history. The existing 65-second provider timeout covers the documented transaction-query latency. No payment approval or cancellation is requested by this discovery path.
 
+The QR page's ten-minute display expiry is not a guarantee that the merchant receives a final status within ten minutes. Recovery copy therefore does not promise that deadline; only the provider's verified final result ends the protected order.
+
 **Handoffs the provider never opened (2026-10-02)**
 
 The provider SDK can reject `requestPayment` before its checkout opens (card issuer not selected, a selection race, invalid parameters). No provider payment exists then, so no webhook ever resolves the order, and the rules above would block retry, abandonment and expiry forever. The browser treats every SDK rejection the same way, including a checkout the buyer opened and then closed (`USER_CANCEL`), which leaves a READY payment at Toss until it expires.
