@@ -1,8 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { TermsMarkdown } from '../terms-markdown';
 
 describe('TermsMarkdown', () => {
+  it('renders the published Korean definitions as emphasis without exposing Markdown markers', () => {
+    const markdown = readFileSync(join(process.cwd(), 'content/legal/terms-of-service.md'), 'utf8');
+    const { container } = render(<TermsMarkdown showH1>{markdown}</TermsMarkdown>);
+    const terms = [...container.querySelectorAll('li strong')].map((element) => element.textContent);
+    expect(terms).toEqual(expect.arrayContaining(['서비스', '회원', '아이디(ID)', '비밀번호']));
+    expect(container.textContent).not.toContain('**');
+    expect(container.textContent).toContain('"서비스"란 회사가');
+  });
   describe('showH1 prop (D-09)', () => {
     it('default (showH1 미지정) 시 H1 을 렌더하지 않는다 - dialog 호환', () => {
       const { container } = render(

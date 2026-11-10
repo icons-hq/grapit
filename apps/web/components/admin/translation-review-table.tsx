@@ -77,7 +77,16 @@ export function TranslationReviewTable({
 }: TranslationReviewTableProps) {
   return (
     <div className="overflow-hidden rounded-lg bg-white shadow-sm">
-      <Table>
+      {!isLoading && rows.length === 0 ? (
+        <div role="status" className="px-4 py-12 text-center">
+          <p className="text-base font-semibold text-gray-900">
+            검수할 항목이 없습니다
+          </p>
+          <p className="mt-1 text-sm text-gray-600">
+            한국어 원문을 저장하면 번역 초안과 검수 항목이 여기에 표시됩니다.
+          </p>
+        </div>
+      ) : <Table>
         <TableHeader>
           <TableRow className="bg-[#F5F5F7]">
             <TableHead scope="col">원문</TableHead>
@@ -123,19 +132,6 @@ export function TranslationReviewTable({
                 </TableCell>
               </TableRow>
             ))}
-
-          {!isLoading && rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={7} className="py-12 text-center">
-                <p className="text-base font-semibold text-gray-900">
-                  검수할 항목이 없습니다
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  한국어 원문을 저장하면 번역 초안과 검수 항목이 여기에 표시됩니다.
-                </p>
-              </TableCell>
-            </TableRow>
-          )}
 
           {!isLoading &&
             rows.map((row) => {
@@ -184,7 +180,7 @@ export function TranslationReviewTable({
               );
             })}
         </TableBody>
-      </Table>
+      </Table>}
     </div>
   );
 }

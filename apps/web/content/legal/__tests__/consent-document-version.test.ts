@@ -26,7 +26,9 @@ const DOCUMENT_BY_CONSENT_KEY = {
 const DOCUMENT_TEXT_SNAPSHOTS = {
   'terms-of-service': {
     version: '2026-04-28',
-    ko: 'bbfb81cc358dafc095ebac2b521fcb87558bfa64eca8ac6fbeb86823b6384c01',
+    // 2026-11-10: move emphasis delimiters inside quoted Korean definitions so
+    // CommonMark renders them. Wording and effective version are unchanged.
+    ko: '8b2b0e580ad113695c2017fb0d5c115627c4457db4db15899da1239c8a01a0e2',
     en: '8cc9e21a7f8a18715fd2cf234804de8d57d86ab957366c333357fce6a834f152',
   },
   'privacy-policy': {

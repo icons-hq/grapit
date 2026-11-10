@@ -19,6 +19,7 @@ import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-moda
 import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
 import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
 import { ReservationAmountBreakdown } from '@/components/reservation/reservation-amount-breakdown';
+import { formatPaymentMethodLabel } from '@/lib/booking/payment-method-label';
 import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
@@ -389,32 +390,6 @@ function isBeforeShowDateInSeoul(showDateTime: string): boolean {
   return getSeoulDayOrdinal(showtime) - getSeoulDayOrdinal(new Date()) > 0;
 }
 
-function formatPaymentMethodLabel(
-  method: string | null | undefined,
-  copy: ReservationDetailCopy,
-): string {
-  switch (method) {
-    case 'CARD':
-      return copy.paymentMethods.card;
-    case 'VIRTUAL_ACCOUNT':
-      return copy.paymentMethods.virtualAccount;
-    case 'TRANSFER':
-      return copy.paymentMethods.transfer;
-    case 'MOBILE_PHONE':
-      return copy.paymentMethods.mobilePhone;
-    case 'FOREIGN_EASY_PAY':
-      return copy.paymentMethods.foreignEasyPay;
-    case 'SIMPLE_PAY':
-      return copy.paymentMethods.simplePay;
-    case null:
-    case undefined:
-    case '':
-      return copy.paymentMethods.unselected;
-    default:
-      return method;
-  }
-}
-
 function getPaymentMethodLabel(
   reservation: ReservationDetailType,
   copy: ReservationDetailCopy,
@@ -423,7 +398,7 @@ function getPaymentMethodLabel(
     reservation.paymentInfo?.paymentMethod?.method ??
       reservation.paymentInfo?.method ??
       reservation.paymentMethod,
-    copy,
+    copy.paymentMethods,
   );
 }
 
@@ -900,7 +875,7 @@ export function ReservationDetailView({
                     </Badge>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
+                  <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
                     {card.qrCheckInUrl ? (
                       <QrTicketImage
                         value={card.qrCheckInUrl}

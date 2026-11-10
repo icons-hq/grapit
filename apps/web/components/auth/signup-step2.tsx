@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useLocale } from 'next-intl';
 import {
   CONSENT_DOCUMENT_VERSIONS,
@@ -125,6 +125,7 @@ export function SignupStep2({
   const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues, documentLocale));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState<LegalKey>('termsOfService');
+  const dialogOpenerRef = useRef<HTMLButtonElement | null>(null);
 
   const allChecked = CONSENT_ROWS.every((row) => checkedItems[row.key]);
   const canProceed = CONSENT_ROWS.filter((row) => row.required).every(
@@ -237,8 +238,8 @@ export function SignupStep2({
               </div>
               <button
                 type="button"
-                onClick={() => handleViewTerms(row.legalKey)}
-                className="shrink-0 text-caption text-gray-500 underline hover:text-primary"
+                onClick={(event) => { dialogOpenerRef.current = event.currentTarget; handleViewTerms(row.legalKey); }}
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-caption text-gray-500 underline hover:text-primary"
               >
                 {consentCopy.view}
               </button>
@@ -270,7 +271,10 @@ export function SignupStep2({
 
       {/* Terms dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-h-[80vh] overflow-y-auto" onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          dialogOpenerRef.current?.focus();
+        }}>
           <DialogHeader>
             {/* WR-07: dialogKey 가 LegalKey 로 좁혀져 있어 `?.` 가 불필요. */}
             <DialogTitle>{consentCopy.items[dialogKey].title}</DialogTitle>

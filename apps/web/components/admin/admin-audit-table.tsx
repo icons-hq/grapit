@@ -186,7 +186,16 @@ export function AdminAuditTable({
             감사 로그를 불러오지 못했습니다. 필터를 확인하고 다시 시도하세요.
           </div>
         )}
-        <Table className="admin-audit-table min-w-[1120px] table-fixed">
+        {!isLoading && !isError && sortedRows.length === 0 ? (
+          <div role="status" className="px-4 py-12 text-center">
+            <p className="text-base font-semibold text-gray-900">
+              조회된 감사 로그가 없습니다
+            </p>
+            <p className="mt-1 text-sm text-gray-600">
+              관리자, 수행 작업, 대상이나 기간을 바꿔 다시 조회하세요.
+            </p>
+          </div>
+        ) : <Table className="admin-audit-table min-w-[1120px] table-fixed">
           <TableHeader>
             <TableRow className="bg-[#F5F5F7]">
               <TableHead className="text-sm font-semibold text-gray-600">관리자 계정</TableHead>
@@ -210,19 +219,6 @@ export function AdminAuditTable({
                   ))}
                 </TableRow>
               ))}
-
-            {!isLoading && sortedRows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center">
-                  <p className="text-base font-semibold text-gray-900">
-                    조회된 감사 로그가 없습니다
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    관리자, 수행 작업, 대상이나 기간을 바꿔 다시 조회하세요.
-                  </p>
-                </TableCell>
-              </TableRow>
-            )}
 
             {!isLoading &&
               sortedRows.map((row) => (
@@ -257,7 +253,7 @@ export function AdminAuditTable({
                 </TableRow>
               ))}
           </TableBody>
-        </Table>
+        </Table>}
       </div>
     </div>
   );

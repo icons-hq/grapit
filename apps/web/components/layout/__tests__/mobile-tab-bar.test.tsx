@@ -14,7 +14,7 @@ describe('MobileTabBar',()=>{
     expect(screen.getByRole('link',{name:'찜'}).getAttribute('href')).toBe('/wishlist');
     expect(screen.getByRole('link',{name:'마이'}).getAttribute('href')).toBe('/mypage');
   });
-  it.each([['/','홈'],['/genre/concert','전체 카테고리'],['/categories','전체 카테고리'],['/mypage/reservations/123','마이'],['/wishlist','찜']])(
+  it.each([['/','홈'],['/genre/concert','전체 카테고리'],['/categories','전체 카테고리'],['/ranking','전체 카테고리'],['/upcoming','전체 카테고리'],['/venues','전체 카테고리'],['/mypage/reservations/123','마이'],['/wishlist','찜']])(
     'marks the current destination for %s', (path,label)=>{
       state.pathname=path!;render(<MobileTabBar />);
       expect(screen.getByRole('link',{name:label}).getAttribute('aria-current')).toBe('page');

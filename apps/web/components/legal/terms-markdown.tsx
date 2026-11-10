@@ -47,7 +47,7 @@ const baseComponents: Components = {
   // privacy-policy.md 의 `### 개정 이력` GFM 표 + 향후 약관 개정 이력에서 사용.
   // 모바일 overflow 가드: table 자체가 아닌 wrapper div 가 overflow-x-auto 처리.
   table: ({ node: _node, ...props }) => (
-    <div className="mt-4 -mx-2 overflow-x-auto">
+    <div tabIndex={0} className="mt-4 -mx-2 max-w-full overflow-x-auto rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
       <table className="min-w-full text-caption text-gray-700 border-collapse" {...props} />
     </div>
   ),
@@ -55,10 +55,10 @@ const baseComponents: Components = {
   tbody: ({ node: _node, ...props }) => <tbody className="divide-y divide-gray-200" {...props} />,
   tr: ({ node: _node, ...props }) => <tr {...props} />,
   th: ({ node: _node, ...props }) => (
-    <th className="px-3 py-2 text-left font-semibold text-gray-900 border-b border-gray-300" {...props} />
+    <th className="min-w-36 break-keep px-3 py-2 text-left font-semibold text-gray-900 border-b border-gray-300 [overflow-wrap:anywhere]" {...props} />
   ),
   td: ({ node: _node, ...props }) => (
-    <td className="px-3 py-2 align-top border-b border-gray-200" {...props} />
+    <td className="min-w-36 break-keep px-3 py-2 align-top border-b border-gray-200 [overflow-wrap:anywhere]" {...props} />
   ),
 };
 

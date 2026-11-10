@@ -75,16 +75,16 @@ export function GNB() {
           {search && <button type="button" onClick={() => { setSearch(''); inputRef.current?.focus(); }} aria-label={copy.nav.clearSearch} className="ticket-search-clear"><X size={16} /></button>}
           <button type="submit" aria-label={ticket.search}><Search size={24} strokeWidth={1.8} /></button>
         </form>
-        {mobileTitle && <Link className="ticket-mobile-page-search" href={href('/search')} aria-label={ticket.search}><Search size={21} /></Link>}
+        {!home && !detailId && <Link className={cn('ticket-mobile-page-search', !mobileTitle && 'ticket-narrow-search')} href={href('/search')} aria-label={ticket.search}><Search size={21} /></Link>}
         <div className="ticket-mobile-locale"><MobileLocaleSwitcher /></div>
         <div className="ticket-header-actions">
           {authenticated ? <div ref={profileRef} className="relative">
             <button type="button" aria-label={copy.nav.mypage} aria-expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)} className="ticket-header-action"><UserRound size={18} /><span>{ticket.my}</span><ChevronDown size={12} /></button>
             {profileOpen && <div className="ticket-profile-menu"><Link href={href('/mypage')} onClick={() => setProfileOpen(false)}>{copy.nav.mypage}</Link><button type="button" onClick={() => void logout()}><LogOut size={16} />{copy.nav.logout}</button></div>}
-          </div> : <Link className="ticket-header-action" href={href('/auth')}><UserRound size={18} /><span>{copy.nav.loginSignup}</span></Link>}
-          <Link className="ticket-header-action" href={href('/wishlist')}><Heart size={18} /><span>{ticket.wishlist}</span></Link>
-          <Link className="ticket-header-action" href={`${href('/mypage')}?tab=wallet`}><Ticket size={18} /><span>{ticket.myTickets}</span></Link>
-          <Link className="ticket-header-action" href={href('/recent')}><Clock3 size={18} /><span>{ticket.recent}</span></Link>
+          </div> : <Link className="ticket-header-action" href={href('/auth')} aria-label={copy.nav.loginSignup}><UserRound size={18} /><span>{copy.nav.loginSignup}</span></Link>}
+          <Link className="ticket-header-action" href={href('/wishlist')} aria-label={ticket.wishlist}><Heart size={18} /><span>{ticket.wishlist}</span></Link>
+          <Link className="ticket-header-action" href={`${href('/mypage')}?tab=wallet`} aria-label={ticket.myTickets}><Ticket size={18} /><span>{ticket.myTickets}</span></Link>
+          <Link className="ticket-header-action" href={href('/recent')} aria-label={ticket.recent}><Clock3 size={18} /><span>{ticket.recent}</span></Link>
           <LocaleSwitcher />
         </div>
         {detailId && <div className="ticket-detail-header-actions"><TicketActions performanceId={detailId} /></div>}

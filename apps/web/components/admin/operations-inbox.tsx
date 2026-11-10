@@ -246,7 +246,16 @@ export function OperationsInbox({
               문의 목록을 불러오지 못했습니다. 다시 조회해주세요.
             </div>
           )}
-          <Table>
+          {!isLoading && !isError && sortedRows.length === 0 ? (
+            <div role="status" className="px-4 py-12 text-center">
+              <p className="text-base font-semibold text-gray-900">
+                처리할 문의가 없습니다
+              </p>
+              <p className="mx-auto mt-2 max-w-[520px] text-sm text-gray-600">
+                접수된 문의가 없거나 검색 조건에 맞는 문의가 없습니다. 조회 조건을 바꿔 확인할 수 있습니다.
+              </p>
+            </div>
+          ) : <Table>
             <TableHeader>
               <TableRow className="bg-[#F5F5F7]">
                 <TableHead scope="col">항목</TableHead>
@@ -269,19 +278,6 @@ export function OperationsInbox({
                     <TableCell><Skeleton className="h-5 w-20" /></TableCell>
                   </TableRow>
                 ))}
-
-              {!isLoading && !isError && sortedRows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-12 text-center">
-                    <p className="text-base font-semibold text-gray-900">
-                      처리할 문의가 없습니다
-                    </p>
-                    <p className="mx-auto mt-2 max-w-[520px] text-sm text-gray-600">
-                      접수된 문의가 없거나 검색 조건에 맞는 문의가 없습니다. 조회 조건을 바꿔 확인할 수 있습니다.
-                    </p>
-                  </TableCell>
-                </TableRow>
-              )}
 
               {!isLoading &&
                 sortedRows.map((row) => (
@@ -347,7 +343,7 @@ export function OperationsInbox({
                   </TableRow>
                 ))}
             </TableBody>
-          </Table>
+          </Table>}
         </div>
 
         <aside hidden={!selectedRow} className="rounded-lg bg-white p-5 shadow-sm" aria-label="문의 상세" id="admin-inquiry-detail" tabIndex={-1} style={{ scrollMarginTop: 90 }}>

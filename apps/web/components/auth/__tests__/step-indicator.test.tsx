@@ -5,6 +5,16 @@ import '@testing-library/jest-dom/vitest';
 import { StepIndicator } from '../step-indicator';
 
 describe('StepIndicator', () => {
+  it('moves focus to the progress indicator only when the step changes', () => {
+    const { rerender } = render(<StepIndicator currentStep={1} />);
+    const progress = screen.getByRole('navigation', { name: '회원가입 진행 상태' });
+    expect(progress).not.toHaveFocus();
+
+    rerender(<StepIndicator currentStep={2} />);
+    expect(progress).toHaveFocus();
+    expect(progress.querySelector('[aria-current="step"]')).toHaveTextContent('2');
+  });
+
   it('renders supplied localized labels and navigation aria-label', () => {
     render(
       <StepIndicator

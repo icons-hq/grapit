@@ -51,6 +51,16 @@ describe('SignupStep3 i18n visible copy', () => {
     mocks.activeLocale = 'en';
   });
 
+  it('announces the selected gender and clears the previous selection', async () => {
+    const user = userEvent.setup();
+    render(<SignupStep3 onComplete={vi.fn()} onBack={vi.fn()} isSubmitting={false} />);
+    await user.click(screen.getByRole('button', { name: 'Female' }));
+    expect(screen.getByRole('button', { name: 'Female', pressed: true })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Prefer not to say' }));
+    expect(screen.getByRole('button', { name: 'Female', pressed: false })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prefer not to say', pressed: true })).toBeInTheDocument();
+  });
+
   it('renders step 3 fields and actions from the active locale', () => {
     render(
       <SignupStep3

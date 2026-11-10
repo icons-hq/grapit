@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useRef } from 'react';
 import { CheckCircle2, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +9,8 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { ReservationAmountBreakdown } from '@/components/reservation/reservation-amount-breakdown';
+import { getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
+import { formatPaymentMethodLabel } from '@/lib/booking/payment-method-label';
 import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
@@ -335,6 +338,14 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
   const copy = visibleCopy.bookingExtra.completeCard;
   const qrCards = getBuyerQrCards(booking, copy);
   const hasActiveQr = qrCards.some((card) => card.qrCheckInUrl);
+  const firstQrCard = useRef<HTMLDivElement>(null);
+  const savedPaymentMethod = booking.paymentInfo?.paymentMethod ?? booking.checkoutPaymentMethod;
+  const paymentMethodLabel = savedPaymentMethod
+    ? getCheckoutMethodLabel(savedPaymentMethod, benefitLocale)
+    : formatPaymentMethodLabel(
+      booking.paymentInfo?.method ?? booking.paymentMethod,
+      visibleCopy.reservation.detail.paymentMethods,
+    );
 
   return (
     <div className="flex flex-col items-center gap-6">
@@ -409,7 +420,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
             <ProviderChargeAmount quote={booking.paymentInfo?.providerChargeQuote ?? booking.providerChargeQuote} locale={locale} />
             <div className="flex justify-between">
               <span className="text-gray-500">{copy.paymentMethod}</span>
-              <span className="text-gray-900">{booking.paymentMethod}</span>
+              <span className="text-gray-900">{paymentMethodLabel}</span>
             </div>
             {booking.paidAt && (
               <div className="flex justify-between">
@@ -453,11 +464,13 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
           </div>
 
           <div className="space-y-3">
-            {qrCards.map((card) => (
+            {qrCards.map((card, index) => (
               <div
                 key={card.id}
+                ref={index === 0 ? firstQrCard : undefined}
+                tabIndex={-1}
                 data-testid={`qr-ticket-card-${card.id}`}
-                className="rounded-xl border border-white/80 bg-white/90 p-4"
+                className="scroll-mt-24 rounded-xl border border-white/80 bg-white/90 p-4"
               >
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 basis-full sm:basis-auto">
@@ -487,7 +500,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                   </Badge>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
+                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
                   {card.qrCheckInUrl ? (
                     <QrTicketImage
                       value={card.qrCheckInUrl}
@@ -576,9 +589,10 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       <div className="flex w-full flex-col gap-3 pb-8">
         <Button
           className="h-12 w-full"
-          onClick={() =>
-            router.push(getLocalizedPathname(`/mypage/reservations/${booking.id}`, locale))
-          }
+          onClick={() => {
+            firstQrCard.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+            firstQrCard.current?.focus({ preventScroll: true });
+          }}
         >
           {copy.qrTicket}
         </Button>

@@ -52,6 +52,17 @@ describe('SignupStep2 itemized launch consent', () => {
     navigationMocks.activeLocale = 'ko';
   });
 
+  it('returns focus to the legal document opener after closing the dialog', async () => {
+    const user = userEvent.setup();
+    render(<SignupStep2 onComplete={vi.fn()} onBack={vi.fn()} defaultValues={null} />);
+    const opener = screen.getAllByRole('button', { name: '보기' })[1]!;
+    await user.click(opener);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+  });
+
   it('renders required and optional itemized consent rows with version, language, and legal dialog actions', async () => {
     render(
       <SignupStep2
