@@ -27,10 +27,10 @@ describe('payment handoff policy (w2a x u02: one async wallet list)', () => {
     expect(isAsyncApprovalForeignEasyPayProvider(null)).toBe(false);
   });
 
-  it('treats a checkout as merchant-confirmed exactly when it is not an async foreign wallet', () => {
+  it('only treats supported merchant-approved methods as safe to end without provider approval', () => {
     for (const provider of PROVIDERS) {
       const foreign = { method: 'FOREIGN_EASY_PAY', provider, currency: 'USD' } as PaymentMethod;
-      expect(isMerchantConfirmedCheckoutMethod(foreign)).toBe(!isAsyncApprovalForeignEasyPayProvider(provider));
+      expect(isMerchantConfirmedCheckoutMethod(foreign)).toBe(provider === 'PAYPAL');
     }
     expect(isMerchantConfirmedCheckoutMethod({ method: 'CARD', provider: 'CARD', currency: 'KRW' } as PaymentMethod))
       .toBe(true);

@@ -247,13 +247,14 @@ export class AbandonedPaymentHandoffService {
 
   private async reviewAbandonedPaymentHandoffs(
     now: Date,
+    owner?: { orderId: string; userId: string },
   ): Promise<AbandonedPaymentHandoffSweepResult> {
     // In the bounded worker the review also ends early enough to leave the
     // shutdown drains their share of the Job timeout (common/run-deadline.ts).
-    const budgetEndsAtMs = Date.now() + boundedByRunDeadline(ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS, {
+    const budgetEndsAtMs = Date.now() + boundedByRunDeadline(owner ? 12_000 : ABANDONED_PAYMENT_HANDOFF_SWEEP_BUDGET_MS, {
       reserveMs: ABANDONED_PAYMENT_HANDOFF_RUN_DEADLINE_RESERVE_MS,
     });
-    const candidates = await this.selectReviewCandidates(now);
+    const candidates = await this.selectReviewCandidates(now, owner);
     if (candidates.length === 0) {
       return EMPTY_RESULT;
     }
@@ -331,9 +332,15 @@ export class AbandonedPaymentHandoffService {
     }
   }
 
-  private async selectReviewCandidates(now: Date): Promise<AbandonedHandoffCandidate[]> {
+  /** A buyer can request the same conservative review for their own old order. */
+  async reviewOwnedOrder(owner: { orderId: string; userId: string }, now = new Date()): Promise<AbandonedPaymentHandoffSweepResult> {
+    if (!this.tossClient || !this.bookingService) return EMPTY_RESULT;
+    return this.reviewAbandonedPaymentHandoffs(now, owner);
+  }
+
+  private async selectReviewCandidates(now: Date, owner?: { orderId: string; userId: string }): Promise<AbandonedHandoffCandidate[]> {
     const graceCutoff = new Date(now.getTime() - ABANDONED_PAYMENT_HANDOFF_GRACE_MS);
-    const cursor = await this.readReviewCursor();
+    const cursor = owner ? null : await this.readReviewCursor();
     const asyncWalletProviders = sql.join(
       ASYNC_APPROVAL_FOREIGN_EASY_PAY_PROVIDERS.map((provider) => sql`${provider}`),
       sql`, `,
@@ -349,6 +356,8 @@ export class AbandonedPaymentHandoffService {
       })
       .from(reservations)
       .where(and(
+        owner ? eq(reservations.tossOrderId, owner.orderId) : undefined,
+        owner ? eq(reservations.userId, owner.userId) : undefined,
         eq(reservations.status, 'PENDING_PAYMENT'),
         isNotNull(reservations.checkoutStartedAt),
         isNotNull(reservations.tossOrderId),
@@ -369,6 +378,10 @@ export class AbandonedPaymentHandoffService {
       ))
       .orderBy(asc(reservations.paymentDeadlineAt), asc(reservations.id))
       .limit(ABANDONED_PAYMENT_HANDOFF_SCAN_LIMIT);
+
+    // Manual review must not advance the worker cursor or suppress another buyer's
+    // candidates. Provider evidence and the same grace/lease guards still apply.
+    if (owner) return page.map(toReviewableCandidate).filter((row): row is AbandonedHandoffCandidate => row !== null);
 
     const deferred = await this.readDeferredReviews(page.map((row) => row.id));
     const selected: AbandonedHandoffCandidate[] = [];

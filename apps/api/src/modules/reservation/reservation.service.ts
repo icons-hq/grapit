@@ -1390,6 +1390,21 @@ export class ReservationService {
 
     const insertPendingReservation = (reservationNumber: string) => this.db.transaction(async (tx) => {
       await lockActiveBuyerAccount(tx as DrizzleDB, userId);
+      // Serialize new checkouts for this buyer. Another tab must recover/end its
+      // existing order first, rather than pay the same held seats under two IDs.
+      // The account's KEY SHARE lock protects withdrawal, but is shared between
+      // prepares. A transaction-scoped checkout lock serializes the empty-set read.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+        ${`checkout:${userId}:${dto.showtimeId}`}, 0))`);
+      const activeCheckout = await tx.execute(sql`SELECT ${reservations.tossOrderId} AS order_id
+        FROM ${reservations} WHERE ${reservations.userId} = ${userId}
+        AND ${reservations.showtimeId} = ${dto.showtimeId} AND ${reservations.status} = 'PENDING_PAYMENT'
+        AND ${reservations.tossOrderId} IS NOT NULL AND ${reservations.tossOrderId} <> ${dto.orderId}
+        ORDER BY ${reservations.createdAt} DESC LIMIT 1`);
+      const recoveryOrderId = activeCheckout.rows[0]?.['order_id'];
+      if (typeof recoveryOrderId === 'string') throw new ConflictException({
+        message: '먼저 기존 예매의 결제 상태를 확인해주세요.', code: 'PENDING_CHECKOUT_EXISTS', recoveryOrderId,
+      });
       const [reservation] = await tx
         .insert(reservations)
         .values({

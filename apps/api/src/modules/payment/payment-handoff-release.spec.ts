@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { PaymentMethod } from '@grabit/shared';
 import { PaymentService } from './payment.service.js';
-import { PAYMENT_HANDOFF_RELEASE_WINDOW_MS } from './payment-handoff-policy.js';
+import { PAYMENT_CHECKOUT_END_WINDOW_MS, PAYMENT_HANDOFF_RELEASE_WINDOW_MS } from './payment-handoff-policy.js';
 import { PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL } from '../booking/booking.service.js';
 
 function createSelectChain<T>(rows: T[]) {
@@ -64,6 +64,7 @@ describe('PaymentService.releaseTossPaymentHandoff', () => {
 
   it('keeps a confirm attempt visible far beyond the release window', () => {
     expect(PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL * 1000).toBeGreaterThan(PAYMENT_HANDOFF_RELEASE_WINDOW_MS * 10);
+    expect(PAYMENT_CONFIRM_ATTEMPT_MARKER_TTL * 1000).toBeGreaterThan(PAYMENT_CHECKOUT_END_WINDOW_MS);
   });
 
   it('reopens a card checkout whose SDK rejected before the provider opened, under the confirm lease', async () => {

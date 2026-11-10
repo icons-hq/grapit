@@ -72,6 +72,29 @@ export async function reservationAddonTotal(db: Db, reservationId: string, selec
   return rows.reduce((total, row) => total + Number(row.price), 0);
 }
 
+/**
+ * The caller has ended an unpaid order in this transaction. Keep its bound rows
+ * as receipt evidence and copy the same units into the buyer's unbound selection.
+ * Product locks keep the released capacity reserved until the copies are visible.
+ */
+export async function restoreEndedCheckoutAddonHolds(db: Db, reservationId: string, expiresAt: Date): Promise<void> {
+  await db.execute(sql`SELECT a.id FROM booking_addons a JOIN booking_addon_holds h ON h.addon_id = a.id
+    WHERE h.reservation_id = ${reservationId} ORDER BY a.id FOR UPDATE OF a`);
+  const source = await db.execute(sql`SELECT id FROM booking_addon_holds WHERE reservation_id = ${reservationId}`);
+  if (source.rows.length === 0) return;
+  const restored = await db.execute(sql`INSERT INTO booking_addon_holds
+    (addon_id, user_id, seat_key, unit_index, expires_at, price, display_copy)
+    SELECT addon_id, user_id, seat_key, unit_index, ${expiresAt}, price, display_copy
+    FROM booking_addon_holds WHERE reservation_id = ${reservationId}
+    ON CONFLICT (addon_id, user_id, seat_key, unit_index) WHERE reservation_id IS NULL
+    DO UPDATE SET expires_at = greatest(booking_addon_holds.expires_at, excluded.expires_at)
+    WHERE booking_addon_holds.price = excluded.price
+    RETURNING id`);
+  if (restored.rows.length !== source.rows.length) {
+    throw new ConflictException('추가 구매 선택이 변경되었습니다. 기존 예매를 다시 확인해주세요.');
+  }
+}
+
 /** Lock in a consistent order, then validate and bind the exact requested units in the caller's transaction. */
 export async function selectAddonHoldsForOrder(db: Db, input: {
   userId: string; showtimeId: string; selections: BookingAddonSelection[];

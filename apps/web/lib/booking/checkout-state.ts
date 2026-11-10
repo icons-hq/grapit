@@ -12,7 +12,8 @@ export function getCheckoutState(reservation: CheckoutSnapshot, nowMs: number): 
   if (paymentStatus === 'IN_PROGRESS' || paymentStatus === 'DONE' || paymentStatus === 'PARTIAL_CANCELED') {
     return 'processing';
   }
-  if (reservation.checkoutStartedAt && (!paymentStatus || paymentStatus === 'READY')) {
+  if (reservation.status === 'PENDING_PAYMENT' && reservation.checkoutStartedAt
+    && (!paymentStatus || paymentStatus === 'READY')) {
     return 'processing';
   }
   if (reservation.status !== 'PENDING_PAYMENT' || (paymentStatus && paymentStatus !== 'READY')) {

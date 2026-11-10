@@ -36,9 +36,11 @@ function lockKey(seatKey: string) {
 }
 
 function createBookingService(redis: IORedis): BookingService {
-  // Only the unavailable-seat check reads the database: no sold/held/disabled rows.
+  // No unavailable seats or pending-checkout recovery rows in this lock fixture.
   const mockDb = {
-    select: () => ({ from: () => ({ where: async () => [] }) }),
+    select: () => ({ from: () => ({ where: () => Object.assign(Promise.resolve([]), {
+      orderBy: () => ({ limit: async () => [] }),
+    }) }) }),
   };
   return new BookingService(
     redis,

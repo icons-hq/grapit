@@ -285,8 +285,12 @@ The server-stored method, provider route and charge currency selected for a Prep
 _Avoid_: UI language, card issuer choice, actual provider payment result.
 
 **Provider Handoff**:
-The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured. For a merchant-confirmed method, the browser that made it can release it within seconds whenever the provider SDK rejected `requestPayment` (before opening checkout, or after the Buyer closed the checkout it opened), as long as no payment confirm was ever attempted for the order; otherwise only provider evidence ends it. Provider Handoff re-checks the Checkout Payment Method against the performance's current allowed payment methods and the showtime sales cutoff.
+The point at which a Prepared Checkout authorizes opening the provider's payment flow with its selected method and seats. It is not proof of payment approval; a merchant-confirmed checkout can end when Grabit proves approval has not started, while an independently approved wallet requires provider evidence.
 _Avoid_: Payment success, browser redirect, confirmed Reservation.
+
+**Checkout Restart**:
+The Buyer's explicit choice to end an unapproved Prepared Checkout and choose a payment method under a new order identity. Seats and additional purchases are carried forward only while their holds and booking access remain valid.
+_Avoid_: Refund, automatic cancellation on browser back, reopening the old order.
 
 **Provider Partial Cancellation**:
 A payment-provider cancellation result where only the refundable amount is cancelled and a policy-retained balance remains captured on the original payment. The retained balance can include Cancellation Fee Revenue or a non-refundable Ticket Service Fee. It can happen during Full Reservation Cancellation without implying buyer-facing partial cancellation.

@@ -16,6 +16,7 @@ import {
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
 import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
+import { useRestartCheckout } from '@/hooks/use-restart-checkout';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail, CancellationExpectation } from '@grabit/shared';
 import { toast } from 'sonner';
@@ -31,6 +32,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const locale = getClientLocale();
   const { data: reservation, isLoading, isError, refetch, dataUpdatedAt } = useReservationDetail(id);
   const paymentCheck = useCheckPaymentStatus(reservation?.tossOrderId, refetch);
+  const checkoutRestart = useRestartCheckout({ refetch });
   const cancelMutation = useCancelReservation();
   const cancelTicketMutation = useCancelTicketItem();
   const cancellationCopy = getCancellationCopy(locale);
@@ -100,10 +102,10 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
             isCheckingPayment={paymentCheck.checking}
             providerUnavailable={paymentCheck.providerUnavailable}
             paymentCheckedAt={dataUpdatedAt}
-            onReselectSeats={reservation.performanceId ? () => {
-              useBookingStore.getState().clearBooking();
-              router.push(getLocalizedPathname(`/booking/${reservation.performanceId}`, locale));
-            } : undefined}
+            onChangePaymentMethod={() => checkoutRestart.restart(reservation)}
+            isChangingPaymentMethod={checkoutRestart.restarting}
+            paymentChangeError={checkoutRestart.restartError}
+            onReselectSeats={reservation.performanceId ? () => void checkoutRestart.restart(reservation, false) : undefined}
           />
         )}
       </main>

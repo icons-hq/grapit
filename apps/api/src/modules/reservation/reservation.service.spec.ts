@@ -1910,8 +1910,10 @@ describe('ReservationService', () => {
       await service.prepareReservation(dto, userId);
 
       expect(order[0]).toBe('SELECT account_status FROM users WHERE id = $1 FOR KEY SHARE');
-      expect(order.slice(1)).toEqual(['insert', 'insert']);
-      expect(execute).toHaveBeenCalledTimes(1);
+      expect(order[1]).toContain('pg_advisory_xact_lock');
+      expect(order[2]).toContain('AS order_id');
+      expect(order.slice(3)).toEqual(['insert', 'insert']);
+      expect(execute).toHaveBeenCalledTimes(3);
     });
 
     it.each(['withdrawn', 'merged'])(

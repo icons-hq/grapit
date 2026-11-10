@@ -1,4 +1,4 @@
-import { finalizeReservationAddons } from '../../database/booking-addon-inventory.js';
+import { finalizeReservationAddons, restoreEndedCheckoutAddonHolds } from '../../database/booking-addon-inventory.js';
 import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   isSameCheckoutPaymentMethod,
@@ -55,6 +55,7 @@ import type {
   ReservationStatus,
   PaymentStatus,
   CancellationQuote,
+  EndCheckoutResponse,
 } from '@grabit/shared';
 import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
@@ -113,6 +114,9 @@ import {
   PAYMENT_HANDOFF_RELEASE_WINDOW_MS,
   PAYMENT_HANDOFF_UNKNOWN_MESSAGE,
   PAYMENT_PROCESSING_TOTAL_CAP_MS,
+  PAYMENT_CHECKOUT_END_WINDOW_MS,
+  BUYER_ENDED_CHECKOUT_REASON,
+  BUYER_RESTARTED_CHECKOUT_REASON,
   isAsyncApprovalForeignEasyPayProvider,
   isMerchantConfirmedCheckoutMethod,
 } from './payment-handoff-policy.js';
@@ -124,6 +128,7 @@ import {
   readTossEasyPayProvider,
   resolveEnforcedAllowedPaymentMethods,
 } from './payment-method-policy.js';
+import { AbandonedPaymentHandoffService } from './abandoned-payment-handoff.service.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -371,6 +376,7 @@ export class PaymentService {
     @Optional()
     private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
     @Optional() private readonly bookingService?: BookingService,
+    @Optional() private readonly abandonedHandoffService?: AbandonedPaymentHandoffService,
   ) {}
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
@@ -795,6 +801,98 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Explicit buyer action, not a return-URL verdict. Permanently closes the old
+   * order under the approval lease; a late callback is rejected before Toss confirm.
+   * A fresh no-attempt marker proves merchant-approved methods have not been charged.
+   * Provider-approved wallets and ambiguous approval attempts must keep waiting.
+   */
+  async endUnconfirmedCheckout(input: {
+    orderId: string; userId: string; keepSelection: boolean;
+  }, now = new Date()): Promise<EndCheckoutResponse> {
+    const [reservation] = await this.db.select({
+      id: reservations.id, showtimeId: reservations.showtimeId, status: reservations.status,
+      createdAt: reservations.createdAt,
+      cancelReason: reservations.cancelReason, paymentDeadlineAt: reservations.paymentDeadlineAt,
+      admissionActiveUntilAt: reservations.admissionActiveUntilAt,
+      checkoutStartedAt: reservations.checkoutStartedAt, checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+    }).from(reservations).where(and(eq(reservations.tossOrderId, input.orderId), eq(reservations.userId, input.userId)));
+    if (!reservation) throw new NotFoundException('예매 정보를 찾을 수 없습니다.');
+    const deadline = reservation.paymentDeadlineAt;
+    const reply = (canKeepSelection: boolean): EndCheckoutResponse => ({
+      ended: true, canKeepSelection,
+      ...(this.isValidDate(deadline) ? { paymentDeadlineAt: deadline.toISOString() } : {}),
+    });
+    if (reservation.status === 'CANCELLED' || reservation.status === 'FAILED') {
+      return reply(reservation.cancelReason === BUYER_RESTARTED_CHECKOUT_REASON && input.keepSelection
+        && this.isValidDate(deadline) && deadline > now
+        && this.isValidDate(reservation.admissionActiveUntilAt) && reservation.admissionActiveUntilAt > now);
+    }
+    if (reservation.status !== 'PENDING_PAYMENT') throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+    if (reservation.checkoutStartedAt) {
+      if (!isMerchantConfirmedCheckoutMethod(reservation.checkoutPaymentMethod)) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+      // An expired marker is not evidence that approval never started. Old orders
+      // use the existing all-MID provider-ledger review, including its grace period.
+      const age = this.isValidDate(reservation.createdAt) ? now.getTime() - reservation.createdAt.getTime() : NaN;
+      if (!Number.isFinite(age) || age < 0 || age > PAYMENT_CHECKOUT_END_WINDOW_MS) {
+        const reviewed = await this.abandonedHandoffService?.reviewOwnedOrder(input, now);
+        if (reviewed?.failedReservations === 1) return reply(false);
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+    }
+    if (!this.bookingService) throw new ServiceUnavailableException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+    const token = randomUUID();
+    const held = await this.bookingService.acquirePaymentConfirmLock(input.orderId, token);
+    if (!held) throw new ConflictException('결제 확인이 이미 진행 중입니다.');
+    let leaseLost = false;
+    const refresh = setInterval(() => {
+      void this.bookingService!.refreshPaymentConfirmLock(input.orderId, token)
+        .then(stillHeld => { if (!stillHeld) leaseLost = true; }).catch(() => { leaseLost = true; });
+    }, Math.max(250, Math.floor(PAYMENT_CONFIRM_LOCK_TTL * 1000 / 3)));
+    try {
+      if (await this.bookingService.hasPaymentConfirmAttempt(input.orderId)) {
+        throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+      let canKeepSelection = input.keepSelection && this.isValidDate(deadline) && deadline > now
+        && this.isValidDate(reservation.admissionActiveUntilAt) && reservation.admissionActiveUntilAt > now;
+      if (canKeepSelection) {
+        const seats = await this.db.select({ seatId: reservationSeats.seatId }).from(reservationSeats)
+          .where(eq(reservationSeats.reservationId, reservation.id));
+        try {
+          await this.bookingService.assertOwnedSeatLocks(input.userId, reservation.showtimeId, seats.map(s => s.seatId));
+        } catch (error) {
+          if (!(error instanceof ConflictException)) throw error;
+          canKeepSelection = false;
+        }
+      }
+      if (leaseLost || !await this.bookingService.refreshPaymentConfirmLock(input.orderId, token)) {
+        throw new ServiceUnavailableException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+      }
+      await this.db.transaction(async (tx) => {
+        const [ended] = await tx.update(reservations).set({
+          status: 'CANCELLED', cancelledAt: now, updatedAt: now,
+          cancelReason: canKeepSelection ? BUYER_RESTARTED_CHECKOUT_REASON : BUYER_ENDED_CHECKOUT_REASON,
+        }).where(and(
+          eq(reservations.id, reservation.id), eq(reservations.userId, input.userId),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          reservation.checkoutStartedAt ? eq(reservations.checkoutStartedAt, reservation.checkoutStartedAt) : isNull(reservations.checkoutStartedAt),
+          sql`not exists (select 1 from ${payments} where ${payments.reservationId} = ${reservations.id})`,
+        )).returning({ id: reservations.id });
+        if (!ended) throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+        if (canKeepSelection) await restoreEndedCheckoutAddonHolds(tx, reservation.id, deadline!);
+        if (leaseLost || !await this.bookingService!.refreshPaymentConfirmLock(input.orderId, token)) {
+          throw new ServiceUnavailableException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
+        }
+      });
+      return reply(canKeepSelection);
+    } finally {
+      clearInterval(refresh);
+      await this.bookingService.releasePaymentConfirmLock(input.orderId, token).catch(() => undefined);
+    }
+  }
+
   private isValidDate(value: Date | null | undefined): value is Date {
     return value instanceof Date && !Number.isNaN(value.getTime());
   }
@@ -993,11 +1091,15 @@ export class PaymentService {
       eq(reservations.tossOrderId, input.orderId), eq(reservations.userId, input.userId),
     ));
     if (!reservation) throw new NotFoundException('예매 정보를 찾을 수 없습니다.');
-    if (reservation.status !== 'PENDING_PAYMENT' || !reservation.checkoutStartedAt
-      || reservation.checkoutPaymentMethod?.method !== 'FOREIGN_EASY_PAY'
-      || !isAsyncApprovalForeignEasyPayProvider(reservation.checkoutPaymentMethod.provider)) {
+    if (reservation.status !== 'PENDING_PAYMENT' || !reservation.checkoutStartedAt) {
       return { outcome: 'not_needed' };
     }
+    if (isMerchantConfirmedCheckoutMethod(reservation.checkoutPaymentMethod)) {
+      const review = await this.abandonedHandoffService?.reviewOwnedOrder(input);
+      return { outcome: review?.failedReservations === 1 ? 'checked' : 'not_needed' };
+    }
+    if (reservation.checkoutPaymentMethod?.method !== 'FOREIGN_EASY_PAY'
+      || !isAsyncApprovalForeignEasyPayProvider(reservation.checkoutPaymentMethod.provider)) return { outcome: 'not_needed' };
     if (!this.tossClient) return { outcome: 'unavailable' };
     const [payment] = await this.db.select({ paymentKey: payments.paymentKey })
       .from(payments).where(eq(payments.reservationId, reservation.id));

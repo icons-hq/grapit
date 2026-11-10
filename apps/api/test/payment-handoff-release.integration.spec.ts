@@ -5,12 +5,13 @@ import IORedis from 'ioredis';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '@grabit/shared';
 import type { PaymentMethod, PrepareReservationRequest } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
+import { countAddonConsumption, reservationAddonTotal } from '../src/database/booking-addon-inventory.js';
 import * as schema from '../src/database/schema/index.js';
 import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
@@ -111,7 +112,7 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
     return redis.keys('{payment-confirm}:*');
   }
 
-  async function checkout(paymentMethod: PrepareReservationRequest['paymentMethod'] = CARD) {
+  async function checkout(paymentMethod: PrepareReservationRequest['paymentMethod'] = CARD, addonUnits = 0) {
     const id = randomUUID();
     const [user] = await db.insert(users).values({ email: `${id}@example.test`, name: 'Fixture',
       phone: '+821000000000', gender: 'unspecified', birthDate: '1990-01-01',
@@ -143,16 +144,31 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
       seats: [{ seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층', tierName: 'VIP', row: 'A', number: '1', price: 50000 }],
       amount: 52000, paymentMethod,
       consentItems: [{ key: 'terms', accepted: true, version: 'test', language: 'ko', sourceFlow: 'booking' }],
-      queueAdmission: { queueSessionId: 'test', admissionToken: 'test', refreshFamilyId: 'test', deviceSlotKey: 'test', admittedAt: now, activeUntilAt: now, reentryGraceUntilAt: now },
+      queueAdmission: { queueSessionId: 'test', admissionToken: 'test', refreshFamilyId: 'test', deviceSlotKey: 'test', admittedAt: now, activeUntilAt: new Date(Date.now() + 600_000).toISOString(), reentryGraceUntilAt: new Date(Date.now() + 720_000).toISOString() },
       paymentDeadlineAt: now,
       bookingPolicy: { maxTicketsPerOrder: 4, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false, paymentWindowMinutes: 7, seatHoldMinutes: 10 },
     };
+    let addonId: string | undefined;
+    if (addonUnits) {
+      const displayCopy = Object.fromEntries(['ko', 'en', 'zh-CN', 'th'].map(locale => [locale, { name: 'Hi-touch', description: '' }]));
+      const [addon] = await db.insert(schema.bookingAddons).values({ showtimeId: showtime!.id,
+        identity: 'hi-touch', displayCopy: displayCopy as never, price: 10000, capacity: addonUnits,
+        maxPerTicket: addonUnits, eligibleTierNames: ['VIP'],
+      }).returning();
+      addonId = addon!.id;
+      input.addons = Array.from({ length: addonUnits }, (_, index) => ({ addonId: addon!.id, seatKey: '1F:A-1', unitIndex: index + 1 }));
+      await db.insert(schema.bookingAddonHolds).values(input.addons.map(item => ({
+        ...item, userId: user!.id, price: 10000, displayCopy: displayCopy as never,
+        expiresAt: new Date(Date.now() + 600_000),
+      })));
+      input.amount += addonUnits * 10000;
+    }
     const prepared = await reservationService.prepareReservation(input, user!.id);
     const branch = {
       orderId: prepared.orderId, paymentMethod, userId: user!.id,
       successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
     };
-    return { userId: user!.id, showtimeId: showtime!.id, prepared, reservationService, paymentService, branch, input };
+    return { userId: user!.id, showtimeId: showtime!.id, prepared, reservationService, paymentService, branch, input, addonId };
   }
 
   async function readReservation(id: string) {
@@ -200,6 +216,110 @@ describe('Provider handoff release and abandoned handoff review — PostgreSQL +
     await f.paymentService.releaseTossPaymentHandoff({ orderId: f.prepared.orderId, userId: f.userId });
     await f.reservationService.cancelPendingReservation(f.prepared.reservationId, f.userId);
     expect((await readReservation(f.prepared.reservationId)).status).toBe('CANCELLED');
+  });
+
+  it('ends a returned merchant checkout after 45 seconds and rejects a late callback before asking Toss to charge', async () => {
+    const f = await checkout();
+    await f.paymentService.prepareTossPaymentBranch(f.branch);
+    await db.update(reservations).set({
+      createdAt: new Date(Date.now() - 180_000),
+      checkoutStartedAt: new Date(Date.now() - 120_000),
+    }).where(eq(reservations.id, f.prepared.reservationId));
+    expect(await booking.getMyLocks(f.userId, f.showtimeId)).toMatchObject({ recoveryOrderId: f.prepared.orderId });
+    expect(await booking.getMyLocks(randomUUID(), f.showtimeId)).not.toHaveProperty('recoveryOrderId');
+
+    await expect(f.paymentService.endUnconfirmedCheckout({
+      orderId: f.prepared.orderId, userId: f.userId, keepSelection: true,
+    })).resolves.toMatchObject({ ended: true, canKeepSelection: true });
+    expect((await readReservation(f.prepared.reservationId)).status).toBe('CANCELLED');
+    expect(await booking.getMyLocks(f.userId, f.showtimeId)).not.toHaveProperty('recoveryOrderId');
+
+    const provider = { confirmPayment: vi.fn(), queryPayment: vi.fn(), cancelPayment: vi.fn() };
+    const finalization = new ReservationFinalizationService(
+      db, provider as never, locks as never, { broadcastSeatUpdate: vi.fn() } as never, qr,
+    );
+    await expect(finalization.confirmAndCreateReservation({
+      orderId: f.prepared.orderId, paymentKey: `test-${randomUUID()}`, amount: 52000,
+    }, f.userId)).rejects.toThrow('좌석 점유 시간이 만료');
+    expect(provider.confirmPayment).not.toHaveBeenCalled();
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
+    expect(await db.select().from(payments).where(eq(payments.reservationId, f.prepared.reservationId))).toEqual([]);
+  });
+
+  it('keeps two add-on units reserved for restart without rewriting the ended order receipt', async () => {
+    const f = await checkout(CARD, 2);
+    await f.paymentService.prepareTossPaymentBranch(f.branch);
+    expect(await countAddonConsumption(db, f.addonId!)).toBe(2);
+    await f.paymentService.endUnconfirmedCheckout({ orderId: f.prepared.orderId, userId: f.userId, keepSelection: true });
+    expect(await countAddonConsumption(db, f.addonId!)).toBe(2);
+    expect(await reservationAddonTotal(db, f.prepared.reservationId)).toBe(20000);
+    // A retry of the end request must not allocate another two units.
+    await f.paymentService.endUnconfirmedCheckout({ orderId: f.prepared.orderId, userId: f.userId, keepSelection: true });
+    const next = await f.reservationService.prepareReservation({ ...f.input, orderId: `GRP-${randomUUID()}` }, f.userId);
+    expect(await reservationAddonTotal(db, next.reservationId)).toBe(20000);
+    expect(await reservationAddonTotal(db, f.prepared.reservationId)).toBe(20000);
+    expect(await countAddonConsumption(db, f.addonId!)).toBe(2);
+  });
+
+  it('rejects another pending checkout for the same buyer and admits only one concurrent replacement', async () => {
+    const f = await checkout();
+    await expect(f.reservationService.prepareReservation({ ...f.input, orderId: `GRP-${randomUUID()}` }, f.userId))
+      .rejects.toThrow('먼저 기존 예매의 결제 상태');
+    await f.paymentService.endUnconfirmedCheckout({ orderId: f.prepared.orderId, userId: f.userId, keepSelection: true });
+    // Force both requests to overlap after their pending-order read. Without the
+    // checkout mutex both reach this delayed insert and create duplicate orders.
+    await db.execute(sql`CREATE FUNCTION delay_checkout_test_insert() RETURNS trigger AS $$
+      BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END; $$ LANGUAGE plpgsql`);
+    await db.execute(sql`CREATE TRIGGER delay_checkout_test_insert BEFORE INSERT ON reservations
+      FOR EACH ROW EXECUTE FUNCTION delay_checkout_test_insert()`);
+    try {
+      const replacements = await Promise.allSettled([1, 2].map(() => f.reservationService.prepareReservation({
+        ...f.input, orderId: `GRP-${randomUUID()}`,
+      }, f.userId)));
+      expect(replacements.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(replacements.filter(result => result.status === 'rejected')).toHaveLength(1);
+    } finally {
+      await db.execute(sql`DROP TRIGGER delay_checkout_test_insert ON reservations`);
+      await db.execute(sql`DROP FUNCTION delay_checkout_test_insert()`);
+    }
+  });
+
+  it('reviews only the owner\'s old unpaid order using provider-ledger evidence', async () => {
+    const f = await checkout();
+    await db.update(reservations).set({
+      createdAt: new Date(Date.now() - 120 * 60_000), checkoutStartedAt: new Date(Date.now() - 119 * 60_000),
+      paymentDeadlineAt: new Date(Date.now() - 110 * 60_000),
+    }).where(eq(reservations.id, f.prepared.reservationId));
+    const reviewer = new AbandonedPaymentHandoffService(db, toss as never, booking, redis);
+    expect(await reviewer.reviewOwnedOrder({ orderId: f.prepared.orderId, userId: randomUUID() }))
+      .toEqual({ reviewedReservations: 0, failedReservations: 0 });
+    expect(toss.queryTransactions).not.toHaveBeenCalled();
+    expect(await reviewer.reviewOwnedOrder({ orderId: f.prepared.orderId, userId: f.userId }))
+      .toEqual({ reviewedReservations: 1, failedReservations: 1 });
+    expect((await readReservation(f.prepared.reservationId)).status).toBe('FAILED');
+    expect(toss.queryTransactions).toHaveBeenCalled();
+  });
+
+  it('never ends a merchant checkout once confirmation started, including a lost provider response', async () => {
+    const f = await checkout();
+    await f.paymentService.prepareTossPaymentBranch(f.branch);
+    await booking.markPaymentConfirmAttempted(f.prepared.orderId);
+    await expect(f.paymentService.endUnconfirmedCheckout({
+      orderId: f.prepared.orderId, userId: f.userId, keepSelection: true,
+    })).rejects.toThrow('결제 상태');
+    expect((await readReservation(f.prepared.reservationId)).status).toBe('PENDING_PAYMENT');
+    expect(await heldConfirmLeases()).toEqual([]);
+  });
+
+  it('never ends an unresolved Alipay handoff from a browser return', async () => {
+    const f = await checkout();
+    await db.update(reservations).set({ checkoutStartedAt: new Date(),
+      checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD' },
+    }).where(eq(reservations.id, f.prepared.reservationId));
+    await expect(f.paymentService.endUnconfirmedCheckout({
+      orderId: f.prepared.orderId, userId: f.userId, keepSelection: false,
+    })).rejects.toThrow('결제 상태');
+    expect((await readReservation(f.prepared.reservationId)).status).toBe('PENDING_PAYMENT');
   });
 
   it('compensates the old tab\'s card approval after a release and a re-prepare with another method (D1 #70, w2a)', async () => {
