@@ -8,7 +8,7 @@ import { Autoplay, A11y, Keyboard } from 'swiper/modules';
 import type { Swiper as SwiperInstance } from 'swiper';
 import 'swiper/css';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getTicketCopy } from '@/lib/i18n/ticket-copy';
@@ -75,7 +75,7 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
       {slide.title && <div className="ticket-hero-copy"><h2>{slide.title}</h2><p>{slide.subtitle}</p></div>}
     </div>;
   }
-  return <section className="ticket-hero" aria-label={copy.promotionAlt}>
+  return <Dialog open={allOpen} onOpenChange={setAllOpen}><section className="ticket-hero" aria-label={copy.promotionAlt}>
     <Swiper key={slides.map((slide) => slide.id).join(',')} modules={[Autoplay, A11y, Keyboard]} slidesPerView={1} autoHeight
       spaceBetween={20} loop={slides.length > 2} rewind={slides.length <= 2} watchOverflow keyboard={{ enabled: true, onlyInViewport: true }}
       autoplay={slides.length > 1 && !paused && !reducedMotion && !allOpen ? { delay: 5500, disableOnInteraction: false, pauseOnMouseEnter: true } : false}
@@ -89,15 +89,15 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
       <button type="button" className="ticket-hero-arrow prev" aria-label={copy.previousBanner} onClick={() => swiper.current?.slidePrev()}><ChevronLeft /></button>
       <div className="ticket-hero-counter">
         <button type="button" aria-label={paused || reducedMotion ? ticket.play : ticket.pause} onClick={() => { if (paused || reducedMotion) { setReducedMotion(false); setPaused(false); } else setPaused(true); }}>{paused || reducedMotion ? <Play size={13} /> : <Pause size={13} />}</button>
-        <button type="button" aria-label={ticket.allBanners} onClick={() => setAllOpen(true)}><span>{Math.min(index + 1, slides.length)} / {slides.length}</span><Plus size={13} /></button>
+        <DialogTrigger asChild><button type="button" aria-label={ticket.allBanners}><span>{Math.min(index + 1, slides.length)} / {slides.length}</span><Plus size={13} /></button></DialogTrigger>
       </div>
       <button type="button" className="ticket-hero-arrow next" aria-label={copy.nextBanner} onClick={() => swiper.current?.slideNext()}><ChevronRight /></button>
     </div>}
-    <Dialog open={allOpen} onOpenChange={setAllOpen}><DialogContent className="ticket-dialog ticket-banners-dialog" aria-describedby={undefined}>
+    <DialogContent className="ticket-dialog ticket-banners-dialog" aria-describedby={undefined}>
       <DialogTitle>{ticket.allBanners}</DialogTitle>
       <div className="ticket-all-banners">{slides.map((slide) => <div key={slide.id}>
         {slide.href ? <a href={slide.href}>{artwork(slide)}</a> : artwork(slide)}
       </div>)}</div>
-    </DialogContent></Dialog>
-  </section>;
+    </DialogContent>
+  </section></Dialog>;
 }
