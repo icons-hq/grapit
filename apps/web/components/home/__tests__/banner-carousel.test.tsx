@@ -20,18 +20,31 @@ vi.mock('next/image', () => ({
   }) => <span aria-label={alt} role="img" />,
 }));
 
-vi.mock('swiper/react', () => ({
-  Swiper: ({
-    children,
-    className,
-  }: {
-    children: ReactNode;
-    className?: string;
-  }) => <div className={className}>{children}</div>,
-  SwiperSlide: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
+vi.mock('swiper/react', async () => {
+  const { useEffect, useRef } = await import('react');
+  return {
+    Swiper: function MockSwiper({ children, className, onSwiper, onSlideChange }: {
+      children: ReactNode;
+      className?: string;
+      onSwiper?: (instance: { realIndex: number }) => void;
+      onSlideChange?: (instance: { realIndex: number }) => void;
+    }) {
+      const callbacks = useRef({ onSwiper, onSlideChange });
+      callbacks.current = { onSwiper, onSlideChange };
+      const instance = useRef({
+        realIndex: 0,
+        slideNext() {
+          this.realIndex = 1;
+          callbacks.current.onSlideChange?.(this);
+        },
+      });
+      // Like Swiper, a new keyed instance starts at zero and calls onSwiper once.
+      useEffect(() => { callbacks.current.onSwiper?.(instance.current); }, []);
+      return <div className={className}>{children}</div>;
+    },
+    SwiperSlide: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  };
+});
 
 vi.mock('swiper/modules', () => ({
   Autoplay: {},
@@ -58,6 +71,27 @@ function banner(): Banner {
 describe('BannerCarousel', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
+  });
+
+  it('synchronizes the counter when a paused carousel remounts for another device banner list', async () => {
+    const user = userEvent.setup();
+    const desktopBanners = [banner(), { ...banner(), id: 'desktop-2' }];
+    const mobileBanners = [{ ...banner(), id: 'mobile-1' }, { ...banner(), id: 'mobile-2' }];
+    const { rerender } = render(<BannerCarousel banners={desktopBanners} />);
+    const counter = () => screen.getByRole('button', { name: '배너 전체보기' }).textContent;
+
+    await user.click(screen.getByRole('button', { name: '자동재생 일시정지' }));
+    await user.click(screen.getByRole('button', { name: '다음 소식' }));
+    expect(counter()).toBe('2 / 2');
+
+    rerender(<BannerCarousel banners={mobileBanners} />);
+    expect(counter()).toBe('1 / 2');
+    expect(screen.getByRole('button', { name: '자동재생 시작' })).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: '다음 소식' }));
+    expect(counter()).toBe('2 / 2');
+    rerender(<BannerCarousel banners={desktopBanners} />);
+    expect(counter()).toBe('1 / 2');
   });
 
   it.each(['Escape', 'close button'] as const)('returns focus to the opener after closing all banners with %s', async (closeWith) => {
