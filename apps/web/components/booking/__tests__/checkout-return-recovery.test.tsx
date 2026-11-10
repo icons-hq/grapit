@@ -11,7 +11,7 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import type { PaymentMethodSelection } from '@/components/booking/toss-payment-widget';
 
 const boundary = vi.hoisted(() => ({
-  prepare: vi.fn(), read: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), requestPayment: vi.fn(),
+  prepare: vi.fn(), read: vi.fn(), post: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), requestPayment: vi.fn(),
   replace: vi.fn(), search: new URLSearchParams(),
 }));
 
@@ -25,12 +25,13 @@ vi.mock('next-intl', () => ({
   useTranslations: () => (key: string) => key,
 }));
 vi.mock('@/lib/api-client', () => ({
-  apiClient: { get: boundary.read },
+  apiClient: { get: boundary.read, post: boundary.post },
 }));
 vi.mock('@/hooks/use-booking-availability', () => ({
   useBookingAvailability: () => ({ bookingAvailable: true }),
 }));
 vi.mock('@/hooks/use-booking', () => ({
+  myLocksQueryKey: (showtimeId: string) => ['my-locks', showtimeId],
   useBookingPaymentSnapshot: () => ({
     paymentDeadlineAt: '2099-01-01T00:00:00.000Z',
     lockExpiresAt: '2099-01-01T00:00:00.000Z',
@@ -85,6 +86,8 @@ describe('Checkout document return recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     boundary.read.mockReset();
+    boundary.post.mockReset().mockResolvedValue({ ended: true, canKeepSelection: true,
+      paymentDeadlineAt: '2099-01-01T00:00:00.000Z' });
     boundary.unlock.mockReset().mockResolvedValue(undefined);
     boundary.cancel.mockResolvedValue(undefined);
     boundary.search = new URLSearchParams();
@@ -110,6 +113,83 @@ describe('Checkout document return recovery', () => {
     expect(screen.getByText('Return Test')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '다른 결제수단 선택' })).toBeDisabled();
     expect(screen.queryByText('Provider widget')).not.toBeInTheDocument();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+    { method: 'CARD', provider: 'CARD', currency: 'USD' },
+    { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
+    { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' },
+  ] as const)('offers a server-guarded method change after a $provider $currency checkout return', async (checkoutPaymentMethod) => {
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-merchant-return');
+    boundary.read.mockResolvedValue({
+      ...savedBooking, tossOrderId: 'GRP-merchant-return', checkoutPaymentMethod,
+      checkoutStartedAt: new Date(Date.now() - 120_000).toISOString(),
+    });
+    mountPage();
+    await screen.findByRole('heading', { name: '결제 완료 여부를 확인하고 있어요' });
+    expect(screen.getByRole('button', { name: '다른 결제수단 선택' })).toBeEnabled();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it('waits for the server to end the old order before restoring seats and add-ons for another method', async () => {
+    let endReply!: (value: unknown) => void;
+    boundary.post.mockImplementationOnce(() => new Promise(resolve => { endReply = resolve; }));
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-end-before-restart');
+    const addons = [{ addonId: 'addon-return', seatKey: '2F:A-1', unitIndex: 2, price: 80000,
+      displayCopy: { ko: { name: '하이터치', description: '' }, en: { name: 'Hi-touch', description: '' } },
+      expiresAt: savedBooking.paymentDeadlineAt }];
+    boundary.read.mockResolvedValue({ ...savedBooking, addons, totalAmount: 132000,
+      tossOrderId: 'GRP-end-before-restart', checkoutStartedAt: new Date().toISOString(),
+      checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+    });
+    mountPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: '다른 결제수단 선택' }));
+    expect(boundary.post).toHaveBeenCalledWith('/api/v1/payments/checkout/end', {
+      orderId: 'GRP-end-before-restart', keepSelection: true,
+    }, { showErrorToast: false });
+    expect(boundary.replace).not.toHaveBeenCalled();
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    await act(async () => { endReply({ ended: true, canKeepSelection: true, paymentDeadlineAt: savedBooking.paymentDeadlineAt }); });
+    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/booking/performance-return/confirm'));
+    expect(useBookingStore.getState().selectedSeats).toEqual(savedSeats);
+    expect(useBookingStore.getState().selectedAddons).toEqual(addons);
+    expect(boundary.unlock).not.toHaveBeenCalled();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it('preserves the old order and shows an error when ending it is refused', async () => {
+    boundary.post.mockRejectedValue(new Error('A confirmation is already in progress'));
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-refused-end');
+    boundary.read.mockResolvedValue({ ...savedBooking, tossOrderId: 'GRP-refused-end',
+      checkoutStartedAt: new Date().toISOString(),
+      checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+    });
+    mountPage();
+    await userEvent.setup().click(await screen.findByRole('button', { name: '다른 결제수단 선택' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('결제 상태 또는 좌석을 확인할 수 없습니다');
+    expect(boundary.replace).not.toHaveBeenCalled();
+    expect(boundary.unlock).not.toHaveBeenCalled();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it('shows an ended checkout despite its retained handoff timestamp and releases its saved seats before reselection', async () => {
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-ended');
+    boundary.read.mockResolvedValue({ ...savedBooking, status: 'CANCELLED', tossOrderId: 'GRP-ended',
+      checkoutStartedAt: new Date().toISOString(),
+      checkoutPaymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+    });
+    boundary.post.mockResolvedValue({ ended: true, canKeepSelection: false });
+    mountPage();
+    expect(await screen.findByRole('heading', { name: '이 예매는 다시 결제할 수 없어요' })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '좌석 다시 선택' }));
+    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/booking/performance-return'));
+    expect(boundary.post).toHaveBeenCalledWith('/api/v1/payments/checkout/end', {
+      orderId: 'GRP-ended', keepSelection: false,
+    }, { showErrorToast: false });
+    expect(boundary.unlock).toHaveBeenCalledWith({ showtimeId: 'showtime-return' });
     expect(boundary.requestPayment).not.toHaveBeenCalled();
   });
 

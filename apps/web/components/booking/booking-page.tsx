@@ -1,6 +1,7 @@
 'use client';
 
 import { getSeatSelectionCopy, formatSeatSelectionPrice } from '@/lib/booking/seat-selection-copy';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { formatCopy } from '@/lib/i18n/client-copy';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -361,6 +362,7 @@ export function BookingPage({
   const [selectedFloorKey, setSelectedFloorKey] = useState<string | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(true);
   const [isVerifyingSelection, setIsVerifyingSelection] = useState(false);
+  const [recoveringOrderId, setRecoveringOrderId] = useState<string | null>(null);
 
   const allShowtimes = useMemo(
     () => performance?.showtimes ?? [],
@@ -736,6 +738,13 @@ export function BookingPage({
       if (state.selectedShowtimeId !== showtimeId) {
         return { applied: false, changed: false };
       }
+      if (snapshot.recoveryOrderId) {
+        // Pending-order seats are protected on the server. Do not optimistically
+        // remove them and silently mix them into a fresh selection on resync.
+        setRecoveringOrderId(snapshot.recoveryOrderId);
+        router.replace(`${getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale)}?resumeOrderId=${encodeURIComponent(snapshot.recoveryOrderId)}`);
+        return { applied: false, changed: false };
+      }
 
       const serverSeatKeys = new Set(
         snapshot.seatIds.map((runtimeSeatId) => parseRuntimeSeatIdentity(runtimeSeatId).seatKey),
@@ -769,7 +778,7 @@ export function BookingPage({
       }
       return { applied: true, changed };
     },
-    [addSeat, buildSeatSelection, removeSeat, seatCopy.selectionResynced, seatLocks, setTimerExpiry],
+    [activeLocale, addSeat, buildSeatSelection, performanceId, removeSeat, router, seatCopy.selectionResynced, seatLocks, setTimerExpiry],
   );
 
   const refetchedStaleSnapshotRef = useRef<MyLocksSnapshot | null>(null);
@@ -1261,6 +1270,12 @@ export function BookingPage({
     changeShowtime(selected.id);
     setIsDatePickerOpen(false);
   }, [performance, performanceId, initialShowtimeId, bookingAvailable, bookableShowtimes, setDate, changeShowtime]);
+
+  if (recoveringOrderId) {
+    return <div role="status" className="flex min-h-[50vh] items-center justify-center gap-3 p-6">
+      <Loader2 className="h-6 w-6 animate-spin" />{getCheckoutCopy(activeLocale).checking}
+    </div>;
+  }
 
   if (bookingDisabledReason) {
     const disabledTitle = performance?.title ?? seatCopy.bookingInfo;

@@ -1,4 +1,5 @@
 import type { PaymentMethod, PaymentProvider } from '@grabit/shared';
+import { isMerchantConfirmedCheckoutMethod as isKnownMerchantConfirmedCheckoutMethod } from '@grabit/shared';
 
 /**
  * Foreign wallets that the provider can approve without this server's confirm call.
@@ -63,6 +64,11 @@ export const TOSS_UNAUTHENTICATED_CHECKOUT_EXPIRY_MS = 30 * 60 * 1000;
  */
 export const PAYMENT_PROCESSING_TOTAL_CAP_MS = 15 * 60 * 1000;
 
+/** A fresh no-confirm marker is meaningful throughout this explicit close window. */
+export const PAYMENT_CHECKOUT_END_WINDOW_MS = PAYMENT_PROCESSING_TOTAL_CAP_MS;
+export const BUYER_ENDED_CHECKOUT_REASON = '구매자 요청에 따른 미승인 결제창 종료';
+export const BUYER_RESTARTED_CHECKOUT_REASON = '결제수단 변경을 위한 미승인 결제창 종료';
+
 /**
  * Orphan sweeps start only after the provider-owned resolution (READY expiry after
  * {@link TOSS_UNAUTHENTICATED_CHECKOUT_EXPIRY_MS}, reported through the EXPIRED webhook)
@@ -79,9 +85,6 @@ export const PAYMENT_HANDOFF_UNKNOWN_MESSAGE =
  * approved at the provider without a merchant confirm, so their unknown handoff is
  * never released or abandoned locally.
  */
-export function isMerchantConfirmedCheckoutMethod(paymentMethod: PaymentMethod): boolean {
-  return !(
-    paymentMethod.method === 'FOREIGN_EASY_PAY'
-    && isAsyncApprovalForeignEasyPayProvider(paymentMethod.provider)
-  );
+export function isMerchantConfirmedCheckoutMethod(paymentMethod: PaymentMethod | null | undefined): boolean {
+  return isKnownMerchantConfirmedCheckoutMethod(paymentMethod);
 }

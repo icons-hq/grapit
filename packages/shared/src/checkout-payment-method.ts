@@ -19,6 +19,23 @@ export const CHECKOUT_CONFIGURABLE_PAYMENT_METHODS = [
   'FOREIGN_EASY_PAY',
 ] as const satisfies readonly PerformanceAllowedPaymentMethod[];
 
+/** Only these supported routes require this merchant to request payment approval. */
+export function isMerchantConfirmedCheckoutMethod(method: PaymentMethod | null | undefined): boolean {
+  if (!method) return false;
+  if (method.method === 'CARD') return method.provider === 'CARD';
+  if (method.method === 'TRANSFER') return method.provider === 'CARD';
+  if (method.method === 'SIMPLE_PAY') {
+    return ['TOSS_PAY', 'NAVER_PAY', 'KAKAOPAY'].includes(method.provider);
+  }
+  return method.method === 'FOREIGN_EASY_PAY' && method.provider === 'PAYPAL';
+}
+
+export interface EndCheckoutResponse {
+  ended: true;
+  canKeepSelection: boolean;
+  paymentDeadlineAt?: string;
+}
+
 export function isForeignCheckout(method: PaymentMethod): boolean {
   return method.method === 'FOREIGN_EASY_PAY'
     || (method.method === 'CARD' && method.currency === 'USD')

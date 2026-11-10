@@ -1079,6 +1079,7 @@ describe('BookingService', () => {
 
   describe('getMyLocks', () => {
     it('uses hash-tagged seat lock keys and returns the earliest valid TTL', async () => {
+      mockDb.select.mockReturnValue(chainResult([]));
       const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
       mockRedis.smembers.mockResolvedValue(['A-1', 'A-2', 'A-3']);
       mockRedis.get

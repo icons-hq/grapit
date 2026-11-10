@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, gte } from 'drizzle-orm';
+import { eq, and, or, gte, desc, isNotNull } from 'drizzle-orm';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -1031,11 +1031,18 @@ export class BookingService {
   /**
    * Returns the current user's locked seats for a showtime.
    */
-  async getMyLocks(userId: string, showtimeId: string): Promise<{ seatIds: string[]; expiresAt: number | null }> {
-    const userSeats = await this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`);
+  async getMyLocks(userId: string, showtimeId: string): Promise<{ seatIds: string[]; expiresAt: number | null; recoveryOrderId?: string }> {
+    const [userSeats, pending] = await Promise.all([
+      this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`),
+      this.db.select({ orderId: reservations.tossOrderId }).from(reservations).where(and(
+        eq(reservations.userId, userId), eq(reservations.showtimeId, showtimeId),
+        eq(reservations.status, 'PENDING_PAYMENT'), isNotNull(reservations.tossOrderId),
+      )).orderBy(desc(reservations.createdAt), desc(reservations.id)).limit(1),
+    ]);
+    const recovery = pending[0]?.orderId ? { recoveryOrderId: pending[0].orderId } : {};
 
     if (userSeats.length === 0) {
-      return { seatIds: [], expiresAt: null };
+      return { seatIds: [], expiresAt: null, ...recovery };
     }
 
     // Filter to only seats still actually locked by this user
@@ -1055,7 +1062,7 @@ export class BookingService {
       }
     }
 
-    return { seatIds: validSeats, expiresAt };
+    return { seatIds: validSeats, expiresAt, ...recovery };
   }
 
   /**

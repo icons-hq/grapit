@@ -107,6 +107,17 @@ export class PaymentController {
     });
   }
 
+  /** Explicitly end an unapproved checkout before selecting another method. */
+  @Post('checkout/end')
+  @HttpCode(200)
+  endCheckout(
+    @Body(new ZodValidationPipe(paymentBranchReleaseSchema.extend({ keepSelection: z.boolean().default(false) })))
+    body: PaymentBranchReleaseDto & { keepSelection: boolean },
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.paymentService.endUnconfirmedCheckout({ ...body, userId: req.user.id });
+  }
+
   /** Owner-scoped provider refresh. Never abandons an unknown handoff. */
   @Post('status-check')
   @HttpCode(200)

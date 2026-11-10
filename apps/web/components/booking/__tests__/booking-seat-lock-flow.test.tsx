@@ -40,6 +40,7 @@ const hoisted = vi.hoisted(() => {
     postMock: vi.fn(),
     deleteMock: vi.fn(),
     routerPushMock: vi.fn(),
+    routerReplaceMock: vi.fn(),
     toastInfoMock: vi.fn(),
     toastErrorMock: vi.fn(),
     performanceRef: { current: null as unknown },
@@ -67,7 +68,7 @@ vi.mock('next-intl', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: hoisted.routerPushMock }),
+  useRouter: () => ({ push: hoisted.routerPushMock, replace: hoisted.routerReplaceMock }),
 }));
 
 vi.mock('sonner', () => ({
@@ -208,6 +209,7 @@ const server = {
   myLocksGates: [] as Deferred[],
   /** my-locks GETs that fail with a 503 before answering normally. */
   myLocksFailures: 0,
+  recoveryOrderId: null as string | null,
   holdMs: 10 * 60 * 1000,
   maxSeats: 2,
 };
@@ -264,6 +266,7 @@ function installServer() {
       return {
         seatIds: [...held.keys()],
         expiresAt: held.size > 0 ? Math.min(...held.values()) : null,
+        ...(server.recoveryOrderId ? { recoveryOrderId: server.recoveryOrderId } : {}),
       };
     }
     throw new Error(`unexpected GET ${path}`);
@@ -442,6 +445,7 @@ describe('BookingPage seat lock flow', () => {
     hoisted.postMock.mockReset();
     hoisted.deleteMock.mockReset();
     hoisted.routerPushMock.mockReset();
+    hoisted.routerReplaceMock.mockReset();
     hoisted.toastInfoMock.mockReset();
     hoisted.toastErrorMock.mockReset();
     hoisted.headerRef.current = null;
@@ -453,6 +457,7 @@ describe('BookingPage seat lock flow', () => {
     server.lockAllGates.clear();
     server.myLocksGates = [];
     server.myLocksFailures = 0;
+    server.recoveryOrderId = null;
     server.holdMs = 10 * 60 * 1000;
     server.maxSeats = 2;
     installServer();
@@ -463,6 +468,20 @@ describe('BookingPage seat lock flow', () => {
   afterEach(() => {
     vi.useRealTimers();
     window.history.replaceState({}, '', '/');
+  });
+
+  it('recovers a pending checkout instead of mixing its protected seat into a new selection', async () => {
+    server.recoveryOrderId = 'GRP-protected-checkout';
+    heldFor(SHOWTIME_A).set('1F:A-1', Date.now() + 300000);
+    selectShowtimeInStore(SHOWTIME_A);
+    useBookingStore.getState().addSeat(seat('A-2'));
+    renderBookingPage();
+    await waitFor(() => expect(hoisted.routerReplaceMock).toHaveBeenCalledWith(
+      '/booking/performance-a/confirm?resumeOrderId=GRP-protected-checkout',
+    ));
+    expect(useBookingStore.getState().selectedSeats.map(s => s.seatId)).toEqual(['A-2']);
+    expect(hoisted.postMock).not.toHaveBeenCalled();
+    expect(hoisted.deleteMock).not.toHaveBeenCalled();
   });
 
   it.each(['click', 'restore'])('selects a floor-prefixed template seat through %s', async (mode) => {

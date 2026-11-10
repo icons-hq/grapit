@@ -48,6 +48,8 @@ interface LockSeatRequest {
 interface MyLocksResponse {
   seatIds: string[];
   expiresAt: number | null;
+  /** Pending orders must be resolved before a fresh seat selection is prepared. */
+  recoveryOrderId?: string;
 }
 
 /**

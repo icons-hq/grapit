@@ -30,6 +30,7 @@ import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
 import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
 import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
+import { useRestartCheckout } from '@/hooks/use-restart-checkout';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 import {
   getQueueAccessClosedCopy,
@@ -202,6 +203,20 @@ function ConfirmPageContent() {
   const recovery = useCheckoutRecovery(returnOrderId, performanceId, isProcessing);
   const { refetch: refetchRecovery } = recovery;
   const paymentCheck = useCheckPaymentStatus(returnOrderId, refetchRecovery);
+  const checkoutRestart = useRestartCheckout({ refetch: refetchRecovery, beforeNavigate: () => {
+    // This page can survive router.replace on the same pathname. Never reuse its
+    // earlier newOrderId after the server has permanently ended that order.
+    setOrderId(generateOrderId());
+    reservationIdRef.current = null;
+    paymentRequestInFlightRef.current = false;
+    setIsProcessing(false);
+    setPreparedReview(null);
+    setSelectedPaymentMethod(null);
+    setAgreed(false);
+    setOverseasDisclaimerAgreed(false);
+    setPaymentReturnError(null);
+    setLockFailureMessage(null);
+  } });
   const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
   const ticketsPath = `${getLocalizedPathname('/mypage', locale)}?tab=reservations`;
 
@@ -558,6 +573,14 @@ function ConfirmPageContent() {
         if (mountedRef.current) setIsProcessing(false);
         return;
       }
+      const data = err instanceof Error && 'data' in err ? err.data : null;
+      if (data && typeof data === 'object' && 'code' in data && data.code === 'PENDING_CHECKOUT_EXISTS'
+        && 'recoveryOrderId' in data && typeof data.recoveryOrderId === 'string') {
+        setIsProcessing(false);
+        useBookingStore.getState().clearBooking();
+        router.replace(`${bookingPath}/confirm?resumeOrderId=${encodeURIComponent(data.recoveryOrderId)}`);
+        return;
+      }
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
       // Server rejections arrive in Korean; the checkout closures (sales closed, any queue
@@ -633,7 +656,10 @@ function ConfirmPageContent() {
       <OrderSummary performanceTitle={saved.performanceTitle} posterUrl={saved.posterUrl}
         showDateTime={saved.showDateTime} venue={saved.venue} seats={saved.seats} />
       <PaymentRecoveryPanel reservation={saved} locale={locale} onCheck={paymentCheck.check}
-        checking={paymentCheck.checking} checkedAt={recovery.checkedAt} providerUnavailable={paymentCheck.providerUnavailable} />
+        checking={paymentCheck.checking} checkedAt={recovery.checkedAt} providerUnavailable={paymentCheck.providerUnavailable}
+        onChangeMethod={() => checkoutRestart.restart(saved)}
+        onReselect={() => void checkoutRestart.restart(saved, false)}
+        changingMethod={checkoutRestart.restarting} changeError={checkoutRestart.restartError} />
       <CheckoutAmountSummary seats={saved.seats} addons={saved.addons ?? []} totalPrice={saved.totalAmount}
         quote={saved.paymentInfo?.providerChargeQuote ?? saved.providerChargeQuote} awaitingResult
         paid={['DONE', 'PARTIAL_CANCELED'].includes(saved.paymentInfo?.status ?? '')} />
@@ -652,7 +678,10 @@ function ConfirmPageContent() {
           <p className="text-muted-foreground">{checking ? checkoutCopy.checkingBody : ended ? checkoutCopy.endedBody : checkoutCopy.unavailableBody}</p>
         </section>
         <Button onClick={() => void refetchRecovery()} disabled={recovery.isFetching}>{checkoutCopy.retry}</Button>
-        {ended && <Button variant="outline" onClick={handlePaymentReturnRecovery} disabled={isReselecting}>{checkoutCopy.reselect}</Button>}
+        {ended && <Button variant="outline" onClick={() => recovery.reservation
+          ? void checkoutRestart.restart(recovery.reservation, false) : void handlePaymentReturnRecovery()}
+          disabled={isReselecting || checkoutRestart.restarting}>{checkoutCopy.reselect}</Button>}
+        {checkoutRestart.restartError && <p role="alert" className="text-sm text-amber-800">{checkoutRestart.restartError}</p>}
         <Button variant="ghost" onClick={() => router.replace(ticketsPath)}>{checkoutCopy.tickets}</Button>
         <Link className="text-center text-sm text-primary underline" href={getLocalizedPathname('/support', locale)}>{checkoutCopy.support}</Link>
       </main>

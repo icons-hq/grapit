@@ -547,6 +547,9 @@ interface ReservationDetailProps {
   paymentCheckedAt?: number;
   providerUnavailable?: boolean;
   onReselectSeats?: () => void;
+  onChangePaymentMethod?: () => void | Promise<unknown>;
+  isChangingPaymentMethod?: boolean;
+  paymentChangeError?: string | null;
 }
 
 export function ReservationDetailView({
@@ -555,6 +558,7 @@ export function ReservationDetailView({
   isCancelling,
   onResumePayment,
   onCheckPayment, isCheckingPayment, paymentCheckedAt, providerUnavailable, onReselectSeats,
+  onChangePaymentMethod, isChangingPaymentMethod, paymentChangeError,
 }: ReservationDetailProps) {
   const router = useRouter();
   const locale = getClientLocale();
@@ -755,7 +759,8 @@ export function ReservationDetailView({
 
       {showPaymentRecovery && <div className="mt-4"><PaymentRecoveryPanel reservation={reservation} locale={locale}
         onCheck={onCheckPayment} checking={isCheckingPayment} checkedAt={paymentCheckedAt}
-        providerUnavailable={providerUnavailable} onReselect={onReselectSeats} /></div>}
+        providerUnavailable={providerUnavailable} onReselect={onReselectSeats}
+        onChangeMethod={onChangePaymentMethod} changingMethod={isChangingPaymentMethod} changeError={paymentChangeError} /></div>}
 
       {progressGuidance && !showPaymentRecovery && (
         <Card className={`mt-4 ${progressGuidance.cardClassName} py-4`}>
