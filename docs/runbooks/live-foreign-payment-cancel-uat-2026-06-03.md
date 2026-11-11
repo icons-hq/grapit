@@ -46,6 +46,29 @@ Implementation rules derived from those docs:
 
 ## Operator Rules
 
+### PayPal return without payment (2026-11-11)
+
+The checkout shows a return guide only when PayPal is selected, in Korean,
+English, Thai and Simplified Chinese. The buyer uses PayPal's cancellation/return
+link to return to the merchant and then changes the payment method. Browser Back
+can re-enter a Toss intermediate page and repeat its PayPal prepare request; it
+is not a payment cancellation. The guidance does not intercept browser history
+or weaken the existing server-guarded checkout restart.
+
+[Toss support](https://discord.com/channels/864296203746803753/1019841718318805064/threads/1569609984759693375)
+recommended avoiding browser-history navigation because return handling varies
+by browser. Support did not reproduce the reported error in its own environment.
+
+For a no-payment check, select PayPal and confirm the guide appears before
+handoff; choose another method and confirm it disappears. Reach the provider's
+pre-authentication page, use its cancellation/return link, then verify method
+change and the original seat/amount. If a CAPTCHA hides that link, stop before
+the challenge and report the provider cancellation path as unverified. Browser
+Back recovery is a separate fallback check, not proof that the provider error
+has been fixed. End the test order and verify that no seat locks remain.
+
+### Live-payment rules
+
 1. Raw Toss keys, payment keys, authorization headers, cookies, card numbers,
    PayPal/Alipay account data, full e-mail addresses, phone numbers, and PII
    must never be pasted into docs, commits, screenshots, or evidence artifacts.
