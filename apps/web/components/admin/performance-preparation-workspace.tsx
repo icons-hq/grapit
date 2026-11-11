@@ -64,7 +64,7 @@ export function PerformancePreparationWorkspace({ id }: { id: string }) {
         <h2 className="mb-5 flex items-center gap-2 text-lg font-bold"><Info size={20} className="text-blue-600" />판매 전 확인</h2>
         <p className="font-semibold">게시와 판매 시작은 구분됩니다.</p><p className="mt-2 text-gray-600">공개 후에도 판매 상태, 판매 시작 시각과 예매 허용 설정이 충족되어야 구매할 수 있습니다.</p>
         <dl className="my-5 border-y border-gray-200 py-4"><dt className="text-gray-500">현재 공개 상태</dt><dd className="font-semibold">{data.publishState === 'published' ? '공개됨' : '비공개 준비 중'}</dd><dt className="mt-3 text-gray-500">{data.publishState === 'published' ? '판매 시작 · 한국 시간' : '공개 시 판매 개시 · 한국 시간'}</dt><dd>{data.publishState !== 'published' && data.saleOpening ? describeSaleOpening({ saleOpening: data.saleOpening }) : data.bookingStartsAt ? `${formatAdminKstDateTime(data.bookingStartsAt).replace('T', ' ')} KST` : '시각 미지정'}</dd></dl>
-        {data.publishState === 'published' ? <Link href={`/performance/${id}`} className="font-semibold text-violet-700">구매자 화면 보기 ↗</Link> : <p className="text-gray-600">준비 중인 공연은 공개 승인 후 구매자 화면에 나타납니다.</p>}
+        {data.publishState === 'published' ? <Link href={`/performance/${id}`} className="font-semibold text-violet-700">구매자 화면 보기 ↗</Link> : <p className="text-gray-600">상세페이지와 예매는 공개 승인 후 열립니다. 기본 정보에서 목록 공지를 별도로 설정할 수 있습니다.</p>}
         {canUseAdminBookingBypass(user) && data.status !== 'ended' && (
           <div className="mt-4 border-t border-gray-200 pt-4">
             <Link href={`/booking/${id}`} className="block font-semibold text-violet-700">관리자 구매 테스트 ↗</Link>

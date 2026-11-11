@@ -95,6 +95,32 @@ describe('Ticket storefront — real PostgreSQL', () => {
     expect((await favorites.list(owner)).ids).toEqual([]);
     await expect(favorites.add(owner,hidden)).rejects.toThrow('공연을 찾을 수 없습니다');
   });
+  it('lists an opted-in announcement across catalogs while keeping detail and price private', async () => {
+    await db.update(schema.performances).set({ announcementVisible: true, description: 'private copy' }).where(eq(schema.performances.id, hidden));
+    await db.insert(schema.priceTiers).values({performanceId:hidden,tierName:'Private price',price:123456});
+    try {
+      const list=await catalog.findByGenre(undefined,performanceQuerySchema.parse({ids:hidden}));
+      expect(list.total).toBe(1);
+      expect(list.data[0]).toMatchObject({id:hidden,detailAvailable:false,minPrice:null,status:'upcoming'});
+      expect(list.data[0]).not.toHaveProperty('description');
+      expect((await search.search(searchQuerySchema.parse({q:'catalogqa hidden',status:'upcoming'}))).data[0]).toMatchObject({id:hidden,detailAvailable:false,minPrice:null});
+      expect((await search.search(searchQuerySchema.parse({q:'catalogqa hidden',status:'selling'}))).total).toBe(0);
+      expect((await catalog.getNewPerformances()).find((row)=>row.id===hidden)?.detailAvailable).toBe(false);
+      expect((await catalog.getHotPerformances()).some((row)=>row.id===hidden)).toBe(false);
+      expect(await catalog.findById(hidden)).toBeNull();
+      await expect(new PerformanceController(catalog).getPerformance(hidden)).rejects.toThrow('공연을 찾을 수 없습니다');
+      expect((await catalog.findById(hidden, 'ko', {includeHiddenCopy:true}))?.description).toBe('private copy');
+      await expect(favorites.add(owner,hidden)).rejects.toThrow('공연을 찾을 수 없습니다');
+      // Full publication still opens the same card without retaining a disabled link.
+      await db.update(schema.performances).set({publishState:'published'}).where(eq(schema.performances.id,hidden));
+      expect((await catalog.findByGenre(undefined,performanceQuerySchema.parse({ids:hidden}))).data[0]).toMatchObject({detailAvailable:true,minPrice:123456});
+      expect(await catalog.findById(hidden)).not.toBeNull();
+    } finally {
+      await db.update(schema.performances).set({announcementVisible:false,publishState:'draft'}).where(eq(schema.performances.id,hidden));
+    }
+    expect((await catalog.findByGenre(undefined,performanceQuerySchema.parse({ids:hidden}))).total).toBe(0);
+    expect(await catalog.findById(hidden)).toBeNull();
+  });
   it('keeps the 200-save limit even when the last two additions arrive together',async()=>{
     const events=await db.insert(schema.performances).values(Array.from({length:201},(_,i)=>({
       id:randomUUID(),title:`limit-${i}`,genre:'concert' as const,publishState:'published' as const,status:'selling' as const,

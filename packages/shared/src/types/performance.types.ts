@@ -272,6 +272,8 @@ export interface Performance extends ReviewedTranslationMetadata {
   posterUrl: string | null;
   description: string | null;
   descriptionVisible: boolean;
+  /** Lists an unpublished performance without opening its detail or booking. */
+  announcementVisible?: boolean;
   startDate: string; // ISO string
   endDate: string;   // ISO string
   runtime: string | null;
@@ -313,7 +315,9 @@ export interface PerformanceCardData extends ReviewedTranslationMetadata {
   venueName: string | null;
   minPrice?: number | null;
   bookingStartsAt?: string | null;
-  /** Admin list only: public catalog cards are always published. */
+  /** False for announcement cards; no detail link or booking is available. */
+  detailAvailable?: boolean;
+  /** Admin list only. */
   publishState?: PerformancePublishLifecycle;
 }
 

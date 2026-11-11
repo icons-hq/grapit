@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { PerformanceCardLink } from './performance-card-link';
 import Image from 'next/image';
 import { useLocale } from 'next-intl';
 import { Ticket } from 'lucide-react';
@@ -30,10 +30,10 @@ export function PerformanceCard({ performance, className, priority = false, vari
   const ticket = getTicketCopy(locale);
   const { bookingEnabled, isResolved: flagsResolved } = useRuntimeFlags();
   const reached = useServerTimeReached(parseBookingStartMs(performance.bookingStartsAt));
-  const saleStatus = resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !reached);
+  const saleStatus = performance.detailAvailable === false && performance.status !== 'ended' ? 'upcoming' : resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !reached);
   const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
   const opening = formatBookingOpensAtKst(performance.bookingStartsAt, locale);
-  return <Link href={getLocalizedPathname(`/performance/${performance.id}`, locale)}
+  return <PerformanceCardLink detailAvailable={performance.detailAvailable} href={getLocalizedPathname(`/performance/${performance.id}`, locale)}
     className={cn('ticket-card', variant === 'opening' && 'ticket-card-opening', variant === 'ranking' && 'ticket-card-ranking', className)}>
     <div className="ticket-card-art">
       {performance.posterUrl ? <>
@@ -57,5 +57,5 @@ export function PerformanceCard({ performance, className, priority = false, vari
         <span>{copy.home.feeSeparate}</span>
       </p>}
     </div>
-  </Link>;
+  </PerformanceCardLink>;
 }

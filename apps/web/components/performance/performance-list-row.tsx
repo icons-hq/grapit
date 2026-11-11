@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
+import { PerformanceCardLink } from './performance-card-link';
 import { CalendarDays, ChevronRight, MapPin, Ticket } from 'lucide-react';
 import type { PerformanceCardData, SupportedLocale } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
@@ -23,7 +23,7 @@ export function PerformanceListRow({ performance, locale, bookingEnabled, flagsR
   const copy = getVisibleCopy(locale).home;
   // Server-corrected clock, the same verdict the detail page and its booking CTA use.
   const bookingStartReached = useServerTimeReached(parseBookingStartMs(performance.bookingStartsAt));
-  const saleStatus = resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !bookingStartReached);
+  const saleStatus = performance.detailAvailable === false && performance.status !== 'ended' ? 'upcoming' : resolveBookingStartPerformanceStatus(performance.status, performance.bookingStartsAt, !bookingStartReached);
   const status = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
   const validStart = Boolean(performance.startDate) && Number.isFinite(Date.parse(performance.startDate));
   const start = formatCatalogDateRange(performance.startDate, performance.endDate, locale) ?? copy.dateUnknown;
@@ -33,7 +33,7 @@ export function PerformanceListRow({ performance, locale, bookingEnabled, flagsR
   const opensAt = saleStatus === 'upcoming' ? formatBookingOpensAtKst(performance.bookingStartsAt, locale) : null;
 
   return <li className="border-b border-border last:border-b-0">
-    <Link href={getLocalizedPathname(`/performance/${performance.id}`, locale)}
+    <PerformanceCardLink detailAvailable={performance.detailAvailable} href={getLocalizedPathname(`/performance/${performance.id}`, locale)}
       className="group grid grid-cols-[88px_minmax(0,1fr)] gap-4 rounded-md py-5 outline-offset-4 transition-colors hover:bg-muted/30 focus-visible:outline-2 focus-visible:outline-primary sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-6 md:grid-cols-[176px_minmax(0,1fr)_220px_24px] md:items-center md:py-6">
       <div className="relative aspect-[3/2] overflow-hidden rounded-md bg-muted max-sm:aspect-[3/4]">
         {performance.posterUrl ? <Image src={performance.posterUrl} alt="" fill sizes="(min-width:768px) 176px, 25vw" className="object-cover transition-transform group-hover:scale-[1.02]" />
@@ -50,7 +50,7 @@ export function PerformanceListRow({ performance, locale, bookingEnabled, flagsR
         <span className="hidden md:inline-block"><StatusBadge status={status} locale={locale} /></span>
         <p className="text-xs text-muted-foreground sm:text-sm">{opensAt ? copy.bookingOpens.replace('{date}', opensAt) : copy.statusHelp[status]}</p>
       </div>
-      <ChevronRight className="hidden size-5 text-muted-foreground md:block" aria-hidden="true" />
-    </Link>
+      {performance.detailAvailable !== false && <ChevronRight className="hidden size-5 text-muted-foreground md:block" aria-hidden="true" />}
+    </PerformanceCardLink>
   </li>;
 }

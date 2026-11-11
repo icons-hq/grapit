@@ -143,3 +143,12 @@ describe('BannerCarousel', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 });
+
+it('does not link an announcement used as a fallback hero', () => {
+  render(<BannerCarousel banners={[]} performances={[{
+    id:'announcement',title:'Announcement',genre:'concert',posterUrl:'https://cdn.example.test/poster.jpg',
+    status:'upcoming',startDate:'2099-01-01',endDate:'2099-01-01',venueName:'Hall',detailAvailable:false,
+  }]} />);
+  expect(screen.getByText('Announcement')).toBeDefined();
+  expect(screen.queryByRole('link')).toBeNull();
+});

@@ -36,6 +36,12 @@ function renderRow(performance: PerformanceCardData) {
 }
 
 describe('PerformanceListRow sale status', () => {
+  it('renders an announcement row without a detail anchor', () => {
+    renderRow({ ...row, detailAvailable: false });
+    expect(screen.getByText(row.title)).toBeDefined();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);

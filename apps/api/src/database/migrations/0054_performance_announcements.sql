@@ -1,0 +1,1 @@
+ALTER TABLE "performances" ADD COLUMN "announcement_visible" boolean DEFAULT false NOT NULL;

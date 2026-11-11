@@ -179,6 +179,7 @@ function createMockTx() {
               publishedByUserId: values['publishedByUserId'] ?? null,
               salesInfo: null,
               descriptionVisible: values['descriptionVisible'] ?? true,
+        announcementVisible: values['announcementVisible'] ?? false,
               salesInfoVisible: values['salesInfoVisible'] ?? true,
               viewCount: 0,
               createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -678,6 +679,13 @@ describe('AdminService', () => {
         }),
         mockDb._tx,
       );
+    });
+
+    it('persists announcement visibility without publishing the performance', async () => {
+      await service.updatePerformance('perf-id-123', {announcementVisible:true});
+      const update=mockDb._tx._updates.find((entry)=>entry.table===performances);
+      expect(update?.values).toMatchObject({announcementVisible:true});
+      expect(update?.values).not.toHaveProperty('publishState');
     });
 
     it('persists copy visibility updates without touching showtime preservation behavior', async () => {

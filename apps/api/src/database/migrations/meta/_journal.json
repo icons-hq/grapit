@@ -379,6 +379,13 @@
       "when": 1794207577484,
       "tag": "0053_addon_units_and_benefit_coupons",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1794373339437,
+      "tag": "0054_performance_announcements",
+      "breakpoints": true
     }
   ]
 }

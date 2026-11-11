@@ -286,6 +286,7 @@ export const createPerformanceSchema = z.object({
   posterUrl: z.string().url().nullable().optional(),
   description: z.string().nullable().optional(),
   descriptionVisible: z.boolean().default(true),
+  announcementVisible: z.boolean().optional(),
   startDate: z.string().min(1, '시작일을 입력해주세요'),
   endDate: z.string().min(1, '종료일을 입력해주세요'),
   runtime: z.string().max(50).nullable().optional(),

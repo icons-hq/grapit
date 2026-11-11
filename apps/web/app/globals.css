@@ -320,7 +320,7 @@ body {
 .ticket-curation-group h2 button { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 24px; font-size: 18px; font-weight: 650; }
 .ticket-curation-group.active h2 svg { color: var(--color-primary); }
 .ticket-curation-cards:not([hidden]) { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 64px)/5); gap: 16px; padding: 0 20px 20px; overflow-x: auto; }
-.ticket-curation-cards a { position: relative; aspect-ratio: 3/4; border-radius: 16px; background: var(--ticket-weak); overflow: hidden; }
+.ticket-curation-cards > :is(a, [aria-disabled]) { position: relative; aspect-ratio: 3/4; border-radius: 16px; background: var(--ticket-weak); overflow: hidden; }
 .ticket-curation-cards img { object-fit: cover; }
 .ticket-curation-cards strong { position: absolute; bottom: 0; left: 0; right: 0; padding: 40px 16px 16px; color: white; background: linear-gradient(transparent,#000b); font-size: 16px; line-height: 1.4; }
 .ticket-venue-shelf { margin-top: 80px; padding: 36px 40px; background: var(--color-muted); border-radius: 20px; }

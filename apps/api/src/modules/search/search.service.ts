@@ -9,6 +9,7 @@ import {
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   publicCatalogCardSelection,
+  publicCatalogVisibleCondition,
   mapPublicCatalogCard,
   publicCatalogNotEndedCondition,
   publicCatalogStatusCondition,
@@ -32,7 +33,7 @@ export class SearchService {
     const offset = (page - 1) * limit;
 
     const conditions: ReturnType<typeof eq>[] = [
-      eq(performances.publishState, 'published'),
+      publicCatalogVisibleCondition(),
       ...catalogFilterConditions(query),
     ];
 

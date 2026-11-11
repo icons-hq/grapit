@@ -109,8 +109,8 @@ export function BannerForm({
 
   const handleImageUpload = useCallback(
     async (file: File) => {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('이미지는 5MB 이하여야 합니다.');
+      if (file.size > 20 * 1024 * 1024) {
+        toast.error('배너 이미지는 20MB 이하여야 합니다.');
         return;
       }
       const ext = file.name.split('.').pop() ?? 'jpg';
@@ -163,6 +163,7 @@ export function BannerForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border bg-white p-4">
       {/* Image */}
+      <p className="text-xs text-gray-500">JPG, PNG, WebP · 파일당 최대 20MB</p>
       {imageUrl ? (
         <div className="relative">
           <img

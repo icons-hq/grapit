@@ -26,7 +26,7 @@ import type {
   PerformanceQuery,
   SeatMap,
 } from '@grabit/shared';
-import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogNotEndedCondition, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
+import { publicCatalogVisibleCondition, publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogNotEndedCondition, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
 import { CacheService, type CacheLoadResult } from './cache.service.js';
 import { CATALOG_CACHE_GENERATION_SCOPES } from './catalog-cache-keys.js';
 import { PerformanceViewCounter } from './performance-view-counter.service.js';
@@ -45,7 +45,7 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'ticket-catalog-v5-all-genres';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'ticket-catalog-v6-announcements';
 const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v3-venue-access';
 const HOME_BANNER_CACHE_VERSION = 'home-visible-v1';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
@@ -239,7 +239,7 @@ export class PerformanceService {
     return this.db.select({ id: venues.id, name: venues.name, address: venues.address,
       performanceCount: sql<number>`count(${performances.id})::int` })
       .from(venues).innerJoin(performances, eq(performances.venueId, venues.id))
-      .where(eq(performances.publishState, 'published'))
+      .where(publicCatalogVisibleCondition())
       .groupBy(venues.id, venues.name, venues.address).orderBy(asc(venues.name));
   }
 
@@ -275,7 +275,7 @@ export class PerformanceService {
     const offset = (page - 1) * limit;
 
     const conditions = [
-      eq(performances.publishState, 'published'),
+      publicCatalogVisibleCondition(),
       ...catalogFilterConditions(query),
     ];
     if (genre) conditions.push(eq(performances.genre, genre as (typeof performances.genre.enumValues)[number]));
@@ -318,7 +318,7 @@ export class PerformanceService {
             select min(next_policy.booking_starts_at)
             from performances next_performance
             join booking_policies next_policy on next_policy.performance_id = next_performance.id
-            where next_performance.publish_state = 'published'
+            where (next_performance.publish_state = 'published' or next_performance.announcement_visible = true)
               ${genre ? sql`and next_performance.genre = ${genre}` : sql``}
               and next_performance.status <> 'ended'
               and next_policy.booking_starts_at > ${queryTime}
@@ -466,6 +466,7 @@ export class PerformanceService {
           posterUrl: perf.posterUrl,
           description: perf.description,
           descriptionVisible: perf.descriptionVisible,
+          announcementVisible: perf.announcementVisible,
           detailImages: normalizePerformanceDetailImages(perf.detailImages),
           startDate: perf.startDate?.toISOString() ?? '',
           endDate: perf.endDate?.toISOString() ?? '',
@@ -665,7 +666,7 @@ export class PerformanceService {
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(
           and(
-            eq(performances.publishState, 'published'),
+            publicCatalogVisibleCondition(),
           publicCatalogNotEndedCondition(),
         ),
       )
