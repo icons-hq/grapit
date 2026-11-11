@@ -7,6 +7,7 @@ export * from './schemas/performance-preparation.schema';
 // Phase 24 booking contracts include queue, floor-aware seat, payment, refund, and QR schemas.
 export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
+export * from './schemas/signup-monitoring.schema';
 export * from './schemas/consent.schema';
 export * from './schemas/benefit.schema';
 export * from './schemas/admin-operations.schema';

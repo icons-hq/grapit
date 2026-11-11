@@ -1,4 +1,5 @@
 import { AdminUserManagement } from '@/components/admin/admin-user-management';
+import { SignupMonitoringPanel } from '@/components/admin/signup-monitoring-panel';
 
 export default function AdminUsersPage() {
   return (
@@ -10,6 +11,7 @@ export default function AdminUsersPage() {
         </p>
       </header>
 
+      <SignupMonitoringPanel />
       <AdminUserManagement />
     </div>
   );
