@@ -34,7 +34,7 @@ export async function loadSignupMonitoring(db: DrizzleDB, query: SignupMonitorin
   ), cohort as materialized (select * from eligible where created_at >= ${since}::timestamptz),
   paid as (select c.id from cohort c where exists (
     select 1 from reservations r join payments p on p.reservation_id = r.id
-    where r.user_id = c.id and r.status in ('CONFIRMED', 'CANCELLED') and p.status in ('DONE', 'CANCELED')
+    where r.user_id = c.id and r.status in ('CONFIRMED', 'CANCELLED') and p.status in ('DONE', 'PARTIAL_CANCELED', 'CANCELED')
       and p.paid_at >= c.created_at and p.paid_at < ${until}::timestamptz
   ))
   select json_build_object(
