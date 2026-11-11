@@ -585,7 +585,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       </Card>
 
       <AreunGlPerformancePromo
-        performanceId={booking.performanceId}
+        genre={booking.performanceGenre}
         placement="booking_complete"
         locale={locale}
       />

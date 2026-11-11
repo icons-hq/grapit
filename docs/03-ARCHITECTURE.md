@@ -918,9 +918,11 @@ the home page (below the genre grid, every visitor), the booking-complete screen
 
 - The card disappears at `endsAt` (2027-02-14 00:00 KST); no deploy is needed to end it.
 - Booking-complete and reservation-detail cards appear only when the booked
-  performance's genre is in `targetGenres` (`artist_celebrity`). The genre comes from
-  a public `GET /api/v1/performances/:id` read with `showErrorToast: false`; a failed
-  lookup hides the card and never surfaces an error on the booking screens.
+  performance's genre is in `targetGenres` (`artist_celebrity`). The genre is
+  `ReservationDetail.performanceGenre`, returned by the reservation detail and payment
+  confirm responses, so the booking screens make no extra catalog read. (The public
+  performance detail read records a view that feeds popularity ranking.) A response
+  without the field hides the card.
 - Korean screens show Korean copy; other locales show English copy that notes Areun
   is Korean-only. The card is labelled as an advertisement and opens in a new tab
   with `rel="sponsored noopener"`.

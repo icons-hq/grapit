@@ -22,8 +22,8 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
 }));
 
 vi.mock('@/components/promo/areun-gl-promo', () => ({
-  AreunGlPerformancePromo: ({ performanceId, placement }: { performanceId?: string; placement: string }) => (
-    <div data-testid="areun-gl-promo" data-performance-id={performanceId} data-placement={placement} />
+  AreunGlPerformancePromo: ({ genre, placement }: { genre?: string; placement: string }) => (
+    <div data-testid="areun-gl-promo" data-genre={genre} data-placement={placement} />
   ),
 }));
 
@@ -393,14 +393,14 @@ describe('ReservationDetailView QR ticket card', () => {
   it('places the Areun GL promo under the QR tickets of a confirmed reservation only', () => {
     const { unmount } = render(
       <ReservationDetailView
-        reservation={createReservation({ performanceId: 'performance-fan-meeting' })}
+        reservation={createReservation({ performanceGenre: 'artist_celebrity' })}
         onCancel={vi.fn()}
         isCancelling={false}
       />,
     );
 
     const promo = screen.getByTestId('areun-gl-promo');
-    expect(promo).toHaveAttribute('data-performance-id', 'performance-fan-meeting');
+    expect(promo).toHaveAttribute('data-genre', 'artist_celebrity');
     expect(promo).toHaveAttribute('data-placement', 'reservation_detail');
     expect(screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`).compareDocumentPosition(promo))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -408,7 +408,7 @@ describe('ReservationDetailView QR ticket card', () => {
 
     render(
       <ReservationDetailView
-        reservation={createReservation({ performanceId: 'performance-fan-meeting', status: 'CANCELLED' })}
+        reservation={createReservation({ performanceGenre: 'artist_celebrity', status: 'CANCELLED' })}
         onCancel={vi.fn()}
         isCancelling={false}
       />,

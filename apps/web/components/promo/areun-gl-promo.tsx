@@ -2,9 +2,6 @@
 
 import Image from 'next/image';
 import { ArrowUpRight } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import type { PerformanceWithDetails } from '@grabit/shared';
-import { apiClient } from '@/lib/api-client';
 import {
   AREUN_GL_PROMO,
   buildAreunGlPromoHref,
@@ -67,30 +64,16 @@ export function AreunGlPromoCard({ placement, locale, className }: AreunGlPromoC
 }
 
 interface AreunGlPerformancePromoProps extends AreunGlPromoCardProps {
-  performanceId: string | null | undefined;
+  /** `ReservationDetail.performanceGenre`; absent on older API responses, which hides the card. */
+  genre: string | null | undefined;
 }
 
 /**
- * Shows the promo only for bookings of a target genre. The genre lookup is a
- * public, cached catalog read; failures stay silent so the booking screens never
- * surface an error for the promo.
+ * Shows the promo only for bookings of a target genre. The genre arrives with the
+ * reservation itself, so the booking screens make no extra catalog read (the public
+ * detail endpoint records a view and would skew popularity ranking).
  */
-export function AreunGlPerformancePromo({ performanceId, ...cardProps }: AreunGlPerformancePromoProps) {
-  const active = isAreunGlPromoActive();
-  const genre = useQuery({
-    queryKey: ['promo', 'areun-gl', 'performance-genre', performanceId],
-    queryFn: async () => {
-      const performance = await apiClient.get<Pick<PerformanceWithDetails, 'genre'>>(
-        `/api/v1/performances/${encodeURIComponent(performanceId ?? '')}`,
-        { showErrorToast: false },
-      );
-      return performance.genre;
-    },
-    enabled: active && !!performanceId,
-    staleTime: 60 * 60 * 1000,
-    retry: false,
-  });
-
-  if (!active || !isAreunGlPromoGenre(genre.data)) return null;
+export function AreunGlPerformancePromo({ genre, ...cardProps }: AreunGlPerformancePromoProps) {
+  if (!isAreunGlPromoGenre(genre)) return null;
   return <AreunGlPromoCard {...cardProps} />;
 }

@@ -22,6 +22,11 @@ vi.mock('@/hooks/use-performances', () => ({
   },
 }));
 vi.mock('@/hooks/use-runtime-flags', () => ({ useRuntimeFlags: () => ({ bookingEnabled: mocks.bookingEnabled, isResolved: true }) }));
+// Keep the home promo assertion independent of the real campaign end date.
+vi.mock('@/lib/promo/areun-gl-promo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/promo/areun-gl-promo')>()),
+  isAreunGlPromoActive: () => true,
+}));
 
 describe('Buyer ticket discovery', () => {
   beforeEach(() => {

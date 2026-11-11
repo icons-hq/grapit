@@ -568,7 +568,7 @@ describe('ReservationService', () => {
         createdAt: new Date(),
       },
       showtime: { dateTime: new Date() },
-      performance: { id: 'performance-1', title: '락 테스트 공연', posterUrl: null },
+      performance: { id: 'performance-1', title: '락 테스트 공연', posterUrl: null, genre: 'artist_celebrity' },
       venue: { name: '락 테스트 극장' },
       diagnostic: args.diagnostic ?? null,
       seats: seats.map((seatId) => ({ seatId, tierName: 'VIP', price: 50000, row: 'A', number: seatId.split('-')[1] ?? '1' })),
@@ -2405,6 +2405,17 @@ describe('ReservationService', () => {
 
       expect(detail.queueAdmission.admissionToken).toBe('cookie-bound');
       expect(JSON.stringify(detail)).not.toContain('legacy-raw-admission-token');
+    });
+
+    it('returns the booked performance genre so buyer screens need no extra catalog read', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      setupReservationDetailMocks({ reservationId, userId, amount: 104000 });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(detail.performanceId).toBe('performance-1');
+      expect(detail.performanceGenre).toBe('artist_celebrity');
     });
 
     it('returns the payment confirm detail in the requested display locale (audit #88)', async () => {

@@ -1,14 +1,6 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const apiGet = vi.hoisted(() => vi.fn());
-
-vi.mock('@/lib/api-client', () => ({
-  apiClient: { get: apiGet },
-}));
 
 vi.mock('next/image', () => ({
   default: ({ alt, fill: _fill, ...props }: { alt: string; fill?: boolean; [key: string]: unknown }) => (
@@ -19,18 +11,20 @@ vi.mock('next/image', () => ({
 
 import { AreunGlPerformancePromo, AreunGlPromoCard } from '../areun-gl-promo';
 
-const performanceId = '575e8ff0-cd16-4c00-9edc-d72f54bffa9d';
+// Display tests run inside the campaign window so they keep passing after it ends.
+const DURING_CAMPAIGN = new Date('2026-11-20T12:00:00+09:00');
+const CAMPAIGN_END = new Date('2027-02-14T00:00:00+09:00');
 
-function withQueryClient(children: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-}
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(DURING_CAMPAIGN);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('AreunGlPromoCard', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('links to Areun GL in a new tab with sponsored attribution and placement UTM', () => {
     render(<AreunGlPromoCard placement="home_banner" locale="ko" />);
 
@@ -62,9 +56,8 @@ describe('AreunGlPromoCard', () => {
     expect(new URL(link.getAttribute('href') ?? '').searchParams.get('utm_content')).toBe('en');
   });
 
-  it('renders nothing after the campaign ends', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2027-02-14T00:00:00+09:00'));
+  it('renders nothing once the campaign ends', () => {
+    vi.setSystemTime(CAMPAIGN_END);
 
     const { container } = render(<AreunGlPromoCard placement="home_banner" locale="ko" />);
     expect(container).toBeEmptyDOMElement();
@@ -72,50 +65,26 @@ describe('AreunGlPromoCard', () => {
 });
 
 describe('AreunGlPerformancePromo', () => {
-  beforeEach(() => {
-    apiGet.mockReset();
-  });
+  it('shows the card for a fan-meeting booking', () => {
+    render(<AreunGlPerformancePromo genre="artist_celebrity" placement="reservation_detail" locale="ko" />);
 
-  it('shows the card for a fan-meeting booking', async () => {
-    apiGet.mockResolvedValue({ genre: 'artist_celebrity' });
-
-    render(withQueryClient(
-      <AreunGlPerformancePromo performanceId={performanceId} placement="reservation_detail" locale="ko" />,
-    ));
-
-    const link = await screen.findByRole('link');
+    const link = screen.getByRole('link');
     expect(new URL(link.getAttribute('href') ?? '').searchParams.get('utm_medium')).toBe('reservation_detail');
-    expect(apiGet).toHaveBeenCalledWith(`/api/v1/performances/${performanceId}`, { showErrorToast: false });
   });
 
-  it('stays hidden for other genres', async () => {
-    apiGet.mockResolvedValue({ genre: 'musical' });
-
-    const { container } = render(withQueryClient(
-      <AreunGlPerformancePromo performanceId={performanceId} placement="booking_complete" locale="ko" />,
-    ));
-
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+  it.each([['musical'], [undefined], [null]])('stays hidden for genre %s', (genre) => {
+    const { container } = render(
+      <AreunGlPerformancePromo genre={genre} placement="booking_complete" locale="ko" />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('stays hidden when the genre lookup fails', async () => {
-    apiGet.mockRejectedValue(new Error('unavailable'));
+  it('stays hidden for a fan-meeting booking after the campaign ends', () => {
+    vi.setSystemTime(CAMPAIGN_END);
 
-    const { container } = render(withQueryClient(
-      <AreunGlPerformancePromo performanceId={performanceId} placement="booking_complete" locale="ko" />,
-    ));
-
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('does not look up the performance without an id', () => {
-    const { container } = render(withQueryClient(
-      <AreunGlPerformancePromo performanceId={undefined} placement="booking_complete" locale="ko" />,
-    ));
-
-    expect(apiGet).not.toHaveBeenCalled();
+    const { container } = render(
+      <AreunGlPerformancePromo genre="artist_celebrity" placement="booking_complete" locale="ko" />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 });

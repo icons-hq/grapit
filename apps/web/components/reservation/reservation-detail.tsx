@@ -987,7 +987,7 @@ export function ReservationDetailView({
 
       {reservation.status === 'CONFIRMED' && (
         <AreunGlPerformancePromo
-          performanceId={reservation.performanceId}
+          genre={reservation.performanceGenre}
           placement="reservation_detail"
           locale={locale}
           className="mt-4"

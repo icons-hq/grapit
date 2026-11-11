@@ -17,8 +17,8 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
 }));
 
 vi.mock('@/components/promo/areun-gl-promo', () => ({
-  AreunGlPerformancePromo: ({ performanceId, placement }: { performanceId?: string; placement: string }) => (
-    <div data-testid="areun-gl-promo" data-performance-id={performanceId} data-placement={placement} />
+  AreunGlPerformancePromo: ({ genre, placement }: { genre?: string; placement: string }) => (
+    <div data-testid="areun-gl-promo" data-genre={genre} data-placement={placement} />
   ),
 }));
 
@@ -257,11 +257,11 @@ describe('BookingComplete QR ticket card', () => {
     expect(screen.getByText('카드', { exact: true })).toBeInTheDocument();
   });
 
-  it('places the Areun GL promo for this performance between the tickets and the CTA buttons', () => {
-    render(<BookingComplete booking={createReservation({ performanceId: 'performance-fan-meeting' })} />);
+  it('places the Areun GL promo with the booked genre between the tickets and the CTA buttons', () => {
+    render(<BookingComplete booking={createReservation({ performanceGenre: 'artist_celebrity' })} />);
 
     const promo = screen.getByTestId('areun-gl-promo');
-    expect(promo).toHaveAttribute('data-performance-id', 'performance-fan-meeting');
+    expect(promo).toHaveAttribute('data-genre', 'artist_celebrity');
     expect(promo).toHaveAttribute('data-placement', 'booking_complete');
     expect(screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`).compareDocumentPosition(promo))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
