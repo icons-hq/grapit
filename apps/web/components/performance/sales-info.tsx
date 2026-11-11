@@ -46,7 +46,7 @@ export function SalesInfo({ text, label }: { text: string; label: string }) {
     {salesInfoBlocks(text).map((block, index) => block.type === 'text'
       ? <p key={index}>{block.content}</p>
       : <div key={index} className="ticket-sales-table-scroll" role="region" aria-label={label} tabIndex={0}>
-        <table className="ticket-sales-table" aria-label={label} style={{ minWidth: block.rows[0].length * 140 }}>
+        <table className="ticket-sales-table" aria-label={label} style={{ minWidth: block.rows[0].length > 2 ? block.rows[0].length * 140 : undefined }}>
           <thead><tr>{block.rows[0].map((cell, column) => <th key={column} scope="col">{cell}</th>)}</tr></thead>
           <tbody>{block.rows.slice(1).map((row, rowIndex) => <tr key={rowIndex}>
             {row.map((cell, column) => <td key={column}>{cell}</td>)}
