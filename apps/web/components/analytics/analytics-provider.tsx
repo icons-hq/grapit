@@ -19,7 +19,11 @@ export function AnalyticsProvider() {
   const permittedRoute = normalizeAnalyticsPath(pathname) !== null && user?.role !== 'admin';
   const config = useQuery({ queryKey: ['analytics', 'config'], enabled: initialized && permittedRoute,
     queryFn: async () => { const response = await fetch(apiUrl('/api/v1/analytics/config'), { credentials: 'omit', signal: AbortSignal.timeout(1500) }); if (!response.ok) throw new Error('Analytics config unavailable'); return response.json() as Promise<AnalyticsConfig>; },
-    staleTime: 20_000, refetchInterval: 30_000, retry: false,
+    staleTime: (query) => query.state.data?.enabled ? 20_000 : 300_000,
+    // The default-off gate and outages must not add a polling loop during a
+    // ticket opening. An approved but paused collector checks less often.
+    refetchInterval: (query) => query.state.status === 'error' ? false : query.state.data?.enabled ? 30_000 : query.state.data?.environmentEnabled ? 300_000 : false,
+    retry: false,
   });
   const active = initialized && permittedRoute && !config.isError && config.data?.enabled === true;
   const queryKey = search.toString();
