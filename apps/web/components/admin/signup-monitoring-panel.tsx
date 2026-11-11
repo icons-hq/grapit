@@ -12,19 +12,12 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatAdminKstDateTime, parseAdminKstDateTimeInput } from '@/lib/admin-datetime';
 import { useSignupMonitoring } from '@/hooks/use-signup-monitoring';
+import { readAnnouncement, saveAnnouncement, subscribeAnnouncement } from '@/lib/admin-announcement';
 
-const STORAGE_KEY = 'grabit-signup-announcement-v1';
 const Chart = dynamic(() => import('./signup-monitoring-chart'), { ssr: false, loading: () => <Skeleton className="h-[230px] w-full" /> });
 const providerNames: Record<string, string> = { email: '이메일', kakao: '카카오', naver: '네이버', google: 'Google', unknown: '확인 불가' };
 const kst = (value: string) => formatAdminKstDateTime(value).replace('T', ' ');
 const percent = (count: number, total: number) => total ? (100 * count / total).toFixed(1) : '0.0';
-function readAnnouncement() {
-  try { const value = localStorage.getItem(STORAGE_KEY); return value && Number.isFinite(Date.parse(value)) ? value : null; } catch { return null; }
-}
-function subscribeAnnouncement(listener: () => void) {
-  window.addEventListener('storage', listener);
-  return () => window.removeEventListener('storage', listener);
-}
 const noSavedAnnouncement = () => null;
 
 export function SignupMonitoringPanel() {
@@ -42,7 +35,7 @@ export function SignupMonitoringPanel() {
     const age = parsed ? Date.now() - Date.parse(parsed) : -1;
     if (!parsed || age < 0 || age > 90 * 86400000) { setValidation('현재 이전, 최근 90일 이내의 공지 시각을 입력해주세요.'); return; }
     setValidation(''); setAnnouncement(parsed); setPeriod('announcement');
-    try { localStorage.setItem(STORAGE_KEY, parsed); } catch { /* the current selection still works */ }
+    saveAnnouncement(parsed);
   }
   return <section className="admin-panel flex flex-col gap-5" aria-labelledby="signup-monitor-heading">
     <div className="flex flex-wrap items-start justify-between gap-4">

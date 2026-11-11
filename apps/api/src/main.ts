@@ -16,6 +16,7 @@ import { checkEdgeProxySecretAtStartup } from './common/request-ip.js';
 import { RedisIoAdapter } from './modules/booking/providers/redis-io.adapter.js';
 import { REDIS_CLIENT } from './modules/booking/providers/redis.provider.js';
 import { adminBodyParser } from './config/admin-body-parser.js';
+import { analyticsBodyParser } from './config/analytics-body-parser.js';
 
 async function bootstrap() {
   // REVIEWS.md MED: FRONTEND_URL production hard-fail.
@@ -52,6 +53,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.set('trust proxy', 1);
   app.use('/api/v1/admin', adminBodyParser());
+  app.use('/api/v1/analytics', analyticsBodyParser());
 
   // Wire Socket.IO to the shared ioredis REDIS_CLIENT so seat-update events
   // broadcast across Cloud Run instances via Valkey pub/sub (VALK-04).

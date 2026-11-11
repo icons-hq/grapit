@@ -8,6 +8,7 @@ export * from './schemas/performance-preparation.schema';
 export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
 export * from './schemas/signup-monitoring.schema';
+export * from './schemas/analytics.schema';
 export * from './schemas/consent.schema';
 export * from './schemas/benefit.schema';
 export * from './schemas/admin-operations.schema';

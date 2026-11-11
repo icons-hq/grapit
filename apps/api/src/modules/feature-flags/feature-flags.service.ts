@@ -1,5 +1,5 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { readFeatureFlags } from '@grabit/shared';
+import { readFeatureFlags, parseBooleanFlag } from '@grabit/shared';
 import {
   canUseAdminBookingBypass,
   type AdminBookingBypassActor,
@@ -20,6 +20,10 @@ export class FeatureFlagsService {
 
   getFlags(): ReturnType<typeof readFeatureFlags> {
     return readFeatureFlags(this.runtimeEnvProvider());
+  }
+
+  isAnalyticsEnvironmentEnabled(): boolean {
+    return parseBooleanFlag(this.runtimeEnvProvider()['ANALYTICS_ENABLED'], false);
   }
 
   assertBookingEnabled(actor?: BookingActor): void {

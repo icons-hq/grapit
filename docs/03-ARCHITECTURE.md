@@ -4,6 +4,14 @@
 
 `GET /api/v1/admin/users/signup-monitoring` extends `AdminUserService` with aggregate-only, KST hourly signup monitoring for announcement/today/24h/7d windows (admin + `audit.read`). `/admin/users` refreshes it every 60 seconds while visible. It reads users, social accounts, reservations and payment approval timestamps without new tracking or writes. A single SQL snapshot compares an equal preceding interval. Withdrawn users remain included; merged/admin users are excluded. The `users.created_at` B-tree supports selective ranges. Definitions, local EXPLAIN evidence and limitations are in [the signup monitoring runbook](runbooks/signup-monitoring.md).
 
+## Consented visitor analytics
+
+`AnalyticsModule` owns public `GET /api/v1/analytics/config`, `POST /api/v1/analytics/events`, public withdrawal `POST /api/v1/analytics/withdraw`, authenticated `POST /api/v1/analytics/identify`, aggregate `GET /api/v1/admin/analytics` (`audit.read`) and `PUT /api/v1/admin/analytics/settings` (`security.manage`). Both the `ANALYTICS_ENABLED` environment gate and shared DB switch default off. The frontend's separate, optional consent is required; DNT/GPC and excluded private routes override it. Existing marketing-receipt consent is not reused.
+
+Tables are `analytics_events` (allowlisted append-only events), `analytics_sessions` (coarse context and verified account links), `analytics_attribution` (frozen signup acquisition), `analytics_rollups` (KST hour/day aggregates), `analytics_settings` (shared kill switch/rebuild cursor), and `analytics_opt_outs` (hashed withdrawal tombstones). Raw/session/attribution retention is 90 days, identifier-free aggregates 365 days, and Valkey liveness 5 minutes. Signup/payment/cancellation facts are read from the existing source tables, not duplicated as browser completion events.
+
+`AnalyticsDatabaseModule` adds one hard-capped connection per API/worker process, explicitly counted in the deploy connection budget. Ingestion drops busy batches rather than joining the ticketing pool. `AnalyticsMaintenanceModule` is loaded only by the existing five-minute bounded worker and registers a deduplicated `analytics-maintenance` pg-boss job for bounded rollup/backfill and deletion. Withdrawal serializes against ingestion by visitor and removes raw/account links before confirming completion; delayed batches are rejected and aggregates rebuilt. See [ADR 0013](adr/0013-first-party-consented-analytics.md) and [the analytics runbook](runbooks/visitor-analytics.md) for event definitions, partial coverage, consent withdrawal, capacity/cost, and activation gates. Current legal documents remain unchanged; the [ko/en amendment](legal/analytics-privacy-amendment-draft.md) is a review draft.
+
 ## 1. Architecture Summary
 
 Grabit is a pnpm monorepo with four runtime packages:

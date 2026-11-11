@@ -1,4 +1,5 @@
 'use client';
+import { trackAnalytics } from '@/lib/analytics-client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -563,6 +564,7 @@ function ConfirmPageContent() {
       }
 
       // 2. Initiate Toss payment — SDK redirects the browser
+      trackAnalytics('checkout_start', { performanceId });
       await paymentWidgetRef.current.requestPayment(result);
       paymentRequestInFlightRef.current = false;
       if (mountedRef.current) setIsProcessing(false);

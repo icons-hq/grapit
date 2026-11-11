@@ -1,3 +1,4 @@
+import { analyticsCopy } from '@/components/analytics/analytics-copy';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
@@ -13,6 +14,7 @@ export function Footer() {
   return (
     <footer className="ticket-footer mt-auto min-h-[120px]">
       <div className="ticket-container py-10">
+        <Link href={getLocalizedPathname('/legal/analytics', activeLocale)} className="mb-3 inline-block text-xs text-muted-foreground underline">{analyticsCopy(activeLocale).settings}</Link>
         {/* Legal links */}
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
           <Link
