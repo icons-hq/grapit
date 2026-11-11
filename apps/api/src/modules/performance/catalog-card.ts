@@ -6,12 +6,18 @@ import { isShowtimeSalesClosed, showtimeOnSaleCondition } from '../booking/showt
 export const publicCatalogCardSelection = {
   id: performances.id, title: performances.title, genre: performances.genre,
   posterUrl: performances.posterUrl, status: performances.status,
+  publishState: performances.publishState,
   bookingStartsAt: bookingPolicies.bookingStartsAt,
   startDate: performances.startDate, endDate: performances.endDate, venueName: venues.name,
   minPrice: sql<number | null>`(select min(${priceTiers.price}) from ${priceTiers} where ${priceTiers.performanceId} = ${performances.id})`,
   // Start of the last showtime; null when the performance has no showtime yet.
   lastShowtimeAt: sql<Date | string | null>`(select max(${showtimes.dateTime}) from ${showtimes} where ${showtimes.performanceId} = ${performances.id})`,
 };
+
+/** Public listing and public detail are independent: announcements stay unpublished. */
+export function publicCatalogVisibleCondition(): SQL {
+  return or(eq(performances.publishState, 'published'), eq(performances.announcementVisible, true)) as SQL;
+}
 
 /**
  * True when the performance has showtimes and every one of them has passed the
@@ -107,12 +113,13 @@ function latestShowtimeAt(
 }
 
 export function publicCatalogStatusCondition(status: PerformanceQuery['status'], now = new Date()) {
-  if (status === 'selling') return and(or(
+  if (status === 'selling') return and(eq(performances.publishState, 'published'), or(
     and(inArray(performances.status, ['selling', 'closing_soon']),
       or(isNull(bookingPolicies.bookingStartsAt), lte(bookingPolicies.bookingStartsAt, now))),
     and(eq(performances.status, 'upcoming'), lte(bookingPolicies.bookingStartsAt, now))),
   catalogShowtimesOpenCondition(now));
-  if (status === 'upcoming') return and(or(
+  if (status === 'upcoming') return and(ne(performances.status, 'ended'), or(
+    and(ne(performances.publishState, 'published'), eq(performances.announcementVisible, true)),
     and(eq(performances.status, 'upcoming'),
       or(isNull(bookingPolicies.bookingStartsAt), gt(bookingPolicies.bookingStartsAt, now))),
     and(inArray(performances.status, ['selling', 'closing_soon']), gt(bookingPolicies.bookingStartsAt, now))),
@@ -132,17 +139,21 @@ export function publicCatalogNotEndedCondition(now = new Date()): SQL {
 
 type CatalogCardRow = Pick<typeof performances.$inferSelect,
   'id' | 'title' | 'genre' | 'posterUrl' | 'status' | 'startDate' | 'endDate'> & {
+    publishState?: typeof performances.$inferSelect.publishState;
     bookingStartsAt?: Date | null; venueName: string | null; minPrice?: number | null;
     lastShowtimeAt?: Date | string | null;
   };
 
 // Used directly as an Array#map callback, so it takes no extra parameters.
 export function mapPublicCatalogCard(row: CatalogCardRow): PerformanceCardData {
+  const detailAvailable = row.publishState === undefined || row.publishState === 'published';
   return {
+    detailAvailable,
     id: row.id, title: row.title, genre: row.genre, posterUrl: row.posterUrl,
-    status: resolvePublicCatalogStatus(row.status, row.bookingStartsAt, new Date(), row.lastShowtimeAt),
+    status: !detailAvailable && row.status !== 'ended' && !areAllShowtimesSalesClosed(row.lastShowtimeAt)
+      ? 'upcoming' : resolvePublicCatalogStatus(row.status, row.bookingStartsAt, new Date(), row.lastShowtimeAt),
     startDate: row.startDate?.toISOString() ?? '', endDate: row.endDate?.toISOString() ?? '',
-    venueName: row.venueName ?? null, minPrice: row.minPrice ?? null,
+    venueName: row.venueName ?? null, minPrice: detailAvailable ? row.minPrice ?? null : null,
     bookingStartsAt: row.bookingStartsAt?.toISOString() ?? null,
   };
 }

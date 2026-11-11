@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { PerformanceCardLink } from '@/components/performance/performance-card-link';
 import { useLocale } from 'next-intl';
 import { ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -25,10 +26,10 @@ export function TicketCuration({ items }: {items:PerformanceCardData[]}) {
         {copy.genres[group.genre]}{active===group.genre?<ChevronUp size={20}/>:<ChevronDown size={20}/>}
       </button></h2>
       <div id={`curation-${group.genre}`} hidden={active!==group.genre} className="ticket-curation-cards">
-        {group.items.slice(0,5).map((item)=><Link key={item.id} href={getLocalizedPathname(`/performance/${item.id}`,locale)}>
+        {group.items.slice(0,5).map((item)=><PerformanceCardLink key={item.id} detailAvailable={item.detailAvailable} href={getLocalizedPathname(`/performance/${item.id}`,locale)}>
           {item.posterUrl&&<Image src={item.posterUrl} alt="" fill sizes="(max-width:767px) 180px, 240px" />}
           <strong>{item.title}</strong>
-        </Link>)}
+        </PerformanceCardLink>)}
       </div>
     </div>)}
   </section>;

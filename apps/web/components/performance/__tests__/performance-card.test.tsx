@@ -46,6 +46,18 @@ const basePerformance: PerformanceCardData = {
 };
 
 describe('PerformanceCard', () => {
+  it('shows an announcement without a clickable or focusable detail link', () => {
+    render(<PerformanceCard performance={{ ...basePerformance, detailAvailable: false }} />);
+    expect(screen.getByText(basePerformance.title)).toBeDefined();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText(basePerformance.title).closest('[aria-disabled]')?.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('keeps published performances linked', () => {
+    render(<PerformanceCard performance={{ ...basePerformance, detailAvailable: true }} />);
+    expect(screen.getByRole('link').getAttribute('href')).toBe('/performance/performance-1');
+  });
+
   beforeEach(() => {
     localeMock.activeLocale = 'ko';
     runtimeFlagsMock.bookingEnabled = true;

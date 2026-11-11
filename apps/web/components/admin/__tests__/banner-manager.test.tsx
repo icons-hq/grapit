@@ -216,6 +216,28 @@ describe('BannerForm', () => {
     }));
   });
 
+  it.each([6, 20])('accepts a %i MB banner without the former 5 MB cap', async (megabytes) => {
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      uploadUrl:'https://upload.example.com/banner',publicUrl:'https://r2.example.com/banners/large.png',mode:'r2',cacheControl:null,
+    });
+    render(<BannerForm onSubmit={vi.fn()} onCancel={vi.fn()} isSubmitting={false} />, {wrapper:createWrapper()});
+    const file=new File(['image'],'large.png',{type:'image/png'});
+    Object.defineProperty(file,'size',{value:megabytes*1024*1024});
+    fireEvent.change(screen.getByLabelText('배너 이미지 파일'),{target:{files:[file]}});
+    await waitFor(()=>expect(global.fetch).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('rejects banners above 20 MB before requesting an upload URL', async () => {
+    render(<BannerForm onSubmit={vi.fn()} onCancel={vi.fn()} isSubmitting={false} />, {wrapper:createWrapper()});
+    const file=new File(['image'],'large.png',{type:'image/png'});
+    Object.defineProperty(file,'size',{value:20*1024*1024+1});
+    fireEvent.change(screen.getByLabelText('배너 이미지 파일'),{target:{files:[file]}});
+    expect(toast.error).toHaveBeenCalledWith('배너 이미지는 20MB 이하여야 합니다.');
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it('keeps image upload and submits expanded banner fields', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

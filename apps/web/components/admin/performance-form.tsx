@@ -345,6 +345,7 @@ function mapToFormValues(
     posterUrl: data.posterUrl,
     description: data.description,
     descriptionVisible: data.descriptionVisible !== false,
+    announcementVisible: data.announcementVisible === true,
     startDate: formatAdminKstDate(data.startDate),
     endDate: formatAdminKstDate(data.endDate),
     runtime: data.runtime,
@@ -472,6 +473,7 @@ export function PerformanceForm({
           posterUrl: null,
           description: null,
           descriptionVisible: true,
+          announcementVisible: false,
           startDate: '',
           endDate: '',
           runtime: null,
@@ -820,6 +822,16 @@ export function PerformanceForm({
       {/* Section: 기본 정보 */}
       <section hidden={step !== 'basic'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">기본 정보</h2>
+        <Controller control={form.control} name="announcementVisible" render={({ field }) => (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border p-4">
+            <div>
+              <Label htmlFor="announcement-visible">상세 공개 전 목록에 공지</Label>
+              <p className="mt-1 text-sm text-gray-500">포스터·공연명·일정·장소·예매 오픈 일정을 목록에 표시합니다. 상세페이지와 예매는 공개 승인 전까지 열리지 않습니다.</p>
+              {isPublished && <p className="mt-1 text-sm text-gray-500">이미 공개된 공연은 기존 공개 상태를 유지합니다.</p>}
+            </div>
+            <Switch id="announcement-visible" checked={field.value === true} onCheckedChange={field.onChange} disabled={isPublished} />
+          </div>
+        )} />
         <div className="grid gap-4">
           <div>
             <label htmlFor="title" className="mb-1 block text-sm font-semibold">

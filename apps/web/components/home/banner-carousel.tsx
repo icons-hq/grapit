@@ -43,7 +43,7 @@ export function BannerCarousel({ banners, performances = [], isLoading = false, 
   const slides = banners.length ? banners.map((banner) => ({
     id: banner.id, image: banner.imageUrl, href: localizedBannerHref(banner.linkUrl, locale), title: '', subtitle: '',
   })) : performances.filter((item) => item.posterUrl).slice(0, 8).map((item) => ({
-    id: item.id, image: item.posterUrl!, href: getLocalizedPathname(`/performance/${item.id}`, locale),
+    id: item.id, image: item.posterUrl!, href: item.detailAvailable === false ? null : getLocalizedPathname(`/performance/${item.id}`, locale),
     title: item.title, subtitle: [item.venueName, formatCatalogDateRange(item.startDate, item.endDate, locale)].filter(Boolean).join(' · '),
   }));
   useEffect(() => {

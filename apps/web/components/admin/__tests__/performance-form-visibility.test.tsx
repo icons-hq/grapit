@@ -226,6 +226,15 @@ describe('PerformanceForm copy visibility controls', () => {
     );
   });
 
+  it('saves announcement visibility independently of full publication and detail copy', async () => {
+    const user=userEvent.setup();
+    renderWithClient(<PerformanceForm mode="edit" initialData={{...fixturePerformance,publishState:'draft'}} performanceId={fixturePerformance.id} />);
+    await user.click(screen.getByRole('switch',{name:'상세 공개 전 목록에 공지'}));
+    await user.click(screen.getByRole('button',{name:/4\s*검수·공개/}));
+    await user.click(screen.getByRole('button',{name:'공연 정보에 반영'}));
+    await waitFor(()=>expect(apiClient.post).toHaveBeenCalledWith('/api/v1/admin/performance-drafts',expect.objectContaining({data:expect.objectContaining({announcementVisible:true,description:fixturePerformance.description})}),{showErrorToast:false}));
+  });
+
   it('lets an operator review the final step before applying anything', async () => {
     const user = userEvent.setup();
     renderWithClient(<PerformanceForm mode="edit" initialStep="content" initialData={fixturePerformance} performanceId={fixturePerformance.id} />);

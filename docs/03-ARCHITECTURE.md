@@ -882,3 +882,28 @@ Docs-only updates normally require:
 - Data model descriptions must be refreshed from Drizzle schema files.
 - Cross-package contracts must be refreshed from `packages/shared/src`.
 - Deployment descriptions must be refreshed from `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, and Dockerfiles.
+
+### Announcement-only performance cards
+
+`performances.announcement_visible` opts an unpublished performance into the public
+home, genre/catalog, venue and search listings. It defaults to false. Operators can
+change it with **상세 공개 전 목록에 공지** in the performance form. This setting
+exposes the poster, title, date range, venue name and booking-opening schedule only;
+announcement cards return `detailAvailable: false` and no price, and render without
+an anchor or Next.js prefetch. Unpublished announcements remain upcoming even after
+the opening schedule passes, and do not enter the on-sale/hot list.
+
+Public detail and booking authorization still require `publish_state = published`;
+announcing a draft does not publish its descriptions, seat maps, benefits or booking.
+Admin previews retain their existing guarded access. To withdraw an announcement,
+clear the flag. To open the detail and sale normally, use the existing publication
+review workflow; the public card then becomes clickable regardless of the flag.
+Admin updates invalidate catalog generations using the existing freshness service.
+
+Banner uploads accept JPG, PNG and WebP up to 20 MiB (shown as 20MB in the admin UI).
+The browser enforces this editorial limit before requesting a presigned upload URL;
+the file is PUT directly into R2, so the API JSON body-parser limit does not apply.
+Other media forms keep their existing limits. Production banner delivery still uses
+Next.js image optimization, and the carousel preserves the image aspect ratio.
+The 20MB choice follows [Shopify's image-upload guidance](https://help.shopify.com/en/manual/online-store/images/theme-images);
+it is a product choice, not a universal industry standard.

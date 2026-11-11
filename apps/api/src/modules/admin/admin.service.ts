@@ -846,6 +846,7 @@ export class AdminService {
           posterUrl: input.posterUrl ?? null,
           description: input.description ?? null,
           descriptionVisible: input.descriptionVisible ?? true,
+          announcementVisible: input.announcementVisible ?? false,
           detailImages: normalizePerformanceDetailImages(input.detailImages),
           startDate: parseAdminKstDateTime(input.startDate),
           endDate: parseAdminKstDateTime(input.endDate),
@@ -948,6 +949,7 @@ export class AdminService {
         posterUrl: perf!.posterUrl,
         description: perf!.description,
         descriptionVisible: perf!.descriptionVisible,
+        announcementVisible: perf!.announcementVisible,
         detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
@@ -1016,6 +1018,9 @@ export class AdminService {
       if (venueId !== undefined) updateData['venueId'] = venueId;
       if (input.posterUrl !== undefined) updateData['posterUrl'] = input.posterUrl;
       if (input.description !== undefined) updateData['description'] = input.description;
+      if (input.announcementVisible !== undefined) {
+        updateData['announcementVisible'] = input.announcementVisible;
+      }
       if (input.descriptionVisible !== undefined) {
         updateData['descriptionVisible'] = input.descriptionVisible;
       }
@@ -1177,6 +1182,7 @@ export class AdminService {
         posterUrl: perf!.posterUrl,
         description: perf!.description,
         descriptionVisible: perf!.descriptionVisible,
+        announcementVisible: perf!.announcementVisible,
         detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
@@ -1325,6 +1331,7 @@ export class AdminService {
         posterUrl: perf.posterUrl,
         description: perf.description,
         descriptionVisible: perf.descriptionVisible,
+        announcementVisible: perf.announcementVisible,
         detailImages: normalizePerformanceDetailImages(perf.detailImages),
         startDate: perf.startDate?.toISOString() ?? '',
         endDate: perf.endDate?.toISOString() ?? '',

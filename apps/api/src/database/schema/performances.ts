@@ -37,6 +37,7 @@ export const performances = pgTable('performances', {
   posterUrl: varchar('poster_url', { length: 1000 }),
   description: text('description'),
   descriptionVisible: boolean('description_visible').notNull().default(true),
+  announcementVisible: boolean('announcement_visible').notNull().default(false),
   startDate: timestamp('start_date', { withTimezone: true }).notNull(),
   endDate: timestamp('end_date', { withTimezone: true }).notNull(),
   runtime: varchar('runtime', { length: 50 }),
