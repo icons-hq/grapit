@@ -15,6 +15,7 @@ import { ProviderChargeAmount } from '@/components/booking/provider-charge-amoun
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
+import { AreunGlPerformancePromo } from '@/components/promo/areun-gl-promo';
 import {
   buildQrCheckInUrl,
   QrTicketImage,
@@ -582,6 +583,12 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
           />
         </CardContent>
       </Card>
+
+      <AreunGlPerformancePromo
+        performanceId={booking.performanceId}
+        placement="booking_complete"
+        locale={locale}
+      />
 
       <Separator />
 

@@ -25,6 +25,7 @@ import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import { TicketBenefitCoupons } from '@/components/reservation/ticket-benefit-coupons';
+import { AreunGlPerformancePromo } from '@/components/promo/areun-gl-promo';
 import { useRefundPreview } from '@/hooks/use-reservations';
 import {
   buildQrCheckInUrl,
@@ -982,6 +983,15 @@ export function ReservationDetailView({
             />}
           </CardContent>
         </Card>
+      )}
+
+      {reservation.status === 'CONFIRMED' && (
+        <AreunGlPerformancePromo
+          performanceId={reservation.performanceId}
+          placement="reservation_detail"
+          locale={locale}
+          className="mt-4"
+        />
       )}
 
       {showRefundPreview && (

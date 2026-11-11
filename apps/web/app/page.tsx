@@ -11,6 +11,7 @@ import { GenreGrid } from '@/components/home/genre-grid';
 import { TicketShelf } from '@/components/home/ticket-shelf';
 import { TicketCuration, VenueShelf } from '@/components/home/ticket-curation';
 import { GenreTabs } from '@/components/performance/genre-tabs';
+import { AreunGlPromoCard } from '@/components/promo/areun-gl-promo';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { useCatalogPerformances, useHomeBanners } from '@/hooks/use-performances';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
@@ -36,6 +37,7 @@ export default function HomePage() {
     <div className="ticket-container">
       <Link href={href('/support')} className="ticket-notice"><span>{copy.notice}</span><p>{copy.noticeText}</p><ChevronRight size={16} /></Link>
       <GenreGrid />
+      <AreunGlPromoCard placement="home_banner" locale={locale} className="areun-promo-home" />
       {isResolved && !bookingEnabled && <p role="status" className="ticket-booking-notice">{legacy.home.bookingPaused}</p>}
       <TicketShelf title={copy.upcoming} href={href('/upcoming')} items={upcoming.data?.data} isLoading={upcoming.isLoading} isError={upcoming.isError}
         onRetry={() => void upcoming.refetch()} variant="opening" empty={copy.noUpcoming} />

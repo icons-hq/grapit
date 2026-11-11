@@ -441,7 +441,35 @@ body {
 .ticket-account-tabs [role="tab"][data-state="active"] { color: var(--color-primary) !important; border-color: var(--color-primary); }
 .ticket-mypage section { border-radius: 20px; box-shadow: none; }
 .ticket-auth [role="tabpanel"] { background: white; }
+/* Areun GL partner promo (campaign settings: lib/promo/areun-gl-promo.ts).
+ * The ink colour comes from the creative so the art's dark wall blends into the copy area.
+ * Narrow containers stack art over copy; from 600px the art sits on the right behind a fade. */
+.areun-promo { --areun-promo-ink: #1b1722; container-type: inline-size; width: 100%; }
+.areun-promo-home { margin-top: 48px; }
+.areun-promo-link { position: relative; display: block; overflow: hidden; border-radius: 20px; background: var(--areun-promo-ink); color: #fff; isolation: isolate; }
+.areun-promo-link:focus-visible { outline: 3px solid var(--color-primary); outline-offset: 3px; }
+.areun-promo-media { position: relative; display: block; aspect-ratio: 2 / 1; }
+.areun-promo-media::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, var(--areun-promo-ink) 100%); }
+.areun-promo-art { object-fit: cover; object-position: 72% 32%; }
+.areun-promo-copy { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 4px 20px 20px; word-break: keep-all; overflow-wrap: anywhere; }
+.areun-promo-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; line-height: 16px; color: #ffffffd9; }
+.areun-promo-badge > span { padding: 1px 6px; border: 1px solid #ffffff80; border-radius: 4px; font-size: 10px; line-height: 14px; }
+.areun-promo-title { font-size: 19px; line-height: 1.38; font-weight: 750; letter-spacing: -.4px; text-wrap: balance; }
+.areun-promo-body { font-size: 13px; line-height: 1.6; color: #ffffffc7; }
+.areun-promo-note { font-size: 11px; line-height: 1.5; color: #ffffff99; }
+.areun-promo-cta { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; margin-top: 6px; padding: 0 16px; border-radius: 20px; background: #fff; color: var(--color-gray-900); font-size: 14px; font-weight: 650; transition: background-color .15s; }
+.areun-promo-link:hover .areun-promo-cta { background: var(--color-info-surface); }
+@container (min-width: 600px) {
+  .areun-promo-link { display: flex; align-items: center; min-height: 240px; }
+  .areun-promo-media { position: absolute; inset: 0 0 0 auto; width: 64%; aspect-ratio: auto; }
+  .areun-promo-media::after { background: linear-gradient(90deg, var(--areun-promo-ink) 0%, transparent 45%); }
+  .areun-promo-art { object-position: 70% 28%; }
+  .areun-promo-copy { max-width: 48%; gap: 10px; padding: 32px 0 32px 40px; }
+  .areun-promo-title { font-size: 24px; letter-spacing: -.6px; }
+  .areun-promo-body { font-size: 14px; }
+}
 @media (max-width: 1199px) {
+  .areun-promo-home { margin-top: 32px; }
   .ticket-header-actions { gap: 14px; }.ticket-header-search { flex-basis: 330px; }
   .ticket-header-action span { display: none; }.ticket-header-actions .ticket-header-action { min-width: 28px; }
   .ticket-genre-link { font-size: 13px; }.ticket-genre-art { width: 64px; height: 64px; }

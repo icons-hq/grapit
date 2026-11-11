@@ -103,6 +103,7 @@ The web app is grouped by operational surface:
 - `components/auth`: login, signup, phone verification, profile, auth guard
 - `components/booking`: date/showtime picker, floor selector, SVG seat viewer, selection panel, payment deadline, Toss widget, completion QR
 - `components/reservation`: reservation list/detail, QR card, refund timeline, cancellation modal
+- `components/promo`: time-boxed partner promo cards (see [Partner promo cards](#partner-promo-cards))
 - `components/field`: QR image helper, scanner check-in, offline sync status, field monitor
 - `components/admin`: performance form, floor editor, booking table/export, support content, operations inbox, settlement, security, audit, users
 - `components/ui`: shared primitives used by the app
@@ -907,3 +908,24 @@ Other media forms keep their existing limits. Production banner delivery still u
 Next.js image optimization, and the carousel preserves the image aspect ratio.
 The 20MB choice follows [Shopify's image-upload guidance](https://help.shopify.com/en/manual/online-store/images/theme-images);
 it is a product choice, not a universal industry standard.
+
+### Partner promo cards
+
+`components/promo/areun-gl-promo.tsx` shows the Areun (areun.ai) GL partner card on
+the home page (below the genre grid, every visitor), the booking-complete screen
+(between the QR tickets and the CTA buttons) and a confirmed reservation's detail
+(under the QR tickets). Campaign values live in `lib/promo/areun-gl-promo.ts`:
+
+- The card disappears at `endsAt` (2027-02-14 00:00 KST); no deploy is needed to end it.
+- Booking-complete and reservation-detail cards appear only when the booked
+  performance's genre is in `targetGenres` (`artist_celebrity`). The genre comes from
+  a public `GET /api/v1/performances/:id` read with `showErrorToast: false`; a failed
+  lookup hides the card and never surfaces an error on the booking screens.
+- Korean screens show Korean copy; other locales show English copy that notes Areun
+  is Korean-only. The card is labelled as an advertisement and opens in a new tab
+  with `rel="sponsored noopener"`.
+- Grabit records no click data. Every link carries `utm_source=grabit`,
+  `utm_campaign=girlrules-fanmeeting-2026-11`, `utm_medium` per slot
+  (`home_banner`, `booking_complete`, `reservation_detail`) and `utm_content`
+  (`ko`/`en`). Arrivals appear in Areun's `/admin/analytics` campaign table,
+  grouped by source, medium and campaign.

@@ -37,6 +37,10 @@ describe('Buyer ticket discovery', () => {
     expect(screen.getAllByRole('heading', { name: 'Girl Rules Fanmeet' })).toHaveLength(3);
     expect(screen.getByText('From KRW 50,000')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'My tickets' })).toHaveAttribute('href', '/en/mypage?tab=wallet');
+    const promo = screen.getByRole('complementary', { name: 'Advertisement' });
+    const promoLink = new URL(promo.querySelector('a')?.getAttribute('href') ?? '');
+    expect(promoLink.searchParams.get('utm_medium')).toBe('home_banner');
+    expect(promoLink.searchParams.get('utm_content')).toBe('en');
     expect(mocks.queries).toHaveBeenCalledWith(expect.objectContaining({status:'upcoming',sort:'opening'}));
     expect(mocks.queries).toHaveBeenCalledWith(expect.objectContaining({genre:undefined,sort:'popular'}));
   });
