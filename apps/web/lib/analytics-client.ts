@@ -30,8 +30,14 @@ export function getAnalyticsChoice(): 'accepted' | 'declined' | null {
   } catch { return null; }
 }
 export function subscribeAnalyticsChoice(listener: () => void) {
-  window.addEventListener(ANALYTICS_CHOICE_EVENT, listener); window.addEventListener('storage', listener);
-  return () => { window.removeEventListener(ANALYTICS_CHOICE_EVENT, listener); window.removeEventListener('storage', listener); };
+  const onStorage = (event: StorageEvent) => {
+    // Invalidate this tab even if a later re-consent is already in shared storage.
+    // Never remove the new visitor ID created by the tab that accepted again.
+    if (event.key === ANALYTICS_CHOICE_KEY || event.key === null) resetSession();
+    listener();
+  };
+  window.addEventListener(ANALYTICS_CHOICE_EVENT, listener); window.addEventListener('storage', onStorage);
+  return () => { window.removeEventListener(ANALYTICS_CHOICE_EVENT, listener); window.removeEventListener('storage', onStorage); };
 }
 export function setAnalyticsChoice(value: 'accepted' | 'declined') {
   if (value === 'accepted' && getAnalyticsWithdrawalPending()) return;
@@ -45,6 +51,9 @@ export function setAnalyticsChoice(value: 'accepted' | 'declined') {
     } catch { /* in-memory request can still be sent */ }
   }
   if (previous !== 'accepted') resetIdentity();
+  // Publish the shared identity before acceptance wakes other tabs. Otherwise
+  // both tabs can race to create different visitor IDs after a withdrawal.
+  try { if (value === 'accepted' && enabled && !analyticsPrivacySignal()) browserVisitorId(Date.now()); } catch { /* optional identifier support */ }
   memoryChoice = JSON.stringify({ version: ANALYTICS_NOTICE_VERSION, value, at: Date.now() });
   try { localStorage.setItem(ANALYTICS_CHOICE_KEY, memoryChoice); } catch { /* session-only choice */ }
   if (value === 'declined') resetIdentity();
@@ -73,14 +82,26 @@ function allowed() {
   return enabled && getAnalyticsChoice() === 'accepted' && !analyticsPrivacySignal() && !navigator.webdriver
     && useAuthStore.getState().user?.role !== 'admin' && normalizeAnalyticsPath(window.location.pathname) !== null;
 }
-function resetIdentity() {
+function resetSession() {
   queue = []; page = null; session = null; identified = '';
-  try { localStorage.removeItem(VISITOR_KEY); sessionStorage.removeItem(SESSION_KEY); } catch { /* optional storage */ }
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* optional storage */ }
+}
+function resetIdentity() {
+  resetSession();
+  try { localStorage.removeItem(VISITOR_KEY); } catch { /* optional storage */ }
+}
+function discardStaleSession() {
+  if (!session) return;
+  try {
+    const visitor = JSON.parse(localStorage.getItem(VISITOR_KEY) ?? 'null') as { id?: string; expires?: number } | null;
+    if (visitor?.id !== session.visitorId || !(visitor.expires && visitor.expires > Date.now())) resetSession();
+  } catch { /* unavailable storage keeps the current in-memory session */ }
 }
 export function configureAnalytics(active: boolean, locale: string) {
   enabled = active;
   language = locale.startsWith('zh') ? 'zh' : ['ko', 'en', 'th'].includes(locale) ? locale as 'ko' | 'en' | 'th' : 'other';
-  if (!active || getAnalyticsChoice() !== 'accepted' || analyticsPrivacySignal()) { queue = []; page = null; }
+  if (getAnalyticsChoice() !== 'accepted' || analyticsPrivacySignal()) resetSession();
+  else if (!active) { queue = []; page = null; }
 }
 export function analyticsTouch(url: URL, referrer: string): AnalyticsTouch {
   let referrerHost: string | null = null;
@@ -107,6 +128,12 @@ function saveSession() {
     if (session && visitor?.id === session.visitorId) localStorage.setItem(VISITOR_KEY, JSON.stringify({ ...visitor, lastSessionId: session.id }));
   } catch { /* optional storage */ }
 }
+function browserVisitorId(now: number) {
+  try { const saved = JSON.parse(localStorage.getItem(VISITOR_KEY) ?? 'null'); if (saved?.expires > now && /^[0-9a-f-]{36}$/i.test(saved?.id ?? '')) return saved.id as string; } catch { /* optional storage */ }
+  const id = crypto.randomUUID();
+  try { localStorage.setItem(VISITOR_KEY, JSON.stringify({ id, expires: now + RETENTION_MS })); } catch { /* ephemeral */ }
+  return id;
+}
 function ensureSession(interaction: boolean): boolean {
   const now = Date.now(); const userId = useAuthStore.getState().user?.id ?? null;
   if (!session) {
@@ -115,6 +142,8 @@ function ensureSession(interaction: boolean): boolean {
       if (saved && /^[0-9a-f-]{36}$/i.test(saved.id) && /^[0-9a-f-]{36}$/i.test(saved.visitorId) && analyticsTouchSchema.safeParse(saved.touch).success && Number.isFinite(saved.lastActivity)) session = saved;
     } catch { /* corrupt or disabled storage */ }
   }
+  // A suspended tab can miss storage events. Recheck before any use of its ID.
+  discardStaleSession();
   if (session?.owner && session.owner !== userId) resetIdentity();
   if (session && now - session.lastActivity > ANALYTICS_SESSION_MS) {
     if (!interaction) return false;
@@ -123,10 +152,7 @@ function ensureSession(interaction: boolean): boolean {
   }
   if (!session) {
     if (!interaction) return false;
-    let visitorId = '';
-    try { const saved = JSON.parse(localStorage.getItem(VISITOR_KEY) ?? 'null'); if (saved?.expires > now && /^[0-9a-f-]{36}$/i.test(saved?.id ?? '')) visitorId = saved.id as string; } catch { /* optional storage */ }
-    if (!visitorId) { visitorId = crypto.randomUUID(); try { localStorage.setItem(VISITOR_KEY, JSON.stringify({ id: visitorId, expires: now + RETENTION_MS })); } catch { /* ephemeral */ } }
-    session = { id: crypto.randomUUID(), visitorId, lastActivity: now, touch: analyticsTouch(new URL(window.location.href), document.referrer), owner: null };
+    session = { id: crypto.randomUUID(), visitorId: browserVisitorId(now), lastActivity: now, touch: analyticsTouch(new URL(window.location.href), document.referrer), owner: null };
   }
   if (interaction) session.lastActivity = now;
   saveSession(); return true;
@@ -186,6 +212,7 @@ export function recordAnalyticsScroll() {
 }
 export function flushAnalytics() {
   try {
+    discardStaleSession();
     if (!queue.length || !session) return;
     if (!allowed()) { queue = []; return; }
     const batch = analyticsBatchSchema.safeParse({ consentVersion: ANALYTICS_NOTICE_VERSION, consentedAt: consentTime(), visitorId: session.visitorId, sessionId: session.id, touch: session.touch, ...dimensions(), events: queue.splice(0, ANALYTICS_MAX_BATCH) });
@@ -200,6 +227,7 @@ export function flushAnalytics() {
 }
 export async function identifyAnalytics() {
   try {
+    discardStaleSession();
     const { user, accessToken } = useAuthStore.getState();
     if (!allowed() || !session || !user || user.role !== 'user' || !accessToken || identifying || identified === `${user.id}:${session.id}`) return;
     identifying = true; flushAnalytics();

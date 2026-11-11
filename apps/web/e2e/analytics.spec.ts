@@ -47,20 +47,42 @@ test('real browser navigation persists sanitized events through the local analyt
   const posted: string[] = []; page.on('request', (r) => { if (r.url().endsWith('/analytics/events')) posted.push(r.postData() ?? ''); });
   const since = new Date(Date.now() - 3600000).toISOString();
   const report = async () => { const params = new URLSearchParams({ since, until: new Date(Date.now() + 1000).toISOString(), granularity: 'hour' }); const response = await request.get(`${api}/api/v1/admin/analytics?${params}`, { headers: { Authorization: 'Bearer admin-e2e-access-token' } }); expect(response.ok()).toBe(true); return response.json() as Promise<AnalyticsReport>; };
+  // The local harness can be reused after a failed run. Assert this browser's
+  // contribution and removal without assuming unrelated fixture data is empty.
+  const baseline = (await report()).summary;
   await page.goto(`/performance/${performanceId}?utm_source=instagram&utm_campaign=launch_20261111&utm_content=poster_a&ticket=must-not-collect`);
   await expect(page.getByRole('heading', { name: '분석 검증 공연', exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '분석 허용', exact: true })).toBeVisible(); expect(posted).toHaveLength(0); await capture(page, 'analytics-consent');
   await page.setViewportSize({ width: 390, height: 844 }); await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); await capture(page, 'analytics-consent-mobile');
   await page.getByRole('button', { name: '분석 허용', exact: true }).click();
   await page.goto('/auth'); await expect(page.getByRole('tab', { name: '회원가입', exact: true })).toBeVisible(); await page.waitForTimeout(300); await page.getByRole('tab', { name: '회원가입', exact: true }).click();
   await page.goto('/legal/analytics'); await expect(page.getByRole('heading', { name: '방문 분석 설정' })).toBeVisible();
-  await expect.poll(async () => (await report()).summary.pageViews, { timeout: 10000 }).toBeGreaterThanOrEqual(2);
+  await expect.poll(async () => (await report()).summary.pageViews, { timeout: 10000 }).toBeGreaterThanOrEqual(baseline.pageViews + 2);
+  await expect.poll(async () => (await report()).summary.visitors).toBe(baseline.visitors + 1);
   const observed = await report(); expect(observed.performances[0]?.views).toBeGreaterThanOrEqual(1); expect(observed.sources.some((r) => r.source === 'instagram')).toBe(true);
   expect(posted.join('')).not.toContain('must-not-collect');
   const dir = process.env['ANALYTICS_QA_DIR']; if (dir) await writeFile(`${dir}/analytics-live-report.json`, JSON.stringify(observed, null, 2));
+  const otherTab = await page.context().newPage();
+  await otherTab.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+  await otherTab.goto('/auth');
+  await expect.poll(() => otherTab.evaluate(() => sessionStorage.getItem('grabit-analytics-session-v1'))).not.toBeNull();
+  const previousVisitor = await otherTab.evaluate(() => JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!).visitorId as string);
   const withdrawn = page.waitForResponse((r) => r.url().endsWith('/analytics/withdraw') && r.status() === 200);
   await page.getByRole('button', { name: '분석 거부', exact: true }).click(); await withdrawn;
-  await expect.poll(async () => (await report()).summary.visitors).toBe(0);
+  await expect.poll(async () => (await report()).summary.visitors).toBe(baseline.visitors);
   await expect(page.getByText('이 브라우저에서 분석을 거부했습니다')).toBeVisible(); await capture(page, 'analytics-withdrawn');
+  await expect.poll(() => otherTab.evaluate(() => sessionStorage.getItem('grabit-analytics-session-v1'))).toBeNull();
+  await expect(page.getByRole('button', { name: '분석 허용', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '분석 허용', exact: true }).click();
+  await expect.poll(() => otherTab.evaluate(() => sessionStorage.getItem('grabit-analytics-session-v1'))).not.toBeNull();
+  const nextVisitor = await otherTab.evaluate(() => JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!).visitorId as string);
+  expect(nextVisitor).not.toBe(previousVisitor);
+  expect(nextVisitor).toBe(await page.evaluate(() => JSON.parse(localStorage.getItem('grabit-analytics-visitor-v1')!).id as string));
+  await otherTab.goto('/legal/analytics');
+  await expect.poll(async () => (await report()).summary.visitors).toBe(baseline.visitors + 1);
+  const withdrawnAgain = page.waitForResponse((r) => r.url().endsWith('/analytics/withdraw') && r.status() === 200);
+  await page.getByRole('button', { name: '분석 거부', exact: true }).click(); await withdrawnAgain;
+  await expect.poll(async () => (await report()).summary.visitors).toBe(baseline.visitors);
+  await otherTab.close();
 });
 
 test('unavailable analytics never blocks signup input or exposes input text', async ({ page }) => {

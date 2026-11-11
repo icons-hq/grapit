@@ -57,4 +57,39 @@ describe('first-party browser tracker', () => {
     client.setAnalyticsChoice('declined'); await Promise.resolve(); await Promise.resolve();
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/analytics/withdraw'), expect.objectContaining({ body: JSON.stringify({ visitorId: prior.visitorId, sessionId: prior.id, consentVersion: 'analytics-v1' }) }));
   });
+  it('publishes a shared visitor before notifying accepted tabs while the collector is active', () => {
+    client.configureAnalytics(true, 'ko');
+    const listener = vi.fn(() => expect(localStorage.getItem('grabit-analytics-visitor-v1')).not.toBeNull());
+    const unsubscribe = client.subscribeAnalyticsChoice(listener);
+    try { client.setAnalyticsChoice('accepted'); expect(listener).toHaveBeenCalledOnce(); } finally { unsubscribe(); }
+  });
+  it.each([true, false])('uses the current browser identity after another tab withdraws and accepts again (storage event: %s)', async (receiveStorageEvent) => {
+    auth.user = { id: crypto.randomUUID(), role: 'user' }; auth.accessToken = 'synthetic-token';
+    const unsubscribe = client.subscribeAnalyticsChoice(() => client.configureAnalytics(true, 'ko'));
+    try {
+      client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); await client.identifyAnalytics();
+      const prior = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
+      // Emulate the shared localStorage changes from a separate tab. This tab's
+      // sessionStorage and module state deliberately retain the earlier session.
+      const declined = JSON.stringify({ version: 'analytics-v1', value: 'declined', at: Date.now() });
+      localStorage.setItem(client.ANALYTICS_CHOICE_KEY, declined); localStorage.removeItem('grabit-analytics-visitor-v1');
+      if (receiveStorageEvent) {
+        window.dispatchEvent(new StorageEvent('storage', { key: client.ANALYTICS_CHOICE_KEY, newValue: declined }));
+        expect(sessionStorage.getItem('grabit-analytics-session-v1')).toBeNull();
+      }
+      const transmissions = vi.mocked(navigator.sendBeacon).mock.calls.length;
+      client.trackAnalytics('signup_start'); client.flushAnalytics(); expect(navigator.sendBeacon).toHaveBeenCalledTimes(transmissions);
+      const visitorId = crypto.randomUUID();
+      localStorage.setItem('grabit-analytics-visitor-v1', JSON.stringify({ id: visitorId, expires: Date.now() + 86400000 }));
+      const accepted = JSON.stringify({ version: 'analytics-v1', value: 'accepted', at: Date.now() });
+      localStorage.setItem(client.ANALYTICS_CHOICE_KEY, accepted);
+      if (receiveStorageEvent) window.dispatchEvent(new StorageEvent('storage', { key: client.ANALYTICS_CHOICE_KEY, newValue: accepted }));
+      client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); await client.identifyAnalytics();
+      const current = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
+      expect(current.id).not.toBe(prior.id); expect(current.visitorId).toBe(visitorId);
+      expect(JSON.parse(localStorage.getItem('grabit-analytics-visitor-v1')!).id).toBe(visitorId);
+      expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/analytics/identify'), expect.objectContaining({ body: JSON.stringify({ visitorId, sessionId: current.id, consentVersion: 'analytics-v1' }) }));
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(transmissions + 1);
+    } finally { unsubscribe(); }
+  });
 });
