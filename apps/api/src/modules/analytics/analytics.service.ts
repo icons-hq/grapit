@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { and, asc, eq, gte, isNull, or, sql } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type IORedis from 'ioredis';
-import { ANALYTICS_NOTICE_VERSION, ANALYTICS_RETENTION_DAYS, ANALYTICS_SESSION_MS, type AnalyticsBatch, type AnalyticsConfig, type AnalyticsCounts } from '@grabit/shared';
+import { ANALYTICS_NOTICE_VERSION, ANALYTICS_RETENTION_DAYS, ANALYTICS_SESSION_MS, type AnalyticsBatch, type AnalyticsConfig, type AnalyticsCounts, type AnalyticsReplayBatch, ANALYTICS_REPLAY_SESSION_BYTES, ANALYTICS_REPLAY_MAX_BYTES } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
-import { analyticsAttribution, analyticsEvents, analyticsSessions, analyticsSettings, analyticsOptOuts, users } from '../../database/schema/index.js';
+import { analyticsReplayChunks, analyticsAttribution, analyticsEvents, analyticsSessions, analyticsSettings, analyticsOptOuts, users } from '../../database/schema/index.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
 import { ANALYTICS_DB, ANALYTICS_POOL } from './analytics-database.module.js';
@@ -30,7 +30,7 @@ export class AnalyticsService {
     this.configCache = { until: Date.now() + 5000, value }; return value;
   }
   async configure(enabled: boolean, actor: RequestUser) {
-    if (enabled && !this.flags.isAnalyticsEnvironmentEnabled()) throw new ForbiddenException('정책 개정·시행 확인 후 ANALYTICS_ENABLED 환경 게이트를 먼저 활성화해야 합니다');
+    if (enabled && !this.flags.isAnalyticsEnvironmentEnabled()) throw new ForbiddenException('선택기능 안내·동의 절차 확인 후 ANALYTICS_ENABLED 환경 게이트를 먼저 활성화해야 합니다');
     await this.db.insert(analyticsSettings).values({ id: 1, enabled, noticeVersion: ANALYTICS_NOTICE_VERSION, updatedBy: actor.id })
       .onConflictDoUpdate({ target: analyticsSettings.id, set: { enabled, noticeVersion: ANALYTICS_NOTICE_VERSION, updatedAt: new Date(), updatedBy: actor.id } });
     this.configCache = undefined; return this.config(true);
@@ -78,7 +78,7 @@ export class AnalyticsService {
           occurredAt: new Date(Math.abs(Date.parse(at) - now.getTime()) <= 300_000 ? at : now.getTime()) }));
         const [session] = await tx.insert(analyticsSessions).values({ id: batch.sessionId, visitorId: batch.visitorId,
           startedAt: new Date(Math.min(...events.map((e) => e.occurredAt.getTime()), now.getTime())), lastSeenAt: now,
-          touch: batch.touch, consentVersion: batch.consentVersion, consentedAt: new Date(batch.consentedAt), device: batch.device, browser: batch.browser, os: batch.os, screen: batch.screen, language: batch.language })
+          touch: batch.touch, collectionConsent: batch.collectionConsent, overseasConsent: batch.overseasConsent, consentVersion: batch.consentVersion, consentedAt: new Date(batch.consentedAt), device: batch.device, browser: batch.browser, os: batch.os, screen: batch.screen, language: batch.language })
           .onConflictDoUpdate({ target: analyticsSessions.id, set: { lastSeenAt: now }, setWhere: and(eq(analyticsSessions.visitorId, batch.visitorId), gte(analyticsSessions.lastSeenAt, new Date(now.getTime() - ANALYTICS_SESSION_MS))) })
           .returning({ id: analyticsSessions.id });
         if (!session) return false;
@@ -95,6 +95,28 @@ export class AnalyticsService {
     finally { this.collecting = false; }
   }
 
+  async collectReplay(batch: AnalyticsReplayBatch) {
+    if (!this.flags.isAnalyticsEnvironmentEnabled() || this.collecting || this.pool.waitingCount > 0 || (this.pool.totalCount > 0 && this.pool.idleCount === 0)) return { stored: false };
+    const bytes = Buffer.byteLength(JSON.stringify(batch.events));
+    if (bytes > ANALYTICS_REPLAY_MAX_BYTES) return { stored: false };
+    this.collecting = true;
+    try {
+      const stored = await this.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${batch.visitorId}::text,7261112))`);
+        const [setting] = await tx.select().from(analyticsSettings).where(eq(analyticsSettings.id, 1));
+        if (!setting?.enabled || setting.noticeVersion !== ANALYTICS_NOTICE_VERSION) return false;
+        const [session] = await tx.select().from(analyticsSessions).where(and(eq(analyticsSessions.id,batch.sessionId),eq(analyticsSessions.visitorId,batch.visitorId),eq(analyticsSessions.consentVersion,ANALYTICS_NOTICE_VERSION),gte(analyticsSessions.lastSeenAt,new Date(Date.now()-ANALYTICS_SESSION_MS))));
+        if (!session || !session.collectionConsent || !session.overseasConsent || batch.events.some((e) => e.timestamp < session.consentedAt.getTime() || e.timestamp > Date.now()+300000 || e.timestamp < Date.now()-1800000)) return false;
+        const quota = await tx.execute(sql`select coalesce(sum(bytes),0)::int as bytes,count(*)::int as chunks from analytics_replay_chunks where session_id=${batch.sessionId}::uuid`);
+        if (Number(quota.rows[0]?.bytes) + bytes > ANALYTICS_REPLAY_SESSION_BYTES || Number(quota.rows[0]?.chunks) >= 1000) return false;
+        await tx.insert(analyticsReplayChunks).values({ id:batch.id, sessionId:batch.sessionId, recordingId:batch.recordingId,pageId:batch.pageId,path:batch.path,events:batch.events,bytes,startedAt:new Date(Math.min(...batch.events.map((e)=>e.timestamp))) }).onConflictDoNothing();
+        return true;
+      });
+      return { stored };
+    } catch { this.logger.warn('Replay batch dropped: storage unavailable or capacity limit'); return { stored: false }; }
+    finally { this.collecting = false; }
+  }
+
   async identify(input: { visitorId: string; sessionId: string }, actor: RequestUser) {
     if (actor.role !== 'user' || !(await this.config(true)).enabled) return false;
     const now = new Date(); const cutoff = new Date(now.getTime() - ANALYTICS_SESSION_MS);
@@ -106,6 +128,7 @@ export class AnalyticsService {
       // different user can never be reassigned on a shared device.
       const [session] = await tx.update(analyticsSessions).set({ userId: actor.id }).where(and(
         eq(analyticsSessions.id, input.sessionId), eq(analyticsSessions.visitorId, input.visitorId), gte(analyticsSessions.lastSeenAt, cutoff),
+        eq(analyticsSessions.consentVersion, ANALYTICS_NOTICE_VERSION), eq(analyticsSessions.collectionConsent, true), eq(analyticsSessions.overseasConsent, true),
         or(isNull(analyticsSessions.userId), eq(analyticsSessions.userId, actor.id)),
       )).returning();
       if (!session) return false;

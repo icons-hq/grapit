@@ -407,6 +407,20 @@
       "when": 1794454041012,
       "tag": "0057_aggregate_traffic",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1794463356604,
+      "tag": "0058_personal_visitor_replay",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1794463454117,
+      "tag": "0059_analytics_consent_receipt",
+      "breakpoints": true
     }
   ]
 }

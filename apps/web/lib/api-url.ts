@@ -14,10 +14,15 @@ function getHostname(baseUrl: string): string {
 }
 
 export function apiUrl(path: `/${string}`): string {
-  const baseUrl = getApiBaseUrl();
+  // Personal analytics and administrator replay responses go directly to the
+  // existing Seoul API, without passing their contents through the CDN.
+  const analytics = /^\/api\/v1\/(?:admin\/)?analytics(?:[/?]|$)/.test(path);
+  const analyticsOrigin = (process.env.NEXT_PUBLIC_ANALYTICS_API_URL ?? '').trim().replace(/\/+$/, '');
+  const baseUrl = analytics && analyticsOrigin ? analyticsOrigin : getApiBaseUrl();
 
   // NEXT_PUBLIC_* values are inlined into browser bundles at next build, so production misconfiguration must fail loudly.
   if (process.env.NODE_ENV === 'production') {
+    if (analytics && !analyticsOrigin) throw new Error('NEXT_PUBLIC_ANALYTICS_API_URL must be set in production');
     if (baseUrl === '') {
       throw new Error('NEXT_PUBLIC_API_URL must be set in production');
     }

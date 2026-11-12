@@ -50,8 +50,8 @@ export default function AuthPage() {
         )}
         <Tabs defaultValue="login" className="w-full">
           <TabsList className="w-full">
-            <TabsTrigger value="login">{authCopy.tabs.login}</TabsTrigger>
-            <TabsTrigger value="signup">{authCopy.tabs.signup}</TabsTrigger>
+            <TabsTrigger value="login" data-analytics-action="login">{authCopy.tabs.login}</TabsTrigger>
+            <TabsTrigger value="signup" data-analytics-action="signup">{authCopy.tabs.signup}</TabsTrigger>
           </TabsList>
           <TabsContent
             value="login"

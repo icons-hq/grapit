@@ -12,6 +12,7 @@ import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import { FeatureFlagsService } from '../src/modules/feature-flags/feature-flags.service.js';
 import { AnalyticsService } from '../src/modules/analytics/analytics.service.js';
+import { AnalyticsVisitorService } from '../src/modules/analytics/analytics-visitor.service.js';
 import { AnalyticsReportService } from '../src/modules/analytics/analytics-report.service.js';
 import { AnalyticsMaintenance } from '../src/modules/analytics/analytics-maintenance.module.js';
 import type { PgBossContract } from '../src/modules/jobs/pgboss.provider.js';
@@ -33,11 +34,11 @@ describe('first-party analytics / isolated PostgreSQL and Valkey', () => {
     await redis.flushall(); now = Date.now(); environment = true;
     const flags = new FeatureFlagsService(() => ({ ANALYTICS_ENABLED: String(environment), AGGREGATE_ANALYTICS_ENABLED: String(environment) }));
     service = new AnalyticsService(db, pool, flags, redis); reports = new AnalyticsReportService(db, service, redis); maintenance = new AnalyticsMaintenance(db, boss as unknown as PgBossContract);
-    boss.send.mockClear(); await db.insert(schema.analyticsSettings).values({ id: 1, enabled: true, noticeVersion: 'analytics-v1' });
+    boss.send.mockClear(); await db.insert(schema.analyticsSettings).values({ id: 1, enabled: true, noticeVersion: 'analytics-v2-replay' });
   });
   const touch = (source = 'instagram'): AnalyticsTouch => ({ landingPath: '/', referrerHost: 'instagram.com', source, medium: 'social', campaign: 'announcement', term: null, content: 'poster_a' });
   function batch(source = 'instagram', visitorId = randomUUID(), sessionId = randomUUID()): AnalyticsBatch {
-    return { consentVersion: 'analytics-v1', consentedAt: new Date(now - 250000).toISOString(), visitorId, sessionId, touch: touch(source), device: 'mobile', browser: 'safari', os: 'ios', screen: 'small', language: 'ko',
+    return { collectionConsent: true, overseasConsent: true, consentVersion: 'analytics-v2-replay', consentedAt: new Date(now - 250000).toISOString(), visitorId, sessionId, touch: touch(source), device: 'mobile', browser: 'safari', os: 'ios', screen: 'small', language: 'ko',
       events: [{ id: randomUUID(), pageId: randomUUID(), name: 'page_view', path: '/', previousPath: null, at: new Date(now - 240000).toISOString(), props: {} }] };
   }
   const query = () => ({ since: new Date(now - 300000).toISOString(), until: new Date(Date.now() + 1000).toISOString(), granularity: 'hour' as const });
@@ -98,6 +99,36 @@ describe('first-party analytics / isolated PostgreSQL and Valkey', () => {
     expect(report.signupFunnel.map((r) => r.count)).toEqual([3, 1]);
     expect(report.attribution.find((a) => a.model === 'first')?.source).toBe('instagram');
     expect(JSON.stringify(report)).not.toMatch(/test.invalid|821000000000|Fixture"|userId|visitorId|sessionId/);
+  });
+  it('stores replay only for a consented matching session, exposes an opaque admin handle and cascades withdrawal', async () => {
+    const data = batch(); await service.collect(data);
+    const input = { id: randomUUID(), recordingId: randomUUID(), pageId: data.events[0]!.pageId, visitorId: data.visitorId, sessionId: data.sessionId, consentVersion: data.consentVersion, path: '/', events: [
+      { type: 4, timestamp: Date.now(), data: { href: 'https://heygrabit.com/', width: 390, height: 844 } },
+      { type: 2, timestamp: Date.now()+1, data: { node: { type: 0, id: 1, childNodes: [] }, initialOffset: { top: 0, left: 0 } } },
+    ] };
+    expect(await service.collectReplay({ ...input, visitorId: randomUUID() })).toEqual({ stored: false });
+    expect(await service.collectReplay(input)).toEqual({ stored: true });
+    expect(await service.collectReplay(input)).toEqual({ stored: true });
+    expect(await db.select().from(schema.analyticsReplayChunks)).toHaveLength(1);
+    const visitors = new AnalyticsVisitorService(db);
+    const result = await visitors.sessions(query());
+    expect(result.sessions).toHaveLength(1); expect(result.sessions[0]?.recordings).toBe(1);
+    expect(JSON.stringify(result)).not.toContain(data.visitorId);
+    expect((await visitors.detail(data.sessionId)).recordings).toHaveLength(1);
+    expect((await visitors.replay(input.recordingId)).events).toHaveLength(2);
+    await db.update(schema.analyticsSettings).set({ enabled: false });
+    expect(await service.collectReplay({ ...input, id: randomUUID() })).toEqual({ stored: false });
+    await service.withdraw(data);
+    expect(await db.select().from(schema.analyticsReplayChunks)).toHaveLength(0);
+    await db.update(schema.analyticsSettings).set({ enabled: true });
+    expect(await service.collectReplay({ ...input, id: randomUUID() })).toEqual({ stored: false });
+  });
+  it('expires replay independently after 14 days while keeping 90-day activity', async () => {
+    const data = batch(); await service.collect(data);
+    await db.insert(schema.analyticsReplayChunks).values({ id: randomUUID(), sessionId: data.sessionId, recordingId: randomUUID(), pageId: data.events[0]!.pageId, path: '/', events: [], bytes: 2, startedAt: new Date(now - 15*86400000), receivedAt: new Date(now - 15*86400000) });
+    await maintenance.run();
+    expect(await db.select().from(schema.analyticsReplayChunks)).toHaveLength(0);
+    expect(await db.select().from(schema.analyticsSessions)).toHaveLength(1);
   });
   it('expires a session after inactivity and counts a returning browser once per period', async () => {
     const first = batch(); await service.collect(first);

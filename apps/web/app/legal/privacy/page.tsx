@@ -34,7 +34,7 @@ export default async function PrivacyPage() {
 
   return (
     <>
-      <aside className="mb-6 rounded-lg border p-4 text-sm"><Link className="underline" href="/legal/analytics">{locale === 'ko' ? '2026-11-12 서비스 이용 횟수 집계 안내·설정' : '2026-11-12 usage counting notice and settings'}</Link></aside>
+      <aside className="mb-6 rounded-lg border p-4 text-sm"><Link className="underline" href="/legal/analytics">{locale === 'ko' ? '2026-11-12 개인별 방문·화면 재생 선택기능 안내·설정' : '2026-11-12 optional individual analytics and replay notice'}</Link></aside>
       {fallbackLocale ? <LegalFallbackLabel locale={fallbackLocale} /> : null}
       <TermsMarkdown showH1>{markdown}</TermsMarkdown>
     </>

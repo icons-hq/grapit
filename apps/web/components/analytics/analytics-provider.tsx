@@ -9,7 +9,7 @@ import { normalizeAnalyticsPath } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { analyticsCopy } from './analytics-copy';
 import { Button } from '@/components/ui/button';
-import { analyticsPrivacySignal, configureAnalytics, finishAnalyticsPage, flushAnalytics, getAnalyticsChoice, identifyAnalytics, observeAnalyticsPage, recordAnalyticsEngagement, recordAnalyticsScroll, resumeAnalyticsEngagement, retryAnalyticsWithdrawal, setAnalyticsChoice, subscribeAnalyticsChoice, touchAnalyticsActivity, trackAnalytics } from '@/lib/analytics-client';
+import { analyticsPrivacySignal, configureAnalytics, finishAnalyticsPage, flushAnalytics, getAnalyticsChoice, identifyAnalytics, observeAnalyticsPage, recordAnalyticsPointer, recordAnalyticsEngagement, recordAnalyticsScroll, resumeAnalyticsEngagement, retryAnalyticsWithdrawal, setAnalyticsChoice, subscribeAnalyticsChoice, touchAnalyticsActivity, trackAnalytics } from '@/lib/analytics-client';
 
 const serverChoice = () => null;
 export function AnalyticsProvider() {
@@ -35,6 +35,12 @@ function PersonalAnalyticsProvider() {
   }, [active, choice, pathname, queryKey, locale, user?.id]);
   useEffect(() => {
     if (!active || choice !== 'accepted') return;
+    let cancelled = false; let stop: (() => void) | undefined;
+    void import('@/lib/analytics-replay-client').then((module) => { if (!cancelled) stop = module.startAnalyticsReplay(); }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [active, choice, pathname, user?.id]);
+  useEffect(() => {
+    if (!active || choice !== 'accepted') return;
     const tick = window.setInterval(() => { if (document.visibilityState === 'visible') { recordAnalyticsEngagement(); flushAnalytics(); void identifyAnalytics(); } }, 20_000);
     const visibility = () => { if (document.visibilityState === 'hidden') finishAnalyticsPage(); else resumeAnalyticsEngagement(); };
     const link = (event: MouseEvent) => {
@@ -43,14 +49,14 @@ function PersonalAnalyticsProvider() {
     };
     document.addEventListener('visibilitychange', visibility); window.addEventListener('pagehide', finishAnalyticsPage);
     window.addEventListener('scroll', recordAnalyticsScroll, { passive: true }); document.addEventListener('pointerdown', touchAnalyticsActivity, { passive: true });
-    document.addEventListener('keydown', touchAnalyticsActivity, { passive: true }); document.addEventListener('click', link);
+    document.addEventListener('keydown', touchAnalyticsActivity, { passive: true }); document.addEventListener('click', link); document.addEventListener('click', recordAnalyticsPointer);
     return () => { clearInterval(tick); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', finishAnalyticsPage);
-      window.removeEventListener('scroll', recordAnalyticsScroll); document.removeEventListener('pointerdown', touchAnalyticsActivity); document.removeEventListener('keydown', touchAnalyticsActivity); document.removeEventListener('click', link); };
+      window.removeEventListener('scroll', recordAnalyticsScroll); document.removeEventListener('pointerdown', touchAnalyticsActivity); document.removeEventListener('keydown', touchAnalyticsActivity); document.removeEventListener('click', link); document.removeEventListener('click', recordAnalyticsPointer); };
   }, [active, choice]);
-  if (!active || choice !== null || analyticsPrivacySignal()) return null;
+  if (!active || choice !== null || analyticsPrivacySignal() || normalizeAnalyticsPath(pathname) === '/legal') return null;
   const copy = analyticsCopy(locale);
-  return <aside aria-label={copy.title} className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-2xl rounded-xl border border-border bg-background p-5 shadow-lg md:bottom-4">
+  return <aside data-analytics-consent aria-label={copy.title} className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-2xl rounded-xl border border-border bg-background p-5 shadow-lg md:bottom-4">
     <h2 className="font-semibold">{copy.title}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.summary}</p>
-    <div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="outline" onClick={() => setAnalyticsChoice('accepted')}>{copy.accept}</Button><Button variant="outline" onClick={() => setAnalyticsChoice('declined')}>{copy.decline}</Button><Link href="/legal/analytics" className="text-sm underline">{copy.details}</Link></div>
+    <div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="outline" asChild><Link href="/legal/analytics">{copy.details}</Link></Button><Button variant="outline" onClick={() => setAnalyticsChoice('declined')}>{copy.decline}</Button></div>
   </aside>;
 }

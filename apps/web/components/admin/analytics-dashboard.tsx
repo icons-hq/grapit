@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users, Eye, Activity, Ticket, RefreshCw, UserPlus } from 'lucide-react';
 import { resolveAdminCapabilitySnapshot, type AnalyticsReport } from '@grabit/shared';
+import { AnalyticsVisitorsPanel } from './analytics-visitors-panel';
 import { AnalyticsCountsPanel } from './analytics-counts-panel';
 import { AdminPageHeader } from './admin-page-header';
 import { AdminStatCard } from './admin-stat-card';
@@ -72,9 +73,10 @@ export function AnalyticsDashboard() {
       <section className="admin-panel flex flex-col gap-3"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Badge variant={data.config.enabled ? 'default' : 'secondary'}>{data.config.enabled ? '개인별 방문 연결 중' : '개인별 방문 연결 중지'}</Badge><span className="text-xs text-muted-foreground">최근 수신 {kst(data.lastCollectedAt)}</span></div>
         {canControl && data.config.enabled && <Button variant="destructive" size="sm" disabled={settings.isPending} onClick={() => settings.mutate(false)}>수집 즉시 중단</Button>}</div>
         {!data.config.enabled && <p className="text-sm text-muted-foreground">개인별 방문 연결이 중지되어 UV·세션·전환 퍼널은 집계하지 않습니다. 위의 식별자 없는 횟수 집계는 별도입니다. 신규 가입·결제·취소는 기존 DB 기록으로 계속 확인할 수 있습니다.</p>}
-        {canControl && !data.config.enabled && <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={acknowledged} onCheckedChange={(v) => setAcknowledged(v === true)} disabled={!data.config.environmentEnabled} />개정 방침 시행·선택 동의 절차 확인</label><Button size="sm" variant="outline" disabled={!data.config.environmentEnabled || !acknowledged || settings.isPending} onClick={() => settings.mutate(true)}>수집 시작</Button>{!data.config.environmentEnabled && <p className="text-xs text-muted-foreground">정책 검토와 운영 환경 활성화가 필요합니다.</p>}</div>}
+        {canControl && !data.config.enabled && <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={acknowledged} onCheckedChange={(v) => setAcknowledged(v === true)} disabled={!data.config.environmentEnabled} />선택기능 안내 게시·동의 절차 확인</label><Button size="sm" variant="outline" disabled={!data.config.environmentEnabled || !acknowledged || settings.isPending} onClick={() => settings.mutate(true)}>수집 시작</Button>{!data.config.environmentEnabled && <p className="text-xs text-muted-foreground">선택기능 안내와 운영 환경 활성화가 필요합니다.</p>}</div>}
         {settings.isError && <p role="alert" className="text-sm text-destructive">수집 설정 변경에 실패했습니다. 상태를 새로고침한 뒤 다시 시도해주세요.</p>}
       </section>
+      {canControl && <AnalyticsVisitorsPanel since={data.since} until={data.until} />}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-6"><AdminStatCard label="방문자 (UV)" value={data.summary.visitors} format="count" icon={Users} description={`이전 동일 구간 ${data.summary.previousVisitors.toLocaleString()} · 재방문 ${data.summary.returningVisitors.toLocaleString()}`} />
         <AdminStatCard label="세션" value={data.summary.sessions} format="count" icon={Activity} description="30분 무활동 시 새 세션" /><AdminStatCard label="페이지뷰" value={data.summary.pageViews} format="count" icon={Eye} description="동의 후 수집한 조회" />
         <AdminStatCard label="신규 가입 · DB" value={data.summary.signups} format="count" icon={UserPlus} description="방문 동의 여부와 무관" /><AdminStatCard label="결제 완료 · DB" value={data.summary.paidOrders} format="count" icon={Ticket} description={`기간 내 취소 예매 ${data.summary.cancelledOrders}건`} />

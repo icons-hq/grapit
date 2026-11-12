@@ -221,7 +221,7 @@ export function LoginForm() {
 
           <div className="pt-2">
             <Button
-              type="submit"
+              type="submit" data-analytics-action="login"
               size="lg"
               className="w-full"
               disabled={isLoading}

@@ -31,8 +31,11 @@ export function buildSentryInitOptions(
         },
       }),
     ],
-    beforeSend: (event) => scrubSentryEvent(event),
-    beforeSendTransaction: (event) => scrubSentryEvent(event),
-    beforeBreadcrumb: (breadcrumb) => scrubSentryBreadcrumb(breadcrumb),
+    beforeSend: (event) => isAnalyticsTelemetry(event) ? null : scrubSentryEvent(event),
+    beforeSendTransaction: (event) => isAnalyticsTelemetry(event) ? null : scrubSentryEvent(event),
+    beforeBreadcrumb: (breadcrumb) => /\/analytics(?:[/?]|$)/.test(String(breadcrumb.data?.['url'] ?? '')) ? null : scrubSentryBreadcrumb(breadcrumb),
   };
+}
+function isAnalyticsTelemetry(event: { request?: { url?: string }; transaction?: string }) {
+  return /\/analytics(?:[/?]|$)/.test(`${event.request?.url ?? ''} ${event.transaction ?? ''}`);
 }

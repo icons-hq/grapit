@@ -25,9 +25,9 @@ export function getAnalyticsChoice(): 'accepted' | 'declined' | null {
   try {
     let raw = memoryChoice;
     try { raw = localStorage.getItem(ANALYTICS_CHOICE_KEY); } catch { /* in-memory fallback */ }
-    const value = JSON.parse(raw ?? 'null') as { value?: string; version?: string; at?: number } | null;
+    const value = JSON.parse(raw ?? 'null') as { value?: string; version?: string; at?: number; collectionConsent?: boolean; overseasConsent?: boolean } | null;
     return value?.version === ANALYTICS_NOTICE_VERSION && typeof value.at === 'number' && Date.now() - value.at < RETENTION_MS
-      && (value.value === 'accepted' || value.value === 'declined') ? value.value : null;
+      && (value.value === 'declined' || (value.value === 'accepted' && value.collectionConsent === true && value.overseasConsent === true)) ? value.value : null;
   } catch { return null; }
 }
 export function subscribeAnalyticsChoice(listener: () => void) {
@@ -40,7 +40,8 @@ export function subscribeAnalyticsChoice(listener: () => void) {
   window.addEventListener(ANALYTICS_CHOICE_EVENT, listener); window.addEventListener('storage', onStorage);
   return () => { window.removeEventListener(ANALYTICS_CHOICE_EVENT, listener); window.removeEventListener('storage', onStorage); };
 }
-export function setAnalyticsChoice(value: 'accepted' | 'declined') {
+export function setAnalyticsChoice(value: 'accepted' | 'declined', consents?: { collectionConsent: boolean; overseasConsent: boolean }) {
+  if (value === 'accepted' && (!consents?.collectionConsent || !consents.overseasConsent)) return;
   if (value === 'accepted' && getAnalyticsWithdrawalPending()) return;
   const previous = getAnalyticsChoice();
   if (value === 'declined') {
@@ -55,7 +56,7 @@ export function setAnalyticsChoice(value: 'accepted' | 'declined') {
   // Publish the shared identity before acceptance wakes other tabs. Otherwise
   // both tabs can race to create different visitor IDs after a withdrawal.
   try { if (value === 'accepted' && enabled && !analyticsPrivacySignal()) browserVisitorId(Date.now()); } catch { /* optional identifier support */ }
-  memoryChoice = JSON.stringify({ version: ANALYTICS_NOTICE_VERSION, value, at: Date.now() });
+  memoryChoice = JSON.stringify({ version: ANALYTICS_NOTICE_VERSION, value, at: Date.now(), collectionConsent: value === 'accepted', overseasConsent: value === 'accepted' });
   try { localStorage.setItem(ANALYTICS_CHOICE_KEY, memoryChoice); } catch { /* session-only choice */ }
   if (value === 'declined') resetIdentity();
   window.dispatchEvent(new Event(ANALYTICS_CHOICE_EVENT));
@@ -196,6 +197,26 @@ export function trackAnalytics(name: AnalyticsEventName, props: AnalyticsEvent['
 export function touchAnalyticsActivity() {
   try { if (allowed() && ensureSession(true) && !page) observeAnalyticsPage(window.location.pathname); } catch { /* no impact */ }
 }
+export function getAnalyticsRecordingContext() {
+  discardStaleSession();
+  if (!allowed() || !session || !page || Date.now() - session.lastActivity > ANALYTICS_SESSION_MS) return null;
+  return { visitorId: session.visitorId, sessionId: session.id, pageId: page.id, path: page.path, consentVersion: ANALYTICS_NOTICE_VERSION };
+}
+export function recordAnalyticsPointer(event: PointerEvent) {
+  const element = event.target instanceof Element ? event.target : null;
+  if (!element || element.closest('[data-analytics-private], [data-analytics-consent]')) return;
+  const actionable = element.closest('a,button,input,select,textarea,[role="button"]') ?? element;
+  const tag = actionable.tagName.toLowerCase();
+  const declared = actionable.getAttribute('data-analytics-action');
+  const label = ['booking', 'signup', 'login', 'search', 'menu', 'navigation'].includes(declared ?? '') ? declared as 'booking' : 'other';
+  trackAnalytics('pointer_click', {
+    x: Math.max(0, Math.round(event.clientX + window.scrollX)), y: Math.max(0, Math.round(event.clientY + window.scrollY)),
+    viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight,
+    scrollX: Math.max(0, Math.round(window.scrollX)), scrollY: Math.max(0, Math.round(window.scrollY)),
+    pointer: event.pointerType === 'touch' ? 'touch' : event.pointerType === 'pen' ? 'pen' : event.detail === 0 ? 'keyboard' : 'mouse',
+    element: tag === 'a' ? 'link' : tag === 'button' || actionable.getAttribute('role') === 'button' ? 'button' : ['input','select','textarea'].includes(tag) ? 'input' : tag === 'img' ? 'image' : 'other', label,
+  });
+}
 export function recordAnalyticsEngagement() {
   try {
     if (!allowed() || !page || !ensureSession(false)) return;
@@ -219,7 +240,7 @@ export function flushAnalytics() {
     discardStaleSession();
     if (!queue.length || !session) return;
     if (!allowed()) { queue = []; return; }
-    const batch = analyticsBatchSchema.safeParse({ consentVersion: ANALYTICS_NOTICE_VERSION, consentedAt: consentTime(), visitorId: session.visitorId, sessionId: session.id, touch: session.touch, ...dimensions(), events: queue.splice(0, ANALYTICS_MAX_BATCH) });
+    const batch = analyticsBatchSchema.safeParse({ collectionConsent: true, overseasConsent: true, consentVersion: ANALYTICS_NOTICE_VERSION, consentedAt: consentTime(), visitorId: session.visitorId, sessionId: session.id, touch: session.touch, ...dimensions(), events: queue.splice(0, ANALYTICS_MAX_BATCH) });
     if (!batch.success) return;
     const body = new Blob([JSON.stringify(batch.data)], { type: 'application/json' });
     if (body.size > 16 * 1024) return;
