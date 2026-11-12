@@ -6,6 +6,7 @@ import type { AnalyticsReport } from '@grabit/shared';
 const performanceId = '00000000-0000-4000-8000-000000009001';
 const rows = ['방문', '공연 상세', '좌석 선택', '결제 시작', '결제 완료'].map((name, i) => ({ name, count: [120, 80, 24, 16, 10][i]!, rate: [100, 66.7, 20, 13.3, 8.3][i]!, dropoff: [0, 40, 56, 8, 6][i]! }));
 const data: AnalyticsReport = {
+  aggregate: { startedAt: '2026-11-12T03:00:00Z', updatedAt: '2026-11-12T03:30:00Z', counts: [{ hour: '2026-11-12 12:00', page: 'home', name: 'page_view', count: 12 }], history: [{ hour: '2026-11-11 15:00', source: 'cloudflare_zone', metric: 'html_page_views', count: 100, sampled: false, observedThrough: '2026-11-12T03:26:00Z' }] },
   since: '2026-11-10T15:00:00.000Z', until: '2026-11-11T06:00:00.000Z', generatedAt: '2026-11-11T06:00:00.000Z',
   config: { enabled: true, environmentEnabled: true, noticeVersion: 'analytics-v1', rawRetentionDays: 90 }, lastCollectedAt: '2026-11-11T06:00:00.000Z', rollupThrough: '2026-11-11T05:55:00.000Z',
   summary: { visitors: 100, sessions: 120, pageViews: 360, returningVisitors: 20, previousVisitors: 42, activeVisitors: 7, signups: 24, paidOrders: 12, cancelledOrders: 1 },
@@ -32,7 +33,7 @@ test('analytics dashboard renders responsive data and handles filters, errors, e
   release(); await expect(page.getByRole('group', { name: '방문자 (UV)', exact: true })).toContainText('100건'); await expect(page.locator('.recharts-surface')).toBeVisible(); await capture(page, 'analytics-desktop');
   await page.getByRole('heading', { name: '예매 퍼널', exact: true }).scrollIntoViewIfNeeded(); await capture(page, 'analytics-funnel');
   await page.getByRole('radio', { name: '7일', exact: true }).click(); await expect.poll(() => queries.at(-1)).toContain('granularity=day');
-  await page.getByRole('button', { name: '수집 즉시 중단' }).click(); await expect(page.getByText('방문 분석 수집 중지', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '수집 즉시 중단' }).click(); await expect(page.getByText('개인별 방문 연결 중지', { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => window.scrollTo(0, 0)); await capture(page, 'analytics-mobile'); await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); await capture(page, 'analytics-mobile');
   mode = 'empty'; await page.getByRole('button', { name: '새로고침', exact: true }).click(); await expect(page.getByText(/선택한 기간에 수집된 방문 기록이 없습니다/)).toBeVisible(); await capture(page, 'analytics-empty');
   mode = 'error'; await page.getByRole('button', { name: '새로고침', exact: true }).click(); await expect(page.getByText(/방문 분석을 불러오지 못했습니다/)).toBeVisible(); await capture(page, 'analytics-error');
@@ -108,4 +109,31 @@ test('unavailable analytics never blocks signup input or exposes input text', as
   const email = page.getByRole('textbox').first(); await email.fill('analytics-qa@example.invalid'); await expect(email).toHaveValue('analytics-qa@example.invalid');
   expect(sent.length).toBeGreaterThan(0); expect(sent.join('')).not.toContain('analytics-qa@example.invalid'); expect(errors).toEqual([]);
   const dir = process.env['ANALYTICS_QA_DIR']; if (dir) await writeFile(`${dir}/analytics-failure-timing.json`, JSON.stringify({ syntheticLinkActions: 25, dispatchMs, inputResponsive: true, appErrors: errors.length }, null, 2));
+});
+
+test('identifier-free counts work before personal consent and stop on the browser setting', async ({ page }) => {
+  const sent: Array<{ counts: Array<{ page: string; name: string; count: number }> }> = [];
+  const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+  await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({ status: 204 }));
+  await page.route('**/api/v1/analytics/config', (route) => fulfillJson(route, { ...data.config, enabled: false, environmentEnabled: false, aggregateEnabled: true, aggregateEnvironmentEnabled: true }));
+  await page.route('**/api/v1/analytics/counts', async (route) => { sent.push(route.request().postDataJSON()); await route.fulfill({ status: 204 }); });
+  await page.goto('/auth?email=never-collect@example.invalid');
+  await page.getByRole('tab', { name: '회원가입', exact: true }).click();
+  await page.waitForResponse((r) => r.url().endsWith('/analytics/counts'));
+  expect(sent.some((batch) => batch.counts.some((row) => row.name === 'page_view'))).toBe(true);
+  expect(JSON.stringify(sent)).not.toMatch(/never-collect|visitorId|sessionId|userId|consentedAt/);
+  expect(await page.evaluate(() => localStorage.getItem('grabit-analytics-visitor-v1'))).toBeNull();
+  await page.goto('/legal/analytics');
+  await expect(page.getByRole('heading', { name: '식별자 없는 이용 횟수 집계' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '분석 허용', exact: true })).toBeDisabled();
+  await page.setViewportSize({ width: 1440, height: 1000 }); await capture(page, 'aggregate-settings-desktop');
+  await page.getByRole('button', { name: '횟수 집계 끄기' }).click();
+  await expect(page.getByText('이 브라우저의 횟수 집계가 꺼져 있습니다.', { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '횟수 집계 끄기' }).scrollIntoViewIfNeeded();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); await capture(page, 'aggregate-settings-mobile');
+  const before = sent.length; await page.goto('/auth');
+  await page.getByRole('tab', { name: '회원가입', exact: true }).click();
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  expect(sent).toHaveLength(before); expect(errors).toEqual([]);
 });

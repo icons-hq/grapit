@@ -20,7 +20,7 @@ const body = () => ({ consentVersion: 'analytics-v1', consentedAt: new Date().to
   events: [{ id: randomUUID(), pageId: randomUUID(), name: 'page_view', path: '/', previousPath: null, props: {}, at: new Date().toISOString() }] });
 describe('analytics HTTP boundary', () => {
   let app: INestApplication;
-  const service = { collect: vi.fn().mockResolvedValue(true), identify: vi.fn().mockResolvedValue(true), config: vi.fn().mockResolvedValue({ enabled: false }), configure: vi.fn(), withdraw: vi.fn().mockResolvedValue({ deleted: true }) };
+  const service = { collectCounts: vi.fn().mockResolvedValue(true), configureAggregate: vi.fn(), collect: vi.fn().mockResolvedValue(true), identify: vi.fn().mockResolvedValue(true), config: vi.fn().mockResolvedValue({ enabled: false }), configure: vi.fn(), withdraw: vi.fn().mockResolvedValue({ deleted: true }) };
   const reports = { report: vi.fn().mockResolvedValue({ summary: {} }) };
   beforeAll(async () => {
     vi.stubEnv('FRONTEND_URL', 'https://heygrabit.com');
@@ -40,6 +40,14 @@ describe('analytics HTTP boundary', () => {
     await app.init(); await app.listen(0, '127.0.0.1');
   });
   afterAll(async () => { await app?.close(); vi.unstubAllEnvs(); });
+  it('accepts category counts while rejecting identifiers and browser privacy signals', async () => {
+    const payload = { counts: [{ page: 'home', name: 'page_view', count: 1 }] };
+    const endpoint = () => request(app.getHttpServer()).post('/analytics/counts').set('origin', 'https://heygrabit.com');
+    expect((await endpoint().send({ ...payload, visitorId: randomUUID() })).status).toBe(400);
+    expect((await endpoint().set('dnt', '1').send(payload)).status).toBe(204);
+    expect(service.collectCounts).not.toHaveBeenCalled();
+    expect((await endpoint().send(payload)).status).toBe(204); expect(service.collectCounts).toHaveBeenCalledWith(payload);
+  });
   it('rejects raw query values, foreign properties, invalid origins, oversized batches and bodies before storage', async () => {
     const data = body(); data.events[0]!.path = '/?ticket=do-not-store';
     let response = await request(app.getHttpServer()).post('/analytics/events').set('origin', 'https://heygrabit.com').send(data);

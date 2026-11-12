@@ -1,30 +1,26 @@
 'use client';
+import { AggregateAnalyticsProvider } from './aggregate-analytics-provider';
 import { useEffect, useSyncExternalStore } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
+import { useAnalyticsConfig } from '@/hooks/use-analytics-config';
 import Link from 'next/link';
-import { normalizeAnalyticsPath, type AnalyticsConfig } from '@grabit/shared';
+import { normalizeAnalyticsPath } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
-import { apiUrl } from '@/lib/api-url';
 import { analyticsCopy } from './analytics-copy';
 import { Button } from '@/components/ui/button';
 import { analyticsPrivacySignal, configureAnalytics, finishAnalyticsPage, flushAnalytics, getAnalyticsChoice, identifyAnalytics, observeAnalyticsPage, recordAnalyticsEngagement, recordAnalyticsScroll, resumeAnalyticsEngagement, retryAnalyticsWithdrawal, setAnalyticsChoice, subscribeAnalyticsChoice, touchAnalyticsActivity, trackAnalytics } from '@/lib/analytics-client';
 
 const serverChoice = () => null;
 export function AnalyticsProvider() {
+  return <><AggregateAnalyticsProvider /><PersonalAnalyticsProvider /></>;
+}
+function PersonalAnalyticsProvider() {
   const pathname = usePathname(); const search = useSearchParams(); const locale = useLocale();
   const user = useAuthStore((s) => s.user); const initialized = useAuthStore((s) => s.isInitialized);
   const choice = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsChoice, serverChoice);
   const permittedRoute = normalizeAnalyticsPath(pathname) !== null && user?.role !== 'admin';
-  const config = useQuery({ queryKey: ['analytics', 'config'], enabled: initialized && permittedRoute,
-    queryFn: async () => { const response = await fetch(apiUrl('/api/v1/analytics/config'), { credentials: 'omit', signal: AbortSignal.timeout(1500) }); if (!response.ok) throw new Error('Analytics config unavailable'); return response.json() as Promise<AnalyticsConfig>; },
-    staleTime: (query) => query.state.data?.enabled ? 20_000 : 300_000,
-    // The default-off gate and outages must not add a polling loop during a
-    // ticket opening. An approved but paused collector checks less often.
-    refetchInterval: (query) => query.state.status === 'error' ? false : query.state.data?.enabled ? 30_000 : query.state.data?.environmentEnabled ? 300_000 : false,
-    retry: false,
-  });
+  const config = useAnalyticsConfig(initialized && permittedRoute);
   const active = initialized && permittedRoute && !config.isError && config.data?.enabled === true;
   const queryKey = search.toString();
   useEffect(() => {

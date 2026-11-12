@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users, Eye, Activity, Ticket, RefreshCw, UserPlus } from 'lucide-react';
 import { resolveAdminCapabilitySnapshot, type AnalyticsReport } from '@grabit/shared';
+import { AnalyticsCountsPanel } from './analytics-counts-panel';
 import { AdminPageHeader } from './admin-page-header';
 import { AdminStatCard } from './admin-stat-card';
 import { Button } from '@/components/ui/button';
@@ -22,11 +23,11 @@ import { readAnnouncement, saveAnnouncement, subscribeAnnouncement } from '@/lib
 
 const Chart = dynamic(() => import('./analytics-chart'), { ssr: false, loading: () => <Skeleton className="h-[260px] w-full" /> });
 const kst = (value: string | null) => value ? formatAdminKstDateTime(value).replace('T', ' ') : '아직 없음';
-type Period = 'today' | '7d' | '30d' | 'announcement';
+type Period = 'yesterday' | 'today' | '7d' | '30d' | 'announcement';
 function startOfKstDay(now: number) { return Math.floor((now + 32400000) / 86400000) * 86400000 - 32400000; }
 const noSavedAnnouncement = () => null;
 export function AnalyticsDashboard() {
-  const [period, setPeriod] = useState<Period>('today'); const [granularity, setGranularity] = useState<'hour' | 'day'>('hour');
+  const [period, setPeriod] = useState<Period>('yesterday'); const [granularity, setGranularity] = useState<'hour' | 'day'>('hour');
   const savedAnnouncement = useSyncExternalStore(subscribeAnnouncement, readAnnouncement, noSavedAnnouncement);
   const [selectedAnnouncement, setAnnouncement] = useState<string | null>(null);
   const [defaultAnnouncement] = useState(() => new Date(startOfKstDay(Date.now())).toISOString());
@@ -38,7 +39,7 @@ export function AnalyticsDashboard() {
   const canControl = caps.superuser || caps.capabilities.includes('security.manage');
   const client = useQueryClient();
   const report = useQuery({ queryKey: ['admin', 'analytics', period, announcement, granularity],
-    queryFn: () => { const now = Date.now(); const since = period === 'announcement' ? announcement : new Date(startOfKstDay(now) - (period === '7d' ? 6 : period === '30d' ? 29 : 0) * 86400000).toISOString();
+    queryFn: () => { const now = Date.now(); const since = period === 'announcement' ? announcement : new Date(startOfKstDay(now) - (period === 'yesterday' ? 1 : period === '7d' ? 6 : period === '30d' ? 29 : 0) * 86400000).toISOString();
       const params = new URLSearchParams({ since, until: new Date(now).toISOString(), granularity }); return apiClient.get<AnalyticsReport>(`/api/v1/admin/analytics?${params}`, { showErrorToast: false }); },
     staleTime: 30_000, refetchInterval: 60_000, refetchIntervalInBackground: false,
   });
@@ -52,11 +53,11 @@ export function AnalyticsDashboard() {
   }
   const data = report.isError ? undefined : report.data;
   return <div className="flex min-w-0 flex-col gap-6">
-    <AdminPageHeader title="방문·가입 분석" description="공지와 캠페인 유입부터 가입·예매 전환까지 확인합니다. 한국 시간 기준 · 60초 자동 갱신"
+    <AdminPageHeader title="방문·가입 분석" description="기존 접속 기록·새 행동 횟수와 실제 가입·결제를 확인합니다. 한국 시간 기준 · 60초 자동 갱신"
       actions={<Button variant="outline" onClick={() => void report.refetch()} disabled={report.isFetching}><RefreshCw data-icon="inline-start" />새로고침</Button>} />
     <section className="admin-panel flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3"><ToggleGroup type="single" value={period} onValueChange={(v) => { if (v) { setPeriod(v as Period); setGranularity(v === 'today' || v === 'announcement' ? 'hour' : 'day'); } }} aria-label="분석 기간">
-        <ToggleGroupItem value="today">오늘</ToggleGroupItem><ToggleGroupItem value="7d">7일</ToggleGroupItem><ToggleGroupItem value="30d">30일</ToggleGroupItem><ToggleGroupItem value="announcement">공지 이후</ToggleGroupItem></ToggleGroup>
+      <div className="flex flex-wrap items-center justify-between gap-3"><ToggleGroup type="single" value={period} onValueChange={(v) => { if (v) { setPeriod(v as Period); setGranularity(v === 'today' || v === 'yesterday' || v === 'announcement' ? 'hour' : 'day'); } }} aria-label="분석 기간">
+        <ToggleGroupItem value="yesterday">어제부터</ToggleGroupItem><ToggleGroupItem value="today">오늘</ToggleGroupItem><ToggleGroupItem value="7d">7일</ToggleGroupItem><ToggleGroupItem value="30d">30일</ToggleGroupItem><ToggleGroupItem value="announcement">공지 이후</ToggleGroupItem></ToggleGroup>
         <ToggleGroup type="single" value={granularity} onValueChange={(v) => { if (v) setGranularity(v as 'hour' | 'day'); }} aria-label="추이 단위"><ToggleGroupItem value="hour">시간별</ToggleGroupItem><ToggleGroupItem value="day">일별</ToggleGroupItem></ToggleGroup>
       </div>
       <form className="flex flex-wrap items-end gap-3" onSubmit={apply}><div className="flex flex-col gap-2"><Label htmlFor="analytics-since">공지 기준 시각 (KST)</Label><Input id="analytics-since" type="datetime-local" value={draft} onChange={(e) => setDraft(e.target.value)} required aria-invalid={!!error} /></div><Button type="submit" variant="secondary">적용</Button></form>
@@ -66,9 +67,11 @@ export function AnalyticsDashboard() {
     {report.isPending ? <div role="status" aria-label="방문 분석 불러오는 중" className="grid grid-cols-2 gap-3 xl:grid-cols-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-28 w-full" />)}</div>
       : report.isError ? <section role="alert" className="admin-panel"><p>방문 분석을 불러오지 못했습니다. 기간을 줄이거나 잠시 후 다시 시도해주세요.</p><Button className="mt-3" variant="outline" onClick={() => void report.refetch()}>다시 시도</Button></section> : null}
     {data && <>
-      <section className="admin-panel flex flex-col gap-3"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Badge variant={data.config.enabled ? 'default' : 'secondary'}>{data.config.enabled ? '방문 분석 수집 중' : '방문 분석 수집 중지'}</Badge><span className="text-xs text-muted-foreground">최근 수신 {kst(data.lastCollectedAt)}</span></div>
+      <AnalyticsCountsPanel data={data} canControl={canControl} />
+      <h2 className="text-lg font-semibold">선택 동의 기반 개인별 방문 연결</h2>
+      <section className="admin-panel flex flex-col gap-3"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Badge variant={data.config.enabled ? 'default' : 'secondary'}>{data.config.enabled ? '개인별 방문 연결 중' : '개인별 방문 연결 중지'}</Badge><span className="text-xs text-muted-foreground">최근 수신 {kst(data.lastCollectedAt)}</span></div>
         {canControl && data.config.enabled && <Button variant="destructive" size="sm" disabled={settings.isPending} onClick={() => settings.mutate(false)}>수집 즉시 중단</Button>}</div>
-        {!data.config.enabled && <p className="text-sm text-muted-foreground">중지 중에는 새 방문을 기록하지 않습니다. 신규 가입·결제·취소는 기존 DB 기록으로 계속 확인할 수 있습니다.</p>}
+        {!data.config.enabled && <p className="text-sm text-muted-foreground">개인별 방문 연결이 중지되어 UV·세션·전환 퍼널은 집계하지 않습니다. 위의 식별자 없는 횟수 집계는 별도입니다. 신규 가입·결제·취소는 기존 DB 기록으로 계속 확인할 수 있습니다.</p>}
         {canControl && !data.config.enabled && <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={acknowledged} onCheckedChange={(v) => setAcknowledged(v === true)} disabled={!data.config.environmentEnabled} />개정 방침 시행·선택 동의 절차 확인</label><Button size="sm" variant="outline" disabled={!data.config.environmentEnabled || !acknowledged || settings.isPending} onClick={() => settings.mutate(true)}>수집 시작</Button>{!data.config.environmentEnabled && <p className="text-xs text-muted-foreground">정책 검토와 운영 환경 활성화가 필요합니다.</p>}</div>}
         {settings.isError && <p role="alert" className="text-sm text-destructive">수집 설정 변경에 실패했습니다. 상태를 새로고침한 뒤 다시 시도해주세요.</p>}
       </section>

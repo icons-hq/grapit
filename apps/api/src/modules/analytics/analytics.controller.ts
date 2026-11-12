@@ -1,7 +1,8 @@
+import { z } from 'zod';
 import { Body, Controller, ForbiddenException, Get, Header, HttpCode, Inject, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
-import { analyticsBatchSchema, analyticsIdentifySchema, analyticsQuerySchema, analyticsSettingsSchema, type AnalyticsBatch, type AnalyticsQuery } from '@grabit/shared';
+import { analyticsCountsSchema, analyticsBatchSchema, analyticsIdentifySchema, analyticsQuerySchema, analyticsSettingsSchema, type AnalyticsCounts, type AnalyticsBatch, type AnalyticsQuery } from '@grabit/shared';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
@@ -27,6 +28,12 @@ export class AnalyticsController {
   @Public() @Get('config') @Header('Cache-Control', 'no-store')
   config() { return this.service.config(); }
 
+  @Public() @Post('counts') @HttpCode(204) @Throttle({ default: ROUTE_THROTTLES.analyticsEvents })
+  async counts(@Req() req: Request, @Body(new ZodValidationPipe(analyticsCountsSchema)) batch: AnalyticsCounts) {
+    assertOrigin(req); if (ignoresAnalyticsRequest(req)) return;
+    await this.service.collectCounts(batch);
+  }
+
   @Public() @Post('events') @HttpCode(204) @Throttle({ default: ROUTE_THROTTLES.analyticsEvents })
   async collect(@Req() req: Request, @Body(new ZodValidationPipe(analyticsBatchSchema)) batch: AnalyticsBatch) {
     assertOrigin(req); if (ignoresAnalyticsRequest(req)) return;
@@ -47,6 +54,8 @@ export class AdminAnalyticsController {
   constructor(@Inject(AnalyticsService) private readonly service: AnalyticsService, @Inject(AnalyticsReportService) private readonly reports: AnalyticsReportService) {}
   @Get() @AdminCapabilities('audit.read') @Header('Cache-Control', 'no-store')
   report(@Query(new ZodValidationPipe(analyticsQuerySchema)) query: AnalyticsQuery) { return this.reports.report(query); }
+  @Put('aggregate-settings') @AdminCapabilities('security.manage')
+  aggregateSettings(@CurrentUser() actor: RequestUser, @Body(new ZodValidationPipe(z.object({ enabled: z.boolean() }).strict())) input: { enabled: boolean }) { return this.service.configureAggregate(input.enabled, actor); }
   @Put('settings') @AdminCapabilities('security.manage')
   settings(@CurrentUser() actor: RequestUser, @Body(new ZodValidationPipe(analyticsSettingsSchema)) input: { enabled: boolean }) { return this.service.configure(input.enabled, actor); }
 }

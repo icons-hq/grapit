@@ -943,3 +943,8 @@ the home page (below the genre grid, every visitor), the booking-complete screen
   (`home_banner`, `booking_complete`, `reservation_detail`) and `utm_content`
   (`ko`/`en`). Arrivals appear in Areun's `/admin/analytics` campaign table,
   grouped by source, medium and campaign.
+
+
+### Identifier-free usage counters (2026-11-12)
+
+`POST /api/v1/analytics/counts` accepts only bounded public-screen category/event counters. It stores no visitor/session/user/event identifiers or raw events, and adds directly to hourly `analytics_counters`. The separate `AGGREGATE_ANALYTICS_ENABLED` environment and `aggregate_enabled` DB switches control it; the personal analytics switch remains independent. `/admin/analytics` includes these counts and source-labelled `analytics_traffic_history` snapshots from pre-existing Cloudflare aggregates. Neither represents unique people. See the [analytics runbook](runbooks/visitor-analytics.md) for collection boundaries, retention and the reviewed history import job.

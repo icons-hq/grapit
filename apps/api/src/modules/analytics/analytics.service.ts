@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { and, asc, eq, gte, isNull, or, sql } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type IORedis from 'ioredis';
-import { ANALYTICS_NOTICE_VERSION, ANALYTICS_RETENTION_DAYS, ANALYTICS_SESSION_MS, type AnalyticsBatch, type AnalyticsConfig } from '@grabit/shared';
+import { ANALYTICS_NOTICE_VERSION, ANALYTICS_RETENTION_DAYS, ANALYTICS_SESSION_MS, type AnalyticsBatch, type AnalyticsConfig, type AnalyticsCounts } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { analyticsAttribution, analyticsEvents, analyticsSessions, analyticsSettings, analyticsOptOuts, users } from '../../database/schema/index.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -22,10 +22,11 @@ export class AnalyticsService {
 
   async config(refresh = false): Promise<AnalyticsConfig> {
     const environmentEnabled = this.flags.isAnalyticsEnvironmentEnabled();
-    const base = { environmentEnabled, noticeVersion: ANALYTICS_NOTICE_VERSION, rawRetentionDays: ANALYTICS_RETENTION_DAYS };
-    if (!environmentEnabled) return { ...base, enabled: false };
+    const aggregateEnvironmentEnabled = this.flags.isAggregateAnalyticsEnvironmentEnabled();
+    const base = { environmentEnabled, aggregateEnvironmentEnabled, noticeVersion: ANALYTICS_NOTICE_VERSION, rawRetentionDays: ANALYTICS_RETENTION_DAYS };
+    if (!environmentEnabled && !aggregateEnvironmentEnabled) return { ...base, enabled: false, aggregateEnabled: false };
     if (!refresh && this.configCache && this.configCache.until > Date.now()) return this.configCache.value;
-    const value = this.db.select().from(analyticsSettings).where(eq(analyticsSettings.id, 1)).then(([row]) => ({ ...base, enabled: row?.enabled === true && row.noticeVersion === ANALYTICS_NOTICE_VERSION })).catch(() => ({ ...base, enabled: false }));
+    const value = this.db.select().from(analyticsSettings).where(eq(analyticsSettings.id, 1)).then(([row]) => ({ ...base, aggregateEnabled: aggregateEnvironmentEnabled && row?.aggregateEnabled === true, enabled: environmentEnabled && row?.enabled === true && row.noticeVersion === ANALYTICS_NOTICE_VERSION })).catch(() => ({ ...base, enabled: false }));
     this.configCache = { until: Date.now() + 5000, value }; return value;
   }
   async configure(enabled: boolean, actor: RequestUser) {
@@ -33,6 +34,31 @@ export class AnalyticsService {
     await this.db.insert(analyticsSettings).values({ id: 1, enabled, noticeVersion: ANALYTICS_NOTICE_VERSION, updatedBy: actor.id })
       .onConflictDoUpdate({ target: analyticsSettings.id, set: { enabled, noticeVersion: ANALYTICS_NOTICE_VERSION, updatedAt: new Date(), updatedBy: actor.id } });
     this.configCache = undefined; return this.config(true);
+  }
+
+  async configureAggregate(enabled: boolean, actor: RequestUser) {
+    if (enabled && !this.flags.isAggregateAnalyticsEnvironmentEnabled()) throw new ForbiddenException('운영 분석 환경이 비활성 상태입니다');
+    await this.db.insert(analyticsSettings).values({ id: 1, enabled: false, aggregateEnabled: enabled, updatedBy: actor.id })
+      .onConflictDoUpdate({ target: analyticsSettings.id, set: { aggregateEnabled: enabled, updatedAt: new Date(), updatedBy: actor.id } });
+    this.configCache = undefined;
+    return this.config(true);
+  }
+
+  async collectCounts(batch: AnalyticsCounts): Promise<boolean> {
+    if (!this.flags.isAggregateAnalyticsEnvironmentEnabled() || this.collecting || this.pool.waitingCount > 0 || (this.pool.totalCount > 0 && this.pool.idleCount === 0)) return false;
+    this.collecting = true;
+    try {
+      // One bounded statement reads the shared switch and adds grouped counts.
+      // Duplicate keys are merged; no raw event, timestamp, account or browser ID is persisted.
+      await this.db.execute(sql`insert into analytics_counters(bucket,page,name,count)
+        select date_trunc('hour',now()), x.page, x.name, sum(x.count)::int
+        from jsonb_to_recordset(${JSON.stringify(batch.counts)}::jsonb) as x(page text,name text,count int)
+        where exists(select 1 from analytics_settings where id=1 and aggregate_enabled=true)
+        group by x.page,x.name order by x.page,x.name
+        on conflict(bucket,page,name) do update set count=analytics_counters.count+excluded.count,updated_at=now()`);
+      return true;
+    } catch { this.logger.warn('Aggregate analytics dropped: storage unavailable or capacity limit'); return false; }
+    finally { this.collecting = false; }
   }
 
   async collect(batch: AnalyticsBatch): Promise<boolean> {

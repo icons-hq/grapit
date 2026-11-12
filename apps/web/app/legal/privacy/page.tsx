@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getLocale } from 'next-intl/server';
 import privacyMd from '@/content/legal/privacy-policy.md?raw';
 import privacyEnMd from '@/content/legal/privacy-policy.en.md?raw';
@@ -33,6 +34,7 @@ export default async function PrivacyPage() {
 
   return (
     <>
+      <aside className="mb-6 rounded-lg border p-4 text-sm"><Link className="underline" href="/legal/analytics">{locale === 'ko' ? '2026-11-12 서비스 이용 횟수 집계 안내·설정' : '2026-11-12 usage counting notice and settings'}</Link></aside>
       {fallbackLocale ? <LegalFallbackLabel locale={fallbackLocale} /> : null}
       <TermsMarkdown showH1>{markdown}</TermsMarkdown>
     </>

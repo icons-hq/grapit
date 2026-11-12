@@ -1,4 +1,5 @@
 'use client';
+import { trackAggregateAnalytics } from './analytics-counts-client';
 import { ANALYTICS_MAX_BATCH, ANALYTICS_NOTICE_VERSION, ANALYTICS_SESSION_MS, analyticsBatchSchema, analyticsEventSchema, analyticsTouchSchema, normalizeAnalyticsPath, sanitizeAnalyticsCampaign, type AnalyticsBatch, type AnalyticsEvent, type AnalyticsEventName, type AnalyticsTouch } from '@grabit/shared';
 import { apiUrl } from './api-url';
 import { stripUrlQuery } from './sentry-redaction';
@@ -182,6 +183,7 @@ export function observeAnalyticsPage(pathname: string) {
   } catch { /* measurement must never interrupt navigation */ }
 }
 export function trackAnalytics(name: AnalyticsEventName, props: AnalyticsEvent['props'] = {}) {
+  trackAggregateAnalytics(name);
   try {
     if (!allowed() || !ensureSession(true)) return;
     if (!page) observeAnalyticsPage(window.location.pathname);

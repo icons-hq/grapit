@@ -1,3 +1,4 @@
+import type { AnalyticsCountsReport } from './analytics-counts.schema';
 import { z } from 'zod';
 
 export const ANALYTICS_NOTICE_VERSION = 'analytics-v1';
@@ -56,8 +57,9 @@ export const analyticsQuerySchema = z.object({ since: z.string().datetime({ offs
   const duration = Date.parse(until) - Date.parse(since); return duration > 0 && duration <= 90 * 86400000;
 }, '조회 기간은 90일 이내여야 합니다');
 export type AnalyticsQuery = z.infer<typeof analyticsQuerySchema>;
-export interface AnalyticsConfig { enabled: boolean; environmentEnabled: boolean; noticeVersion: string; rawRetentionDays: number; }
+export interface AnalyticsConfig { enabled: boolean; environmentEnabled: boolean; noticeVersion: string; rawRetentionDays: number; aggregateEnabled?: boolean; aggregateEnvironmentEnabled?: boolean; }
 export interface AnalyticsReport {
+  aggregate?: AnalyticsCountsReport;
   since: string; until: string; generatedAt: string; config: AnalyticsConfig; lastCollectedAt: string | null; rollupThrough: string | null;
   summary: { visitors: number; sessions: number; pageViews: number; returningVisitors: number; previousVisitors: number; activeVisitors: number | null; signups: number; paidOrders: number; cancelledOrders: number; };
   trend: Array<{ hour: string; visitors: number; sessions: number; pageViews: number }>;
