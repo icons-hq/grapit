@@ -1,0 +1,2 @@
+ALTER TABLE "analytics_sessions" ADD COLUMN "collection_consent" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "analytics_sessions" ADD COLUMN "overseas_consent" boolean DEFAULT false NOT NULL;

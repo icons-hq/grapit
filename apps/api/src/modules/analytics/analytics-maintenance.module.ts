@@ -50,6 +50,7 @@ export class AnalyticsMaintenance implements OnModuleInit {
       if (rebuildSince) await tx.execute(sql`update analytics_settings set rebuild_since=${rebuiltUntil < Date.now() ? new Date(rebuiltUntil).toISOString() : null}::timestamptz
         where id=1 and rebuild_since=${new Date(rebuildSince as string).toISOString()}::timestamptz`);
       await tx.execute(sql`delete from analytics_opt_outs where expires_at<now()`);
+      const replays = await tx.execute(sql`delete from analytics_replay_chunks where id in (select id from analytics_replay_chunks where received_at<now()-interval '14 days' order by received_at limit 1000) returning id`);
       const deleted = await tx.execute(sql`delete from analytics_events where id in (select id from analytics_events where occurred_at<now()-interval '90 days' order by occurred_at limit 10000) returning id`);
       const sessions = await tx.execute(sql`delete from analytics_sessions where id in (select id from analytics_sessions where started_at<now()-interval '90 days' order by started_at limit 5000) returning id`);
       await tx.execute(sql`delete from analytics_attribution where updated_at<now()-interval '90 days' or first_at<now()-interval '90 days' or user_id in(select id from users where account_status<>'active')`);
@@ -57,7 +58,7 @@ export class AnalyticsMaintenance implements OnModuleInit {
       await tx.execute(sql`delete from analytics_counters where bucket<now()-interval '365 days'`);
       await tx.execute(sql`delete from analytics_traffic_history where bucket<now()-interval '365 days'`);
       await tx.execute(sql`delete from analytics_rollups where bucket<now()-interval '365 days'`);
-      return { deleted: deleted.rows.length, more: more || deleted.rows.length === 10000 || sessions.rows.length === 5000 };
+      return { deleted: deleted.rows.length, more: more || replays.rows.length === 1000 || deleted.rows.length === 10000 || sessions.rows.length === 5000 };
     });
     if (result.more) await this.boss.send(ANALYTICS_MAINTENANCE_QUEUE, {}, { startAfter: new Date(Date.now() + 1000), retryLimit: 3, retryDelay: 30 });
     return result;

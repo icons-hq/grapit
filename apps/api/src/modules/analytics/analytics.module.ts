@@ -5,5 +5,6 @@ import { AnalyticsService } from './analytics.service.js';
 import { AnalyticsReportService } from './analytics-report.service.js';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { RedisModule } from '../booking/providers/redis.module.js';
-@Module({ imports: [AnalyticsDatabaseModule, FeatureFlagsModule, RedisModule], controllers: [AnalyticsController, AdminAnalyticsController], providers: [AnalyticsService, AnalyticsReportService] })
+import { AnalyticsVisitorService } from './analytics-visitor.service.js';
+@Module({ imports: [AnalyticsDatabaseModule, FeatureFlagsModule, RedisModule], controllers: [AnalyticsController, AdminAnalyticsController], providers: [AnalyticsService, AnalyticsReportService, AnalyticsVisitorService] })
 export class AnalyticsModule {}

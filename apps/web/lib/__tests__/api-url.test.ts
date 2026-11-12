@@ -8,6 +8,15 @@ async function loadApiUrl() {
 }
 
 describe('apiUrl', () => {
+  it('routes analytics ingestion and individual administrator views directly while preserving ordinary API routing', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.heygrabit.com');
+    vi.stubEnv('NEXT_PUBLIC_ANALYTICS_API_URL', 'https://seoul-api.run.app');
+    const { apiUrl } = await loadApiUrl();
+    expect(apiUrl('/api/v1/analytics/replay')).toBe('https://seoul-api.run.app/api/v1/analytics/replay');
+    expect(apiUrl('/api/v1/admin/analytics/sessions/123')).toBe('https://seoul-api.run.app/api/v1/admin/analytics/sessions/123');
+    expect(apiUrl('/api/v1/booking')).toBe('https://api.heygrabit.com/api/v1/booking');
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();

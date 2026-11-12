@@ -16,12 +16,12 @@ describe('first-party browser tracker', () => {
   it('creates no identity or transmission until enabled and accepted; errors remain outside user flows', () => {
     client.observeAnalyticsPage('/'); client.trackAnalytics('signup_start'); client.flushAnalytics();
     expect(localStorage.getItem('grabit-analytics-visitor-v1')).toBeNull(); expect(navigator.sendBeacon).not.toHaveBeenCalled();
-    client.setAnalyticsChoice('accepted'); client.observeAnalyticsPage('/'); expect(navigator.sendBeacon).not.toHaveBeenCalled();
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.observeAnalyticsPage('/'); expect(navigator.sendBeacon).not.toHaveBeenCalled();
     client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics(); expect(navigator.sendBeacon).toHaveBeenCalledOnce();
     client.configureAnalytics(false, 'ko'); client.trackAnalytics('signup_start'); client.flushAnalytics(); expect(navigator.sendBeacon).toHaveBeenCalledOnce();
   });
   it('sends a sanitized batch through Beacon and falls back to quiet keepalive fetch', async () => {
-    client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.trackAnalytics('signup_start'); client.flushAnalytics();
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.trackAnalytics('signup_start'); client.flushAnalytics();
     const blob = vi.mocked(navigator.sendBeacon).mock.calls[0]![1] as Blob;
     const serialized = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.readAsText(blob); });
     expect(serialized).toContain('instagram'); expect(serialized).toContain('launch_20261111'); expect(serialized).not.toMatch(/secret|email|ticket=/);
@@ -30,48 +30,48 @@ describe('first-party browser tracker', () => {
     await Promise.resolve(); expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/analytics/events'), expect.objectContaining({ keepalive: true, credentials: 'omit' }));
   });
   it('excludes sensitive routes and respects DNT even with prior acceptance', () => {
-    client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); history.replaceState({}, '', '/auth/callback?token=secret');
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); history.replaceState({}, '', '/auth/callback?token=secret');
     client.observeAnalyticsPage('/auth/callback'); client.trackAnalytics('signup_start'); client.flushAnalytics(); expect(navigator.sendBeacon).not.toHaveBeenCalled();
     history.replaceState({}, '', '/'); Object.defineProperty(navigator, 'doNotTrack', { value: '1', configurable: true });
     client.observeAnalyticsPage('/'); client.flushAnalytics(); expect(navigator.sendBeacon).not.toHaveBeenCalled();
   });
   it('rotates sessions after 30 minutes of inactivity without rotating the visitor', async () => {
-    vi.useFakeTimers(); client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
+    vi.useFakeTimers(); client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
     const first = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
     vi.advanceTimersByTime(31 * 60000); client.touchAnalyticsActivity(); client.flushAnalytics();
     const next = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
     expect(next.id).not.toBe(first.id); expect(next.visitorId).toBe(first.visitorId);
   });
   it('stops immediately on withdrawal, retains only a failed deletion request and retries without falsely reporting completion', async () => {
-    client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
     vi.mocked(fetch).mockResolvedValue({ ok: false } as Response); client.setAnalyticsChoice('declined'); await Promise.resolve(); await Promise.resolve();
     expect(client.getAnalyticsChoice()).toBe('declined'); expect(localStorage.getItem('grabit-analytics-visitor-v1')).toBeNull(); expect(client.getAnalyticsWithdrawalPending()).toBe(true);
-    client.setAnalyticsChoice('accepted'); expect(client.getAnalyticsChoice()).toBe('declined');
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); expect(client.getAnalyticsChoice()).toBe('declined');
     const calls = vi.mocked(navigator.sendBeacon).mock.calls.length; client.trackAnalytics('signup_start'); client.flushAnalytics(); expect(navigator.sendBeacon).toHaveBeenCalledTimes(calls);
     vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => ({ deleted: true }) } as Response); await client.retryAnalyticsWithdrawal(); expect(client.getAnalyticsWithdrawalPending()).toBe(false);
   });
   it('can withdraw earlier visits from a fresh tab before that tab creates a session', async () => {
-    client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
+    client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); client.flushAnalytics();
     const prior = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
     sessionStorage.clear(); vi.resetModules(); client = await import('../analytics-client');
     client.setAnalyticsChoice('declined'); await Promise.resolve(); await Promise.resolve();
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/analytics/withdraw'), expect.objectContaining({ body: JSON.stringify({ visitorId: prior.visitorId, sessionId: prior.id, consentVersion: 'analytics-v1' }) }));
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/analytics/withdraw'), expect.objectContaining({ body: JSON.stringify({ visitorId: prior.visitorId, sessionId: prior.id, consentVersion: 'analytics-v2-replay' }) }));
   });
   it('publishes a shared visitor before notifying accepted tabs while the collector is active', () => {
     client.configureAnalytics(true, 'ko');
     const listener = vi.fn(() => expect(localStorage.getItem('grabit-analytics-visitor-v1')).not.toBeNull());
     const unsubscribe = client.subscribeAnalyticsChoice(listener);
-    try { client.setAnalyticsChoice('accepted'); expect(listener).toHaveBeenCalledOnce(); } finally { unsubscribe(); }
+    try { client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); expect(listener).toHaveBeenCalledOnce(); } finally { unsubscribe(); }
   });
   it.each([true, false])('uses the current browser identity after another tab withdraws and accepts again (storage event: %s)', async (receiveStorageEvent) => {
     auth.user = { id: crypto.randomUUID(), role: 'user' }; auth.accessToken = 'synthetic-token';
     const unsubscribe = client.subscribeAnalyticsChoice(() => client.configureAnalytics(true, 'ko'));
     try {
-      client.setAnalyticsChoice('accepted'); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); await client.identifyAnalytics();
+      client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); await client.identifyAnalytics();
       const prior = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
       // Emulate the shared localStorage changes from a separate tab. This tab's
       // sessionStorage and module state deliberately retain the earlier session.
-      const declined = JSON.stringify({ version: 'analytics-v1', value: 'declined', at: Date.now() });
+      const declined = JSON.stringify({ version: 'analytics-v2-replay', value: 'declined', at: Date.now() });
       localStorage.setItem(client.ANALYTICS_CHOICE_KEY, declined); localStorage.removeItem('grabit-analytics-visitor-v1');
       if (receiveStorageEvent) {
         window.dispatchEvent(new StorageEvent('storage', { key: client.ANALYTICS_CHOICE_KEY, newValue: declined }));
@@ -81,14 +81,14 @@ describe('first-party browser tracker', () => {
       client.trackAnalytics('signup_start'); client.flushAnalytics(); expect(navigator.sendBeacon).toHaveBeenCalledTimes(transmissions);
       const visitorId = crypto.randomUUID();
       localStorage.setItem('grabit-analytics-visitor-v1', JSON.stringify({ id: visitorId, expires: Date.now() + 86400000 }));
-      const accepted = JSON.stringify({ version: 'analytics-v1', value: 'accepted', at: Date.now() });
+      const accepted = JSON.stringify({ version: 'analytics-v2-replay', value: 'accepted', at: Date.now(), collectionConsent: true, overseasConsent: true });
       localStorage.setItem(client.ANALYTICS_CHOICE_KEY, accepted);
       if (receiveStorageEvent) window.dispatchEvent(new StorageEvent('storage', { key: client.ANALYTICS_CHOICE_KEY, newValue: accepted }));
       client.configureAnalytics(true, 'ko'); client.observeAnalyticsPage('/'); await client.identifyAnalytics();
       const current = JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1')!);
       expect(current.id).not.toBe(prior.id); expect(current.visitorId).toBe(visitorId);
       expect(JSON.parse(localStorage.getItem('grabit-analytics-visitor-v1')!).id).toBe(visitorId);
-      expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/analytics/identify'), expect.objectContaining({ body: JSON.stringify({ visitorId, sessionId: current.id, consentVersion: 'analytics-v1' }) }));
+      expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/analytics/identify'), expect.objectContaining({ body: JSON.stringify({ visitorId, sessionId: current.id, consentVersion: 'analytics-v2-replay' }) }));
       expect(navigator.sendBeacon).toHaveBeenCalledTimes(transmissions + 1);
     } finally { unsubscribe(); }
   });

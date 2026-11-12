@@ -36,8 +36,8 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
   const canChooseSchedule = available && !ended;
   const canContinue = available && !ended && (selected !== null || performance.showtimes.length === 0);
   const label = verificationRequired ? legacy.performance.verifyCta : legacy.performance.bookCta;
-  const cta = canContinue ? <Link className="ticket-book-cta" href={bookingHref}>{label}</Link>
-    : <button type="button" disabled className="ticket-book-cta">{!available ? disabledMessage : ended ? copy.noFutureShowtime : copy.selectTimePrompt}</button>;
+  const cta = canContinue ? <Link className="ticket-book-cta" data-analytics-action="booking" href={bookingHref}>{label}</Link>
+    : <button type="button" disabled className="ticket-book-cta" data-analytics-action="booking">{!available ? disabledMessage : ended ? copy.noFutureShowtime : copy.selectTimePrompt}</button>;
   const time = (value:string) => new Intl.DateTimeFormat(locale,{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value));
   const schedule = <div className="ticket-booking-panel-body">
         {showtimes.length ? <>
@@ -59,7 +59,7 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
         {cta}
       </DialogContent>
       <div className="ticket-mobile-booking">{canChooseSchedule
-        ? <DialogTrigger asChild><button type="button" className="ticket-book-cta">{label}</button></DialogTrigger>
+        ? <DialogTrigger asChild><button type="button" className="ticket-book-cta" data-analytics-action="booking">{label}</button></DialogTrigger>
         : cta}</div>
     </Dialog>
   </>;

@@ -10,7 +10,7 @@
 
 서버는 전용 분석 연결의 한 statement로 공유 스위치를 확인하고 `analytics_counters`의 시간대/화면 종류/동작별 숫자에 더한다. 개인별 raw event는 저장하지 않으며 365일 후 삭제한다. 연결 대기·오류·부하 제한은 버리고 사용자 동작을 지연시키지 않는다. 네트워크 손실·브라우저 거부·호출 위조·공유 IP throttle 영향을 받을 수 있는 운영 참고용 횟수이며 사람 수/세션/정확한 전환율이 아니다.
 
-이 모드는 `AGGREGATE_ANALYTICS_ENABLED=true` 환경 변수와 DB `aggregate_enabled=true`를 함께 요구한다. 개인별 연결 모드의 `ANALYTICS_ENABLED`/`enabled`와 독립적이다. 이번 운영 요청에서는 **횟수 집계만 활성화하고 개인별 연결은 off를 유지한다**. 관리자는 `/admin/analytics`의 횟수 집계 시작/중단을 사용한다. 기본 조회는 어제 00:00 KST부터다. 개인정보처리방침 페이지에서 공개 집계 안내·설정으로 연결하며 현행 방침 본문을 소급 변경하지 않는다. 별도 개인별 분석 개정 준비안은 미게시 상태다.
+이 모드는 `AGGREGATE_ANALYTICS_ENABLED=true` 환경 변수와 DB `aggregate_enabled=true`를 함께 요구한다. 개인별 연결 모드의 `ANALYTICS_ENABLED`/`enabled`와 독립적이다. 2026-11-12 1차 배포에서는 횟수 집계만 활성화했다. 후속 개인별 방문·좌표·화면 재생 요청은 아래 별도 절차에 따라 `analytics-v2-replay` 동의부터 활성화한다. 관리자는 `/admin/analytics`의 횟수 집계 시작/중단을 사용한다. 기본 조회는 어제 00:00 KST부터다. 개인정보처리방침 페이지에서 공개 집계 안내·설정으로 연결하며 현행 방침 본문을 소급 변경하지 않는다. 별도 개인별 분석 개정 준비안은 미게시 상태다.
 
 [기존 Cloudflare 기록 조사](../research/2026-11-12-existing-traffic-evidence.md)의 `httpRequests1hGroups` 요청/HTML pageViews와 공개 호스트의 adaptive HTML 추정치를 `analytics_traffic_history`에 보존한다. HTML 요청은 봇·모니터링을 포함하고 사람 수가 아니다. 집계 간 모집단·수집 위치가 다르므로 새 브라우저 횟수와 더하지 않는다. 현재 시간대와 조회 시작 시각을 포함한 시간대는 부분 구간이 포함될 수 있다. 별도 정기 Cloudflare 수집은 아직 구성하지 않았으며 관리자는 화면의 확보 시각으로 범위를 확인한다.
 
@@ -45,7 +45,7 @@
 | 철회 UUID의 SHA256·만료 시각 | 지연 전송의 재수집 방지 | `analytics_opt_outs` | 최대 90일 | 삭제·거부 이행 목적의 연결 가능 정보 |
 | 미완료 삭제 요청의 visitor/session ID | 삭제 요청 재시도 | 브라우저 localStorage | 완료 즉시 삭제, 최대 90일 | 삭제 목적만 사용, 분석 재사용 금지 |
 
-원본 IP·이름·이메일·전화·검색어·전체 URL query/hash·결제/QR/예매 식별자·폼 값·리플레이는 수집하지 않는다. `stripUrlQuery`를 재사용한 뒤 path를 추가 정규화하고, UTM만 별도로 읽는다. UTM에 개인 식별값을 넣지 않는다. `/admin`, `/field`, `/api`, `/mypage`, `/payment`, 인증 하위 경로, 유효한 공개 공연 UUID가 없는 예매/공연 경로는 제외한다. 라우트가 같은 query 변화에서는 UTM이 바뀐 경우만 새 유입으로 잡으며 검색어 변화는 저장하지 않는다.
+원본 IP·이름·이메일·전화·검색어·전체 URL query/hash·결제/QR/예매 식별자·폼 값은 분석 이벤트에 수집하지 않는다. 개인별 관리자 화면은 인증된 회원 연결을 통해 기존 회원 DB의 이름·이메일을 표시한다. v2의 마스킹된 화면 재생은 아래 별도 보관·접근 기준을 적용한다. `stripUrlQuery`를 재사용한 뒤 path를 추가 정규화하고, UTM만 별도로 읽는다. UTM에 개인 식별값을 넣지 않는다. `/admin`, `/field`, `/api`, `/mypage`, `/payment`, 인증 하위 경로, 유효한 공개 공연 UUID가 없는 예매/공연 경로는 제외한다. 라우트가 같은 query 변화에서는 UTM이 바뀐 경우만 새 유입으로 잡으며 검색어 변화는 저장하지 않는다.
 
 ## 지표 해석
 
@@ -59,7 +59,7 @@
 
 ## 수집 제어·부하 경계
 
-1. 처리방침 개정/고지/시행일과 선택 동의를 확정한다. 기존 문서를 직접 덮지 말고 [동의 문서 버전 절차](consent-document-versions.md)를 따른다. 현재 PR에는 초안만 있으며 기존 적용 버전은 유지된다.
+1. 처리방침 개정/고지/시행일과 선택 동의를 확정한다. 기존 문서를 직접 덮지 말고 [동의 문서 버전 절차](consent-document-versions.md)를 따른다. 새 선택기능은 `/legal/analytics`의 별도 처리 안내와 두 개의 선택 동의를 적용한다. 기존 필수 개인정보처리방침·마케팅 수신 동의의 버전은 재사용하지 않는다.
 2. 승인된 배포에서 repository variable `ANALYTICS_ENABLED=true`를 API에 전달한다. unset은 Deploy workflow에서 false로 덮으며 코드 기본값도 false다. 기존 환경 변수 방식만으로 즉시 중단할 수 없으므로 관리자 DB 스위치를 별도로 둔다.
 3. `security.manage` 관리자가 `/admin/analytics`에서 정책 시행·선택 동의 절차를 확인하고 수집을 시작한다. DB 기본값은 false다. `audit.read`만 있는 운영자는 지표만 읽는다.
 4. 티켓 오픈 전/부하 급증/오류 때 **수집 즉시 중단**을 누른다. 모든 API가 새 배치마다 공유 스위치를 읽는다. 진행 중인 배치는 완료될 수 있으며 수집 중인 브라우저는 30초 내 새 설정을 가져온다. 환경 게이트 기본 off 또는 요청 실패 시 반복 조회를 멈추며, 환경 승인 후 일시 중지는 5분마다 확인한다. 원본 조회·보관 삭제는 중단하지 않는다.
@@ -90,9 +90,9 @@
 
 서울 SSD 공개 단가 $0.221/GiB-month로 계산한 저장소 시나리오다. [공식 가격](https://cloud.google.com/sql/pricing). 실제 할당 저장소, index/WAL/backup/CPU/worker/네트워크/할인/세금은 별도이고 현행 청구나 여유 공간을 조회하지 않았다. 기존 [비용·용량 runbook](managed-demo-cost-floor.md)의 현재 선택 프로파일과 배포 preflight를 따른다. 연결 예산은 `API_MAX × (DB_POOL_MAX + PGBOSS_POOL_MAX + 1) + workerTasks × (WORKER_DB_POOL_MAX + workerPgBossPoolMax + 1) + reserve`다. 분석 때문에 인스턴스를 자동 증설하거나 비용을 승인하지 않는다.
 
-## 3단계 보류와 별도 발견
+## 광고 매체와 화면 재생 범위
 
-광고 픽셀 ID와 리플레이 요청이 없으므로 Meta/Kakao/Naver/GA4/Clarity를 설치하거나 활성화하지 않는다. 필요해지면 매체·처리 목적·수신 법인/국가·동의·거부를 먼저 확정한다. 현재 Sentry에는 오류 리플레이 샘플링 설정이 있으나 `replayIntegration()` 등록과 실제 전송은 확인되지 않았다. 기존 ko/en 정책 수탁자 목록의 Sentry 누락은 이번 수집 기능과 별도 검토 항목이다.
+외부 광고 픽셀 ID는 제공되지 않았으므로 Meta/Kakao/Naver/GA4/Clarity는 설치하지 않는다. 클릭·터치·스크롤·화면 재생은 요청에 따라 자체 수집한다. rrweb은 로컬 번들 라이브러리이며 외부 rrweb 서비스로 전송하지 않는다. Sentry의 미사용 오류 리플레이 샘플링도 0으로 명시한다. 기존 ko/en 정책 수탁자 목록의 Sentry 누락은 이번 수집 기능과 별도 검토 항목이다.
 
 ## 로컬 검증 재현
 
@@ -103,3 +103,36 @@
 2026-11-11 로컬 검증에서는 API 단위 2,764개, 분석 PostgreSQL/Valkey 통합 5개, 관련 웹 91개와 추가 fresh-tab 철회 회귀 검증, 가입·분석 브라우저 시나리오 5개를 통과했다. 분석 API 실패 상태에서 합성 링크 동작 25회 처리에 2ms가 걸렸고 가입 입력은 동작했으며 애플리케이션 예외는 없었다. 이 측정은 로컬 개발 빌드의 작은 동작 검증이며 운영 LCP/INP/실판매 부하 성능 보장이 아니다. 운영 검증은 승인된 배포·활성화 단계에서 수행한다.
 
 후속 리뷰의 다중 탭 철회/재동의 누락을 재현하고 수정했다. 클라이언트 테스트 9개와 실제 두 탭 → API → DB의 철회/재동의/새 방문 저장/재삭제를 통과했다. 재동의 시 방문자 ID를 먼저 공유해 동시 생성 경쟁도 방지한다. CI에서 발견된 기존 연결 예산 기대값 4건을 분석 연결 포함 기준으로 갱신했고 해당 운영 스크립트 검사 66개가 통과했다.
+
+
+## 개인별 방문·좌표·세션 리플레이 (analytics-v2-replay)
+
+- 수집·이용 및 국외 이전 체크박스는 각각 기본 미동의다. 둘 모두 선택하고 허용한 이후부터만 전송한다. 동의 버전·시각과 두 선택값을 세션에 저장한다. 이전 analytics-v1 상태나 마케팅 동의를 재사용하지 않는다.
+- `pointer_click`: 문서 좌표 x/y, viewport/document 크기, scroll offset, mouse/touch/pen/keyboard, 대상 종류와 고정 CTA 분류만 저장한다. DOM text, CSS selector, 입력값은 보내지 않는다. 좌표는 90일이며 민감 경로와 동의 UI를 제외한다.
+- rrweb의 전체/증분 DOM snapshot, 포인터·스크롤·크기 변경·마스킹된 입력 상태를 저장한다. 모든 텍스트와 값은 마스킹하고, script·iframe·canvas·video·audio·임의 URL·원본 이미지·custom event는 제외한다. 클라이언트 전송 전 및 API 저장 전에 같은 허용목록 sanitizer를 적용한다. `/auth`, `/legal`에서는 replay를 시작하지 않는다. 기존 인증 하위/결제/마이페이지/관리자/현장 경로도 제외한다.
+- 최대 768 KiB/배치, 200 events/배치, 10 MiB/세션, 1000 chunks/세션이다. 약 5초마다 전송하며 큰 snapshot은 일반 fetch, 작은 종료 배치만 keepalive를 사용한다. 메모리·서버 용량 제한 또는 네트워크 실패 시 누락될 수 있다. 브라우저에 녹화 원본을 영구 저장하지 않는다. 실제 화면의 영상 파일이 아닌 마스킹된 DOM 기반 재생이다.
+- `analytics_replay_chunks`는 14일 후 조회에서 제외하고 기존 5분 worker가 1000행씩 삭제한다. 세션 삭제 FK cascade로 철회 때 함께 삭제한다. 나머지 원본90일·집계365일은 유지한다.
+- `/admin/analytics/visitors`, `/sessions/:id`, `/replays/:id`는 **audit.read와 security.manage 모두** 필요하다. visitor UUID는 삭제 권한용 값이므로 응답하지 않고 md5(UUID) 불투명 표시값으로 방문 세션을 묶는다. 상세에는 회원 이름·이메일을 포함하므로 운영자 화면 공유에 유의한다. 일반 audit.read 통계 권한만으로 상세는 열 수 없다.
+- 목록은 최신50세션, 타임라인은 최신 500행씩 조회한다. 시각과 UUID를 함께 커서에 넣어 같은 밀리초의 기록도 누락 없이 이어간다. 히트맵은 현재 타임라인 범위의 동일 경로·약100px 너비구간 클릭을 문서크기로 정규화한다. 상세 화면에 이 범위를 표시한다. 당시 화면은 별도 replay를 선택해 재생/탐색/속도를 조정한다.
+
+### 전송·운영 설정
+
+배포 Web build arg `NEXT_PUBLIC_ANALYTICS_API_URL`은 repository variable `ANALYTICS_API_ORIGIN`에서 가져온다. 운영 값은 **https://grabit-api-d3c6wrfdbq-du.a.run.app** (프로젝트 grapit-491806, asia-northeast3, 기존 grabit-api)이다. `/api/v1/analytics`와 `/api/v1/admin/analytics`만 이 origin을 사용한다. 일반 API와 예매·결제는 기존 public API를 유지한다. 기존 공개 origin의 Origin 검증·JWT·관리자 권한·throttle은 그대로 적용되며 새 공개 bypass를 만들지 않는다. 개인별 payload 및 상세 응답을 Cloudflare CDN으로 보내지 않는다. 향후 API origin 교체 시 이 build 변수를 함께 갱신하고 재배포한다.
+
+선택 분석 endpoint는 Sentry 오류/transaction/HTTP breadcrumb 및 span의 식별정보에서 제외한다. Cloud Logging `_Default` sink의 `personal-analytics-request-logs` exclusion은 `grabit-api`의 `/api/v1/(admin/)?analytics` 요청 메타데이터 저장만 제외한다. 다른 서비스 로그는 유지한다. 일반 사이트·보안 로그 전체가 동의로 중단된다고 고지하지 않는다.
+
+2026-11-12 승인 범위에서 `grabit-db-managed-demo`의 **새 자동 백업 위치를 asia-northeast3**로 지정했다. 기존 백업은 이동·삭제하지 않았다. 기존 백업은 개인별 수집 활성화 이전 자료다. 최근 자동백업7개/PITR7일을 유지하며 신규 수동 백업에 개인별 자료가 포함되면 목적·만료일을 기록하고7일 이내 정리한다. 복원된 DB는 분석 수집·관리자 개인별 조회를 열기 전에 복원시각 이후 접수한 철회와 현재시각14/90일 만료를 재적용한다. 공급자 최종삭제 최대180일은 Google CDPA의 삭제 처리 상한이며 활성DB 보관을180일로 늘리는 의미가 아니다.
+
+### 배포·활성화 순서
+
+1. CI로 0058/0059 migration과 API/Web 배포를 수행한다. 운영 DB 연결 대상 확인, migration freeze 임시해제와 복구는 기존 배포 절차를 따른다.
+2. Web build의 직접 전송 origin, CORS, 실제 요청 목적지, 새 자동백업 위치와 Logging exclusion을 검증한다.
+3. 한영 선택기능 안내를 게시하고 상세 페이지 링크·두 동의 항목·거부/철회를 실제 렌더링으로 확인한다. 기존 필수 방침의 개정 시점 약속을 지워 즉시 적용하는 방식으로 대체하지 않는다. 새 기능은 별도 상세 동의 시점부터만 적용한다.
+4. 승인된 `ANALYTICS_ENABLED=true` 배포 후 관리자 DB 스위치를 v2로 켠다. 별도 QA 브라우저 한 건으로 동의 전 전송없음 → 두 동의 → 좌표·replay 저장 → 관리자 실제 재생 → 철회 삭제를 확인한다. 합성 QA 방문은 실제 신규회원 실적으로 보고하지 않는다.
+5. `/analytics/config`의 noticeVersion/enabled, live 관리자의 최근 수신·개인별 기록, 새 공지와 거부 상태를 확인한다. 수집 중지 시 신규 raw/replay 배치는 모두 공유 kill switch를 적용한다.
+
+사전 수집하지 않은 2026-11-11의 개인별 클릭·화면은 복원하지 않는다. 이미 확보한 Cloudflare HTML 요청 집계는 개인별 이력과 구분한다.
+
+### 구현 검증(운영 배포 전)
+
+공유 계약 전체 215개, API 단위 2,767개, PostgreSQL/Valkey 통합 502개 통과. 웹 전체 1,768개 중 6개는 동시 대량 실행에서 5초 timeout으로 실패했고, 관련 3개 파일을 낮은 동시성으로 재실행하여 모두 통과했다(기능 오류 수정 없음). 변경 대상 웹·API 타입 검사와 lint를 통과했다. 로컬 실제 브라우저 → API → DB에서 두 선택 동의 전송, 좌표·마스킹 replay 저장, 권한 있는 관리자 재생/히트맵, PC 1440×1000·모바일 390×844, 두 탭 철회/재동의/서버 삭제를 통과했다. Browser plugin이 제공되지 않아 기존 Playwright 흐름을 사용했다. 운영 CORS·인증·수신·공지는 배포 뒤 확인한다.

@@ -273,6 +273,7 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=${{ vars.CLOUD_RUN_API_URL }}
+            NEXT_PUBLIC_ANALYTICS_API_URL=${{ vars.ANALYTICS_API_ORIGIN }}
             NEXT_PUBLIC_WS_URL=${{ vars.CLOUD_RUN_API_URL }}
             NEXT_PUBLIC_R2_HOSTNAME=${{ secrets.R2_PUBLIC_HOSTNAME }}
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}

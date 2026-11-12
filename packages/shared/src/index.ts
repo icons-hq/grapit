@@ -41,3 +41,4 @@ export * from './i18n/launch-copy-keys';
 export * from './flags';
 export * from './schemas/booking-addon.schema';
 export * from './schemas/analytics-counts.schema';
+export * from './schemas/analytics-replay.schema';

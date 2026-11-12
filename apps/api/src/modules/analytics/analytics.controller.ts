@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Body, Controller, ForbiddenException, Get, Header, HttpCode, Inject, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Header, HttpCode, Inject, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { analyticsCountsSchema, analyticsBatchSchema, analyticsIdentifySchema, analyticsQuerySchema, analyticsSettingsSchema, type AnalyticsCounts, type AnalyticsBatch, type AnalyticsQuery } from '@grabit/shared';
@@ -12,6 +12,8 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { getFrontendOrigins } from '../../config/frontend-origins.js';
 import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
+import { analyticsCursorSchema, analyticsReplayBatchSchema, analyticsVisitorsQuerySchema, type AnalyticsReplayBatch, type AnalyticsVisitorsQuery } from '@grabit/shared';
+import { AnalyticsVisitorService } from './analytics-visitor.service.js';
 import { AnalyticsService } from './analytics.service.js';
 import { AnalyticsReportService } from './analytics-report.service.js';
 
@@ -39,6 +41,11 @@ export class AnalyticsController {
     assertOrigin(req); if (ignoresAnalyticsRequest(req)) return;
     await this.service.collect(batch);
   }
+  @Public() @Post('replay') @HttpCode(200) @Throttle({ default: ROUTE_THROTTLES.analyticsEvents })
+  async replay(@Req() req: Request, @Body(new ZodValidationPipe(analyticsReplayBatchSchema)) batch: AnalyticsReplayBatch) {
+    assertOrigin(req); if (ignoresAnalyticsRequest(req)) return { stored: false };
+    return this.service.collectReplay(batch);
+  }
   @Post('identify') @HttpCode(200) @Throttle({ default: ROUTE_THROTTLES.analyticsIdentify })
   async identify(@Req() req: Request, @CurrentUser() user: RequestUser, @Body(new ZodValidationPipe(analyticsIdentifySchema)) input: { visitorId: string; sessionId: string; consentVersion: string }) {
     assertOrigin(req); if (ignoresAnalyticsRequest(req)) return { linked: false };
@@ -51,9 +58,15 @@ export class AnalyticsController {
 }
 @Controller('admin/analytics') @UseGuards(RolesGuard, AdminCapabilitiesGuard) @Roles('admin')
 export class AdminAnalyticsController {
-  constructor(@Inject(AnalyticsService) private readonly service: AnalyticsService, @Inject(AnalyticsReportService) private readonly reports: AnalyticsReportService) {}
+  constructor(@Inject(AnalyticsService) private readonly service: AnalyticsService, @Inject(AnalyticsReportService) private readonly reports: AnalyticsReportService, @Inject(AnalyticsVisitorService) private readonly visitors: AnalyticsVisitorService) {}
   @Get() @AdminCapabilities('audit.read') @Header('Cache-Control', 'no-store')
   report(@Query(new ZodValidationPipe(analyticsQuerySchema)) query: AnalyticsQuery) { return this.reports.report(query); }
+  @Get('visitors') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
+  sessions(@Query(new ZodValidationPipe(analyticsVisitorsQuerySchema)) query: AnalyticsVisitorsQuery) { return this.visitors.sessions(query); }
+  @Get('sessions/:id') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
+  detail(@Param('id', new ParseUUIDPipe()) id: string, @Query(new ZodValidationPipe(z.object({ before: analyticsCursorSchema.optional() }).strict())) query: { before?: string }) { return this.visitors.detail(id, query.before); }
+  @Get('replays/:id') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
+  replay(@Param('id', new ParseUUIDPipe()) id: string) { return this.visitors.replay(id); }
   @Put('aggregate-settings') @AdminCapabilities('security.manage')
   aggregateSettings(@CurrentUser() actor: RequestUser, @Body(new ZodValidationPipe(z.object({ enabled: z.boolean() }).strict())) input: { enabled: boolean }) { return this.service.configureAggregate(input.enabled, actor); }
   @Put('settings') @AdminCapabilities('security.manage')

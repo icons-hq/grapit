@@ -8,31 +8,32 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { AnalyticsController, AdminAnalyticsController } from './analytics.controller.js';
 import { AnalyticsService } from './analytics.service.js';
+import { AnalyticsVisitorService } from './analytics-visitor.service.js';
 import { AnalyticsReportService } from './analytics-report.service.js';
 import { analyticsBodyParser } from '../../config/analytics-body-parser.js';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 
-const body = () => ({ consentVersion: 'analytics-v1', consentedAt: new Date().toISOString(), visitorId: randomUUID(), sessionId: randomUUID(),
+const body = () => ({ collectionConsent: true, overseasConsent: true, consentVersion: 'analytics-v2-replay', consentedAt: new Date().toISOString(), visitorId: randomUUID(), sessionId: randomUUID(),
   touch: { landingPath: '/', referrerHost: null, source: null, medium: null, campaign: null, term: null, content: null },
   device: 'desktop', browser: 'chrome', os: 'macos', screen: 'large', language: 'ko',
   events: [{ id: randomUUID(), pageId: randomUUID(), name: 'page_view', path: '/', previousPath: null, props: {}, at: new Date().toISOString() }] });
 describe('analytics HTTP boundary', () => {
   let app: INestApplication;
-  const service = { collectCounts: vi.fn().mockResolvedValue(true), configureAggregate: vi.fn(), collect: vi.fn().mockResolvedValue(true), identify: vi.fn().mockResolvedValue(true), config: vi.fn().mockResolvedValue({ enabled: false }), configure: vi.fn(), withdraw: vi.fn().mockResolvedValue({ deleted: true }) };
+  const service = { collectReplay: vi.fn().mockResolvedValue({ stored: true }), collectCounts: vi.fn().mockResolvedValue(true), configureAggregate: vi.fn(), collect: vi.fn().mockResolvedValue(true), identify: vi.fn().mockResolvedValue(true), config: vi.fn().mockResolvedValue({ enabled: false }), configure: vi.fn(), withdraw: vi.fn().mockResolvedValue({ deleted: true }) };
   const reports = { report: vi.fn().mockResolvedValue({ summary: {} }) };
   beforeAll(async () => {
     vi.stubEnv('FRONTEND_URL', 'https://heygrabit.com');
     Reflect.defineMetadata('design:paramtypes', [Reflector], RolesGuard); Reflect.defineMetadata('design:paramtypes', [Reflector], AdminCapabilitiesGuard);
     const module = await Test.createTestingModule({
       imports: [ThrottlerModule.forRoot({ throttlers: [{ name: 'default', ttl: 60000, limit: 500 }], getTracker: (req) => req.headers['x-test-network'] ?? 'test' })],
-      controllers: [AnalyticsController, AdminAnalyticsController], providers: [{ provide: AnalyticsService, useValue: service }, { provide: AnalyticsReportService, useValue: reports }, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+      controllers: [AnalyticsController, AdminAnalyticsController], providers: [{ provide: AnalyticsService, useValue: service }, { provide: AnalyticsReportService, useValue: reports }, { provide: AnalyticsVisitorService, useValue: { sessions: vi.fn().mockResolvedValue({ sessions: [], nextBefore: null }), detail: vi.fn(), replay: vi.fn() } }, { provide: APP_GUARD, useClass: ThrottlerGuard }],
     }).compile();
     app = module.createNestApplication(); app.use('/analytics', analyticsBodyParser());
     app.use((req: { user?: unknown; headers: Record<string, string> }, _res: unknown, next: () => void) => {
       const kind = req.headers['x-test-user'];
-      if (kind) req.user = { id: 'test-user', role: kind === 'customer' ? 'user' : 'admin', adminCapabilities: kind === 'auditor' ? ['audit.read'] : kind === 'security' ? ['security.manage'] : ['field.scan.verify'] };
+      if (kind) req.user = { id: 'test-user', role: kind === 'customer' ? 'user' : 'admin', adminCapabilities: kind === 'owner' ? ['audit.read', 'security.manage'] : kind === 'auditor' ? ['audit.read'] : kind === 'security' ? ['security.manage'] : ['field.scan.verify'] };
       next();
     });
     const reflector = new Reflector();
@@ -77,7 +78,18 @@ describe('analytics HTTP boundary', () => {
     expect((await request(server).put('/admin/analytics/settings').set('x-test-user', 'security').send({ enabled: true })).status).toBe(400);
     expect((await request(server).put('/admin/analytics/settings').set('x-test-user', 'security').send({ enabled: false })).status).toBe(200);
     const { visitorId, sessionId } = body();
-    expect((await request(server).post('/analytics/identify').set('origin', 'https://heygrabit.com').send({ visitorId, sessionId, consentVersion: 'analytics-v1' })).status).toBe(401);
-    expect((await request(server).post('/analytics/withdraw').set('origin', 'https://heygrabit.com').send({ visitorId, sessionId, consentVersion: 'analytics-v1' })).body).toEqual({ deleted: true });
+    expect((await request(server).post('/analytics/identify').set('origin', 'https://heygrabit.com').send({ visitorId, sessionId, consentVersion: 'analytics-v2-replay' })).status).toBe(401);
+    expect((await request(server).post('/analytics/withdraw').set('origin', 'https://heygrabit.com').send({ visitorId, sessionId, consentVersion: 'analytics-v2-replay' })).body).toEqual({ deleted: true });
+  });
+  it('requires both personal-data permissions and sanitizes replay before storage', async () => {
+    const query = '/admin/analytics/visitors?since=2026-11-10T00:00:00Z&until=2026-11-11T00:00:00Z';
+    for (const kind of ['auditor', 'security', 'customer']) expect((await request(app.getHttpServer()).get(query).set('x-test-user', kind)).status).toBe(403);
+    expect((await request(app.getHttpServer()).get(query).set('x-test-user', 'owner')).status).toBe(200);
+    const input = { id: randomUUID(), recordingId: randomUUID(), pageId: randomUUID(), visitorId: randomUUID(), sessionId: randomUUID(), consentVersion: 'analytics-v2-replay', path: '/', events: [{ type: 4, timestamp: Date.now(), data: { href: 'https://private.test/?email=secret', width: 390, height: 844 } }] };
+    const result = await request(app.getHttpServer()).post('/analytics/replay').set('origin', 'https://heygrabit.com').send(input);
+    expect(result.status).toBe(200); expect(service.collectReplay).toHaveBeenCalledOnce();
+    expect(JSON.stringify(service.collectReplay.mock.calls)).not.toMatch(/private.test|email=secret/);
+    const missingConsent = body(); delete (missingConsent as Partial<typeof missingConsent>).overseasConsent;
+    expect((await request(app.getHttpServer()).post('/analytics/events').set('origin', 'https://heygrabit.com').send(missingConsent)).status).toBe(400);
   });
 });
