@@ -49,6 +49,7 @@ export const users = pgTable('users', {
   }).onDelete('set null'),
   index('idx_users_role_admin_capability_bundle').on(table.role, table.adminCapabilityBundle),
   index('idx_users_account_status').on(table.accountStatus),
+  index('idx_users_created_at').on(table.createdAt),
   // Case-insensitive login/signup lookups. Not unique: legacy rows may differ only by case.
   index('idx_users_email_lower').using('btree', sql`lower(${table.email})`),
   // Verified phone identity lookup for the per-person ticket limit (ticket-limit.ts, migration 0039).
