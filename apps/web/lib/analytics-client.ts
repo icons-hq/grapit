@@ -183,7 +183,9 @@ export function observeAnalyticsPage(pathname: string) {
   } catch { /* measurement must never interrupt navigation */ }
 }
 export function trackAnalytics(name: AnalyticsEventName, props: AnalyticsEvent['props'] = {}) {
-  trackAggregateAnalytics(name);
+  // Page/link/scroll/engagement counts have one independent provider. Forward
+  // only business-flow hooks so enabling personal analytics cannot double count.
+  if (['signup_start', 'queue_enter', 'seat_select', 'checkout_start'].includes(name)) trackAggregateAnalytics(name);
   try {
     if (!allowed() || !ensureSession(true)) return;
     if (!page) observeAnalyticsPage(window.location.pathname);

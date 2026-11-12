@@ -25,6 +25,15 @@ describe('browser usage counter', () => {
     client.setAggregateAnalyticsDisabled(false); Object.defineProperty(navigator, 'doNotTrack', { value: '1' });
     client.configureAggregateAnalytics(true); client.observeAggregatePage('/'); client.flushAggregateAnalytics(); expect(fetch).not.toHaveBeenCalled();
   });
+  it('does not double forward a link already counted by the aggregate provider', async () => {
+    client.configureAggregateAnalytics(true); client.observeAggregatePage('/');
+    client.trackAggregateAnalytics('link_click');
+    const personal = await import('../analytics-client');
+    personal.trackAnalytics('link_click', { target: '/search' });
+    client.flushAggregateAnalytics();
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    expect(body.counts.find((row: { name: string }) => row.name === 'link_click')?.count).toBe(1);
+  });
   it('bounds batches, deduplicates a mounted page and isolates network failure from interactions', () => {
     vi.mocked(fetch).mockRejectedValue(new Error('offline'));
     client.configureAggregateAnalytics(true); client.observeAggregatePage('/'); client.observeAggregatePage('/');
