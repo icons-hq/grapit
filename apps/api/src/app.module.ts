@@ -1,5 +1,6 @@
 import { BookingAddonsModule } from './modules/booking-addons/booking-addons.module.js';
 import { Module } from '@nestjs/common';
+import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import type IORedis from 'ioredis';
@@ -60,6 +61,7 @@ import { redisConfig } from './config/redis.config.js';
       },
     }),
     DrizzleModule,
+    AnalyticsModule,
     HealthModule,
     AuthModule,
     UserModule,

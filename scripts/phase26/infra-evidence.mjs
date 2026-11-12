@@ -265,8 +265,9 @@ function input(value, source) {
  * DB pool evidence from deploy.yml plus, when collected, the live grabit-api
  * service and bounded worker Job. Live values win over workflow defaults (repository variables can
  * differ from them). The connection estimate uses the Deploy workflow's budget
- * formula: API instances x (app pool + API pg-boss cap) + worker (app pool +
- * worker pg-boss cap) + reserve. Every input records where it came from.
+ * formula: API instances x (app pool + API pg-boss cap + 1 analytics connection)
+ * + worker (app pool + worker pg-boss cap + 1 analytics connection) + reserve.
+ * Configurable inputs record where they came from; the analytics cap is fixed in code.
  */
 export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi = null, liveWorker = null } = {}) {
   const poolKeys = ['DB_POOL_MAX', 'DB_POOL_IDLE_TIMEOUT_MS', 'DB_POOL_CONNECTION_TIMEOUT_MS'];
@@ -366,7 +367,7 @@ export function extractDeployPoolEvidence(deployYaml, drizzleProvider, { liveApi
       note: 'Same formula as the Deploy workflow database preflight (deploy-guards.mjs). Counts one '
         + 'revision; rollout overlap, migration and operator sessions must fit in the reserve.',
     },
-    // API instances x (app pool + pg-boss pool); the full requirement is connectionEstimate.required.
+    // API instances x (app pool + pg-boss pool + analytics); full requirement: connectionEstimate.required.
     estimatedApiDbConnections: demand?.api ?? null,
     estimatedDbConnections: demand?.required ?? null,
   };

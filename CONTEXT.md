@@ -4,6 +4,18 @@ Grabit is a live-entertainment ticketing and event-operations platform. This glo
 
 ## Language
 
+**Observed Visitor**:
+A browser that permits visitor analytics. One person may appear as several Observed Visitors; this is not a verified real-world identity.
+_Avoid_: Person, Buyer Account, anonymous person.
+
+**Observed Visit**:
+An interval of activity by an Observed Visitor, separated by inactivity or a new campaign arrival.
+_Avoid_: Reservation, authenticated session, complete customer journey.
+
+**Observed Conversion**:
+A signup or paid Reservation whose authoritative completion can be connected to an Observed Visit. It describes observed acquisition, not the causal effect of an advertisement.
+_Avoid_: All signups, all revenue, guaranteed advertising attribution.
+
 **Buyer**:
 A person who discovers a performance, books seats, pays, and owns the resulting reservation and QR credential.
 _Avoid_: Customer, fan, user when referring to the booking actor.

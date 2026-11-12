@@ -1,8 +1,9 @@
 'use client';
+import { trackAnalytics } from '@/lib/analytics-client';
 
 import { useRouter } from 'next/navigation';
 import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
 import type {
@@ -23,6 +24,7 @@ import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { isPhoneVerificationTokenUsedError } from '@/components/auth/phone-verification-errors';
 
 export function SignupForm() {
+  useEffect(() => { trackAnalytics('signup_start'); }, []);
   const router = useRouter();
   const authCopy = getAuthLaunchCopy(useLocale());
   const setAuth = useAuthStore((s) => s.setAuth);

@@ -1,3 +1,4 @@
+import { trackAnalytics } from '@/lib/analytics-client';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hashKey, useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
@@ -550,6 +551,7 @@ export function useLockSeat(options: SeatLockMutationOptions = {}) {
     // Hook-level callbacks run for every mutation. Per-call mutate() callbacks
     // are dropped when the next seat is clicked, so callers use mutateAsync.
     onSuccess: async (response, variables) => {
+      if (performanceId) trackAnalytics('seat_select', { performanceId, count: 1 });
       // Same id format the server broadcasts in seat-update.
       const runtimeSeatId = toRuntimeSeatId(variables);
       const seatKey = toSeatStatusKey(runtimeSeatId);

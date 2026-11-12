@@ -108,6 +108,7 @@ function parseCountryListText(value, name) {
  * connection budget derives each process's pg-boss cap the same way.
  */
 export const OPTIONAL_RUNTIME_ENV = [
+  { name: 'ANALYTICS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
   { name: 'PGBOSS_POOL_MAX', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'PGBOSS_START_MAX_ATTEMPTS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'DB_STATEMENT_TIMEOUT_MS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
@@ -576,7 +577,7 @@ export function evaluateMigrationFreeze({ freeze, pending }) {
 /**
  * Worst-case PostgreSQL connection demand of the deployed posture.
  * Each API instance and the single worker task own one app pool (DB_POOL_MAX)
- * plus one pg-boss pool. The pg-boss cap differs per process: the runtime
+ * plus one pg-boss pool and one dedicated analytics connection. The pg-boss cap differs per process: the runtime
  * PGBOSS_POOL_MAX when set, otherwise 3 with background processing and 1 for a
  * producer-only API (the managed-demo API). The worker Job always processes jobs.
  *
@@ -593,16 +594,18 @@ export function estimateConnectionDemand({
   workerTasks = 1,
   reserve,
 }) {
-  const api = apiMaxInstances * (dbPoolMax + apiPgBossPoolMax);
-  const worker = workerTasks * (workerDbPoolMax + workerPgBossPoolMax);
+  // Analytics has its own hard-capped pool of one per process, even when
+  // ingestion is off (admin reads and retention still use the connection).
+  const api = apiMaxInstances * (dbPoolMax + apiPgBossPoolMax + 1);
+  const worker = workerTasks * (workerDbPoolMax + workerPgBossPoolMax + 1);
   return {
     api,
     worker,
     reserve,
     required: api + worker + reserve,
     formula:
-      `API ${apiMaxInstances} x (${dbPoolMax} app + ${apiPgBossPoolMax} pg-boss) = ${api}, ` +
-      `worker ${workerTasks} x (${workerDbPoolMax} app + ${workerPgBossPoolMax} pg-boss) = ${worker}, ` +
+      `API ${apiMaxInstances} x (${dbPoolMax} app + ${apiPgBossPoolMax} pg-boss + 1 analytics) = ${api}, ` +
+      `worker ${workerTasks} x (${workerDbPoolMax} app + ${workerPgBossPoolMax} pg-boss + 1 analytics) = ${worker}, ` +
       `reserve ${reserve}`,
   };
 }

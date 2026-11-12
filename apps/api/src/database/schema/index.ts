@@ -1,4 +1,5 @@
 export { users, genderEnum, localeEnum } from './users.js';
+export * from './analytics.js';
 export { socialAccounts } from './social-accounts.js';
 export { refreshTokens } from './refresh-tokens.js';
 export { emailVerificationTokens } from './email-verification-tokens.js';

@@ -55,6 +55,9 @@ export function resolveCurrentUserProfileTracker(req: ThrottleRequestLike): stri
 }
 
 export const ROUTE_THROTTLES = {
+  /** Bounded batches per trusted client network, separate from booking buckets. */
+  analyticsEvents: { limit: 60, ttl: MINUTE_MS },
+  analyticsIdentify: { limit: 10, ttl: MINUTE_MS },
   /**
    * POST /auth/refresh with a refresh cookie, per client IP. AuthInitializer
    * refreshes on every full page load, so a shared NAT needs headroom. A
