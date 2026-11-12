@@ -123,6 +123,22 @@ describe('first-party analytics / isolated PostgreSQL and Valkey', () => {
     await db.update(schema.analyticsSettings).set({ enabled: true });
     expect(await service.collectReplay({ ...input, id: randomUUID() })).toEqual({ stored: false });
   });
+  it('paginates equal-time sessions and events without skipping a record', async () => {
+    const data = batch(); await service.collect(data);
+    const [original] = await db.select().from(schema.analyticsSessions);
+    await db.insert(schema.analyticsSessions).values(Array.from({ length: 50 }, () => ({ ...original!, id: randomUUID(), visitorId: randomUUID() })));
+    await db.insert(schema.analyticsEvents).values(Array.from({ length: 501 }, () => ({ id: randomUUID(), sessionId: data.sessionId, pageId: data.events[0]!.pageId, name: 'page_view', path: '/', previousPath: null, props: {}, occurredAt: new Date(data.events[0]!.at) })));
+    const visitors = new AnalyticsVisitorService(db);
+    const first = await visitors.sessions(query());
+    expect(first.sessions).toHaveLength(50); expect(first.nextBefore).toBeTruthy();
+    const rest = await visitors.sessions({ ...query(), before: first.nextBefore! });
+    expect(rest.sessions).toHaveLength(1); expect(new Set([...first.sessions, ...rest.sessions].map((s) => s.id)).size).toBe(51);
+    const page = await visitors.detail(data.sessionId);
+    expect(page.events).toHaveLength(500); expect(page.nextBefore).toBeTruthy();
+    const remaining = await visitors.detail(data.sessionId, page.nextBefore!);
+    expect(remaining.events).toHaveLength(2); expect(new Set([...page.events, ...remaining.events].map((e) => e.id)).size).toBe(502);
+    expect(page.events[0]!.occurredAt).toMatch(/Z$/);
+  });
   it('expires replay independently after 14 days while keeping 90-day activity', async () => {
     const data = batch(); await service.collect(data);
     await db.insert(schema.analyticsReplayChunks).values({ id: randomUUID(), sessionId: data.sessionId, recordingId: randomUUID(), pageId: data.events[0]!.pageId, path: '/', events: [], bytes: 2, startedAt: new Date(now - 15*86400000), receivedAt: new Date(now - 15*86400000) });

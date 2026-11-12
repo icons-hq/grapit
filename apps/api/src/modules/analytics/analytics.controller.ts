@@ -12,7 +12,7 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { getFrontendOrigins } from '../../config/frontend-origins.js';
 import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
-import { analyticsReplayBatchSchema, analyticsVisitorsQuerySchema, type AnalyticsReplayBatch, type AnalyticsVisitorsQuery } from '@grabit/shared';
+import { analyticsCursorSchema, analyticsReplayBatchSchema, analyticsVisitorsQuerySchema, type AnalyticsReplayBatch, type AnalyticsVisitorsQuery } from '@grabit/shared';
 import { AnalyticsVisitorService } from './analytics-visitor.service.js';
 import { AnalyticsService } from './analytics.service.js';
 import { AnalyticsReportService } from './analytics-report.service.js';
@@ -64,7 +64,7 @@ export class AdminAnalyticsController {
   @Get('visitors') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
   sessions(@Query(new ZodValidationPipe(analyticsVisitorsQuerySchema)) query: AnalyticsVisitorsQuery) { return this.visitors.sessions(query); }
   @Get('sessions/:id') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
-  detail(@Param('id', new ParseUUIDPipe()) id: string, @Query(new ZodValidationPipe(z.object({ before: z.string().datetime({ offset: true }).optional() }).strict())) query: { before?: string }) { return this.visitors.detail(id, query.before); }
+  detail(@Param('id', new ParseUUIDPipe()) id: string, @Query(new ZodValidationPipe(z.object({ before: analyticsCursorSchema.optional() }).strict())) query: { before?: string }) { return this.visitors.detail(id, query.before); }
   @Get('replays/:id') @AdminCapabilities('audit.read', 'security.manage') @Header('Cache-Control', 'no-store')
   replay(@Param('id', new ParseUUIDPipe()) id: string) { return this.visitors.replay(id); }
   @Put('aggregate-settings') @AdminCapabilities('security.manage')

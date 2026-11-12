@@ -83,9 +83,13 @@ export const analyticsReplayBatchSchema = z.object({
   events: z.array(z.unknown()).min(1).max(200).transform((events) => events.map(sanitizeReplayEvent).filter((e): e is ReplayEvent => e !== null)).refine((events) => events.length > 0),
 }).strict();
 export type AnalyticsReplayBatch = z.infer<typeof analyticsReplayBatchSchema>;
+export const analyticsCursorSchema = z.string().max(80).refine((value) => {
+  const parts = value.split('|');
+  return parts.length === 2 && z.string().datetime({ offset: true }).safeParse(parts[0]).success && z.string().uuid().safeParse(parts[1]).success;
+}, '올바른 조회 커서가 필요합니다');
 export const analyticsVisitorsQuerySchema = z.object({
   since: z.string().datetime({ offset: true }), until: z.string().datetime({ offset: true }),
-  before: z.string().datetime({ offset: true }).optional(), visitor: z.string().regex(/^[a-f0-9]{32}$/).optional(),
+  before: analyticsCursorSchema.optional(), visitor: z.string().regex(/^[a-f0-9]{32}$/).optional(),
 }).strict().refine((v) => analyticsQuerySchema.safeParse({ since: v.since, until: v.until }).success);
 export type AnalyticsVisitorsQuery = z.infer<typeof analyticsVisitorsQuerySchema>;
 export interface AnalyticsVisitorSession {
