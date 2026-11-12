@@ -16,6 +16,12 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
   ),
 }));
 
+vi.mock('@/components/promo/areun-gl-promo', () => ({
+  AreunGlPerformancePromo: ({ genre, placement }: { genre?: string; placement: string }) => (
+    <div data-testid="areun-gl-promo" data-genre={genre} data-placement={placement} />
+  ),
+}));
+
 const rawQrToken = 'raw-token-booking-complete-should-not-render';
 const rawQrJti = 'raw-jti-booking-complete-should-not-render';
 const secondRawQrToken = 'raw-token-booking-complete-seat-2-should-not-render';
@@ -249,6 +255,18 @@ describe('BookingComplete QR ticket card', () => {
 
     rerender(<BookingComplete booking={createReservation({ paymentInfo: undefined, paymentMethod: 'CARD' })} />);
     expect(screen.getByText('카드', { exact: true })).toBeInTheDocument();
+  });
+
+  it('places the Areun GL promo with the booked genre between the tickets and the CTA buttons', () => {
+    render(<BookingComplete booking={createReservation({ performanceGenre: 'artist_celebrity' })} />);
+
+    const promo = screen.getByTestId('areun-gl-promo');
+    expect(promo).toHaveAttribute('data-genre', 'artist_celebrity');
+    expect(promo).toHaveAttribute('data-placement', 'booking_complete');
+    expect(screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`).compareDocumentPosition(promo))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(promo.compareDocumentPosition(screen.getByRole('button', { name: 'QR 티켓' })))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('moves the QR action directly to the first displayed ticket', () => {

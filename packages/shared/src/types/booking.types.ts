@@ -1,4 +1,5 @@
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
+import type { Genre } from './performance.types';
 import type {
   TicketItem,
   TicketItemCancellationPolicyCode,
@@ -301,6 +302,8 @@ export interface ReservationListItem {
 export interface ReservationDetail extends ReservationListItem {
   addons?: import('../schemas/booking-addon.schema').BookingAddonChoice[];
   performanceId?: string;
+  /** Booked performance's genre; lets buyer screens target genre-specific content without another catalog read. */
+  performanceGenre?: Genre;
   showtimeId?: string;
   tossOrderId?: string | null;
   checkoutPaymentMethod?: PaymentMethod | null;

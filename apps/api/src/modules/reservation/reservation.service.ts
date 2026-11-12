@@ -1668,6 +1668,7 @@ export class ReservationService {
           id: performances.id,
           title: performances.title,
           posterUrl: performances.posterUrl,
+          genre: performances.genre,
         },
         venue: {
           name: venues.name,
@@ -1797,6 +1798,7 @@ export class ReservationService {
       reservationNumber: row.reservation.reservationNumber,
       status: row.reservation.status as ReservationStatus,
       performanceId: row.performance.id,
+      performanceGenre: row.performance.genre,
       showtimeId: row.reservation.showtimeId,
       tossOrderId: row.reservation.tossOrderId ?? null,
       checkoutPaymentMethod: row.reservation.checkoutPaymentMethod ?? null,

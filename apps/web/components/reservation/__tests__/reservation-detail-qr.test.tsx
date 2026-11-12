@@ -21,6 +21,12 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
   ),
 }));
 
+vi.mock('@/components/promo/areun-gl-promo', () => ({
+  AreunGlPerformancePromo: ({ genre, placement }: { genre?: string; placement: string }) => (
+    <div data-testid="areun-gl-promo" data-genre={genre} data-placement={placement} />
+  ),
+}));
+
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
     get: vi.fn(),
@@ -382,6 +388,32 @@ describe('ReservationDetailView QR ticket card', () => {
     const reservation = createReservation({ status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [] });
     render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
     expect(screen.getByText('결제 전')).toBeInTheDocument();
+  });
+
+  it('places the Areun GL promo under the QR tickets of a confirmed reservation only', () => {
+    const { unmount } = render(
+      <ReservationDetailView
+        reservation={createReservation({ performanceGenre: 'artist_celebrity' })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    const promo = screen.getByTestId('areun-gl-promo');
+    expect(promo).toHaveAttribute('data-genre', 'artist_celebrity');
+    expect(promo).toHaveAttribute('data-placement', 'reservation_detail');
+    expect(screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`).compareDocumentPosition(promo))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    unmount();
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({ performanceGenre: 'artist_celebrity', status: 'CANCELLED' })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+    expect(screen.queryByTestId('areun-gl-promo')).not.toBeInTheDocument();
   });
 
   it('renders one QR image per active ticket item without visible raw secrets', () => {
