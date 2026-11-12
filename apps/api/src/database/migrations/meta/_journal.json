@@ -386,6 +386,13 @@
       "when": 1794373339437,
       "tag": "0054_performance_announcements",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1794380104694,
+      "tag": "0055_users_signup_time_index",
+      "breakpoints": true
     }
   ]
 }

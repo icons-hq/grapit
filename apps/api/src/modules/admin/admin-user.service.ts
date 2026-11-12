@@ -71,6 +71,8 @@ import {
 } from './admin-audit.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
+import { loadSignupMonitoring } from './signup-monitoring.js';
+import type { SignupMonitoringQuery } from '@grabit/shared';
 
 const USER_REFRESH_FAMILY_LIMIT = 2;
 // Withdrawal blockers are counted in full; only the sample list in the 409
@@ -290,6 +292,10 @@ export class AdminUserService {
       supportThreadSummary,
       recentAuditEvents,
     );
+  }
+
+  async getSignupMonitoring(query: SignupMonitoringQuery) {
+    return loadSignupMonitoring(this.db, query);
   }
 
   async getUserStats(): Promise<AdminUserStatsResponse> {

@@ -1,5 +1,9 @@
 # Grabit Architecture
 
+## Signup monitoring
+
+`GET /api/v1/admin/users/signup-monitoring` extends `AdminUserService` with aggregate-only, KST hourly signup monitoring for announcement/today/24h/7d windows (admin + `audit.read`). `/admin/users` refreshes it every 60 seconds while visible. It reads users, social accounts, reservations and payment approval timestamps without new tracking or writes. A single SQL snapshot compares an equal preceding interval. Withdrawn users remain included; merged/admin users are excluded. The `users.created_at` B-tree supports selective ranges. Definitions, local EXPLAIN evidence and limitations are in [the signup monitoring runbook](runbooks/signup-monitoring.md).
+
 ## 1. Architecture Summary
 
 Grabit is a pnpm monorepo with four runtime packages:

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import { Readable } from 'node:stream';
 import type { Request } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { signupMonitoringQuerySchema, type SignupMonitoringQuery } from '@grabit/shared';
 import {
   adminUserExportRequestSchema,
   adminUserListQuerySchema,
@@ -59,6 +61,13 @@ export class AdminUserController {
   @AdminCapabilities('audit.read')
   async getUserStats() {
     return this.adminUserService.getUserStats();
+  }
+
+  @Get('signup-monitoring')
+  @AdminCapabilities('audit.read')
+  @Header('Cache-Control', 'no-store')
+  async getSignupMonitoring(@Query(new ZodValidationPipe(signupMonitoringQuerySchema)) query: SignupMonitoringQuery) {
+    return this.adminUserService.getSignupMonitoring(query);
   }
 
   @Post('export')
