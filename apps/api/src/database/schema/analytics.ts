@@ -4,6 +4,7 @@ import { users } from './users.js';
 
 export const analyticsSettings = pgTable('analytics_settings', {
   id: integer('id').primaryKey().default(1), enabled: boolean('enabled').notNull().default(false),
+  aggregateEnabled: boolean('aggregate_enabled').notNull().default(false),
   noticeVersion: varchar('notice_version', { length: 40 }), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
   rebuildSince: timestamp('rebuild_since', { withTimezone: true }),
@@ -37,3 +38,16 @@ export const analyticsRollups = pgTable('analytics_rollups', {
   grain: varchar('grain', { length: 8 }).notNull(), bucket: timestamp('bucket', { withTimezone: true }).notNull(), visitors: integer('visitors').notNull(), sessions: integer('sessions').notNull(),
   pageViews: integer('page_views').notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.grain, t.bucket] })]);
+
+// Only counters survive a request. No visitor/session/user identifier or event rows.
+export const analyticsCounters = pgTable('analytics_counters', {
+  bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+  page: varchar('page', { length: 24 }).notNull(), name: varchar('name', { length: 32 }).notNull(),
+  count: integer('count').notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.bucket, t.page, t.name] })]);
+export const analyticsTrafficHistory = pgTable('analytics_traffic_history', {
+  bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+  source: varchar('source', { length: 40 }).notNull(), metric: varchar('metric', { length: 40 }).notNull(),
+  count: integer('count').notNull(), sampled: boolean('sampled').notNull(),
+  observedThrough: timestamp('observed_through', { withTimezone: true }).notNull(),
+}, (t) => [primaryKey({ columns: [t.bucket, t.source, t.metric] })]);

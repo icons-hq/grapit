@@ -54,6 +54,8 @@ export class AnalyticsMaintenance implements OnModuleInit {
       const sessions = await tx.execute(sql`delete from analytics_sessions where id in (select id from analytics_sessions where started_at<now()-interval '90 days' order by started_at limit 5000) returning id`);
       await tx.execute(sql`delete from analytics_attribution where updated_at<now()-interval '90 days' or first_at<now()-interval '90 days' or user_id in(select id from users where account_status<>'active')`);
       await tx.execute(sql`update analytics_sessions set user_id=null where user_id in(select id from users where account_status<>'active')`);
+      await tx.execute(sql`delete from analytics_counters where bucket<now()-interval '365 days'`);
+      await tx.execute(sql`delete from analytics_traffic_history where bucket<now()-interval '365 days'`);
       await tx.execute(sql`delete from analytics_rollups where bucket<now()-interval '365 days'`);
       return { deleted: deleted.rows.length, more: more || deleted.rows.length === 10000 || sessions.rows.length === 5000 };
     });

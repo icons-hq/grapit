@@ -40,3 +40,4 @@ export * from './i18n/launch-copy-keys';
 // Feature flags
 export * from './flags';
 export * from './schemas/booking-addon.schema';
+export * from './schemas/analytics-counts.schema';

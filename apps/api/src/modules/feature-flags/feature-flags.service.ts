@@ -26,6 +26,10 @@ export class FeatureFlagsService {
     return parseBooleanFlag(this.runtimeEnvProvider()['ANALYTICS_ENABLED'], false);
   }
 
+  isAggregateAnalyticsEnvironmentEnabled(): boolean {
+    return parseBooleanFlag(this.runtimeEnvProvider()['AGGREGATE_ANALYTICS_ENABLED'], false);
+  }
+
   assertBookingEnabled(actor?: BookingActor): void {
     if (this.getFlags().bookingEnabled || canUseAdminBookingBypass(actor)) {
       return;

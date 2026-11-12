@@ -4,6 +4,32 @@
 
 1단계 가입 모니터링은 `/admin/users`, 2단계 자체 방문·행동 분석은 `/admin/analytics`다. 2단계는 코드·migration·화면을 준비하되 수집 기본값을 꺼 둔다. 정책 개정·실판매 용량 검증·운영 활성화 승인은 별도다. [ADR 0013](../adr/0013-first-party-consented-analytics.md), [공식 근거와 도구 비교](../research/2026-11-11-first-party-analytics-evidence.md), [한·영 정책 개정 초안](../legal/analytics-privacy-amendment-draft.md)을 함께 읽는다.
 
+## 즉시 운영: 식별자 없는 횟수 집계
+
+2026-11-12 추가한 `POST /analytics/counts`는 공개 화면의 종류와 동작 이름별 개수만 받는다. 방문/세션/회원/이벤트 ID, 클라이언트 발생 시각, 실제 경로/공연 ID, query, 유입·기기 정보는 받지 않는다. DTO는 추가 필드를 거부하며 최대 20개 동작의 합계를 한 배치로 제한한다. 별도 브라우저 식별자를 만들지 않고 인증·cookie·referrer 없이 전송한다. DNT/GPC, 관리자·민감 경로, 명시적 거부(기존 분석 거부 포함)를 존중한다. `/legal/analytics`의 횟수 집계 설정은 허용/거부 값만 저장한다. 서비스 제공·보안용 기존 접속 로그와는 별도다.
+
+서버는 전용 분석 연결의 한 statement로 공유 스위치를 확인하고 `analytics_counters`의 시간대/화면 종류/동작별 숫자에 더한다. 개인별 raw event는 저장하지 않으며 365일 후 삭제한다. 연결 대기·오류·부하 제한은 버리고 사용자 동작을 지연시키지 않는다. 네트워크 손실·브라우저 거부·호출 위조·공유 IP throttle 영향을 받을 수 있는 운영 참고용 횟수이며 사람 수/세션/정확한 전환율이 아니다.
+
+이 모드는 `AGGREGATE_ANALYTICS_ENABLED=true` 환경 변수와 DB `aggregate_enabled=true`를 함께 요구한다. 개인별 연결 모드의 `ANALYTICS_ENABLED`/`enabled`와 독립적이다. 이번 운영 요청에서는 **횟수 집계만 활성화하고 개인별 연결은 off를 유지한다**. 관리자는 `/admin/analytics`의 횟수 집계 시작/중단을 사용한다. 기본 조회는 어제 00:00 KST부터다. 개인정보처리방침 페이지에서 공개 집계 안내·설정으로 연결하며 현행 방침 본문을 소급 변경하지 않는다. 별도 개인별 분석 개정 준비안은 미게시 상태다.
+
+[기존 Cloudflare 기록 조사](../research/2026-11-12-existing-traffic-evidence.md)의 `httpRequests1hGroups` 요청/HTML pageViews와 공개 호스트의 adaptive HTML 추정치를 `analytics_traffic_history`에 보존한다. HTML 요청은 봇·모니터링을 포함하고 사람 수가 아니다. 집계 간 모집단·수집 위치가 다르므로 새 브라우저 횟수와 더하지 않는다. 현재 시간대와 조회 시작 시각을 포함한 시간대는 부분 구간이 포함될 수 있다. 별도 정기 Cloudflare 수집은 아직 구성하지 않았으며 관리자는 화면의 확보 시각으로 범위를 확인한다.
+
+### 기존 접속 집계 import runbook
+
+개인정보가 없는 공급자 집계만 아래 형식으로 정규화한다. `analyticsTrafficHistoryImportSchema`가 추가 필드·지표·수치·중복을 검증한다.
+
+- `observedThrough`: 공급자 조회 시각(ISO UTC)
+- `rows`: `{ bucket: 정각 ISO UTC, source: cloudflare_zone|cloudflare_public_html, metric: requests|html_page_views|html_requests_estimated, count: 정수, sampled: boolean }`
+
+운영 적용은 프로젝트 `grapit-491806`, 리전 `asia-northeast3`, DB **grapit**을 확인한 뒤 수행한다. 승인된 API 배포 이미지로 일회용 Cloud Run Job을 만들며, 기존 worker를 변경하지 않는다. worker와 같은 Cloud SQL 연결/네트워크 및 최소한의 `database-url:latest` 참조만 사용한다. 개인 OAuth/API 키를 운영에 복사하지 않는다.
+
+1. JSON의 UTF-8 원문 SHA256을 검토한다. `ANALYTICS_HISTORY_BASE64`, `EXPECTED_HISTORY_SHA256`, `EXPECTED_DATABASE_NAME=grapit` 환경값을 넣는다. 이 payload에는 공개 화면의 시간별 숫자만 있으며 비밀은 포함하지 않는다.
+2. `node dist/ops/analytics-history-import.cli.js dry-run`으로 DB 이름·행 수·조회 시각·해시를 확인한다. 스크립트는 DB가 다르면 쓰지 않는다.
+3. 같은 이미지·입력으로 `apply`를 실행한다. 동일 시간/출처/지표를 upsert하고 더 오래된 스냅샷은 최신 값을 덮지 않는다. 별도 신규 테이블만 기록한다.
+4. 실행 성공과 관리자 화면의 시각·일별 합계를 공급자 응답과 대조한다. 일회용 job은 삭제해 정리한다. 요청된 기존 집계 외의 고객·거래 데이터는 읽거나 수정하지 않는다.
+
+로컬 검증: shared contract 2개, 관련 웹 25개, API 경계/마이그레이션 8개, PostgreSQL/Valkey 통합 6개 및 배포 가드 31개 통과. PC/모바일 브라우저 3개 시나리오를 통과했다. 개인별 수집의 기존 live-harness 시나리오 1개는 별도 harness를 기동하지 않아 제외했으며 개인별 수집 구현은 이 변경의 활성화 범위가 아니다. API/Web 타입과 변경 파일 lint를 통과했다.
+
 ## 수집 항목과 보관
 
 | 항목 | 판단 목적 | 저장 위치 | 보관 | 개인정보 성격 |

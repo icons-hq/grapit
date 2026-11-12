@@ -29,9 +29,9 @@ describe('first-party analytics / isolated PostgreSQL and Valkey', () => {
   }, 180000);
   afterAll(async () => { await redis?.quit(); await pool?.end(); await pg?.stop(); await valkey?.stop(); });
   beforeEach(async () => {
-    await pool.query('truncate analytics_settings, analytics_events, analytics_sessions, analytics_attribution, analytics_rollups, analytics_opt_outs, users, venues cascade');
+    await pool.query('truncate analytics_counters, analytics_traffic_history, analytics_settings, analytics_events, analytics_sessions, analytics_attribution, analytics_rollups, analytics_opt_outs, users, venues cascade');
     await redis.flushall(); now = Date.now(); environment = true;
-    const flags = new FeatureFlagsService(() => ({ ANALYTICS_ENABLED: String(environment) }));
+    const flags = new FeatureFlagsService(() => ({ ANALYTICS_ENABLED: String(environment), AGGREGATE_ANALYTICS_ENABLED: String(environment) }));
     service = new AnalyticsService(db, pool, flags, redis); reports = new AnalyticsReportService(db, service, redis); maintenance = new AnalyticsMaintenance(db, boss as unknown as PgBossContract);
     boss.send.mockClear(); await db.insert(schema.analyticsSettings).values({ id: 1, enabled: true, noticeVersion: 'analytics-v1' });
   });
@@ -45,6 +45,22 @@ describe('first-party analytics / isolated PostgreSQL and Valkey', () => {
     const [u] = await db.insert(schema.users).values({ email: `${randomUUID()}@test.invalid`, name: 'Fixture', phone: '+821000000000', gender: 'unspecified', birthDate: '1990-01-01', createdAt: new Date(createdAt), role }).returning();
     return { id: u!.id, email: u!.email, role };
   }
+  it('stores only hourly category totals, independently of the personal switch, and respects the aggregate stop switch', async () => {
+    const payload = { counts: [{ page: 'home' as const, name: 'page_view' as const, count: 2 }] };
+    await service.collectCounts(payload);
+    expect(await db.select().from(schema.analyticsCounters)).toHaveLength(0);
+    const admin = await member(now, 'admin');
+    await db.update(schema.analyticsSettings).set({ enabled: false });
+    expect(await service.configureAggregate(true, admin)).toMatchObject({ aggregateEnabled: true, enabled: false });
+    await service.collectCounts(payload); await service.collectCounts(payload);
+    const counters = await db.select().from(schema.analyticsCounters);
+    expect(counters).toHaveLength(1); expect(counters[0]).toMatchObject({ page: 'home', name: 'page_view', count: 4 });
+    expect(await db.select().from(schema.analyticsSessions)).toHaveLength(0);
+    expect(await db.select().from(schema.analyticsEvents)).toHaveLength(0);
+    expect((await reports.report(query())).aggregate?.counts[0]?.count).toBe(4);
+    await service.configureAggregate(false, admin); await service.collectCounts(payload);
+    expect((await db.select().from(schema.analyticsCounters))[0]?.count).toBe(4);
+  });
   it('drops ingestion when the environment or shared kill switch is off and deduplicates retries', async () => {
     const data = batch(); environment = false;
     expect(await service.collect(data)).toBe(false); expect((await service.config()).enabled).toBe(false);

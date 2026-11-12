@@ -100,7 +100,14 @@ export class AnalyticsReportService {
       const hour = new Date(at + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
       trend.push(trendMap.get(hour) ?? { hour, visitors: 0, sessions: 0, pageViews: 0 });
     }
-    return { since, until, generatedAt: new Date().toISOString(), config, lastCollectedAt: iso(row.lastCollectedAt), rollupThrough: iso(row.rollupThrough),
+    const counters = await this.db.execute(sql`select
+      (select min(bucket) from analytics_counters) as "startedAt",
+      (select max(updated_at) from analytics_counters) as "updatedAt",
+      ${array(sql`select to_char(date_trunc(${query.granularity},bucket at time zone 'Asia/Seoul'),'YYYY-MM-DD HH24:MI') as hour,page,name,sum(count)::int as count from analytics_counters where bucket>=date_trunc('hour',${since}::timestamptz) and bucket<${until}::timestamptz group by 1,2,3 order by 1,2,3`)} as counts,
+      ${array(sql`select to_char(date_trunc(${query.granularity},bucket at time zone 'Asia/Seoul'),'YYYY-MM-DD HH24:MI') as hour,source,metric,sum(count)::int as count,bool_or(sampled) as sampled,max(observed_through) as "observedThrough" from analytics_traffic_history where bucket>=date_trunc('hour',${since}::timestamptz) and bucket<${until}::timestamptz group by 1,2,3 order by 1,2,3`)} as history`);
+    const aggregateRow = counters.rows[0]!;
+    const aggregate = { startedAt: iso(aggregateRow.startedAt), updatedAt: iso(aggregateRow.updatedAt), counts: aggregateRow.counts, history: aggregateRow.history } as NonNullable<AnalyticsReport['aggregate']>;
+    return { aggregate, since, until, generatedAt: new Date().toISOString(), config, lastCollectedAt: iso(row.lastCollectedAt), rollupThrough: iso(row.rollupThrough),
       summary: { ...(row.summary as AnalyticsReport['summary']), activeVisitors: active }, trend,
       funnel: funnel(row.funnel as Array<{ name: string; count: number }>), signupFunnel: funnel(row.signupFunnel as Array<{ name: string; count: number }>),
       sources: row.sources as AnalyticsReport['sources'], attribution: row.attribution as AnalyticsReport['attribution'], landingPages: row.landingPages as AnalyticsReport['landingPages'],

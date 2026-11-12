@@ -109,6 +109,7 @@ function parseCountryListText(value, name) {
  */
 export const OPTIONAL_RUNTIME_ENV = [
   { name: 'ANALYTICS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
+  { name: 'AGGREGATE_ANALYTICS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
   { name: 'PGBOSS_POOL_MAX', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'PGBOSS_START_MAX_ATTEMPTS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'DB_STATEMENT_TIMEOUT_MS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
