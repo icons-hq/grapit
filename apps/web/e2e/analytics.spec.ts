@@ -174,3 +174,22 @@ test('identifier-free counts work before personal consent and stop on the browse
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   expect(sent).toHaveLength(before); expect(errors).toEqual([]);
 });
+
+test('English visitors keep their locale through the separate analytics consent flow', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+  await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({ status: 204 }));
+  await page.route('**/api/v1/analytics/config', (route) => fulfillJson(route, data.config));
+  await page.route('**/api/v1/analytics/events', (route) => route.fulfill({ status: 204 }));
+  await page.goto('/en/auth');
+  await page.getByRole('link', { name: 'Details and choices', exact: true }).click();
+  await expect(page).toHaveURL(/\/en\/legal\/analytics$/);
+  await expect(page.getByRole('heading', { name: 'Privacy notice for optional individual visitor analytics', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'privacy policy', exact: true })).toHaveAttribute('href', '/en/legal/privacy');
+  await expect(page.getByRole('button', { name: 'Allow analytics', exact: true })).toBeDisabled();
+  await page.getByRole('checkbox').nth(0).check();
+  await expect(page.getByRole('button', { name: 'Allow analytics', exact: true })).toBeDisabled();
+  await page.getByRole('checkbox').nth(1).check();
+  await expect(page.getByRole('button', { name: 'Allow analytics', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Allow analytics', exact: true }).click();
+  await expect(page.getByText('Analytics allowed on this browser', { exact: true })).toBeVisible();
+});

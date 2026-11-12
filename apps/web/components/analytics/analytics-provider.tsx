@@ -5,6 +5,8 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { useAnalyticsConfig } from '@/hooks/use-analytics-config';
 import Link from 'next/link';
+import { getLocalizedPathname } from '@/lib/i18n/locale-path';
+import type { SupportedLocale } from '@grabit/shared';
 import { normalizeAnalyticsPath } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { analyticsCopy } from './analytics-copy';
@@ -57,6 +59,6 @@ function PersonalAnalyticsProvider() {
   const copy = analyticsCopy(locale);
   return <aside data-analytics-consent aria-label={copy.title} className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-2xl rounded-xl border border-border bg-background p-5 shadow-lg md:bottom-4">
     <h2 className="font-semibold">{copy.title}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.summary}</p>
-    <div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="outline" asChild><Link href="/legal/analytics">{copy.details}</Link></Button><Button variant="outline" onClick={() => setAnalyticsChoice('declined')}>{copy.decline}</Button></div>
+    <div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="outline" asChild><Link href={getLocalizedPathname('/legal/analytics', locale as SupportedLocale)}>{copy.details}</Link></Button><Button variant="outline" onClick={() => setAnalyticsChoice('declined')}>{copy.decline}</Button></div>
   </aside>;
 }

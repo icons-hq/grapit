@@ -6,6 +6,8 @@ import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLegalRobots } from '../robots';
+import { getLocalizedPathname } from '@/lib/i18n/locale-path';
+import type { SupportedLocale } from '@grabit/shared';
 
 // Locale comes from the request header written by the locale proxy.
 // force-static discards that header and serves Korean for every language.
@@ -34,7 +36,7 @@ export default async function PrivacyPage() {
 
   return (
     <>
-      <aside className="mb-6 rounded-lg border p-4 text-sm"><Link className="underline" href="/legal/analytics">{locale === 'ko' ? '2026-11-12 개인별 방문·화면 재생 선택기능 안내·설정' : '2026-11-12 optional individual analytics and replay notice'}</Link></aside>
+      <aside className="mb-6 rounded-lg border p-4 text-sm"><Link className="underline" href={getLocalizedPathname('/legal/analytics', locale as SupportedLocale)}>{locale === 'ko' ? '2026-11-12 개인별 방문·화면 재생 선택기능 안내·설정' : '2026-11-12 optional individual analytics and replay notice'}</Link></aside>
       {fallbackLocale ? <LegalFallbackLabel locale={fallbackLocale} /> : null}
       <TermsMarkdown showH1>{markdown}</TermsMarkdown>
     </>
