@@ -15,7 +15,7 @@ test('counts the independent worker application pool when the API pool is larger
   const evidence = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
     liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
   });
-  assert.equal(evidence.connectionEstimate.required, 22);
+  assert.equal(evidence.connectionEstimate.required, 25); // Two API analytics connections + one worker connection.
   assert.deepEqual(evidence.connectionEstimate.inputs.workerDbPoolMax, { value: 2, source: 'workflow-default' });
 });
 
@@ -24,7 +24,7 @@ test('prefers the live worker pools over deployment defaults and unrelated API v
     liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
     liveWorker: { state: 'CONFIG_READY_NOT_DRILLED', env: { DB_POOL_MAX: '3', PGBOSS_POOL_MAX: '4' } },
   });
-  assert.equal(evidence.connectionEstimate.required, 24);
+  assert.equal(evidence.connectionEstimate.required, 27);
   assert.deepEqual(evidence.connectionEstimate.inputs.workerDbPoolMax, { value: 3, source: 'live' });
   assert.deepEqual(evidence.connectionEstimate.inputs.workerPgBossPoolMax, { value: 4, source: 'live' });
 
@@ -32,7 +32,7 @@ test('prefers the live worker pools over deployment defaults and unrelated API v
     liveApi: liveApi({ maxScale: '2', env: { DB_POOL_MAX: '5', BACKGROUND_PROCESSING_ENABLED: 'false' } }),
     liveWorker: { state: 'BLOCKED', error: 'permission denied' },
   });
-  assert.equal(blocked.connectionEstimate.required, 22);
+  assert.equal(blocked.connectionEstimate.required, 25);
   assert.equal(blocked.connectionEstimate.inputs.workerDbPoolMax.source, 'workflow-default');
 });
 
@@ -58,7 +58,7 @@ test('reads the templated deploy.yml values instead of the literal ${{ text', ()
   assert.equal(evidence.drizzleProviderUsesPoolEnv, true);
 });
 
-test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
+test('counts the pg-boss and dedicated analytics pools with the Deploy workflow budget formula', () => {
   // No live service: the bounded 600-seat profile, with each process's pg-boss default.
   const warm = extractDeployPoolEvidence(deployYaml, drizzleProvider).connectionEstimate;
   assert.deepEqual(warm.inputs, {
@@ -70,9 +70,9 @@ test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
     workerPgBossPoolMax: { value: 3, source: 'code-default' },
     reserve: { value: 5, source: 'workflow-default' },
   });
-  assert.equal(warm.api, 2 * (2 + 1));
-  assert.equal(warm.worker, 2 + 3);
-  assert.equal(warm.required, 16);
+  assert.equal(warm.api, 2 * (2 + 1 + 1));
+  assert.equal(warm.worker, 2 + 3 + 1);
+  assert.equal(warm.required, 19);
   assert.equal(
     warm.required,
     estimateConnectionDemand({ apiMaxInstances: 2, dbPoolMax: 2, apiPgBossPoolMax: 1, workerPgBossPoolMax: 3, reserve: 5 })
@@ -92,8 +92,8 @@ test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
     workerPgBossPoolMax: { value: 3, source: 'code-default' },
     reserve: { value: 5, source: 'workflow-default' },
   });
-  assert.equal(demo.estimatedApiDbConnections, 4 * (2 + 1));
-  assert.equal(demo.estimatedDbConnections, 12 + (2 + 3) + 5);
+  assert.equal(demo.estimatedApiDbConnections, 4 * (2 + 1 + 1));
+  assert.equal(demo.estimatedDbConnections, 16 + (2 + 3 + 1) + 5);
 
   // A runtime PGBOSS_POOL_MAX on the live service is the API's cap. It says nothing about
   // the worker Job, which every deploy rebuilds from the workflow (variable or code default).
@@ -102,7 +102,7 @@ test('counts the pg-boss pools with the Deploy workflow budget formula', () => {
   });
   assert.deepEqual(pinned.connectionEstimate.inputs.apiPgBossPoolMax, { value: 2, source: 'live' });
   assert.deepEqual(pinned.connectionEstimate.inputs.workerPgBossPoolMax, { value: 3, source: 'code-default' });
-  assert.equal(pinned.connectionEstimate.required, 4 * (2 + 2) + (2 + 3) + 5);
+  assert.equal(pinned.connectionEstimate.required, 4 * (2 + 2 + 1) + (2 + 3 + 1) + 5);
 
   // A live service without BACKGROUND_PROCESSING_ENABLED processes jobs (code default).
   const unset = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
@@ -120,13 +120,13 @@ test('the worker pg-boss cap never follows the live API value (ops-infra-3)', ()
   });
   assert.deepEqual(leftover.connectionEstimate.inputs.apiPgBossPoolMax, { value: 3, source: 'live' });
   assert.deepEqual(leftover.connectionEstimate.inputs.workerPgBossPoolMax, { value: 3, source: 'code-default' });
-  assert.equal(leftover.connectionEstimate.required, 4 * (2 + 3) + (2 + 3) + 5);
+  assert.equal(leftover.connectionEstimate.required, 4 * (2 + 3 + 1) + (2 + 3 + 1) + 5);
 
   const leftoverSix = extractDeployPoolEvidence(deployYaml, drizzleProvider, {
     liveApi: liveApi({ env: { DB_POOL_MAX: '2', BACKGROUND_PROCESSING_ENABLED: 'false', PGBOSS_POOL_MAX: '6' } }),
   });
   assert.deepEqual(leftoverSix.connectionEstimate.inputs.workerPgBossPoolMax, { value: 3, source: 'code-default' });
-  assert.equal(leftoverSix.connectionEstimate.worker, 2 + 3);
+  assert.equal(leftoverSix.connectionEstimate.worker, 2 + 3 + 1);
 
   // No live value and no workflow value: API producer default 1, worker 3.
   const clean = extractDeployPoolEvidence(deployYaml, drizzleProvider, {

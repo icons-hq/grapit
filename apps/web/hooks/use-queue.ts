@@ -1,4 +1,5 @@
 'use client';
+import { trackAnalytics } from '@/lib/analytics-client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PerformanceWithDetails } from '@grabit/shared';
@@ -675,6 +676,8 @@ export function useQueue({
           setStatus('retry');
           return;
         }
+
+        trackAnalytics('queue_enter', { performanceId });
 
         if (!response.state) {
           await loadQueueSession(response.queueSessionId);

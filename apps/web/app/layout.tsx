@@ -1,3 +1,5 @@
+import { Suspense } from 'react';
+import { AnalyticsProvider } from '@/components/analytics/analytics-provider';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
 import { pretendard } from './fonts';
@@ -36,6 +38,7 @@ export default async function RootLayout({
         <NextIntlClientProvider locale={locale} messages={messages} timeZone="Asia/Seoul">
           <Providers>
             <AuthInitializer />
+            <Suspense fallback={null}><AnalyticsProvider /></Suspense>
             <NetworkBanner />
             <LayoutShell>{children}</LayoutShell>
             <Toaster />

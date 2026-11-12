@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AnalyticsMaintenanceModule } from './modules/analytics/analytics-maintenance.module.js';
 import { ConfigModule } from '@nestjs/config';
 import { redisConfig } from './config/redis.config.js';
 import { DrizzleModule } from './database/drizzle.module.js';
@@ -14,6 +15,7 @@ import { BookingAddonsModule } from './modules/booking-addons/booking-addons.mod
       load: [redisConfig],
     }),
     DrizzleModule,
+    AnalyticsMaintenanceModule,
     JobsModule,
     // Payment confirm reconcile jobs (audit #18).
     ReservationFinalizationModule,

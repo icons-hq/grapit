@@ -357,7 +357,7 @@ function preflightInput(overrides = {}) {
   return {
     config,
     settings: {
-      // Workflow defaults need 40 * (4 + 3) + (4 + 3) + 5 = 292 > 247 available.
+      // Workflow defaults need 40 * (4 + 3 + 1) + (4 + 3 + 1) + 5 = 292 > 247 available.
       max_connections: 250,
       superuser_reserved: 3,
       reserved: 0,
@@ -408,7 +408,7 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
     enforce: false,
   });
   // 40 * (4 + 10) + (4 + 10) + 5 = 579 > 397: reported, not enforced by default.
-  assert.equal(warmDefaults.required, 579);
+  assert.equal(warmDefaults.required, 620);
   assert.equal(warmDefaults.overBudget, true);
   assert.equal(warmDefaults.ok, true);
 
@@ -434,11 +434,11 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
     reserve: 10,
     enforce: true,
   });
-  assert.equal(sized.required, 30 * 11 + 11 + 10);
+  assert.equal(sized.required, 30 * 12 + 12 + 10);
   assert.equal(sized.ok, true);
 });
 
-test('API five and worker two fit the micro budget; another API connection fails closed', () => {
+test('analytics connections are budgeted and the legacy micro profile fails closed', () => {
   const config = validateDeployConfig({
     ...workflowDefaults, API_MIN_INSTANCES: '0', API_MAX_INSTANCES: '2',
     DB_POOL_MAX: '5', WORKER_DB_POOL_MAX: '2', BACKGROUND_PROCESSING_ENABLED: 'false',
@@ -451,11 +451,11 @@ test('API five and worker two fit the micro budget; another API connection fails
     journal: { entries: [{ tag: '0001_a', when: 100 }] }, lastAppliedMillis: 100,
   };
   const accepted = evaluateDbPreflight(input);
-  assert.equal(accepted.ok, true);
-  assert.match(accepted.lines.join('\n'), /required 22 \/ available 22/);
+  assert.equal(accepted.ok, false);
+  assert.match(accepted.lines.join('\n'), /required 25 \/ available 22/);
   const rejected = evaluateDbPreflight({ ...input, config: { ...config, dbPoolMax: 6 } });
   assert.equal(rejected.ok, false);
-  assert.match(rejected.failures.join('\n'), /required 24 \/ available 22/);
+  assert.match(rejected.failures.join('\n'), /required 27 \/ available 22/);
   assert.throws(() => validateDeployConfig({ ...workflowDefaults, WORKER_DB_POOL_MAX: '0' }), /WORKER_DB_POOL_MAX/);
 });
 
@@ -480,9 +480,9 @@ test('the deploy budget uses each process pg-boss cap, not one workflow value (x
     reserve: demo.dbConnectionReserve,
     enforce: false,
   });
-  assert.equal(demoBudget.required, 4 * (2 + 1) + (2 + 3) + 5);
-  assert.equal(demoBudget.overBudget, false);
-  assert.match(demoBudget.message, /API 4 x \(2 app \+ 1 pg-boss\) = 12, worker 1 x \(2 app \+ 3 pg-boss\) = 5/);
+  assert.equal(demoBudget.required, 4 * (2 + 1 + 1) + (2 + 3 + 1) + 5);
+  assert.equal(demoBudget.overBudget, true);
+  assert.match(demoBudget.message, /API 4 x \(2 app \+ 1 pg-boss \+ 1 analytics\) = 16, worker 1 x \(2 app \+ 3 pg-boss \+ 1 analytics\) = 6/);
   const demoPreflight = evaluateDbPreflight({
     config: demo,
     settings: { max_connections: 25, superuser_reserved: 3, reserved: 0, lock_timeout: '5s', statement_timeout: '1min' },
@@ -490,7 +490,7 @@ test('the deploy budget uses each process pg-boss cap, not one workflow value (x
     lastAppliedMillis: 100,
   });
   assert.equal(demoPreflight.ok, true);
-  assert.deepEqual(demoPreflight.annotations, [], 'no false over-budget warning on every managed-demo deploy');
+  assert.match(demoPreflight.annotations.join('\n'), /required 27 \/ available 22/, 'the old micro profile needs new capacity before analytics deploy');
 
   // Warm ticket-opening posture: every API instance processes jobs (pg-boss 3).
   const warm = validateDeployConfig(workflowDefaults);
@@ -505,7 +505,7 @@ test('the deploy budget uses each process pg-boss cap, not one workflow value (x
     reserve: warm.dbConnectionReserve,
     enforce: false,
   });
-  assert.equal(warmBudget.required, 40 * (4 + 3) + (4 + 3) + 5);
+  assert.equal(warmBudget.required, 40 * (4 + 3 + 1) + (4 + 3 + 1) + 5);
 
   // A set RUNTIME_PGBOSS_POOL_MAX is the real cap of both processes.
   const pinned = validateDeployConfig({
@@ -552,15 +552,15 @@ test('the budget counts a PGBOSS_POOL_MAX an earlier deploy left on the API serv
     /gcloud run services update grabit-api --region=asia-northeast3 --remove-env-vars=PGBOSS_POOL_MAX$/,
   );
   const leftoverPreflight = preflight(leftover);
-  assert.match(leftoverPreflight.lines.join('\n'), /API 4 x \(2 app \+ 3 pg-boss\) = 20, worker 1 x \(2 app \+ 3 pg-boss\) = 5, reserve 5/);
+  assert.match(leftoverPreflight.lines.join('\n'), /API 4 x \(2 app \+ 3 pg-boss \+ 1 analytics\) = 24, worker 1 x \(2 app \+ 3 pg-boss \+ 1 analytics\) = 6, reserve 5/);
   assert.equal(leftoverPreflight.annotations[0], leftover.annotation);
   // 20 + 5 + 5 = 30 > 22: the real posture is over budget and is reported as such.
-  assert.match(leftoverPreflight.annotations[1], /^::warning::DB connection budget: .*required 30 \/ available 22/);
+  assert.match(leftoverPreflight.annotations[1], /^::warning::DB connection budget: .*required 35 \/ available 22/);
 
   // No live value: the code default, quietly.
   const clean = resolveApiPgBossPoolCap({ config: demo, apiService: describeService([]) });
   assert.deepEqual([clean.apiPgBossPoolMax, clean.source, clean.annotation], [1, 'code-default', null]);
-  assert.deepEqual(preflight(clean).annotations, []);
+  assert.match(preflight(clean).annotations.join('\n'), /required 27 \/ available 22/);
 
   // A live value below the code default still counts the default once it is removed.
   const processing = validateDeployConfig(workflowDefaults);
@@ -596,7 +596,7 @@ test('the budget counts a PGBOSS_POOL_MAX an earlier deploy left on the API serv
     config: demo,
     apiService: describeService([{ name: 'PGBOSS_POOL_MAX', value: '6' }]),
   });
-  assert.match(preflight(bigLeftover).lines.join('\n'), /API 4 x \(2 app \+ 6 pg-boss\) = 32, worker 1 x \(2 app \+ 3 pg-boss\) = 5/);
+  assert.match(preflight(bigLeftover).lines.join('\n'), /API 4 x \(2 app \+ 6 pg-boss \+ 1 analytics\) = 36, worker 1 x \(2 app \+ 3 pg-boss \+ 1 analytics\) = 6/);
 });
 
 test('pg-boss budget defaults mirror the API code defaults', async () => {
@@ -990,4 +990,14 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
     workflow,
     /--liveness-probe=httpGet\.path=\/api\/v1\/health\/live,httpGet\.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=6\n/,
   );
+});
+
+
+test('analytics collection defaults off and its dedicated connection is counted', async () => {
+  const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
+  assert.match(workflow, /RUNTIME_ANALYTICS_ENABLED: \$\{\{ vars\.ANALYTICS_ENABLED \|\| 'false' \}\}/);
+  assert.deepEqual(resolveOptionalRuntimeEnv({ RUNTIME_ANALYTICS_ENABLED: 'true' }, 'api'), [['ANALYTICS_ENABLED', 'true']]);
+  assert.deepEqual(resolveOptionalRuntimeEnv({ RUNTIME_ANALYTICS_ENABLED: 'true' }, 'worker'), []);
+  const provider = await readFile(join(REPO_ROOT, 'apps/api/src/modules/analytics/analytics-database.module.ts'), 'utf8');
+  assert.match(provider, /max: 1,/);
 });
