@@ -5,7 +5,7 @@ export const ANALYTICS_NOTICE_VERSION = 'analytics-v2-replay';
 export const ANALYTICS_RETENTION_DAYS = 90;
 export const ANALYTICS_SESSION_MS = 30 * 60_000;
 export const ANALYTICS_MAX_BATCH = 20;
-export const analyticsEventNameSchema = z.enum(['page_view', 'performance_view', 'booking_start', 'queue_enter', 'seat_select', 'checkout_start', 'signup_start', 'link_click', 'scroll_depth', 'engagement', 'pointer_click']);
+export const analyticsEventNameSchema = z.enum(['page_view', 'performance_view', 'booking_start', 'queue_enter', 'seat_select', 'checkout_start', 'signup_start', 'link_click', 'scroll_depth', 'engagement', 'pointer_click', 'favorite_add', 'favorite_remove']);
 export type AnalyticsEventName = z.infer<typeof analyticsEventNameSchema>;
 
 /** Public catalogue identifiers only; customer/order/QR identifiers never survive. */
@@ -47,7 +47,7 @@ export const analyticsEventSchema = z.object({
     label: z.enum(['booking', 'signup', 'login', 'search', 'menu', 'navigation', 'other']).optional(),
   }).strict(),
 }).strict().superRefine((event, ctx) => {
-  const allowed: Record<AnalyticsEventName, string[]> = { page_view: [], performance_view: ['performanceId'], booking_start: ['performanceId'], queue_enter: ['performanceId'], seat_select: ['performanceId', 'count'], checkout_start: ['performanceId', 'count'], signup_start: [], link_click: ['target'], scroll_depth: ['depth'], engagement: ['seconds'], pointer_click: ['x', 'y', 'viewportWidth', 'viewportHeight', 'documentWidth', 'documentHeight', 'scrollX', 'scrollY', 'pointer', 'element', 'label'] };
+  const allowed: Record<AnalyticsEventName, string[]> = { page_view: [], performance_view: ['performanceId'], booking_start: ['performanceId'], queue_enter: ['performanceId'], seat_select: ['performanceId', 'count'], checkout_start: ['performanceId', 'count'], signup_start: [], link_click: ['target'], scroll_depth: ['depth'], engagement: ['seconds'], pointer_click: ['x', 'y', 'viewportWidth', 'viewportHeight', 'documentWidth', 'documentHeight', 'scrollX', 'scrollY', 'pointer', 'element', 'label'], favorite_add: ['performanceId'], favorite_remove: ['performanceId'] };
   if (Object.keys(event.props).some((key) => !allowed[event.name].includes(key))) ctx.addIssue({ code: 'custom', message: '허용되지 않은 이벤트 속성입니다' });
   if (allowed[event.name].filter((key) => key !== 'count').some((key) => !(key in event.props))) ctx.addIssue({ code: 'custom', message: '이벤트 속성이 필요합니다' });
 });

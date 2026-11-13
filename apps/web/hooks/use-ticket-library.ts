@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { apiClient } from '@/lib/api-client';
+import { trackAnalytics } from '@/lib/analytics-client';
 
 export function useFavorites(enabled = true) {
   const userId = useAuthStore((s) => s.user?.id);
@@ -22,6 +23,7 @@ export function useToggleFavorite() {
       ? apiClient.delete<{saved:boolean}>(`/api/v1/users/me/favorites/${id}`)
       : apiClient.put<{saved:boolean}>(`/api/v1/users/me/favorites/${id}`),
     onSuccess: (_data, { id, saved }) => {
+      trackAnalytics(saved ? 'favorite_remove' : 'favorite_add', { performanceId: id });
       client.setQueryData<{ids:string[]}>(['ticket-favorites', userId], (old) => ({
         ids: saved ? (old?.ids ?? []).filter((item) => item !== id) : [id, ...(old?.ids ?? []).filter((item) => item !== id)],
       }));

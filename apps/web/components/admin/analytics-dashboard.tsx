@@ -56,6 +56,7 @@ export function AnalyticsDashboard() {
   return <div className="flex min-w-0 flex-col gap-6">
     <AdminPageHeader title="방문·가입 분석" description="기존 접속 기록·새 행동 횟수와 실제 가입·결제를 확인합니다. 한국 시간 기준 · 60초 자동 갱신"
       actions={<Button variant="outline" onClick={() => void report.refetch()} disabled={report.isFetching}><RefreshCw data-icon="inline-start" />새로고침</Button>} />
+    <Link href="/admin/audience" className="text-sm underline">관심 프로필·홍보 소재 비교·GA4 관심사 보기</Link>
     <section className="admin-panel flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><ToggleGroup type="single" value={period} onValueChange={(v) => { if (v) { setPeriod(v as Period); setGranularity(v === 'today' || v === 'yesterday' || v === 'announcement' ? 'hour' : 'day'); } }} aria-label="분석 기간">
         <ToggleGroupItem value="yesterday">어제부터</ToggleGroupItem><ToggleGroupItem value="today">오늘</ToggleGroupItem><ToggleGroupItem value="7d">7일</ToggleGroupItem><ToggleGroupItem value="30d">30일</ToggleGroupItem><ToggleGroupItem value="announcement">공지 이후</ToggleGroupItem></ToggleGroup>

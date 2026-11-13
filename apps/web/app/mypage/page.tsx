@@ -38,6 +38,7 @@ import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { cn } from '@/lib';
 import { getTicketCopy } from '@/lib/i18n/ticket-copy';
+import { InterestInvitation } from '@/components/audience/interest-preferences';
 
 type MyPageTab = 'account' | 'wallet' | 'settings';
 type AccountHubUser = UserProfile & {
@@ -198,6 +199,8 @@ export default function MyPage() {
             <Link href={getLocalizedPathname('/recent', locale)}><History size={24} /><span>{ticketCopy.recent}</span></Link>
             <Link href={getLocalizedPathname('/support', locale)}><CircleHelp size={24} /><span>{ticketCopy.ticketGuide}</span></Link>
           </nav>
+
+          {user?.role === 'user' && <InterestInvitation locale={locale} />}
 
           {isError && <section role="alert" className="mb-5 rounded-lg border border-destructive/20 p-4"><p>{copy.loadError}</p><Button variant="outline" className="mt-3" onClick={() => void refetch()}>{getVisibleCopy(locale).commonErrors.retry}</Button></section>}
           <Tabs value={activeTab} onValueChange={handleTabChange}>

@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import { AnalyticsProvider } from '@/components/analytics/analytics-provider';
+import { Ga4Provider } from '@/components/analytics/ga4-provider';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
 import { pretendard } from './fonts';
@@ -39,6 +40,7 @@ export default async function RootLayout({
           <Providers>
             <AuthInitializer />
             <Suspense fallback={null}><AnalyticsProvider /></Suspense>
+            <Suspense fallback={null}><Ga4Provider /></Suspense>
             <NetworkBanner />
             <LayoutShell>{children}</LayoutShell>
             <Toaster />

@@ -99,6 +99,16 @@ function parseCountryListText(value, name) {
   return text.split(',').map((country) => country.trim().toUpperCase()).join(',');
 }
 
+function parseGa4PropertyId(value, name) {
+  if (!/^\d{1,20}$/.test(value.trim())) throw new Error(`${name} must be a numeric GA4 property ID`);
+  return value.trim();
+}
+
+function parseGa4MeasurementId(value, name) {
+  if (!/^G-[A-Z0-9]{4,20}$/.test(value.trim())) throw new Error(`${name} must be a G- measurement ID`);
+  return value.trim();
+}
+
 /**
  * Runtime settings the services read but the workflow passes only when the
  * repository variable is set (as `RUNTIME_<NAME>` in the workflow env). Unset
@@ -110,6 +120,11 @@ function parseCountryListText(value, name) {
 export const OPTIONAL_RUNTIME_ENV = [
   { name: 'ANALYTICS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
   { name: 'AGGREGATE_ANALYTICS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
+  { name: 'GA4_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
+  { name: 'GA4_NOTICE_READY', targets: ['api'], parse: parseStrictBooleanText },
+  { name: 'GA4_PROPERTY_ID', targets: ['api'], parse: parseGa4PropertyId },
+  { name: 'GA4_MEASUREMENT_ID', targets: ['api'], parse: parseGa4MeasurementId },
+  { name: 'GA4_TRANSFER_COUNTRIES', targets: ['api'], parse: parseCountryListText },
   { name: 'PGBOSS_POOL_MAX', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'PGBOSS_START_MAX_ATTEMPTS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
   { name: 'DB_STATEMENT_TIMEOUT_MS', targets: ['api', 'worker'], parse: parsePositiveIntegerText },

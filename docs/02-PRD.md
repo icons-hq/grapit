@@ -273,3 +273,11 @@ Future expansion candidates should start from current contracts:
 - Add seat-level entitlement by expanding ticket state beyond reservation-level QR.
 - Add external finance integration after settlement CSV and dashboard evidence are accepted.
 - Add native clients only after web QR/field operations prove the operational workflow.
+
+
+## 관심 고객·마케팅 분석 (2026-11-12 구현)
+
+- 회원은 `/mypage/interests`에서 관심 아티스트·활동·혜택을 선택하거나 건너뛰고, 이후 수정·철회할 수 있다. 가입·이메일 인증·예매 복귀 경로를 변경하지 않는다. 별도 선택 동의 및 최근 90일 범위를 적용한다.
+- 관리자는 `/admin/audience`에서 관심 태그와 공연 연결, 직접 선택과 행동 추정의 근거, 현재 마케팅 수신 동의 상태를 확인한다. 민감 속성을 추정하지 않으며 새로운 발송 기능은 포함하지 않는다.
+- 홍보 소재는 정제한 UTM 조합별 관측 세션·가입·찜·결제 전환을 비교한다. 한 주문은 가장 최근의 일치 결제 시작에만 연결하고, 표본·인과 효과·광고비 측정의 한계를 표시한다.
+- Google 관심사는 별도 동의한 이용자 일부의 집계로만 표시한다. 회원 프로필과 결합하지 않으며 미설정·권한·quota·빈 결과·임계값을 구분한다. 계정 생성·코드 구현과 운영 배포·수집 활성화는 별도다. [상세 계약과 연결 절차](runbooks/audience-marketing.md).
