@@ -5,6 +5,7 @@ import { AnalyticsProcessingDetails } from '@/components/analytics/analytics-pro
 import { AggregateAnalyticsSettings } from '@/components/analytics/aggregate-analytics-settings';
 import { Ga4ProcessingDetails } from '@/components/analytics/ga4-provider';
 import { useAnalyticsConfig } from '@/hooks/use-analytics-config';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { useLocale } from 'next-intl';
 import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { Button } from '@/components/ui/button';
@@ -13,16 +14,17 @@ import { analyticsPrivacySignal, getAnalyticsChoice, getAnalyticsWithdrawalPendi
 const serverChoice = () => null;
 export default function AnalyticsPrivacyPage() {
   const config = useAnalyticsConfig();
+  const hydrated = useHydrated();
   const locale = useLocale();
   const copy = analyticsCopy(locale);
   const pending = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsWithdrawalPending, () => false);
   const choice = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsChoice, serverChoice);
   return <div className="flex flex-col gap-6">
     {(locale === 'th' || locale === 'zh-CN') && <LegalFallbackLabel locale={locale} />}
-    <h1 className="text-2xl font-semibold">{copy.settings}</h1><AggregateAnalyticsSettings active={!config.isError && config.data?.aggregateEnabled === true} /><h2 className="text-xl font-semibold">{copy.title}</h2><p className="leading-7">{copy.summary}</p><p className="leading-7">{copy.privacy}</p><p className="leading-7">{copy.storage}</p>
-    <AnalyticsProcessingDetails locale={locale} /><AnalyticsConsentControls disabled={pending || config.data?.enabled !== true || config.isError} />
+    <h1 className="text-2xl font-semibold">{copy.settings}</h1><AggregateAnalyticsSettings active={hydrated && !config.isError && config.data?.aggregateEnabled === true} /><h2 className="text-xl font-semibold">{copy.title}</h2><p className="leading-7">{copy.summary}</p><p className="leading-7">{copy.privacy}</p><p className="leading-7">{copy.storage}</p>
+    <AnalyticsProcessingDetails locale={locale} /><AnalyticsConsentControls disabled={!hydrated || pending || config.data?.enabled !== true || config.isError} />
     {pending && <p role="status" className="text-sm">{copy.deletionPending} <Button variant="outline" size="sm" onClick={() => void retryAnalyticsWithdrawal()}>{copy.retry}</Button></p>}
-    <p role="status" className="text-sm text-muted-foreground">{choice === 'accepted' ? copy.accepted : choice === 'declined' ? copy.declined : ''}{analyticsPrivacySignal() ? ` · ${copy.signal}` : ''}</p>
+    <p role="status" className="text-sm text-muted-foreground">{choice === 'accepted' ? copy.accepted : choice === 'declined' ? copy.declined : ''}{hydrated && analyticsPrivacySignal() ? ` · ${copy.signal}` : ''}</p>
     <Ga4ProcessingDetails />
   </div>;
 }

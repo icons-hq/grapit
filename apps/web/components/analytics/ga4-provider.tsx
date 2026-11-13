@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldLabel, FieldSet, FieldLegend } from '@/components/ui/field';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { useHydrated } from '@/hooks/use-hydrated';
 
 export function useGa4Config() {
   return useQuery({ queryKey: ['audience', 'ga4-config'], queryFn: () => apiClient.get<Ga4Config>('/api/v1/analytics/audience/ga4-config', { showErrorToast: false }), staleTime: 30_000, refetchInterval: (query) => query.state.data?.enabled ? 30_000 : false, refetchIntervalInBackground: false, retry: false });
@@ -63,7 +64,9 @@ export function Ga4ChoiceControls({ enabled }: { enabled: boolean }) {
 }
 export function Ga4ProcessingDetails() {
   const config = useGa4Config(); const locale = useLocale(); const ko = locale === 'ko';
-  const countries = (config.data?.transferCountries ?? []).map((c) => new Intl.DisplayNames([ko ? 'ko' : 'en'], { type: 'region' }).of(c)).join(', ');
+  const hydrated = useHydrated();
+  const visibleConfig = hydrated ? config.data : undefined;
+  const countries = (visibleConfig?.transferCountries ?? []).map((c) => new Intl.DisplayNames([ko ? 'ko' : 'en'], { type: 'region' }).of(c)).join(', ');
   return <section id="google" className="flex scroll-mt-20 flex-col gap-4 border-t pt-6" data-analytics-private data-analytics-consent>
     <h2 className="text-xl font-semibold">{ko ? 'Google 관심사 분석 · 별도 선택기능' : 'Google interest analytics · separate optional feature'}</h2>
     <p className="text-sm leading-7">{ko ? 'Google 신호를 이용한 Google 애널리틱스 관심분야 보고 기능을 사용합니다. 별도로 동의하면 Grabit의 자사 분석 쿠키(_ga 등)와 Google의 제3자 광고 쿠키·식별자가 함께 사용되어 집계 관심분야를 산출할 수 있습니다. Google 집계 보고서의 개인을 식별하거나 회원별 취향 답변과 결합하지 않습니다.' : 'We use Google Analytics interest reporting with Google signals. With your separate consent, first-party analytics cookies on Grabit (such as _ga) and Google third-party advertising cookies/identifiers may be used together to produce aggregate interests. We do not identify individuals in Google aggregate reports or join them to member preference answers.'}</p>
@@ -73,7 +76,7 @@ export function Ga4ProcessingDetails() {
     <p className="text-sm leading-7">{ko ? '두 항목 모두 선택사항이며 거부해도 가입·예매에 제한이 없습니다. 철회하면 이후 전송을 중단하고 이 브라우저의 Google 분석 쿠키를 지웁니다. 이미 만들어진 Google 집계가 즉시 삭제된다는 뜻은 아닙니다. 선택 변경·추가 권리 요청: privacy@heygrabit.com.' : 'Both consents are optional; declining does not affect signup or booking. Withdrawal stops future transmission and clears Google analytics cookies in this browser. It does not immediately erase Google’s existing aggregate reports. Further requests: privacy@heygrabit.com.'}</p>
     <p className="text-sm leading-7">{ko ? '이 화면에서 거부·철회할 수 있습니다. Google 계정에 연결된 활동 조회·삭제는 ' : 'Decline or withdraw on this page. View/delete activity associated with your Google account in '}<a className="underline" href="https://myactivity.google.com/myactivity">{ko ? 'Google 내 활동' : 'Google My Activity'}</a>{ko ? ', 광고 개인 최적화 변경은 ' : ', change ads personalisation in '}<a className="underline" href="https://myadcenter.google.com/">{ko ? '내 광고 센터' : 'My Ad Center'}</a>{ko ? '에서 할 수 있습니다. ' : '. '}<a className="underline" href="https://tools.google.com/dlpage/gaoptout">{ko ? 'Google 애널리틱스 차단 브라우저 부가 기능' : 'The Google Analytics opt-out browser add-on'}</a>{ko ? '도 이용할 수 있습니다.' : ' is also available.'}</p>
     <p className="text-xs text-muted-foreground"><a className="underline" href="https://business.safety.google/adsprocessorterms/">Google {ko ? '처리 약관·연락처' : 'processing terms/contact'}</a> · <a className="underline" href="https://business.safety.google/adssubprocessors/">{ko ? '재처리자 법인·소재지' : 'Subprocessor entities/locations'}</a> · <a className="underline" href="https://datacenters.google/locations/">{ko ? '데이터센터 위치' : 'Data-centre locations'}</a> · <a className="underline" href="https://support.google.com/analytics/answer/7667196">{ko ? '보관 설정 안내' : 'Retention details'}</a></p>
-    {!config.data?.enabled && <p className="text-sm text-muted-foreground">{ko ? '현재 Google 관심사 수집이 비활성화되어 있습니다.' : 'Google interest collection is currently disabled.'}</p>}
-    <Ga4ChoiceControls enabled={!config.isError && config.data?.enabled === true} />
+    {!visibleConfig?.enabled && <p className="text-sm text-muted-foreground">{ko ? '현재 Google 관심사 수집이 비활성화되어 있습니다.' : 'Google interest collection is currently disabled.'}</p>}
+    <Ga4ChoiceControls enabled={!config.isError && visibleConfig?.enabled === true} />
   </section>;
 }
