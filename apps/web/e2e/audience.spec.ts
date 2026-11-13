@@ -66,7 +66,7 @@ test('admin compares creatives, creates a tag and renders GA4 threshold metadata
   let localTags = [...tags]; let savedTag: unknown = null;
   const updatedAt = new Date().toISOString(); const expiresAt = new Date(Date.now() + 90 * 86400000).toISOString();
   const person = { userId: memberId, name: '검증 회원', email: 'member@test.invalid', tagIds: [artistId, activityId], marketingConsent: true, updatedAt, expiresAt, behaviorSince: updatedAt };
-  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: false, measurementId: null, noticeVersion: 'google-interests-v1', transferCountries: [] }));
+  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: false, measurementId: null, noticeVersion: 'google-interests-v2', transferCountries: [] }));
   await page.route('**/api/v1/admin/analytics/audience/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/tags')) {
@@ -113,7 +113,7 @@ test('Google tag stays blocked before consent and after withdrawal; vendor trans
   const googlePayloads: string[] = [];
   await unrelatedConfig(page); await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
   await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({ status: 204 }));
-  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: true, measurementId, noticeVersion: 'google-interests-v1', transferCountries: ['US'] }));
+  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: true, measurementId, noticeVersion: 'google-interests-v2', transferCountries: ['US'] }));
   let scripts = 0;
   await page.route('https://www.googletagmanager.com/**', (route) => { scripts++; return route.fulfill({ contentType: 'application/javascript', body: vendorScript }); });
   // Includes the current primary analytics.google.com collector and signal joins.
