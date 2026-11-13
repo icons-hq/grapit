@@ -181,7 +181,7 @@ test('English visitors keep their locale through the separate analytics consent 
   await page.route('**/api/v1/analytics/config', (route) => fulfillJson(route, data.config));
   await page.route('**/api/v1/analytics/events', (route) => route.fulfill({ status: 204 }));
   await page.goto('/en/auth');
-  await page.getByRole('link', { name: 'Details and choices', exact: true }).click();
+  await page.getByRole('link', { name: 'View details', exact: true }).click();
   await expect(page).toHaveURL(/\/en\/legal\/analytics$/);
   await expect(page.getByRole('heading', { name: 'Privacy notice for optional individual visitor analytics', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'privacy policy', exact: true })).toHaveAttribute('href', '/en/legal/privacy');
@@ -192,4 +192,32 @@ test('English visitors keep their locale through the separate analytics consent 
   await expect(page.getByRole('button', { name: 'Allow analytics', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Allow analytics', exact: true }).click();
   await expect(page.getByText('Analytics allowed on this browser', { exact: true })).toBeVisible();
+});
+
+test('consent banners save immediately without navigation and keep Google age confirmation separate', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+  await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({ status: 204 }));
+  await page.route('**/api/v1/analytics/**', (route) => route.fulfill({ status: 204 }));
+  await page.route('**/api/v1/analytics/config', (route) => fulfillJson(route, data.config));
+  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v2', transferCountries: ['US'] }));
+  await page.route('**/api/v1/performances?**', (route) => fulfillJson(route, { data: [], total: 0, page: 1, limit: 20, totalPages: 0 }));
+  await page.route('**/api/v1/venues', (route) => fulfillJson(route, []));
+  let googleScripts = 0;
+  await page.route('https://www.googletagmanager.com/**', (route) => { googleScripts++; return route.fulfill({ contentType: 'application/javascript', body: '/* local QA stub */' }); });
+  await page.goto('/en/categories');
+  const originalUrl = page.url();
+  const ownBanner = page.getByRole('complementary', { name: 'Optional visitor analytics', exact: true });
+  await expect(ownBanner.getByRole('link')).toHaveCount(1);
+  await expect(ownBanner.getByRole('checkbox')).toHaveCount(0);
+  await ownBanner.getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(ownBanner).toBeHidden(); await expect(page).toHaveURL(originalUrl);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('grabit-analytics-choice-v1')!))).toMatchObject({ value: 'accepted', collectionConsent: true, overseasConsent: true });
+  const googleBanner = page.getByRole('complementary', { name: 'Optional Google interest analytics', exact: true });
+  await googleBanner.getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(googleBanner).toBeHidden(); await expect(page).toHaveURL(originalUrl);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('grabit:google-interests:v1')!))).toMatchObject({ choice: 'accepted', collection: true, transfer: true, adult: false });
+  const configured = page.waitForResponse((response) => response.url().endsWith('/analytics/audience/ga4-config'));
+  await page.reload(); await configured;
+  await expect(ownBanner).toBeHidden(); await expect(googleBanner).toBeHidden();
+  expect(googleScripts).toBe(0);
 });
