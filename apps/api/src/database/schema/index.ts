@@ -122,3 +122,4 @@ export {
 } from './support-notices.js';
 export * from './qr-reminder-deliveries.js';
 export * from './booking-addons.js';
+export * from './audience.js';

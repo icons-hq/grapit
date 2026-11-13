@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { AnalyticsConsentControls } from '@/components/analytics/analytics-consent-controls';
 import { AnalyticsProcessingDetails } from '@/components/analytics/analytics-processing-details';
 import { AggregateAnalyticsSettings } from '@/components/analytics/aggregate-analytics-settings';
+import { Ga4ProcessingDetails } from '@/components/analytics/ga4-provider';
 import { useAnalyticsConfig } from '@/hooks/use-analytics-config';
 import { useLocale } from 'next-intl';
 import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
@@ -22,5 +23,6 @@ export default function AnalyticsPrivacyPage() {
     <AnalyticsProcessingDetails locale={locale} /><AnalyticsConsentControls disabled={pending || config.data?.enabled !== true || config.isError} />
     {pending && <p role="status" className="text-sm">{copy.deletionPending} <Button variant="outline" size="sm" onClick={() => void retryAnalyticsWithdrawal()}>{copy.retry}</Button></p>}
     <p role="status" className="text-sm text-muted-foreground">{choice === 'accepted' ? copy.accepted : choice === 'declined' ? copy.declined : ''}{analyticsPrivacySignal() ? ` · ${copy.signal}` : ''}</p>
+    <Ga4ProcessingDetails />
   </div>;
 }

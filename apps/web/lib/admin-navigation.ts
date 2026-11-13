@@ -12,6 +12,7 @@ export type AdminNavigationItem = {
 export const ADMIN_NAVIGATION: Array<{ id: string; label: string; items: AdminNavigationItem[] }> = [
   { id: 'home', label: '홈', items: [
     { label: '방문·가입 분석', href: '/admin/analytics', description: '공지 유입, 가입과 예매 전환', keywords: '마케팅 방문자 픽셀 캠페인 통계', capabilities: ['audit.read'] },
+    { label: '관심 고객·마케팅', href: '/admin/audience', description: '취향 프로필, 관심 태그와 홍보 소재 성과', keywords: '취미 관심사 GA4 구글 캠페인', capabilities: ['audit.read'] },
     { label: '운영 현황', href: '/admin', description: '오늘의 예매와 처리할 업무', keywords: '대시보드', capabilities: ['reservations.read'] },
   ] },
   { id: 'sales', label: '공연·예매', items: [

@@ -6,12 +6,14 @@ interface AdminStatCardProps {
   label: string;
   value: number;
   icon: LucideIcon;
-  format: 'count' | 'currency' | 'percent' | 'seats';
+  format: 'count' | 'currency' | 'percent' | 'seats' | 'people';
   description?: string;
 }
 
-function formatValue(value: number, format: 'count' | 'currency' | 'percent' | 'seats'): string {
+function formatValue(value: number, format: AdminStatCardProps['format']): string {
   switch (format) {
+    case 'people':
+      return `${value.toLocaleString('ko-KR')}명`;
     case 'seats':
       return `${value.toLocaleString('ko-KR')}석`;
     case 'count':

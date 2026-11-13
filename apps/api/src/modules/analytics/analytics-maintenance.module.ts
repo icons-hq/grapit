@@ -55,10 +55,14 @@ export class AnalyticsMaintenance implements OnModuleInit {
       const sessions = await tx.execute(sql`delete from analytics_sessions where id in (select id from analytics_sessions where started_at<now()-interval '90 days' order by started_at limit 5000) returning id`);
       await tx.execute(sql`delete from analytics_attribution where updated_at<now()-interval '90 days' or first_at<now()-interval '90 days' or user_id in(select id from users where account_status<>'active')`);
       await tx.execute(sql`update analytics_sessions set user_id=null where user_id in(select id from users where account_status<>'active')`);
+      const preferences = await tx.execute(sql`delete from audience_preferences where user_id in (
+        select p.user_id from audience_preferences p join users u on u.id=p.user_id
+        where p.expires_at<=now() or u.account_status<>'active' order by p.expires_at limit 5000) returning user_id`);
+      await tx.execute(sql`delete from audience_consent_events where at<now()-interval '90 days'`);
       await tx.execute(sql`delete from analytics_counters where bucket<now()-interval '365 days'`);
       await tx.execute(sql`delete from analytics_traffic_history where bucket<now()-interval '365 days'`);
       await tx.execute(sql`delete from analytics_rollups where bucket<now()-interval '365 days'`);
-      return { deleted: deleted.rows.length, more: more || replays.rows.length === 1000 || deleted.rows.length === 10000 || sessions.rows.length === 5000 };
+      return { deleted: deleted.rows.length, more: more || replays.rows.length === 1000 || deleted.rows.length === 10000 || sessions.rows.length === 5000 || preferences.rows.length === 5000 };
     });
     if (result.more) await this.boss.send(ANALYTICS_MAINTENANCE_QUEUE, {}, { startAfter: new Date(Date.now() + 1000), retryLimit: 3, retryDelay: 30 });
     return result;

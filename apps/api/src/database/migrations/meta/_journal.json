@@ -421,6 +421,13 @@
       "when": 1794463454117,
       "tag": "0059_analytics_consent_receipt",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794472075610,
+      "tag": "0060_audience_interests",
+      "breakpoints": true
     }
   ]
 }

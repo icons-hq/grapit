@@ -17,6 +17,7 @@ import { useCatalogPerformances, useHomeBanners } from '@/hooks/use-performances
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { getTicketCopy } from '@/lib/i18n/ticket-copy';
+import { NewMemberInterestInvitation } from '@/components/audience/new-member-interest-invitation';
 
 export default function HomePage() {
   const locale = resolveVisibleCopyLocale(useLocale());
@@ -35,6 +36,7 @@ export default function HomePage() {
     <BannerCarousel banners={banners.data?.filter((banner) => banner.placement === 'home_hero') ?? []}
       performances={latest.data?.data} isLoading={banners.isLoading && latest.isLoading} locale={locale} />
     <div className="ticket-container">
+      <NewMemberInterestInvitation locale={locale} />
       <Link href={href('/support')} className="ticket-notice"><span>{copy.notice}</span><p>{copy.noticeText}</p><ChevronRight size={16} /></Link>
       <GenreGrid />
       <AreunGlPromoCard placement="home_banner" locale={locale} className="areun-promo-home" />
