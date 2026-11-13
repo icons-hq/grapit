@@ -40,4 +40,21 @@ describe('Google interest analytics consent and sanitization', () => {
       client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     }
   });
+  it('prevents the vendor bootstrap from emitting a default page view before stream configuration', async () => {
+    const client = await import('../ga4-client'); client.setGa4Choice(true);
+    window.history.replaceState(null, '', '/categories?utm_source=qa&token=must-not-leave');
+    const globalFields: Record<string, unknown> = {};
+    const hits: Record<string, unknown>[] = [];
+    // The real Google tag was observed to bootstrap with document.location
+    // before per-stream config. Model that boundary, not just dataLayer contents.
+    (window as TestWindow).gtag = (command: string, first: unknown, second?: unknown) => {
+      if (command === 'set' && typeof first === 'object' && first) Object.assign(globalFields, first);
+      if (command === 'js' && globalFields.send_page_view !== false) hits.push({ page_location: globalFields.page_location ?? window.location.href });
+      if (command === 'event' && first === 'page_view') hits.push(second as Record<string, unknown>);
+    };
+    client.updateGa4(config, '/categories');
+    expect(hits).toHaveLength(1);
+    expect(JSON.stringify(hits)).not.toContain('must-not-leave');
+    expect(hits[0]?.page_location).toBe(`${location.origin}/categories?utm_source=qa`);
+  });
 });

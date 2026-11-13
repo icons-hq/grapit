@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { fulfillJson, mockAdminAuth } from './helpers/mock-admin';
 
 const memberId = '00000000-0000-4000-8000-000000009002';
@@ -105,13 +105,23 @@ test('admin compares creatives, creates a tag and renders GA4 threshold metadata
   expect(errors).toEqual([]);
 });
 
-test('Google tag stays blocked before consent and after withdrawal; only a stub script runs in QA', async ({ page }) => {
+test('Google tag stays blocked before consent and after withdrawal; vendor transport is intercepted', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
+  const vendorPath = process.env['GA4_VENDOR_SCRIPT'];
+  const measurementId = process.env['GA4_VENDOR_MEASUREMENT_ID'] ?? 'G-TESTABCD';
+  const vendorScript = vendorPath ? await readFile(vendorPath, 'utf8') : '/* local QA stub: no Google requests */';
+  const googlePayloads: string[] = [];
   await unrelatedConfig(page); await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
   await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({ status: 204 }));
-  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v1', transferCountries: ['US'] }));
+  await page.route('**/api/v1/analytics/audience/ga4-config', (route) => fulfillJson(route, { enabled: true, measurementId, noticeVersion: 'google-interests-v1', transferCountries: ['US'] }));
   let scripts = 0;
-  await page.route('https://www.googletagmanager.com/**', (route) => { scripts++; return route.fulfill({ contentType: 'application/javascript', body: '/* local QA stub: no Google requests */' }); });
-  await page.route('https://*.google-analytics.com/**', (route) => route.abort());
+  await page.route('https://www.googletagmanager.com/**', (route) => { scripts++; return route.fulfill({ contentType: 'application/javascript', body: vendorScript }); });
+  // Includes the current primary analytics.google.com collector and signal joins.
+  // Never send QA page data to Google, even when running the actual vendor code.
+  await page.route(/^https:\/\/(?:[a-z0-9-]+\.)*(?:google-analytics\.com|doubleclick\.net|google\.(?:com|co\.kr)|googleadservices\.com|googlesyndication\.com|gstatic\.com)\//, (route) => {
+    googlePayloads.push(`${route.request().url()}\n${route.request().postData() ?? ''}`);
+    return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': new URL(page.url()).origin, 'access-control-allow-credentials': 'true' } });
+  });
   await page.route('**/api/v1/performances?**', (route) => fulfillJson(route, { data: [], total: 0, page: 1, limit: 20, totalPages: 0 }));
   await page.route('**/api/v1/venues', (route) => fulfillJson(route, []));
   await page.goto('/legal/analytics'); const google = page.locator('#google');
@@ -122,6 +132,13 @@ test('Google tag stays blocked before consent and after withdrawal; only a stub 
   await google.getByRole('button', { name: '선택 항목 동의' }).click(); expect(scripts).toBe(0);
   await page.goto('/categories?utm_source=instagram&token=should-not-send'); await expect.poll(() => scripts).toBe(1);
   const layer = await page.evaluate(() => JSON.stringify((window as Window & { dataLayer?: unknown[] }).dataLayer)); expect(layer).not.toContain('should-not-send');
+  if (vendorPath) {
+    await expect.poll(() => googlePayloads.some((payload) => payload.includes('/g/collect') && payload.includes('en=page_view'))).toBe(true);
+    expect(googlePayloads.join('\n')).not.toContain('should-not-send');
+  }
   await page.goto('/legal/analytics'); await page.locator('#google').getByRole('button', { name: '철회·수집 중단' }).click();
+  const afterWithdrawal = googlePayloads.length;
   await page.goto('/categories'); await expect(page.getByRole('main')).toBeVisible(); expect(scripts).toBe(1);
+  expect(googlePayloads).toHaveLength(afterWithdrawal);
+  expect(errors).toEqual([]);
 });

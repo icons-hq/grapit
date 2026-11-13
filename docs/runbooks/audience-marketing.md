@@ -71,3 +71,14 @@
 - 호스트 기본 Node 26의 Web Storage 변화로 기존/신규 웹 테스트가 실패하여, CI와 같은 설치된 Node 22.23.1로 실행해 통과했다. 이 문제를 우회하는 제품 코드는 추가하지 않았다.
 - 산출 이미지: `/tmp/grabit-audience-qa/`. 태그 편집·소재 비교·관심사 표의 숫자는 QA 샘플이며 실제 고객 통계가 아니다.
 - 운영 migration/배포, GA4 Data API 실인증·실수집, Google 신호 데이터 표시, 실기기/Safari·부하 검증은 아직 실행하지 않았다. 운영 수집 활성화와 인증은 위 연결 절차 및 명시적 승인 이후 확인한다.
+
+
+## Google 태그 초기화 및 실제 라이브러리 검증
+
+Google 태그는 개별 스트림의 `config`보다 먼저 기본 페이지 이벤트를 만들 수 있다. `consent` / `js` 명령 전에 전역 `set`으로 `send_page_view: false` 및 정제한 `page_location`, `page_referrer`, `page_title`을 적용한다. 스트림 config와 수동 page_view에만 정제 주소를 넣는 구현으로 되돌리지 않는다. 브라우저 안의 dataLayer만 검사해서는 실제 Google 요청을 증명할 수 없다.
+
+실제 vendor 코드 검증은 현재 속성의 공개 gtag 스크립트를 임시 파일로 내려받아 `GA4_VENDOR_SCRIPT`와 `GA4_VENDOR_MEASUREMENT_ID`를 지정한 `audience.spec.ts`의 Google 시나리오로 실행한다. 모든 Google 수집 요청을 Playwright에서 가로채 204로 응답하므로 이 QA는 Google에 방문 데이터를 보내지 않는다. 기본 CI는 stub으로 동의/철회 흐름을 확인한다. bootstrap 회귀는 별도 단위 테스트가 지킨다.
+
+운영 검증은 primary 수집 응답(`analytics.google.com/g/collect` 또는 `*.google-analytics.com/g/collect`)을 기다린 뒤 수행한다. `stats.g.doubleclick.net`의 신호 연결 응답만으로 본 수집 성공을 판정하지 않는다. Google 도메인 전체의 URL/본문에 허용하지 않은 검증용 쿼리 값이 없는지, 별도 동의 전 요청 0건과 철회 후 추가 요청 0건을 확인한다. 인증·회원·결제 데이터나 실제 비밀값을 검증용 URL에 넣지 않는다.
+
+스트리밍된 분석 설정 화면은 상위 provider가 먼저 공유 query cache를 채울 수 있다. 초기 HTML과 첫 클라이언트 렌더에는 같은 비활성 snapshot을 쓰고 hydration 이후 현재 설정을 반영한다. `analytics-settings-hydration.test.tsx`가 기존 자체 분석 설정과 Google 설정의 조기 도착을 각각 재현한다.

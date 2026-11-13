@@ -76,6 +76,9 @@ export function updateGa4(config: Ga4Config | undefined, pathname: string) {
   let referrer = '';
   try { const url = new URL(document.referrer); if (['https:', 'http:'].includes(url.protocol) && url.origin !== location.origin) referrer = url.origin; } catch { /* no referrer */ }
   disable(id, false);
+  // Google can bootstrap a page view before per-stream config is processed.
+  // Set the safe URL and disable automatic views globally before consent/js.
+  gtag('set', { send_page_view: false, page_location: pageLocation.href, page_referrer: referrer, page_title: title });
   if (configured !== id) {
     gtag('consent', 'default', denied);
     gtag('consent', 'update', granted);
@@ -88,7 +91,6 @@ export function updateGa4(config: Ga4Config | undefined, pathname: string) {
     document.head.appendChild(script); configured = id;
   }
   if (lastPage !== pageLocation.href) {
-    gtag('set', { page_location: pageLocation.href, page_referrer: referrer, page_title: title });
     gtag('event', 'page_view', { send_to: id, page_location: pageLocation.href, page_referrer: referrer, page_title: title });
     lastPage = pageLocation.href;
   }
