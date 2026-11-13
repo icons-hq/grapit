@@ -13,12 +13,12 @@ describe('Google interest analytics consent and sanitization', () => {
   it('makes no Google script or event before the separate choice, including disabled setup and privacy signals', async () => {
     const client = await import('../ga4-client');
     client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
-    client.setGa4Choice(true); client.updateGa4({ ...config, enabled: false }, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
+    client.setGa4Choice(true, true); client.updateGa4({ ...config, enabled: false }, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     client.updateGa4({ ...config, noticeVersion: 'google-interests-v1' }, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     privacy.blocked = true; client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
   });
   it('sends only sanitized public paths, deduplicates the page and disables loaded tags on private routes', async () => {
-    const client = await import('../ga4-client'); client.setGa4Choice(true);
+    const client = await import('../ga4-client'); client.setGa4Choice(true, true);
     window.history.replaceState(null, '', `/performance/${id}?utm_source=instagram&utm_content=photo-benefit&email=private@example.test&token=private-token`);
     client.updateGa4(config, `/performance/${id}`); client.updateGa4(config, `/performance/${id}`);
     expect(document.querySelectorAll('#grabit-google-interests')).toHaveLength(1);
@@ -29,7 +29,7 @@ describe('Google interest analytics consent and sanitization', () => {
     expect((window as TestWindow).dataLayer).toHaveLength(calls.length);
   });
   it('withdraws in this tab even when browser storage fails, and never resumes an old consent', async () => {
-    const client = await import('../ga4-client'); client.setGa4Choice(true); client.updateGa4(config, '/');
+    const client = await import('../ga4-client'); client.setGa4Choice(true, true); client.updateGa4(config, '/');
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
     expect(client.setGa4Choice(false)).toBe(false); expect(client.getGa4Choice()).toBe('declined');
     client.updateGa4(config, '/categories'); expect((window as TestWindow)['ga-disable-G-TESTABCD']).toBe(true);
@@ -41,8 +41,30 @@ describe('Google interest analytics consent and sanitization', () => {
       client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     }
   });
+  it('saves direct consent without inventing an age confirmation, then starts after explicit age confirmation', async () => {
+    const client = await import('../ga4-client');
+    expect(client.setGa4Choice(true)).toBe(true);
+    expect(client.getGa4Choice()).toBe('accepted');
+    expect(client.getGa4AdultConfirmed()).toBe(false);
+    client.updateGa4(config, '/');
+    expect(document.querySelector('#grabit-google-interests')).toBeNull();
+    client.setGa4Choice(true, true); client.updateGa4(config, '/');
+    expect(document.querySelector('#grabit-google-interests')).not.toBeNull();
+  });
+  it('uses a confirmed adult account without recording self-confirmation and stops when that account is absent', async () => {
+    const client = await import('../ga4-client');
+    client.updateGa4(config, '/', true);
+    expect(document.querySelector('#grabit-google-interests')).toBeNull();
+    client.setGa4Choice(true); client.updateGa4(config, '/', true);
+    expect(document.querySelector('#grabit-google-interests')).not.toBeNull();
+    expect(client.getGa4AdultConfirmed()).toBe(false);
+    client.updateGa4(config, '/');
+    expect((window as TestWindow)['ga-disable-G-TESTABCD']).toBe(true);
+    client.setGa4Choice(false); client.updateGa4(config, '/', true);
+    expect((window as TestWindow)['ga-disable-G-TESTABCD']).toBe(true);
+  });
   it('prevents the vendor bootstrap from emitting a default page view before stream configuration', async () => {
-    const client = await import('../ga4-client'); client.setGa4Choice(true);
+    const client = await import('../ga4-client'); client.setGa4Choice(true, true);
     window.history.replaceState(null, '', '/categories?utm_source=qa&token=must-not-leave');
     const globalFields: Record<string, unknown> = {};
     const hits: Record<string, unknown>[] = [];

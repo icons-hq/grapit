@@ -18,7 +18,7 @@ export function getGa4Choice(): 'accepted' | 'declined' | null {
     const row = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? 'null');
     if (!row || row.version !== GA4_CONSENT_VERSION || !Number.isFinite(row.at) || row.at > Date.now() || Date.now() - row.at >= TTL) return null;
     if (row.choice === 'declined') return 'declined';
-    return row.choice === 'accepted' && row.collection === true && row.transfer === true && row.adult === true ? 'accepted' : null;
+    return row.choice === 'accepted' && row.collection === true && row.transfer === true ? 'accepted' : null;
   } catch { return null; }
 }
 export function subscribeGa4Choice(listener: () => void) {
@@ -26,10 +26,14 @@ export function subscribeGa4Choice(listener: () => void) {
   window.addEventListener('storage', storage); window.addEventListener(CHANGED, listener);
   return () => { window.removeEventListener('storage', storage); window.removeEventListener(CHANGED, listener); };
 }
-export function setGa4Choice(accepted: boolean) {
+export function getGa4AdultConfirmed() {
+  if (getGa4Choice() !== 'accepted') return false;
+  try { return JSON.parse(localStorage.getItem(CHOICE_KEY) ?? 'null')?.adult === true; } catch { return false; }
+}
+export function setGa4Choice(accepted: boolean, adultConfirmed = false) {
   if (!accepted) { blockedInMemory = true; stopGa4(true); }
   try {
-    localStorage.setItem(CHOICE_KEY, JSON.stringify({ version: GA4_CONSENT_VERSION, at: Date.now(), choice: accepted ? 'accepted' : 'declined', collection: accepted, transfer: accepted, adult: accepted }));
+    localStorage.setItem(CHOICE_KEY, JSON.stringify({ version: GA4_CONSENT_VERSION, at: Date.now(), choice: accepted ? 'accepted' : 'declined', collection: accepted, transfer: accepted, adult: accepted && adultConfirmed }));
   } catch { blockedInMemory = true; stopGa4(); window.dispatchEvent(new Event(CHANGED)); return false; }
   blockedInMemory = !accepted;
   window.dispatchEvent(new Event(CHANGED));
@@ -52,11 +56,11 @@ export function stopGa4(clearCookies = false) {
     }
   }
 }
-export function updateGa4(config: Ga4Config | undefined, pathname: string) {
+export function updateGa4(config: Ga4Config | undefined, pathname: string, adultAccount = false) {
   if (typeof window === 'undefined') return;
   const path = normalizeGa4Path(pathname);
   if (!config?.enabled || config.noticeVersion !== GA4_CONSENT_VERSION || !/^G-[A-Z0-9]{4,20}$/.test(config.measurementId ?? '')
-    || getGa4Choice() !== 'accepted' || analyticsPrivacySignal() || !path) { stopGa4(); return; }
+    || getGa4Choice() !== 'accepted' || (!adultAccount && !getGa4AdultConfirmed()) || analyticsPrivacySignal() || !path) { stopGa4(); return; }
   const id = config.measurementId!;
   if (measurement && measurement !== id) disable(measurement, true);
   measurement = id;

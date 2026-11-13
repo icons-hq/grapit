@@ -1,11 +1,10 @@
 'use client';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { normalizeGa4Path, isAdultForGoogleInterests, type Ga4Config } from '@grabit/shared';
-import { getGa4Choice, setGa4Choice, stopGa4, subscribeGa4Choice, updateGa4 } from '@/lib/ga4-client';
+import { getGa4Choice, getGa4AdultConfirmed, setGa4Choice, stopGa4, subscribeGa4Choice, updateGa4 } from '@/lib/ga4-client';
 import { analyticsPrivacySignal, getAnalyticsChoice, subscribeAnalyticsChoice } from '@/lib/analytics-client';
 import { apiClient } from '@/lib/api-client';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
@@ -15,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldLabel, FieldSet, FieldLegend } from '@/components/ui/field';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useHydrated } from '@/hooks/use-hydrated';
+import { AnalyticsConsentBanner } from './analytics-consent-banner';
 
 export function useGa4Config() {
   return useQuery({ queryKey: ['audience', 'ga4-config'], queryFn: () => apiClient.get<Ga4Config>('/api/v1/analytics/audience/ga4-config', { showErrorToast: false }), staleTime: 30_000, refetchInterval: (query) => query.state.data?.enabled ? 30_000 : false, refetchIntervalInBackground: false, retry: false });
@@ -22,43 +22,44 @@ export function useGa4Config() {
 export function Ga4Provider() {
   const config = useGa4Config(); const pathname = usePathname(); const search = useSearchParams().toString();
   const choice = useSyncExternalStore(subscribeGa4Choice, getGa4Choice, () => null);
+  const adultConfirmed = useSyncExternalStore(subscribeGa4Choice, getGa4AdultConfirmed, () => false);
   const ownChoice = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsChoice, () => null);
   const authReady = useAuthStore((s) => s.isInitialized);
   const role = useAuthStore((s) => s.user?.role);
   const birthday = useAuthStore((s) => s.user?.birthDate);
-  const accountEligible = !role || (role === 'user' && isAdultForGoogleInterests(birthday));
+  const adultAccount = role === 'user' && isAdultForGoogleInterests(birthday);
+  const accountEligible = !role || adultAccount;
   const locale = resolveVisibleCopyLocale(useLocale()); const ko = locale === 'ko';
   useEffect(() => {
-    const sync = () => updateGa4(config.isError || !authReady || !accountEligible ? undefined : config.data, pathname);
+    const sync = () => updateGa4(config.isError || !authReady || !accountEligible ? undefined : config.data, pathname, adultAccount);
     sync();
     // Also enforce expiry/privacy choices on a long-lived page without traffic.
     const timer = choice === 'accepted' ? window.setInterval(sync, 30_000) : null;
     window.addEventListener('focus', sync);
     return () => { if (timer !== null) window.clearInterval(timer); window.removeEventListener('focus', sync); stopGa4(); };
-  }, [config.data, config.isError, pathname, search, choice, authReady, accountEligible]);
+  }, [config.data, config.isError, pathname, search, choice, authReady, accountEligible, adultAccount, adultConfirmed]);
   if (!authReady || !accountEligible || config.isError || !config.data?.enabled || choice !== null || ownChoice === null || analyticsPrivacySignal() || !normalizeGa4Path(pathname)) return null;
-  return <aside aria-label={ko ? 'Google 관심사 분석 선택' : 'Optional Google interest analytics'} data-analytics-private data-analytics-consent className="fixed inset-x-4 bottom-20 z-40 mx-auto flex max-w-2xl flex-col gap-3 rounded-xl border bg-background p-5 shadow-lg md:bottom-4">
-    <p className="font-semibold">{ko ? 'Google 관심사 분석 (선택)' : 'Google interest analytics (optional)'}</p>
-    <p className="text-sm leading-6">{ko ? '쿠키와 공개 페이지 이용 정보를 Google에 전송하여 일부 이용자의 집계 관심사를 확인합니다. Google 계정의 광고 개인 최적화 정보가 결합될 수 있습니다. 거부해도 예매할 수 있습니다.' : 'Send cookies and public-page activity to Google for aggregate interest reports. Google may associate this with consenting signed-in users who enabled ads personalisation. Declining does not affect booking.'}</p>
-    <Link className="text-sm underline" href={`${getLocalizedPathname('/legal/analytics', locale)}#google`}>{ko ? '처리 국가·항목·보관기간 상세 보기' : 'Countries, data and retention details'}</Link>
-    <Ga4ChoiceControls enabled />
-  </aside>;
+  const detailsHref = getLocalizedPathname('/legal/analytics', locale);
+  return <AnalyticsConsentBanner label={ko ? 'Google 관심사 분석 선택' : 'Optional Google interest analytics'} detailsHref={`${detailsHref}#google`} onAccept={() => setGa4Choice(true)} onDecline={() => setGa4Choice(false)} />;
 }
 export function Ga4ChoiceControls({ enabled }: { enabled: boolean }) {
   const locale = useLocale(); const ko = locale === 'ko';
   const user = useAuthStore((s) => s.user);
   const eligible = enabled && (!user || (user.role === 'user' && isAdultForGoogleInterests(user.birthDate)));
   const choice = useSyncExternalStore(subscribeGa4Choice, getGa4Choice, () => null);
+  const adultConfirmed = useSyncExternalStore(subscribeGa4Choice, getGa4AdultConfirmed, () => false);
+  const needsAgeConfirmation = choice === 'accepted' && !adultConfirmed && !(user?.role === 'user' && isAdultForGoogleInterests(user.birthDate));
   const [collection, setCollection] = useState(false); const [transfer, setTransfer] = useState(false); const [adult, setAdult] = useState(false); const [error, setError] = useState(false);
-  return <div className="flex flex-col gap-3" data-analytics-private>
+  return <div id="google-consent" className="flex scroll-mt-20 flex-col gap-3" data-analytics-private>
     {choice !== 'accepted' && <FieldSet disabled={!eligible || analyticsPrivacySignal()}><FieldLegend className="sr-only">{ko ? 'Google 분석 선택 동의' : 'Optional Google analytics choices'}</FieldLegend>
       <Field orientation="horizontal"><Checkbox id={`google-collection-${enabled}`} checked={collection} onCheckedChange={(v) => setCollection(v === true)} /><FieldLabel htmlFor={`google-collection-${enabled}`}>{ko ? 'Google 관심사 분석 수집·이용 동의 (선택)' : 'Allow collection/use for Google interest analytics (optional)'}</FieldLabel></Field>
       <Field orientation="horizontal"><Checkbox id={`google-transfer-${enabled}`} checked={transfer} onCheckedChange={(v) => setTransfer(v === true)} /><FieldLabel htmlFor={`google-transfer-${enabled}`}>{ko ? 'Google 국외 이전 동의 (선택)' : 'Allow international transfer to Google (optional)'}</FieldLabel></Field>
       <Field orientation="horizontal"><Checkbox id={`google-adult-${enabled}`} checked={adult} onCheckedChange={(v) => setAdult(v === true)} /><FieldLabel htmlFor={`google-adult-${enabled}`}>{ko ? '만 18세 이상입니다.' : 'I am at least 18 years old.'}</FieldLabel></Field>
     </FieldSet>}
-    <div className="flex flex-wrap gap-2">{choice !== 'accepted' && <Button disabled={!eligible || !collection || !transfer || !adult || analyticsPrivacySignal()} onClick={() => setError(!setGa4Choice(true))}>{ko ? '선택 항목 동의' : 'Allow selected analytics'}</Button>}
+    {needsAgeConfirmation && <Field orientation="horizontal"><Checkbox id="google-confirm-age" checked={adult} disabled={!eligible || analyticsPrivacySignal()} onCheckedChange={(v) => setAdult(v === true)} /><FieldLabel htmlFor="google-confirm-age">{ko ? '만 18세 이상입니다.' : 'I am at least 18 years old.'}</FieldLabel></Field>}
+    <div className="flex flex-wrap gap-2">{(choice !== 'accepted' || needsAgeConfirmation) && <Button disabled={!eligible || (choice !== 'accepted' && (!collection || !transfer)) || !adult || analyticsPrivacySignal()} onClick={() => setError(!setGa4Choice(true, adult))}>{needsAgeConfirmation ? ko ? '연령 확인' : 'Confirm age' : ko ? '선택 항목 동의' : 'Allow selected analytics'}</Button>}
       <Button variant="outline" onClick={() => { setError(!setGa4Choice(false)); setCollection(false); setTransfer(false); setAdult(false); }}>{choice === 'accepted' ? ko ? '철회·수집 중단' : 'Withdraw and stop' : ko ? '거부' : 'Decline'}</Button></div>
-    <p role="status" className="text-xs text-muted-foreground">{choice === 'accepted' ? ko ? 'Google 관심사 분석에 동의한 상태입니다.' : 'Google interest analytics is allowed.' : choice === 'declined' ? ko ? 'Google 관심사 분석을 거부한 상태입니다.' : 'Google interest analytics is declined.' : ''}</p>
+    {choice !== null && <p role="status" className="text-xs text-muted-foreground">{needsAgeConfirmation ? ko ? '동의가 저장되었습니다. 만 18세 이상 확인 후 Google 분석을 시작합니다.' : 'Your consent is saved. Google analytics starts after confirming you are at least 18.' : choice === 'accepted' ? ko ? 'Google 관심사 분석에 동의한 상태입니다.' : 'Google interest analytics is allowed.' : ko ? 'Google 관심사 분석을 거부한 상태입니다.' : 'Google interest analytics is declined.'}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{ko ? '선택을 저장하지 못했습니다. 수집은 중지했습니다.' : 'Could not save your choice. Collection has stopped.'}</p>}
   </div>;
 }
