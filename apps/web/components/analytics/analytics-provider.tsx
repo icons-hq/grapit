@@ -4,14 +4,13 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { useAnalyticsConfig } from '@/hooks/use-analytics-config';
-import Link from 'next/link';
 import { getLocalizedPathname } from '@/lib/i18n/locale-path';
 import type { SupportedLocale } from '@grabit/shared';
 import { normalizeAnalyticsPath } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { analyticsCopy } from './analytics-copy';
-import { Button } from '@/components/ui/button';
-import { analyticsPrivacySignal, configureAnalytics, finishAnalyticsPage, flushAnalytics, getAnalyticsChoice, identifyAnalytics, observeAnalyticsPage, recordAnalyticsPointer, recordAnalyticsEngagement, recordAnalyticsScroll, resumeAnalyticsEngagement, retryAnalyticsWithdrawal, setAnalyticsChoice, subscribeAnalyticsChoice, touchAnalyticsActivity, trackAnalytics } from '@/lib/analytics-client';
+import { AnalyticsConsentBanner } from './analytics-consent-banner';
+import { analyticsPrivacySignal, configureAnalytics, finishAnalyticsPage, flushAnalytics, getAnalyticsChoice, getAnalyticsWithdrawalPending, identifyAnalytics, observeAnalyticsPage, recordAnalyticsPointer, recordAnalyticsEngagement, recordAnalyticsScroll, resumeAnalyticsEngagement, retryAnalyticsWithdrawal, setAnalyticsChoice, subscribeAnalyticsChoice, touchAnalyticsActivity, trackAnalytics } from '@/lib/analytics-client';
 
 const serverChoice = () => null;
 export function AnalyticsProvider() {
@@ -21,6 +20,7 @@ function PersonalAnalyticsProvider() {
   const pathname = usePathname(); const search = useSearchParams(); const locale = useLocale();
   const user = useAuthStore((s) => s.user); const initialized = useAuthStore((s) => s.isInitialized);
   const choice = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsChoice, serverChoice);
+  const pending = useSyncExternalStore(subscribeAnalyticsChoice, getAnalyticsWithdrawalPending, () => false);
   const permittedRoute = normalizeAnalyticsPath(pathname) !== null && user?.role !== 'admin';
   const config = useAnalyticsConfig(initialized && permittedRoute);
   const active = initialized && permittedRoute && !config.isError && config.data?.enabled === true;
@@ -57,8 +57,8 @@ function PersonalAnalyticsProvider() {
   }, [active, choice]);
   if (!active || choice !== null || analyticsPrivacySignal() || normalizeAnalyticsPath(pathname) === '/legal') return null;
   const copy = analyticsCopy(locale);
-  return <aside data-analytics-consent aria-label={copy.title} className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-2xl rounded-xl border border-border bg-background p-5 shadow-lg md:bottom-4">
-    <h2 className="font-semibold">{copy.title}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.summary}</p>
-    <div className="mt-3 flex flex-wrap items-center gap-3"><Button variant="outline" asChild><Link href={getLocalizedPathname('/legal/analytics', locale as SupportedLocale)}>{copy.details}</Link></Button><Button variant="outline" onClick={() => setAnalyticsChoice('declined')}>{copy.decline}</Button></div>
-  </aside>;
+  const detailsHref = getLocalizedPathname('/legal/analytics', locale as SupportedLocale);
+  return <AnalyticsConsentBanner label={copy.title} detailsHref={detailsHref} acceptDisabled={pending}
+    onAccept={() => { setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); return getAnalyticsChoice() === 'accepted'; }}
+    onDecline={() => setAnalyticsChoice('declined')} />;
 }

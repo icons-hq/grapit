@@ -40,6 +40,10 @@
 
 ### 배포 전 연결 절차
 
+Google 첫 안내 배너는 자체 분석 배너와 동일하게 `서비스 개선을 위해 쿠키와 이용정보를 수집합니다.` 한 문장과 `자세한 내용 보기`, `동의`·`거부`만 표시한다. `동의`는 수집·이용과 국외 이전을 함께 허용해 화면 이동 없이 즉시 저장하고 해당 배너를 닫는다. 거부도 즉시 적용한다. 상세 설명은 `자세한 내용 보기` 링크로만 `/legal/analytics#google`에서 연다. 자체 방문 분석의 선택과 Google 동의는 계속 별개로 저장한다.
+
+배너 동의는 연령 확인을 대신하지 않는다. 비회원의 동의는 즉시 저장하되 `adult: false`로 두며 Google 스크립트는 로드하지 않는다. 상세 설정에서 만 18세 이상을 직접 확인하거나, 기존 생년월일로 만 18세 이상인 회원으로 로그인한 경우에만 수집한다. 로그인 계정의 나이를 이용한 판단을 본인의 연령 확인 기록으로 저장하지 않는다. 관리자·미성년 회원 제외 및 DNT/GPC 처리는 유지한다. 상세 설정에는 동의 저장·연령 확인 대기 상태와 연령 확인 항목을 표시한다.
+
 1. API 런타임은 현재 `grapit-cloudrun@grapit-491806.iam.gserviceaccount.com`이다. 신규 GA4 속성의 **Viewer**만 부여하고 프로젝트 `grapit-491806`의 `analyticsdata.googleapis.com`을 활성화한다. 서비스 계정 JSON 키를 만들지 않는다. 이 외부 권한/설정 변경은 승인된 범위에서 수행한다.
 2. 실제 Google/재처리자의 처리 국가 목록과 게시할 안내를 확정한다. 단순히 미국만 처리한다고 기재하지 않는다. 확인한 ISO 국가 코드를 `GA4_TRANSFER_COUNTRIES`에 넣는다. 이는 실제 범위 검토를 대신하는 기본 목록이 아니다.
 3. repository variables에 `GA4_PROPERTY_ID=563988659`, `GA4_MEASUREMENT_ID=G-CDQCEPLW7F`, 국가 목록을 설정한다. 초기 배포는 `GA4_ENABLED=false`, `GA4_NOTICE_READY=false`. workflow의 기본값도 false다. 별도 web 빌드 ID가 아니라 API 공개 config로 측정 ID를 전달한다.

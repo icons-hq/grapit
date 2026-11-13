@@ -1,5 +1,8 @@
 const en = {
   title: 'Optional visitor analytics', deletionPending: 'Collection has stopped. Deletion of earlier records is pending.', retry: 'Retry deletion',
+  bannerSummary: 'We collect cookies and usage information to improve our service.',
+  bannerDetails: 'View details', bannerAccept: 'Accept', bannerDecline: 'Decline',
+  saveError: 'Could not save your choice. Collection has stopped.',
   summary: 'Help us understand which announcements bring visitors and where booking becomes difficult. With your permission, we use a random browser ID to record page visits, campaign labels, device groups, booking steps, click/touch coordinates, screen dimensions, scrolling and masked session recordings, and connect them to your account after sign-in. Activity records are kept for up to 90 days and session replay for 14 days; statistics without identifiers for 1 year. You can refuse or withdraw without affecting signup or booking.',
   accept: 'Allow analytics', decline: 'Decline analytics', settings: 'Visitor analytics settings',
   details: 'Details and choices', accepted: 'Analytics allowed on this browser', declined: 'Analytics declined on this browser',
@@ -9,6 +12,9 @@ const en = {
 };
 const ko: typeof en = {
   title: '방문 분석 선택 동의', deletionPending: '수집을 중단했습니다. 기존 기록 삭제는 서버 확인을 기다리고 있습니다.', retry: '삭제 요청 재시도',
+  bannerSummary: '서비스 개선을 위해 쿠키와 이용정보를 수집합니다.',
+  bannerDetails: '자세한 내용 보기', bannerAccept: '동의', bannerDecline: '거부',
+  saveError: '선택을 저장하지 못했습니다. 수집은 중지했습니다.',
   summary: '공지 유입과 예매 과정의 불편을 파악하기 위해, 동의한 경우 무작위 브라우저 ID로 방문 페이지·캠페인·기기 구분·예매 단계·클릭/터치 좌표·화면 크기·스크롤·마스킹된 화면 재생 기록을 수집하고 로그인 후 회원 계정과 연결합니다. 행동 기록은 최대 90일, 화면 재생은 14일, 식별자 없는 통계는 1년 보관합니다. 거부·철회해도 가입과 예매를 이용할 수 있습니다.',
   accept: '분석 허용', decline: '분석 거부', settings: '방문 분석 설정', details: '자세한 내용·설정',
   accepted: '이 브라우저에서 분석을 허용했습니다', declined: '이 브라우저에서 분석을 거부했습니다',

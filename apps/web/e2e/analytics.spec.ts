@@ -54,9 +54,9 @@ test('real browser navigation persists sanitized events through the local analyt
   // contribution and removal without assuming unrelated fixture data is empty.
   const baseline = (await report()).summary;
   await page.goto(`/performance/${performanceId}?utm_source=instagram&utm_campaign=launch_20261111&utm_content=poster_a&ticket=must-not-collect`);
-  await expect(page.getByRole('heading', { name: '분석 검증 공연', exact: true })).toBeVisible(); await expect(page.getByRole('link', { name: '자세한 내용·설정', exact: true })).toBeVisible(); expect(posted).toHaveLength(0); await capture(page, 'analytics-consent');
+  await expect(page.getByRole('heading', { name: '분석 검증 공연', exact: true })).toBeVisible(); await expect(page.getByRole('link', { name: '자세한 내용 보기', exact: true })).toBeVisible(); expect(posted).toHaveLength(0); await capture(page, 'analytics-consent');
   await page.setViewportSize({ width: 390, height: 844 }); await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); await capture(page, 'analytics-consent-mobile');
-  await page.getByRole('link', { name: '자세한 내용·설정', exact: true }).click();
+  await page.getByRole('link', { name: '자세한 내용 보기', exact: true }).click();
   await page.getByRole('checkbox').nth(0).check(); await page.getByRole('checkbox').nth(1).check();
   await page.getByRole('button', { name: '분석 허용', exact: true }).click();
   await page.goto(`/performance/${performanceId}?utm_source=instagram&utm_campaign=launch_20261111`);
