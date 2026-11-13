@@ -58,7 +58,7 @@
 
 위 목록은 공개 시설·법인의 소재 범위이며 해당 속성의 개별 요청 경로 확인서는 아니다. 모든 자료가 모든 국가로 전송·복제된다는 뜻이 아니고, 지원 공유 off가 모든 계열사의 서비스 운영을 없애는 것도 아니다. 2026-11-13 사용자 승인에 따라 Google Analytics Standard에 해당하는 운영·지원 국가와 개발 중으로 표시되지 않은 데이터센터 국가의 합집합을 가능한 처리 범위로 고지한다. 개발 중 시설만 등재된 국가는 추가하지 않는다. 실제 저장·지원 경로가 달라질 수 있음을 안내하고 원문 링크를 제공한다. 공개 목록 변경 시 국가 범위와 고지를 다시 검토한다.
 
-배포 국가 설정: `AE,AR,AU,BE,BR,CA,CH,CL,CO,CZ,DE,DK,ES,FI,FR,GB,HR,IE,IL,IN,IT,JP,KE,MX,MY,NL,NO,PE,PH,PL,PT,SE,SG,TR,TW,US,UY`. 동의 버전 `google-interests-v1`은 이번 최초 배포에 적용한다. 사이트 고지와 동의 UI를 배포·확인한 뒤 Google 신호/최종 사용자 동의 확인과 두 gate를 켠다. Google 지원팀에 고객 원본 자료를 추가로 공유하는 작업이나 Google Ads 연결은 포함하지 않는다.
+배포 국가 설정: `AE,AR,AU,BE,BR,CA,CH,CL,CO,CZ,DE,DK,ES,FI,FR,GB,HR,IE,IL,IN,IT,JP,KE,MX,MY,NL,NO,PE,PH,PL,PT,SE,SG,TR,TW,US,UY`. 현재 동의 버전은 `google-interests-v2`다. 초기 태그 설정 보완 후 버전을 올려, 열려 있던 v1 코드가 새 서버 설정으로 수집을 재개하지 못하게 한다. 기존 v1 동의는 재사용하지 않고 새 코드에서 다시 선택받는다. 브라우저 저장 키의 v1은 JSON 형식 버전이며 동의 버전과 별개다. 사이트 고지와 동의 UI를 배포·확인한 뒤 Google 신호/최종 사용자 동의 확인과 두 gate를 켠다. Google 지원팀에 고객 원본 자료를 추가로 공유하는 작업이나 Google Ads 연결은 포함하지 않는다.
 
 
 ## 구현 검증 (2026-11-12)

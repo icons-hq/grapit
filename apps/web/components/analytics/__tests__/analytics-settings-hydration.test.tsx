@@ -23,7 +23,7 @@ describe('analytics settings hydration with a cache populated by a provider', ()
     // Layout providers fetch shared config independently of this streamed page.
     // It can already be cached when React first hydrates the page boundary.
     if (source === 'first-party') client.setQueryData(['analytics', 'config'], { enabled: true, aggregateEnabled: true });
-    else client.setQueryData(['audience', 'ga4-config'], { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v1', transferCountries: ['US'] });
+    else client.setQueryData(['audience', 'ga4-config'], { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v2', transferCountries: ['US'] });
     const errors: string[] = [];
     let root: ReturnType<typeof hydrateRoot> | undefined;
     try {

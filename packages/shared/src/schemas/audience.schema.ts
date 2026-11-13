@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const AUDIENCE_CONSENT_VERSION = 'interests-v1';
 export const AUDIENCE_RETENTION_DAYS = 90;
-export const GA4_CONSENT_VERSION = 'google-interests-v1';
+export const GA4_CONSENT_VERSION = 'google-interests-v2';
 export const audienceTagKindSchema = z.enum(['artist', 'activity', 'benefit']);
 export type AudienceTagKind = z.infer<typeof audienceTagKindSchema>;
 const label = z.string().trim().min(1).max(80);

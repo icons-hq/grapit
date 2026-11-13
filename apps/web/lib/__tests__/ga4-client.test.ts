@@ -3,7 +3,7 @@ import type { Ga4Config } from '@grabit/shared';
 
 const privacy = vi.hoisted(() => ({ blocked: false }));
 vi.mock('../analytics-client', () => ({ analyticsPrivacySignal: () => privacy.blocked }));
-const config: Ga4Config = { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v1', transferCountries: ['US'] };
+const config: Ga4Config = { enabled: true, measurementId: 'G-TESTABCD', noticeVersion: 'google-interests-v2', transferCountries: ['US'] };
 const id = '00000000-0000-4000-8000-000000000001';
 type TestWindow = Window & { dataLayer?: Array<IArguments>; gtag?: unknown; 'ga-disable-G-TESTABCD'?: boolean };
 
@@ -14,6 +14,7 @@ describe('Google interest analytics consent and sanitization', () => {
     const client = await import('../ga4-client');
     client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     client.setGa4Choice(true); client.updateGa4({ ...config, enabled: false }, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
+    client.updateGa4({ ...config, noticeVersion: 'google-interests-v1' }, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     privacy.blocked = true; client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
   });
   it('sends only sanitized public paths, deduplicates the page and disables loaded tags on private routes', async () => {
@@ -35,8 +36,8 @@ describe('Google interest analytics consent and sanitization', () => {
   });
   it('requires fresh adult, collection and transfer choices', async () => {
     const client = await import('../ga4-client');
-    for (const patch of [{ at: Date.now() - 91 * 86400000 }, { transfer: false }, { adult: false }, { version: 'old' }]) {
-      localStorage.setItem('grabit:google-interests:v1', JSON.stringify({ version: 'google-interests-v1', choice: 'accepted', at: Date.now(), collection: true, transfer: true, adult: true, ...patch }));
+    for (const patch of [{ at: Date.now() - 91 * 86400000 }, { transfer: false }, { adult: false }, { version: 'google-interests-v1' }]) {
+      localStorage.setItem('grabit:google-interests:v1', JSON.stringify({ version: 'google-interests-v2', choice: 'accepted', at: Date.now(), collection: true, transfer: true, adult: true, ...patch }));
       client.updateGa4(config, '/'); expect(document.querySelector('#grabit-google-interests')).toBeNull();
     }
   });
