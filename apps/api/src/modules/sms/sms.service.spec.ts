@@ -323,7 +323,9 @@ describe('SmsService', () => {
 
       expect(error).toBeInstanceOf(HttpException);
       expect((error as HttpException).getStatus()).toBe(429);
-      expect((error as HttpException).getResponse()).toMatchObject({ retryAfterMs: 25000 });
+      expect((error as HttpException).getResponse()).toMatchObject({
+        retryAfterMs: 25000, errorCode: 'SMS_RESEND_COOLDOWN',
+      });
       expect(sendSpy).not.toHaveBeenCalled();
       expect(mockRedis.eval).not.toHaveBeenCalled();
     });
@@ -502,12 +504,17 @@ describe('SmsService', () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);
       mockRedis.eval.mockResolvedValueOnce(6);
+      mockRedis.pttl.mockResolvedValueOnce(1_234_000);
       const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification');
 
       const error = await service.sendVerificationCode('+821012345678')
         .catch((err: unknown) => err);
 
       expect((error as HttpException).getStatus()).toBe(429);
+      expect((error as HttpException).getResponse()).toMatchObject({
+        errorCode: 'SMS_PHONE_SEND_LIMIT', retryAfterMs: 1_234_000,
+      });
+      expect(mockRedis.pttl).toHaveBeenCalledWith(smsSendCounterKey('+821012345678'));
       expect(sendSpy).not.toHaveBeenCalled();
       // The global budget is never touched by a request the phone axis rejected.
       expect(mockRedis.eval).toHaveBeenCalledTimes(1);

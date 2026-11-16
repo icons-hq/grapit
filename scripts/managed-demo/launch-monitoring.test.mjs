@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyPlan, buildPolicies, planPolicies, planSuccessMetric, waitForInitialWorkerSuccess, WORKER_SUCCESS_METRIC } from './launch-monitoring.mjs';
+import { applyPlan, buildPolicies, planPolicies, planSuccessMetric, planLogMetric, selectPolicies, waitForInitialWorkerSuccess, WORKER_SUCCESS_METRIC, SMS_RATE_LIMIT_METRIC, SMS_ALERT_POLICY_IDS } from './launch-monitoring.mjs';
 
 const channel = 'projects/grapit-491806/notificationChannels/1234';
+
+test('one expected SMS limit among 25 requests does not become a server outage', () => {
+  const ratio = buildPolicies(channel).find(item => item.userLabels.policy_id === 'api-error-ratio');
+  const condition = ratio.conditions[0].conditionThreshold;
+  assert.match(condition.filter, /response_code_class="5xx"/);
+  assert.doesNotMatch(condition.filter, /429/);
+  assert.equal(ratio.severity, 'ERROR');
+  const burst = buildPolicies(channel).find(item => item.userLabels.policy_id === 'sms-rate-limit-burst');
+  assert.equal(burst.conditions[0].conditionThreshold.thresholdValue, 4);
+  assert.equal(burst.conditions[0].conditionThreshold.aggregations[0].alignmentPeriod, '600s');
+  assert.equal(burst.severity, 'WARNING');
+});
 
 test('successful scheduled executions do not become missing when the native completion counter stays zero', () => {
   // Production 2026-11-02 07:13–07:25 UTC: two successful RunJob audit
@@ -107,16 +119,62 @@ test('serializes policy writes and preserves the same enabled channel', async ()
     active--;
     return { name: `projects/grapit-491806/alertPolicies/${++calls}`, enabled: true };
   });
-  assert.equal(result.length, 7);
+  assert.equal(result.length, 10);
+});
+
+test('a failed replacement creation leaves the old broader warning unchanged', async () => {
+  const desired = buildPolicies(channel);
+  const old = { ...desired[0], name: 'projects/grapit-491806/alertPolicies/42' };
+  const plan = planPolicies([desired[0], desired[2]], [old]);
+  const methods = [];
+  await assert.rejects(applyPlan(plan, async method => {
+    methods.push(method);
+    throw new Error('create failed');
+  }), /create failed/);
+  assert.deepEqual(methods, ['POST']);
 });
 
 test('keeps platform failures covered separately from container request metrics', () => {
   const policies = buildPolicies(channel);
   const platform = policies.find(item => item.userLabels.policy_id === 'purchase-http-errors');
   assert.match(platform.conditions[0].conditionMatchedLog.filter, /httpRequest.status>=500/);
-  assert.match(platform.conditions[0].conditionMatchedLog.filter, /httpRequest.status=429/);
+  assert.doesNotMatch(platform.conditions[0].conditionMatchedLog.filter, /httpRequest.status=429/);
+  const throttled = policies.find(item => item.userLabels.policy_id === 'api-request-throttled');
+  assert.match(throttled.conditions[0].conditionMatchedLog.filter, /httpRequest.status=429/);
+  assert.match(throttled.conditions[0].conditionMatchedLog.filter, /no available instance/);
+  assert.match(throttled.conditions[0].conditionMatchedLog.filter, /NOT httpRequest.requestUrl/);
   assert.equal(platform.conditions.length, 1);
   assert.equal(platform.alertStrategy.notificationRateLimit.period, '300s');
   const critical = policies.find(item => item.userLabels.policy_id === 'transaction-recovery');
   assert.match(critical.conditions[0].conditionMatchedLog.filter, /QR_REMINDER_REQUIRES_ATTENTION/);
+});
+
+test('SMS-only plan preserves existing condition identities without touching database, worker or Valkey', () => {
+  const policies = buildPolicies(channel);
+  const desired = selectPolicies(policies, SMS_ALERT_POLICY_IDS.join(','));
+  assert.equal(desired.length, 5);
+  assert(!desired.some(policy => /database|worker|valkey/.test(policy.userLabels.policy_id)));
+  assert.throws(() => selectPolicies(policies, 'api-error-ratio,typo'));
+  assert.throws(() => selectPolicies(policies, ''));
+  const previous = { ...desired[1], name: 'projects/grapit-491806/alertPolicies/42',
+    conditions: [{ ...desired[1].conditions[0], displayName: 'API 5xx/429 ratio > 1% for 5 minutes', name: 'projects/grapit-491806/alertPolicies/42/conditions/99' }] };
+  const changed = planPolicies(desired, [previous]).find(item => item.policy.name === previous.name);
+  assert.equal(changed.policy.conditions[0].name, previous.conditions[0].name);
+});
+
+test('SMS failures include provider 400s and global budget exhaustion while expected limits use a counter', () => {
+  const failure = buildPolicies(channel).find(item => item.userLabels.policy_id === 'sms-send-failure');
+  const filter = failure.conditions[0].conditionMatchedLog.filter;
+  assert.match(filter, /jsonPayload.event="sms.send_failed"/);
+  assert.match(filter, /jsonPayload.event="sms.pending_marker_failed"/);
+  assert.match(filter, /global_hourly_send_budget/);
+  assert.doesNotMatch(filter, /sms.rate_limited/);
+  const metric = planLogMetric(SMS_RATE_LIMIT_METRIC, null);
+  assert.equal(metric.action, 'create');
+  assert.match(metric.metric.filter, /jsonPayload.event/);
+  assert.match(metric.metric.filter, /textPayload/);
+  assert.doesNotMatch(metric.metric.filter, /phone|account/);
+  const textRegex = /textPayload=~"([^"]+)"/.exec(metric.metric.filter)[1];
+  assert.match("  event: \u001b[32m'sms.rate_limited'\u001b[39m,", new RegExp(textRegex));
+  assert.doesNotMatch("  event: 'sms.sent',", new RegExp(textRegex));
 });

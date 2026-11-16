@@ -170,6 +170,17 @@ describe('SMS app-side limits (real SmsController + SmsService + Valkey)', () =>
       expect(sendSpy).toHaveBeenCalledTimes(5);
     });
 
+    it('hourly rejection returns the remaining Valkey window, not another full hour', async () => {
+      const phone = phoneAt(3);
+      await redis.set(smsSendCounterKey(phone), '5', 'PX', 62_000);
+      const rejected = await request(app.getHttpServer()).post('/sms/send-code').send({ phone });
+      expect(rejected.status).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(rejected.body.errorCode).toBe('SMS_PHONE_SEND_LIMIT');
+      expect(rejected.body.retryAfterMs).toBeGreaterThan(60_000);
+      expect(rejected.body.retryAfterMs).toBeLessThanOrEqual(62_000);
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
     it('번호를 돌리는 대량 발송은 공유 IP throttle이 아니라 분당 global send budget에서 멈춘다', async () => {
       const server = app.getHttpServer();
       const windowIndex = await waitForFreshMinuteWindow();

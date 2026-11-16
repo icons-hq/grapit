@@ -33,6 +33,19 @@ type SmsVerificationPurpose =
   | 'signup'
   | 'social_registration'
   | 'profile_phone_change';
+type SendRetryReason = 'cooldown' | 'phone' | 'service' | 'unknown';
+type SendRetry = { phone: string; until: number; reason?: SendRetryReason };
+
+function readSendRetry(err: unknown, phone: string, now: number): SendRetry | null {
+  if (!(err instanceof ApiClientError) || err.statusCode !== 429) return null;
+  const data = err.data as { retryAfterMs?: unknown; errorCode?: unknown } | null;
+  const delay = data?.retryAfterMs;
+  if (typeof delay !== 'number' || !Number.isFinite(delay) || delay <= 0) return null;
+  const reason: SendRetryReason = data?.errorCode === 'SMS_PHONE_SEND_LIMIT' ? 'phone'
+    : data?.errorCode === 'SMS_GLOBAL_SEND_LIMIT' ? 'service'
+    : data?.errorCode === 'SMS_RESEND_COOLDOWN' ? 'cooldown' : 'unknown';
+  return { phone, until: now + Math.min(delay, 24 * 60 * 60_000), reason };
+}
 type SmsSendErrorCode =
   | 'SMS_PHONE_INVALID'
   | 'SMS_CAPABLE_PHONE_REQUIRED'
@@ -77,6 +90,8 @@ function mapErrorToCopy(
 ): string {
   if (err instanceof ApiClientError) {
     const smsErrorCode = readSmsErrorCode(err.data);
+    if (smsErrorCode === 'SMS_RECIPIENT_BLOCKED'
+      && (err.data as { providerCode?: unknown }).providerCode === 60410) return copy.providerBlocked;
     if (smsErrorCode) return mapSmsSendErrorCodeToCopy(smsErrorCode, copy);
     if (err.statusCode === 429) return copy.throttled;
     if (err.statusCode === 410 || err.statusCode === 422) return copy.expired;
@@ -138,12 +153,18 @@ export function PhoneVerification({
   const [isSending, setIsSending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
-  const [resendCooldown, setResendCooldown] = useState(0);
+  const [sendRetry, setSendRetry] = useState<SendRetry | null>(null);
+  const [clockNow, setClockNow] = useState(Date.now);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
   const smsDestination = useMemo(() => getMaskedSmsDestination(phone), [phone]);
+  const retryForPhone = sendRetry?.phone === phone || sendRetry?.reason === 'service';
+  const resendCooldown = sendRetry && retryForPhone
+    ? Math.max(0, Math.ceil((sendRetry.until - clockNow) / 1000)) : 0;
+  const retryReason = resendCooldown > 0 ? sendRetry?.reason : undefined;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -176,22 +197,23 @@ export function PhoneVerification({
     return clearTimer;
   }, [timeLeft, clearTimer]);
 
-  // Resend cooldown timer (30s, independent)
+  // Use a deadline, not timer ticks: background-tab throttling must not turn
+  // a one-hour limit into an even longer wait when the buyer returns.
   useEffect(() => {
-    if (resendCooldown <= 0) {
-      if (cooldownTimerRef.current) {
-        clearInterval(cooldownTimerRef.current);
-        cooldownTimerRef.current = null;
-      }
-      return;
-    }
-    cooldownTimerRef.current = setInterval(() => {
-      setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-    return () => {
-      if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
+    if (!sendRetry || isVerified) return;
+    const tick = () => {
+      setClockNow(Date.now());
+      if (Date.now() >= sendRetry.until) clearInterval(timer);
     };
-  }, [resendCooldown]);
+    const timer = setInterval(tick, 1000);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [sendRetry, isVerified]);
 
   const isExpired = codeSent && timeLeft === 0 && !isVerified;
 
@@ -202,7 +224,7 @@ export function PhoneVerification({
   }
 
   async function handleSendCode() {
-    if (!phone || !isValidPhoneNumber(phone)) return;
+    if (!phone || !isValidPhoneNumber(phone) || isSending || resendCooldown > 0) return;
 
     setIsSending(true);
     setVerifyError(null);
@@ -214,10 +236,13 @@ export function PhoneVerification({
         { phone },
         { showErrorToast: false },
       );
+      if (phoneRef.current !== phone) return;
       setCodeSent(true);
       setCode('');
       setTimeLeft(SMS_CODE_EXPIRY_SECONDS);
-      setResendCooldown(SMS_RESEND_COOLDOWN_SECONDS);
+      const now = Date.now();
+      setClockNow(now);
+      setSendRetry({ phone, until: now + SMS_RESEND_COOLDOWN_SECONDS * 1000 });
       if (smsDestination) {
         setStatusMessage(
           formatOtpTemplate(
@@ -229,7 +254,15 @@ export function PhoneVerification({
         setStatusMessage(wasResend ? otpCopy.resendSuccess : otpCopy.sent);
       }
     } catch (err) {
-      setVerifyError(mapErrorToCopy(err, otpCopy, 'send'));
+      if (phoneRef.current !== phone) return;
+      const now = Date.now();
+      const retry = readSendRetry(err, phone, now);
+      if (retry) {
+        setClockNow(now);
+        setSendRetry(retry);
+      } else {
+        setVerifyError(mapErrorToCopy(err, otpCopy, 'send'));
+      }
     } finally {
       setIsSending(false);
     }
@@ -286,12 +319,17 @@ export function PhoneVerification({
   const sendButtonDisabled =
     isVerified ||
     isSending ||
-    (codeSent && resendCooldown > 0) ||
-    (!codeSent && !isValidPhoneNumber(phone));
+    resendCooldown > 0 ||
+    !isValidPhoneNumber(phone);
+
+  const retryLabel = otpCopy.retryButtonLabel.replace('{time}', formatTime(resendCooldown));
+  const retryMessage = retryReason === 'phone' ? otpCopy.phoneSendLimit
+    : retryReason === 'service' ? otpCopy.sendServiceBusy
+    : retryReason === 'cooldown' ? otpCopy.resendTooSoon : otpCopy.throttled;
 
   // Button aria-label for cooldown
   const sendButtonAriaLabel =
-    codeSent && resendCooldown > 0
+    retryReason ? retryLabel : resendCooldown > 0
       ? formatSecondsCopy(otpCopy.cooldownAriaLabel, resendCooldown)
       : undefined;
 
@@ -302,10 +340,17 @@ export function PhoneVerification({
         <PhoneInput
           locale={activeLocale}
           value={phone}
-          onChange={onPhoneChange}
+          onChange={(nextPhone) => {
+            setCodeSent(false);
+            setCode('');
+            setTimeLeft(0);
+            setVerifyError(null);
+            setStatusMessage(null);
+            onPhoneChange(nextPhone);
+          }}
           aria-label={authCopy.signup.phoneLabel}
           autoComplete="tel"
-          disabled={isVerified}
+          disabled={isVerified || isSending || isVerifying}
           className="w-full"
         />
         <Button
@@ -322,7 +367,9 @@ export function PhoneVerification({
               <Loader2 className="h-4 w-4 animate-spin" />
               {codeSent ? otpCopy.resendLoading : otpCopy.sendLoading}
             </>
-          ) : codeSent && resendCooldown > 0 ? (
+          ) : retryReason ? (
+            retryLabel
+          ) : resendCooldown > 0 ? (
             formatSecondsCopy(otpCopy.cooldownLabel, resendCooldown)
           ) : codeSent ? (
             otpCopy.resendCta
@@ -331,6 +378,13 @@ export function PhoneVerification({
           )}
         </Button>
       </div>
+
+      {retryReason && !isVerified && (
+        <div className="space-y-1 text-caption text-error">
+          <p role="alert">{retryMessage}</p>
+          <p aria-live="off">{otpCopy.retryWait.replace('{time}', formatTime(resendCooldown))}</p>
+        </div>
+      )}
 
       {smsDestination && !codeSent && !isVerified && (
         <p className="text-caption text-gray-500" role="status">

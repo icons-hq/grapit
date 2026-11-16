@@ -182,6 +182,30 @@ describe('PhoneVerification', () => {
 
   // ---------- 에러 카피 ----------
   describe('에러 카피', () => {
+    it('첫 발송이 시간당 한도에 걸려도 사유와 실제 대기시간을 표시하고 재요청을 막는다', async () => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiClientError('잠시 후 다시 시도해주세요', 429, {
+          errorCode: 'SMS_PHONE_SEND_LIMIT', retryAfterMs: 65_000,
+        }),
+      );
+      render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: '인증번호 발송' }));
+      expect(screen.getByRole('alert')).toHaveTextContent('이 번호의 시간당 인증문자 발송 한도에 도달했습니다.');
+      const retry = screen.getByRole('button', { name: '01:05 후 재시도' });
+      expect(retry).toBeDisabled();
+      await user.click(retry);
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+      // Deadline-based: a background tab can resume after the entire wait.
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 65_000);
+        window.dispatchEvent(new Event('focus'));
+      });
+      expect(screen.getByRole('button', { name: '인증번호 발송' })).toBeEnabled();
+      expect(screen.queryByText('이 번호의 시간당 인증문자 발송 한도에 도달했습니다.')).not.toBeInTheDocument();
+    });
+
     it('429 에러 시 "잠시 후 다시 시도해주세요"', async () => {
       const { apiClient, ApiClientError } = await import('@/lib/api-client');
       const error429 = new ApiClientError('잠시 후 다시 시도해주세요', 429);
@@ -194,6 +218,26 @@ describe('PhoneVerification', () => {
       await waitFor(() => {
         expect(screen.getByText(/잠시 후 다시 시도해주세요/)).toBeInTheDocument();
       });
+    });
+
+    it.each([
+      ['SMS_PHONE_SEND_LIMIT', true],
+      ['SMS_GLOBAL_SEND_LIMIT', false],
+    ])('%s는 번호별 제한과 서비스 전체 제한을 구분한다', async (errorCode, canSendAnotherNumber) => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiClientError('limit', 429, { errorCode, retryAfterMs: 65_000 }),
+      );
+      const view = render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: '인증번호 발송' }));
+      expect(screen.getByRole('button', { name: '01:05 후 재시도' })).toBeDisabled();
+      view.rerender(<PhoneVerification {...defaultProps} phone="+66812345678" />);
+      const send = screen.getByRole('button', { name: canSendAnotherNumber ? '인증번호 발송' : '01:05 후 재시도' });
+      if (canSendAnotherNumber) expect(send).toBeEnabled();
+      else expect(send).toBeDisabled();
+      view.rerender(<PhoneVerification {...defaultProps} />);
+      expect(screen.getByRole('button', { name: '01:05 후 재시도' })).toBeDisabled();
     });
 
     it('send-code 400은 OTP 불일치가 아니라 휴대폰 번호 안내로 표시하고 코드 입력을 열지 않는다', async () => {
@@ -238,7 +282,7 @@ describe('PhoneVerification', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(
-          'We cannot send a verification code to this number right now.',
+          'Our messaging provider has restricted delivery to this number.',
         );
       });
       expect(screen.queryByText(/현재 이 번호/)).not.toBeInTheDocument();
