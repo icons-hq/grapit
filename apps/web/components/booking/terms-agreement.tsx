@@ -53,7 +53,7 @@ export function TermsAgreement({ performanceId, onAgreementChange }: {
         ))}
       </div>
       <p className="text-sm leading-relaxed text-muted-foreground">{copy.policyHelper}</p>
-      <a className="inline-flex min-h-11 items-center text-sm text-primary underline underline-offset-4" href={getLocalizedPathname(`/performance/${performanceId}#sales-copy`, locale)} target="_blank" rel="noopener noreferrer">{copy.cancellationPolicy}</a>
+      <a className="inline-flex min-h-11 items-center text-sm text-primary underline underline-offset-4" href={getLocalizedPathname(`/performance/${performanceId}#cancellation-policy`, locale)} target="_blank" rel="noopener noreferrer">{copy.cancellationPolicy}</a>
       <Dialog open={document !== null} onOpenChange={(open) => { if (!open) setDocument(null); }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">{copy.terms}</DialogDescription></DialogHeader>

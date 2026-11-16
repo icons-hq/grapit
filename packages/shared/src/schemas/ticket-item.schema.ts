@@ -6,6 +6,7 @@ const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
 export const TICKET_SERVICE_FEE_KRW = 2000;
+export const FIXED_TICKET_CANCELLATION_FEE_KRW = 4_000;
 
 export const ticketItemStatusSchema = z.enum([
   'ACTIVE',

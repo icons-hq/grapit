@@ -428,6 +428,13 @@
       "when": 1794472075610,
       "tag": "0060_audience_interests",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794810976402,
+      "tag": "0061_fixed_ticket_cancellation_fee",
+      "breakpoints": true
     }
   ]
 }

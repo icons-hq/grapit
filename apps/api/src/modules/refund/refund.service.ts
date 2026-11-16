@@ -10,6 +10,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { calculateTicketItemCancellationQuote } from '../cancellation/ticket-cancellation-policy.js';
 import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
 import { toRefundTimeline, hasRestoredRefundRights } from '../cancellation/refund-timeline.js';
 export { toRefundTimeline } from '../cancellation/refund-timeline.js';
@@ -18,7 +19,6 @@ import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import type {
   CancellationQuote,
   RefundTimeline,
-  TicketItemCancellationPolicyCode,
   CancellationExpectation,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
@@ -193,14 +193,6 @@ const LOCAL_REFUND_PREFLIGHT_CODES = new Set([
 /** Admin refunds fail closed: without a PG answer neither the preview nor the request may revoke rights. */
 export const ADMIN_REFUND_PROVIDER_CHECK_UNAVAILABLE_MESSAGE =
   '결제사 결제 상태를 확인하지 못했습니다. 잠시 후 미리보기를 다시 조회해주세요.';
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const seoulDateFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Seoul',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
 
 export function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
   const identity = normalizeSeatIdentity({ seatId });
@@ -1388,10 +1380,11 @@ export class RefundService {
         };
       }
 
-      const quote = this.calculateTicketItemCancellationQuote({
+      const quote = calculateTicketItemCancellationQuote({
         price: ticketItem.price + (ticketItem.addonAmount ?? 0),
         serviceFee,
         bookedAt: resolveBookingConfirmedAt(context),
+        fixedCancellationFee: context.reservation.fixedCancellationFee,
         showtimeAt: context.showtime.dateTime,
       });
 
@@ -1424,98 +1417,6 @@ export class RefundService {
 
   private normalizeTicketItemServiceFee(value: number): 0 | 2000 {
     return value === TICKET_SERVICE_FEE_KRW ? TICKET_SERVICE_FEE_KRW : 0;
-  }
-
-  /**
-   * `bookedAt` is the booking confirmation time: the provider approval (`payments.paid_at`), falling back to
-   * the reservation creation time only for legacy rows without it. A seat selected before midnight but paid
-   * after midnight is booked on the payment day.
-   */
-  protected calculateTicketItemCancellationQuote(input: {
-    price: number;
-    serviceFee: number;
-    bookedAt: Date;
-    showtimeAt: Date;
-    now?: Date;
-  }): {
-    cancellationFee: number;
-    serviceFeeRefund: number;
-    refundableAmount: number;
-    policyCode: TicketItemCancellationPolicyCode;
-  } {
-    const now = input.now ?? new Date();
-    const today = this.getSeoulDayOrdinal(now);
-    const bookingDay = this.getSeoulDayOrdinal(input.bookedAt);
-    const showDay = this.getSeoulDayOrdinal(input.showtimeAt);
-    const daysBeforeShow = showDay - today;
-
-    if (daysBeforeShow <= 0) {
-      throw new ForbiddenException('관람일 당일에는 취소할 수 없습니다');
-    }
-
-    if (today === bookingDay) {
-      return {
-        cancellationFee: 0,
-        serviceFeeRefund: input.serviceFee,
-        refundableAmount: input.price + input.serviceFee,
-        policyCode: 'SAME_DAY_BEFORE_MIDNIGHT',
-      };
-    }
-
-    if (daysBeforeShow <= 2) {
-      const cancellationFee = Math.floor(input.price * 0.3);
-      return {
-        cancellationFee,
-        serviceFeeRefund: 0,
-        refundableAmount: Math.max(0, input.price - cancellationFee),
-        policyCode: 'SHOW_DAY_2_TO_1',
-      };
-    }
-
-    if (daysBeforeShow <= 6) {
-      const cancellationFee = Math.floor(input.price * 0.2);
-      return {
-        cancellationFee,
-        serviceFeeRefund: 0,
-        refundableAmount: Math.max(0, input.price - cancellationFee),
-        policyCode: 'SHOW_DAY_6_TO_3',
-      };
-    }
-
-    if (daysBeforeShow <= 9) {
-      const cancellationFee = Math.floor(input.price * 0.1);
-      return {
-        cancellationFee,
-        serviceFeeRefund: 0,
-        refundableAmount: Math.max(0, input.price - cancellationFee),
-        policyCode: 'SHOW_DAY_9_TO_7',
-      };
-    }
-
-    const daysAfterBooking = Math.max(0, today - bookingDay);
-    const cancellationFee =
-      daysAfterBooking <= 7
-        ? 0
-        : Math.min(4000, Math.floor(input.price * 0.1));
-
-    return {
-      cancellationFee,
-      serviceFeeRefund: 0,
-      refundableAmount: Math.max(0, input.price - cancellationFee),
-      policyCode:
-        daysAfterBooking <= 7
-          ? 'WITHIN_7_DAYS_AFTER_BOOKING'
-          : 'BOOKING_DAY_8_TO_SHOW_DAY_10',
-    };
-  }
-
-  private getSeoulDayOrdinal(date: Date): number {
-    const parts = seoulDateFormatter.formatToParts(date);
-    const year = Number(parts.find((part) => part.type === 'year')?.value);
-    const month = Number(parts.find((part) => part.type === 'month')?.value);
-    const day = Number(parts.find((part) => part.type === 'day')?.value);
-
-    return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
   }
 
   protected async ensureTicketItemsAvailableForQuote(

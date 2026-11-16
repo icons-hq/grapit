@@ -1663,8 +1663,9 @@ export function PerformanceForm({
               id="salesInfo"
               {...form.register('salesInfo')}
               rows={4}
-              placeholder="취소/환불 규정 등 판매 관련 정보"
+              placeholder="예매 일정, 판매 대상 등 공연별 안내"
             />
+            <p className="mt-1 text-sm text-gray-500">공통 취소·환불 안내는 공연 상세에 자동으로 표시됩니다.</p>
           </div>
         </div>
       </section>

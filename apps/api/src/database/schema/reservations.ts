@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index, jsonb, boolean } from 'drizzle-orm/pg-core';
 import type { PaymentMethod } from '@grabit/shared';
 import { users } from './users.js';
 import { showtimes } from './showtimes.js';
@@ -32,6 +32,8 @@ export const reservations = pgTable('reservations', {
   providerChargeAmountMinor: integer('provider_charge_amount_minor'),
   providerChargeRate: varchar('provider_charge_rate', { length: 50 }),
   providerChargeQuotedAt: timestamp('provider_charge_quoted_at', { withTimezone: true }),
+  // Set on checkout creation. Existing orders retain the terms shown when checkout began.
+  fixedCancellationFee: boolean('fixed_cancellation_fee').notNull().default(false),
   cancelDeadline: timestamp('cancel_deadline', { withTimezone: true }).notNull(),
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   cancelReason: varchar('cancel_reason', { length: 200 }),
