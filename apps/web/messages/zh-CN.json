@@ -518,15 +518,15 @@
       "invalidPhone": "请输入有效的手机号码。",
       "smsCapablePhoneRequired": "请输入可以接收短信的手机号码。",
       "recipientBlocked": "目前无法向此号码发送验证码。请使用其他手机号码或联系客户支持。",
-      "providerRateLimited": "验证码请求暂时受限，请稍后再试。",
-      "sendFailed": "验证码发送失败，请稍后再试。",
-      "verified": "验证完成",
+      "providerBlocked": "短信服务商已限制向此号码发送短信。请停止重复请求，稍后重试或联系客服。",
       "phoneSendLimit": "此号码已达到每小时验证码短信发送上限。",
       "sendServiceBusy": "当前验证码请求较多，已暂时限制短信发送。",
       "resendTooSoon": "您刚刚请求了验证码，请先查看收到的短信。",
       "retryButtonLabel": "{time} 后重试",
       "retryWait": "距离可以再次请求短信还有 {time}。",
-      "providerBlocked": "短信服务商已限制向此号码发送短信。请停止重复请求，稍后重试或联系客服。"
+      "providerRateLimited": "验证码请求暂时受限，请稍后再试。",
+      "sendFailed": "验证码发送失败，请稍后再试。",
+      "verified": "验证完成"
     },
     "errors": {
       "invalidCredentials": "邮箱或密码不正确",
