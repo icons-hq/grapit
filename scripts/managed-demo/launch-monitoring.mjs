@@ -21,22 +21,33 @@ export const WORKER_SUCCESS_METRIC = {
 };
 const WORKER_SUCCESS_SIGNAL = `metric.type="logging.googleapis.com/user/${WORKER_SUCCESS_METRIC.name}" AND ${WORKER_RESOURCE}`;
 const SUM = { alignmentPeriod: '300s', perSeriesAligner: 'ALIGN_SUM', crossSeriesReducer: 'REDUCE_SUM' };
+// Nest's current logger emits object properties as separate text lines. Match
+// the event line itself; also accept structured JSON after a logger migration.
+// Text lines contain ANSI color escapes between the property and its value.
+const smsEvent = event => `(jsonPayload.event="${event}" OR textPayload=~"event:.*'${event.replaceAll('.', '[.]')}'")`;
+export const SMS_RATE_LIMIT_METRIC = {
+  name: 'grabit_sms_rate_limited',
+  description: `Managed by ${OWNER}. App-side SMS limits; counts events without phone/account labels.`,
+  filter: `${API_RESOURCE} AND ${smsEvent('sms.rate_limited')}`,
+};
+export const SMS_ALERT_POLICY_IDS = ['purchase-http-errors', 'api-error-ratio', 'api-request-throttled', 'sms-send-failure', 'sms-rate-limit-burst'];
 
 export function buildPolicies(channel, { databaseMaxConnections = 25 } = {}) {
   assert.match(channel ?? '', /^projects\/grapit-491806\/notificationChannels\/\d+$/, 'An existing channel in the production project is required');
   assert(Number.isSafeInteger(databaseMaxConnections) && databaseMaxConnections >= 5 && databaseMaxConnections <= 100_000,
     'Measured database max_connections must be an integer between 5 and 100000');
   const databaseConnectionThreshold = Math.floor(databaseMaxConnections * .8);
-  const policy = (id, name, documentation, conditions, strategy = {}) => ({
+  const policy = (id, name, documentation, conditions, strategy = {}, severity) => ({
     displayName: `Grabit launch: ${name}`, enabled: true, combiner: 'OR',
+    ...(severity ? { severity } : {}),
     userLabels: { managed_by: OWNER, policy_id: id },
     notificationChannels: [channel],
     documentation: { mimeType: 'text/markdown', content: `${documentation}\n\n[장애 대응 절차](${RUNBOOK}). 로그의 주문·계정 식별자와 자격값을 외부 메시지에 복사하지 않는다.` },
     conditions, alertStrategy: { autoClose: '3600s', ...strategy },
   });
-  const log = (id, name, filter, documentation) => policy(id, name, documentation,
+  const log = (id, name, filter, documentation, severity) => policy(id, name, documentation,
     [{ displayName: name, conditionMatchedLog: { filter } }],
-    { notificationRateLimit: { period: '300s' } });
+    { notificationRateLimit: { period: '300s' } }, severity);
   const threshold = (displayName, filter, value, extra = {}) => ({ displayName, conditionThreshold: {
     filter, comparison: 'COMPARISON_GT', thresholdValue: value, duration: '0s',
     aggregations: [SUM], trigger: { count: 1 }, ...extra,
@@ -44,13 +55,24 @@ export function buildPolicies(channel, { databaseMaxConnections = 25 } = {}) {
   const apiRequests = 'metric.type="run.googleapis.com/request_count" AND ' + API_RESOURCE;
   const ratioAggregation = [{ alignmentPeriod: '300s', perSeriesAligner: 'ALIGN_RATE', crossSeriesReducer: 'REDUCE_SUM' }];
   return [
-    log('purchase-http-errors', 'purchase HTTP or platform failure', `${API_RESOURCE} AND (httpRequest.status>=500 OR (httpRequest.status=429 AND httpRequest.requestUrl=~"/api/v1/(booking/|reservations/prepare|payments/confirm|queue/)"))`,
-      'API 5xx 또는 구매/대기열 429가 발생했다. 요청 시각의 Cloud Run 요청 수용·DB 연결·Valkey 상태를 확인한다. 플랫폼에서 거절한 요청은 request_count 지표에서 제외될 수 있어 로그로도 감시한다. 이 정책은 로그 알림이며 오류율 지표와 다르다.'),
-    policy('api-error-ratio', 'API error ratio above 1 percent',
-      '5분 정렬 구간의 API 5xx/429 비율이 1%를 넘는 상태가 5분 지속됐다. 좌석·예매·결제 원장과 사용자 복구 성공을 함께 확인한다. request_count는 컨테이너에 도달하지 않은 요청을 제외한다.',
-      [threshold('API 5xx/429 ratio > 1% for 5 minutes', `${apiRequests} AND (metric.labels.response_code_class="5xx" OR metric.labels.response_code="429")`, .01, {
+    log('purchase-http-errors', 'API HTTP 5xx or platform failure', `${API_RESOURCE} AND httpRequest.status>=500`,
+      'API 또는 Cloud Run 플랫폼이 5xx를 반환했다. 좌석·예매·결제 영향과 Cloud Run·DB·Valkey 상태를 확인한다. 컨테이너에 도달하지 않은 요청도 로그로 감시한다. 429는 요청 제한 경보에서 별도로 확인한다.', 'ERROR'),
+    policy('api-error-ratio', 'API server error ratio above 1 percent',
+      '5분 정렬 구간의 API 5xx 비율이 1%를 넘는 상태가 5분 지속됐다. 429는 이 비율에서 제외하고 요청 제한·SMS 경보로 분리한다. 좌석·예매·결제 영향과 실제 오류 건수를 확인한다. request_count는 컨테이너에 도달하지 않은 요청을 제외한다.',
+      [threshold('API 5xx ratio > 1% for 5 minutes', `${apiRequests} AND metric.labels.response_code_class="5xx"`, .01, {
         duration: '300s', aggregations: ratioAggregation, denominatorFilter: apiRequests, denominatorAggregations: ratioAggregation,
-      })]),
+      })], {}, 'ERROR'),
+    log('api-request-throttled', 'API request throttling or unavailable instance',
+      `${API_RESOURCE} AND httpRequest.status=429 AND (NOT httpRequest.requestUrl=~"(?i)/api/v1/sms/(send-code|verify-code)/?([?]|$)" OR textPayload:"no available instance")`,
+      'SMS 앱 제한 외의 API 429 또는 Cloud Run 수용량 부족이다. 구매·로그인 요청의 제한 사유와 인스턴스 한도를 확인한다. SMS URL이라도 플랫폼의 no available instance 오류는 이 경보에 포함한다.', 'WARNING'),
+    log('sms-send-failure', 'SMS provider failure or service send quota exhausted',
+      `${API_RESOURCE} AND (${smsEvent('sms.send_failed')} OR ${smsEvent('sms.pending_marker_failed')} OR jsonPayload.layer=("global_send_budget" OR "global_hourly_send_budget") OR textPayload=~"layer:.*'global(_hourly)?_send_budget'")`,
+      '인증문자 발송이 실패했거나 서비스 전체 발송 한도가 소진됐다. Twilio providerCode와 전달 기록을 확인한다. 60410은 Fraud Guard 차단이며 정상 번호도 영향을 받을 수 있다. sms.sent는 접수이지 수신 완료가 아니다. 발송 실패가 API 400이어도 이 경보로 감지한다. 보호 한도와 Fraud Guard를 임의로 해제하지 않는다.', 'WARNING'),
+    policy('sms-rate-limit-burst', 'SMS request limits reached repeatedly',
+      '10분 동안 SMS 앱 제한이 5건 이상 발생했다. 번호별 재전송 대기·시간당 발송 한도·인증 시도 한도와 서비스 전체 한도를 확인한다. 서버 전체 장애를 뜻하지 않는다. 소수의 정상 재요청 제한은 집계만 하고 메일을 보내지 않는다.',
+      [threshold('At least 5 SMS limit rejections in 10 minutes', `metric.type="logging.googleapis.com/user/${SMS_RATE_LIMIT_METRIC.name}" AND ${API_RESOURCE}`, 4, {
+        aggregations: [{ ...SUM, alignmentPeriod: '600s' }],
+      })], {}, 'WARNING'),
     log('transaction-recovery', 'payment or QR recovery requires attention',
       `((${API_RESOURCE}) OR (${WORKER_RESOURCE})) AND ("CRITICAL:" OR "QR_REMINDER_REQUIRES_ATTENTION" OR "QR reminder recovery sweep failed" OR "timeout exceeded when trying to connect" OR "Background worker run failed")`,
       '결제·환불·QR 복구 또는 DB 연결 오류다. PG 상태와 내부 원장을 먼저 대조한다. QR 메일의 미확정 요청은 공급자 수신 내역을 확인하기 전 새 멱등키로 다시 보내지 않는다.'),
@@ -88,8 +110,9 @@ export function planPolicies(desired, existing) {
       ...policy, name: current.name,
       conditions: policy.conditions.map(condition => {
         const previous = current.conditions?.find(item => item.displayName === condition.displayName)
-          ?? (policy.userLabels.policy_id === 'database-connections' && current.conditions?.length === 1
-            && current.conditions[0].conditionThreshold ? current.conditions[0] : undefined);
+          ?? (current.conditions?.length === 1 && policy.conditions.length === 1
+            && ['conditionThreshold', 'conditionMatchedLog'].some(key => current.conditions[0][key] && condition[key])
+            ? current.conditions[0] : undefined);
         return previous?.name ? { ...condition, name: previous.name } : condition;
       }),
     } : policy };
@@ -99,7 +122,10 @@ export function planPolicies(desired, existing) {
 export async function applyPlan(plan, request) {
   const results = [];
   // Cloud Monitoring requires serialized modifications within a project.
-  for (const item of plan) {
+  // Install replacement coverage before narrowing an existing policy. A failed
+  // create must leave the older, broader warning in place.
+  const ordered = [...plan.filter(item => item.action === 'create'), ...plan.filter(item => item.action === 'update')];
+  for (const item of ordered) {
     const path = item.action === 'create' ? `projects/${PROJECT}/alertPolicies` : item.policy.name;
     assert(path === `projects/${PROJECT}/alertPolicies` || /^projects\/grapit-491806\/alertPolicies\/\d+$/.test(path));
     const result = await request(item.action === 'create' ? 'POST' : 'PATCH', path, item.policy);
@@ -108,13 +134,22 @@ export async function applyPlan(plan, request) {
   return results;
 }
 
-export function planSuccessMetric(existing) {
+export function planLogMetric(metric, existing) {
   if (existing) {
     assert(existing.description?.startsWith(`Managed by ${OWNER}.`), 'Refusing to change a log metric owned by another operator');
     assert.equal(existing.metricDescriptor?.metricKind, 'DELTA', 'Success metric must be a counter');
     assert.equal(existing.metricDescriptor?.valueType, 'INT64', 'Success metric must count events');
   }
-  return { action: existing ? 'update' : 'create', metric: WORKER_SUCCESS_METRIC };
+  return { action: existing ? 'update' : 'create', metric };
+}
+
+export const planSuccessMetric = existing => planLogMetric(WORKER_SUCCESS_METRIC, existing);
+
+export function selectPolicies(desired, only) {
+  if (only === undefined) return desired;
+  const ids = only.split(',');
+  assert(ids.length > 0 && ids.every(id => desired.some(policy => policy.userLabels.policy_id === id)), 'Unknown --only policy id');
+  return desired.filter(policy => ids.includes(policy.userLabels.policy_id));
 }
 
 export async function waitForInitialWorkerSuccess(read, pause) {
@@ -133,10 +168,13 @@ async function main() {
   const channel = args.find(value => value.startsWith('--channel='))?.slice(10);
   const output = args.find(value => value.startsWith('--output='))?.slice(9);
   assert(output?.startsWith('/'), 'An absolute --output path is required');
+  const only = args.find(value => value.startsWith('--only='))?.slice(7);
   const measuredLimit = args.find(value => value.startsWith('--database-max-connections='))?.split('=')[1];
-  assert(measuredLimit, 'An explicit measured --database-max-connections value is required');
-  const databaseMaxConnections = Number(measuredLimit);
-  const desired = buildPolicies(channel, { databaseMaxConnections });
+  const includesDatabase = !only || only.split(',').includes('database-connections');
+  assert(!includesDatabase || measuredLimit, 'An explicit measured --database-max-connections value is required');
+  const desired = selectPolicies(buildPolicies(channel, {
+    databaseMaxConnections: measuredLimit ? Number(measuredLimit) : 25,
+  }), only);
   const token = execFileSync('gcloud', ['auth', 'print-access-token', `--project=${PROJECT}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   const googleRequest = async (service, method, path, body, allowMissing = false) => {
     const response = await fetch(`https://${service}.googleapis.com/${service === 'logging' ? 'v2' : 'v3'}/${path}`, {
@@ -157,22 +195,36 @@ async function main() {
     existing.push(...(page.alertPolicies ?? [])); pageToken = page.nextPageToken;
   } while (pageToken);
   const plan = planPolicies(desired, existing);
-  const metricPath = `projects/${PROJECT}/metrics/${WORKER_SUCCESS_METRIC.name}`;
-  const metricPlan = planSuccessMetric(await googleRequest('logging', 'GET', metricPath, undefined, true));
+  const hasPolicy = id => desired.some(policy => policy.userLabels.policy_id === id);
+  const metrics = [
+    ...(hasPolicy('worker-missing-success') ? [WORKER_SUCCESS_METRIC] : []),
+    ...(hasPolicy('sms-rate-limit-burst') ? [SMS_RATE_LIMIT_METRIC] : []),
+  ];
+  const metricPlans = [];
+  for (const metric of metrics) {
+    metricPlans.push(planLogMetric(metric, await googleRequest('logging', 'GET', `projects/${PROJECT}/metrics/${metric.name}`, undefined, true)));
+  }
   await mkdir(dirname(output), { recursive: true });
-  const result = { generatedAt: new Date().toISOString(), project: PROJECT, channel, mode: args.includes('--apply') ? 'apply' : 'plan', metricPlan, plan };
+  const previousPolicies = existing.filter(policy => plan.some(item => item.policy.name === policy.name))
+    .map(policy => Object.fromEntries(['name', 'displayName', 'enabled', 'combiner', 'userLabels', 'notificationChannels', 'documentation', 'conditions', 'alertStrategy', 'severity']
+      .filter(key => policy[key] !== undefined).map(key => [key, policy[key]])));
+  const result = { generatedAt: new Date().toISOString(), project: PROJECT, channel, mode: args.includes('--apply') ? 'apply' : 'plan', metricPlans, previousPolicies, plan };
   await writeFile(output, JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   if (args.includes('--apply')) {
-    await googleRequest('logging', metricPlan.action === 'create' ? 'POST' : 'PUT',
-      metricPlan.action === 'create' ? `projects/${PROJECT}/metrics` : metricPath, metricPlan.metric);
-    const metric = await googleRequest('logging', 'GET', metricPath);
-    assert.equal(metric.filter, WORKER_SUCCESS_METRIC.filter);
-    assert.notEqual(metric.disabled, true, 'Success log metric must be enabled');
-    result.successMetricVerified = true;
+    result.verifiedMetrics = [];
+    for (const metricPlan of metricPlans) {
+      const metricPath = `projects/${PROJECT}/metrics/${metricPlan.metric.name}`;
+      await googleRequest('logging', metricPlan.action === 'create' ? 'POST' : 'PUT',
+        metricPlan.action === 'create' ? `projects/${PROJECT}/metrics` : metricPath, metricPlan.metric);
+      const metric = await googleRequest('logging', 'GET', metricPath);
+      assert.equal(metric.filter, metricPlan.metric.filter);
+      assert.notEqual(metric.disabled, true, 'Log metric must be enabled');
+      result.verifiedMetrics.push(metric.name);
+    }
     const alreadyInitialized = existing.some(policy => policy.userLabels?.managed_by === OWNER
       && policy.userLabels?.policy_id === 'worker-missing-success'
       && policy.conditions?.some(condition => condition.conditionThreshold?.filter === WORKER_SUCCESS_SIGNAL));
-    if (!alreadyInitialized) {
+    if (hasPolicy('worker-missing-success') && !alreadyInitialized) {
       await writeFile(output, JSON.stringify(result, null, 2) + '\n');
       await waitForInitialWorkerSuccess(() => {
         const query = new URLSearchParams({
@@ -192,6 +244,11 @@ async function main() {
       assert.deepEqual(live.notificationChannels, [channel]);
       assert.equal(live.userLabels?.managed_by, OWNER);
       assert.equal(live.userLabels?.policy_id, item.id);
+      const desiredPolicy = plan.find(entry => entry.policy.userLabels.policy_id === item.id).policy;
+      assert.equal(live.displayName, desiredPolicy.displayName);
+      if (desiredPolicy.severity) assert.equal(live.severity, desiredPolicy.severity);
+      const conditions = policy => policy.conditions.map(({ name, ...condition }) => condition);
+      assert.deepEqual(conditions(live), conditions(desiredPolicy));
       result.verified.push({ name: live.name, id: item.id, conditionCount: live.conditions?.length });
     }
     await writeFile(output, JSON.stringify(result, null, 2) + '\n');

@@ -520,7 +520,13 @@
       "recipientBlocked": "We cannot send a verification code to this number right now. Try another mobile number or contact support.",
       "providerRateLimited": "Verification requests are temporarily limited. Please try again shortly.",
       "sendFailed": "We could not send the verification code. Please try again shortly.",
-      "verified": "Verified"
+      "verified": "Verified",
+      "phoneSendLimit": "This number has reached the hourly verification text limit.",
+      "sendServiceBusy": "Verification texts are temporarily limited due to high demand.",
+      "resendTooSoon": "You just requested a code. Please check your messages first.",
+      "retryButtonLabel": "Try again in {time}",
+      "retryWait": "You can request another text in {time}.",
+      "providerBlocked": "Our messaging provider has restricted delivery to this number. Stop resending and try again later, or contact support."
     },
     "errors": {
       "invalidCredentials": "Email or password is incorrect",

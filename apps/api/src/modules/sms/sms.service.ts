@@ -266,9 +266,13 @@ function parseE164OrBadRequest(phone: string): string {
   }
 }
 
-function smsTooManyRequests(retryAfterMs: number, message = SMS_LOCAL_RATE_LIMITED_MESSAGE): HttpException {
+function smsTooManyRequests(
+  retryAfterMs: number,
+  message = SMS_LOCAL_RATE_LIMITED_MESSAGE,
+  errorCode?: 'SMS_RESEND_COOLDOWN' | 'SMS_PHONE_SEND_LIMIT' | 'SMS_GLOBAL_SEND_LIMIT',
+): HttpException {
   return new HttpException(
-    { statusCode: 429, message, retryAfterMs: Math.max(retryAfterMs, 0) },
+    { statusCode: 429, message, retryAfterMs: Math.max(retryAfterMs, 0), ...(errorCode ? { errorCode } : {}) },
     HttpStatus.TOO_MANY_REQUESTS,
   );
 }
@@ -566,7 +570,7 @@ export class SmsService {
         if (acquired === null) {
           const ttl = await this.redis.pttl(cooldownKey);
           this.logger.warn({ event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'resend_cooldown' });
-          throw smsTooManyRequests(ttl);
+          throw smsTooManyRequests(ttl, SMS_LOCAL_RATE_LIMITED_MESSAGE, 'SMS_RESEND_COOLDOWN');
         }
         rollbacks.push({ op: 'cooldown_del', run: () => this.redis.del(cooldownKey) });
 
@@ -577,7 +581,12 @@ export class SmsService {
           this.logger.warn({
             event: 'sms.rate_limited', phone: maskE164ForLog(e164), layer: 'phone_axis_send', count: sendCount,
           });
-          throw smsTooManyRequests(SEND_PHONE_WINDOW_SEC * 1000);
+          // The counter's window started with the first request. Returning a
+          // fresh hour here overstates the wait on every rejected resend.
+          const ttl = await this.redis.pttl(sendCounterKey);
+          const retryAfterMs = ttl === -1 ? SEND_PHONE_WINDOW_SEC * 1000
+            : Math.max(ttl, RESEND_COOLDOWN_MS); // this attempt acquired a cooldown
+          throw smsTooManyRequests(retryAfterMs, SMS_LOCAL_RATE_LIMITED_MESSAGE, 'SMS_PHONE_SEND_LIMIT');
         }
         rollbacks.push({ op: 'counter_decr', run: () => this.redis.decr(sendCounterKey) });
       }
@@ -609,6 +618,7 @@ export class SmsService {
           throw smsTooManyRequests(
             (windowIndex + 1) * budget.windowMs - now,
             SMS_GLOBAL_RATE_LIMITED_MESSAGE,
+            'SMS_GLOBAL_SEND_LIMIT',
           );
         }
         rollbacks.push({ op: `${budget.layer}_decr`, run: () => this.redis.decr(globalKey) });
