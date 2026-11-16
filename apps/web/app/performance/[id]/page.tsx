@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useLocale } from 'next-intl';
 import { Ticket, MapPin } from 'lucide-react';
+import { FIXED_TICKET_CANCELLATION_FEE_KRW, stripStandardCancellationCopy } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { StatusBadge, getDisplayPerformanceStatus } from '@/components/performance/status-badge';
@@ -24,6 +25,8 @@ import { getTicketCopy } from '@/lib/i18n/ticket-copy';
 function DetailSkeleton() {
   return <main className="ticket-container ticket-detail-grid"><div><Skeleton className="aspect-[2.34] w-full rounded-3xl" /><Skeleton className="mt-6 h-7 w-2/3" /><Skeleton className="mt-6 h-40 w-full" /></div><Skeleton className="hidden h-[560px] rounded-3xl lg:block" /></main>;
 }
+const cancellationFee = FIXED_TICKET_CANCELLATION_FEE_KRW.toLocaleString('en-US');
+
 export default function PerformanceDetailPage({ params }: { params: Promise<{id:string}> }) {
   const { id } = use(params);
   const locale = resolveVisibleCopyLocale(useLocale());
@@ -42,12 +45,15 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
   const detailImages = performance.detailImages ?? [];
   const showDescription = performance.descriptionVisible !== false;
   const showSales = performance.salesInfoVisible !== false;
+  const salesInfo = showSales ? stripStandardCancellationCopy(performance.salesInfo ?? null) : null;
   const nav = [
     ...(detailImages.length ? [{id:'detail-images',label:copy.performance.detailImagesTitle}] : []),
     ...(performance.castings.length ? [{id:'cast',label:ticket.cast}] : []),
     ...(showDescription ? [{id:'detail-copy',label:copy.performance.detailTab}] : []),
     {id:'prices',label:ticket.prices},
-    ...(showSales ? [{id:'sales-copy',label:copy.performance.salesTab}] : []),
+    showSales
+      ? { id: 'sales-copy', label: copy.performance.salesTab }
+      : { id: 'cancellation-policy', label: copy.performance.refundTitle },
     ...(performance.venue ? [{id:'venue',label:ticket.venue}] : []),
   ];
   return <main className="ticket-container ticket-detail-grid">
@@ -81,9 +87,17 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
         <dl className="ticket-price-list">{performance.priceTiers.map((tier) => <div key={tier.id}><dt>{tier.tierName}</dt><dd><CurrencyDisplay krwAmount={tier.price} /></dd></div>)}</dl>
         <p className="ticket-fee-note">{copy.home.feeSeparate}</p>
       </section>
-      {showSales && <section id="sales-copy" className="ticket-detail-section"><h2>{copy.performance.salesTab}</h2>
-        {performance.salesInfo ? <SalesInfo text={performance.salesInfo} label={copy.performance.salesTab} /> : <><h3>{copy.performance.refundTitle}</h3><ul className="list-disc pl-5">{copy.performance.refundItems.map((item) => <li key={item}>{item}</li>)}</ul></>}
-      </section>}
+      <section id={showSales ? 'sales-copy' : 'cancellation-policy'} className="ticket-detail-section">
+        {showSales && <h2>{copy.performance.salesTab}</h2>}
+        {salesInfo && <SalesInfo text={salesInfo} label={copy.performance.salesTab} />}
+        {showSales
+          ? <h3 id="cancellation-policy" className="scroll-mt-24">{copy.performance.refundTitle}</h3>
+          : <h2>{copy.performance.refundTitle}</h2>}
+        <SalesInfo
+          text={copy.performance.cancellationPolicy.join('\n').replace('{fee}', cancellationFee)}
+          label={copy.performance.refundTitle}
+        />
+      </section>
       {performance.venue && <section id="venue" className="ticket-detail-section"><h2>{ticket.venue}</h2><h3>{performance.venue.name}</h3>
         {performance.venue.address && <p className="flex items-start gap-2"><MapPin size={18} className="mt-1 shrink-0" />{performance.venue.address}</p>}
         {performance.venue.transportSummary && <p className="whitespace-pre-wrap">{performance.venue.transportSummary}</p>}

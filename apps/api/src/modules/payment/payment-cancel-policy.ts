@@ -43,11 +43,18 @@ export function describePaymentCancellation(payment: PaymentCancelPaymentSnapsho
 }
 
 export function withCompletedRefunds(payment: PaymentCancelPaymentSnapshot, items: Array<{
-  status: string; refundableAmount: number; cancellationCommand?: { amountMinor: number } | null;
+  status: string;
+  refundableAmount: number;
+  cancellationFee: number;
+  price: number;
+  addonAmount: number;
+  cancellationCommand?: { amountMinor: number } | null;
 }>): PaymentCancelPaymentSnapshot {
   const completed = items.filter((item) => item.status === 'cancelled');
   const foreign = requiresProviderCurrencyPartialCancel(payment);
-  if (foreign && completed.some((item) => !item.cancellationCommand)) {
+  if (foreign && completed.some((item) => !item.cancellationCommand && !(
+    item.refundableAmount === 0 && item.cancellationFee > 0 && item.cancellationFee === item.price + item.addonAmount
+  ))) {
     throw new Error('Previous foreign refunds require ledger reconciliation');
   }
   return { ...payment,

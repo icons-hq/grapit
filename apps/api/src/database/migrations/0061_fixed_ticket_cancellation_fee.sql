@@ -1,0 +1,1 @@
+ALTER TABLE "reservations" ADD COLUMN "fixed_cancellation_fee" boolean DEFAULT false NOT NULL;

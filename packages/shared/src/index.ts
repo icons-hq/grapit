@@ -43,3 +43,5 @@ export * from './schemas/booking-addon.schema';
 export * from './schemas/analytics-counts.schema';
 export * from './schemas/analytics-replay.schema';
 export * from './schemas/audience.schema';
+
+export * from './performance-sales-copy';

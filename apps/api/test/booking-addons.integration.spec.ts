@@ -220,6 +220,8 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       paymentDeadlineAt: now,
       bookingPolicy: { maxTicketsPerOrder: 4, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false, paymentWindowMinutes: 7, seatHoldMinutes: 10 } };
     const prepared = await service.prepareReservation(input, actor);
+    const [pendingOrder] = await db.select().from(schema.reservations).where(eq(schema.reservations.id, prepared.reservationId));
+    expect(pendingOrder?.fixedCancellationFee).toBe(true);
     expect(await service.prepareReservation(input, actor)).toMatchObject({ reservationId: prepared.reservationId });
     const recovered = await service.getReservationByOrderId(input.orderId, actor.id);
     expect(recovered).toMatchObject({ totalAmount: 532000,

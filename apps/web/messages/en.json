@@ -94,10 +94,21 @@
     "salesTab": "Sales info",
     "noDetail": "No details are available",
     "refundTitle": "Cancellation and refund notice",
-    "refundItems": [
-      "Cancellation fees may apply after booking.",
-      "Fees vary by cancellation timing before the show date.",
-      "Please review the details during booking."
+    "cancellationPolicy": [
+      "Booking fees are nonrefundable after the booking date.",
+      "",
+      "Cancellation date (KST) | Cancellation fee",
+      "On the booking date by 23:59, within the cancellation window | None",
+      "Within 7 days of booking, with at least 10 days until the event | None",
+      "From 8 days after booking through 10 days before the event | KRW {fee} per ticket",
+      "9 to 7 days before the event | 10% of the ticket amount",
+      "6 to 3 days before the event | 20% of the ticket amount",
+      "2 to 1 day before the event | 30% of the ticket amount",
+      "",
+      "Booking fees are also refunded for eligible cancellations on the booking date. Starting the next day, the fees based on the event date take priority if the event is within 9 days, even if you booked within the last 7 days.",
+      "Standard cancellations close at 23:59 the day before the event.",
+      "The ticket amount includes paid add-ons for that ticket. Booking fees are excluded from the cancellation fee calculation.",
+      "If the flat fee equals or exceeds the ticket amount, the refund is zero and there is no additional charge. Existing bookings follow the terms shown when you booked."
     ],
     "loadError": "Could not load show information. Please try again shortly.",
     "retry": "Retry",

@@ -716,6 +716,35 @@ describe('PerformanceService', () => {
       expect(result.translatedBy).toBe('machine_reviewed');
     });
 
+    it('removes the old common refund table and its stale translation from public sales information', async () => {
+      const salesInfo = [
+        '팬클럽 선예매 안내',
+        '',
+        '- 예매 당일 이후 취소 시 예매수수료는 원칙적으로 환불되지 않습니다.',
+        '',
+        '취소일 | 취소수수료',
+        '예매 당일 23:59까지 | 없음',
+        '예매 후 8일 ~ 관람일 10일 전까지 | 장당 4,000원 (티켓 금액의 10% 한도)',
+        '',
+        '현장 수령 안내',
+      ].join('\n');
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([
+          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, { salesInfo }),
+        ]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([createBookingPolicyRow()]))
+        .mockReturnValueOnce(createChainableResult(translatedFieldRows));
+
+      const result = await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'en');
+
+      expect(result?.title).toBe('2026 Girl Rules Fanmeeting');
+      expect(result?.salesInfo).toMatch(/^팬클럽 선예매 안내\s+현장 수령 안내$/);
+    });
+
     it('masks hidden copy after translation overlay for public details', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainableResult([
