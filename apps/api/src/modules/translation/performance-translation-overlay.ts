@@ -133,6 +133,7 @@ export async function overlayReviewedDetailTranslations(
   db: DrizzleDB,
   performance: PerformanceWithDetails,
   targetLocale?: string | null,
+  translateSalesInfo = true,
 ): Promise<PerformanceWithDetails> {
   if (!shouldOverlayPerformanceTranslations(targetLocale)) {
     return performance;
@@ -143,7 +144,7 @@ export async function overlayReviewedDetailTranslations(
       db,
       [performance.id],
       targetLocale,
-      ['title', 'description', 'salesInfo'],
+      translateSalesInfo ? ['title', 'description', 'salesInfo'] : ['title', 'description'],
     )
   ).get(performance.id);
 

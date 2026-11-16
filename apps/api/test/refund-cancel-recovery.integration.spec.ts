@@ -79,6 +79,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
 
   async function purchase(options: {
     price?: number;
+    fixedCancellationFee?: boolean;
     showtimeAt?: Date;
     cancelDeadline?: Date;
     bookedAt?: Date;
@@ -103,6 +104,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const amount = (price + 2000) * 2;
     const [reservation] = await db.insert(reservations).values({ userId: user!.id, showtimeId: showtime!.id,
       reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status: 'CONFIRMED', totalAmount: amount,
+      fixedCancellationFee: options.fixedCancellationFee,
       cancelDeadline: options.cancelDeadline ?? new Date(showtimeAt.getTime() - 86400000), createdAt: bookedAt }).returning();
     const [payment] = await db.insert(payments).values({ reservationId: reservation!.id, paymentKey: `pay_${id}`,
       tossOrderId: reservation!.tossOrderId!, method: 'CARD', amount, status: 'DONE', paidAt: options.paidAt ?? bookedAt }).returning();
@@ -427,6 +429,52 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(single.showtime.id, '1F:A-1', 'available');
     expect(singleToss.cancelPayment).not.toHaveBeenCalled();
     expect(singleToss.queryPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['existing checkout with capped fee', undefined, 3000],
+    ['new checkout with fixed fee', true, 4000],
+  ] as const)('uses the stored policy for full and seat cancellation: %s', async (_case, fixedCancellationFee, fee) => {
+    const bookedAt = new Date(Date.now() - 8 * 86400000);
+    const f = await purchase({ price: 30000, bookedAt, fixedCancellationFee });
+    const toss = provider(f.snapshot);
+    const refund = new RefundService(db, toss as never, finalizer());
+    const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+      {} as never, {} as never, qr, undefined, undefined, finalizer());
+    const preview = await refund.getRefundPreview(f.reservation.id, f.userId);
+    expect(preview.cancellationQuote).toMatchObject({
+      cancellationFeeTotal: 2 * fee,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 2 * (30000 - fee),
+      policyCodes: ['BOOKING_DAY_8_TO_SHOW_DAY_10'],
+    });
+    const partial = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);
+    expect(partial).toMatchObject({ refundableAmount: 30000 - fee, providerRefund: { amountMinor: 30000 - fee } });
+    const cancellation = {
+      expectedRefundableAmount: 30000 - fee,
+      expectedProviderRefundAmountMinor: 30000 - fee,
+    };
+    await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, '한 좌석 취소', cancellation);
+    expect(toss.cancelPayment.mock.calls[0]?.[2].cancelAmount).toBe(30000 - fee);
+    const remaining = await refund.getRefundPreview(f.reservation.id, f.userId);
+    expect(remaining).toMatchObject({ refundableAmount: 30000 - fee, providerRefund: { amountMinor: 30000 - fee } });
+    await refund.requestRefund(f.reservation.id, f.userId, '나머지 좌석 취소', cancellation);
+    expect(toss.cancelPayment.mock.calls[1]?.[2].cancelAmount).toBe(30000 - fee);
+    expect(f.snapshot.balanceAmount).toBe(2 * (fee + 2000));
+  });
+
+  it('retains only the ticket amount when a new fixed fee would exceed it', async () => {
+    const f = await purchase({ price: 3000, bookedAt: new Date(Date.now() - 8 * 86400000), fixedCancellationFee: true });
+    const toss = provider(f.snapshot);
+    const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+      {} as never, {} as never, qr, undefined, undefined, finalizer());
+    const preview = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);
+    expect(preview).toMatchObject({ refundableAmount: 0, cancellationQuote: { cancellationFeeTotal: 3000 } });
+    await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, '저가 티켓 취소');
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+    const [cancelled] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.items[0]!.id));
+    expect(cancelled).toMatchObject({ status: 'cancelled', cancellationFee: 3000, refundableAmount: 0 });
+    expect(f.snapshot.balanceAmount).toBe(10000);
   });
 
   it('allows only the admin full refund override after the cancellation window, on the show day (#23)', async () => {

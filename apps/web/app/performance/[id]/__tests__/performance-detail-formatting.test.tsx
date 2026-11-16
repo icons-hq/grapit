@@ -193,9 +193,9 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByText('Hidden public sales body')).toBeNull();
   });
 
-  it('renders the stored sales rows as a named table without replacing their wording', async () => {
+  it('renders event sales information alongside the shared cancellation policy', async () => {
     localeMock.activeLocale = 'ko';
-    fixturePerformance.salesInfo = '취소일 | 취소수수료\n예매 당일 23:59까지 | 없음';
+    fixturePerformance.salesInfo = '판매 유형 | 대상\n선예매 | 팬클럽';
     const params = Object.assign(Promise.resolve({ id: 'perf-23-14' }), {
       status: 'fulfilled' as const,
       value: { id: 'perf-23-14' },
@@ -204,9 +204,11 @@ describe('PerformanceDetailPage i18n formatting', () => {
     render(<Suspense fallback={<div>loading</div>}><PerformanceDetailPage params={params} /></Suspense>);
 
     expect(await screen.findByRole('table', { name: '판매정보' })).toBeDefined();
-    expect(screen.getByRole('columnheader', { name: '취소수수료' })).toBeDefined();
-    expect(screen.getByRole('cell', { name: '예매 당일 23:59까지' })).toBeDefined();
-    expect(screen.getByRole('cell', { name: '없음' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: '팬클럽' })).toBeDefined();
+    expect(screen.getByRole('table', { name: '취소/환불 안내' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: '장당 4,000원' })).toBeDefined();
+    expect(screen.queryByText(/원칙적으로|10% 한도/)).toBeNull();
+    expect(screen.getByText(/예매 당일 이후 취소 시 예매수수료는 환불되지 않습니다/)).toBeDefined();
   });
 
   it('localizes the upcoming badge and keeps the performance period for upcoming performances', async () => {

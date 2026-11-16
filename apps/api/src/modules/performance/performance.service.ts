@@ -1,3 +1,4 @@
+import { stripStandardCancellationCopy } from '@grabit/shared';
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { eq, asc, desc, sql, and, inArray, ne, or, gt, isNull } from 'drizzle-orm';
@@ -46,7 +47,7 @@ type FindPerformanceByIdOptions = {
 };
 
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'ticket-catalog-v6-announcements';
-const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v3-venue-access';
+const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v4-cancellation-policy';
 const HOME_BANNER_CACHE_VERSION = 'home-visible-v1';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 /**
@@ -451,6 +452,7 @@ export class PerformanceService {
 
     const perf = performanceRow.performances;
     const venue = performanceRow.venues;
+    const salesInfo = includeHiddenCopy ? perf.salesInfo : stripStandardCancellationCopy(perf.salesInfo);
     const detailSeatMaps = seatMapRows.map(mapSeatMapRowToDetailsSeatMap);
     const bookingPolicy = mapBookingPolicyRow(bookingPolicyRows[0] ?? null);
 
@@ -478,7 +480,7 @@ export class PerformanceService {
               perf.status,
               bookingPolicy.bookingStartsAt,
             ),
-          salesInfo: perf.salesInfo,
+          salesInfo,
           salesInfoVisible: perf.salesInfoVisible,
           viewCount: perf.viewCount,
           createdAt: perf.createdAt?.toISOString() ?? '',
@@ -511,6 +513,7 @@ export class PerformanceService {
           seatMap: detailSeatMaps[0] ?? null,
         },
         targetLocale,
+        salesInfo === perf.salesInfo,
       );
 
     return { detail: result, bookingStartsAt: bookingPolicy.bookingStartsAt ?? null };
