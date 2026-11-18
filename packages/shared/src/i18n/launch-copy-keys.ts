@@ -192,6 +192,7 @@ const authOtpKeys = [
   'retryWait',
   'providerRateLimited',
   'sendFailed',
+  'sendOutcomeUnknown',
   'verified',
 ] as const;
 

@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { PhoneVerification } from '../phone-verification';
+import { getAuthLaunchCopy } from '../auth-launch-copy';
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'ko',
@@ -115,6 +116,50 @@ describe('PhoneVerification', () => {
   });
 
   // ---------- 쿨다운 종료 ----------
+  describe('발송 결과 불명', () => {
+    it.each(['ko', 'en', 'th', 'zh-CN'] as const)('%s opens code entry without claiming delivery and prevents duplicate sends', async (locale) => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      const copy = getAuthLaunchCopy(locale).otp;
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiClientError('send outcome unknown', 400, {
+          errorCode: 'SMS_SEND_OUTCOME_UNKNOWN', retryAfterMs: 590_000,
+        }),
+      ).mockResolvedValueOnce({ verified: true, verificationToken: 'verified-sens-token' });
+      render(<PhoneVerification {...defaultProps} phone="+8613912345678" locale={locale} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: copy.sendCta }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(copy.sendOutcomeUnknown);
+      expect(screen.queryByText(copy.sent)).not.toBeInTheDocument();
+      const retry = screen.getByRole('button', { name: copy.retryButtonLabel.replace('{time}', '09:50') });
+      expect(retry).toBeDisabled();
+      await user.click(retry);
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+      const input = screen.getByLabelText(copy.codeAriaLabel);
+      expect(input).toBeEnabled();
+      await user.type(input, '012345');
+      await user.click(screen.getByRole('button', { name: copy.verifyCta }));
+      await waitFor(() => expect(defaultProps.onVerified).toHaveBeenCalledWith('verified-sens-token'));
+      expect(apiClient.post).toHaveBeenLastCalledWith('/api/v1/sms/verify-code',
+        { phone: '+8613912345678', code: '012345', purpose: 'signup' }, { showErrorToast: false });
+    });
+
+    it('keeps an entered code usable when a resend times out', async () => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: true });
+      render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
+      await user.type(await screen.findByLabelText(/인증번호 6자리/), '012345');
+      await act(async () => { vi.advanceTimersByTime(31_000); });
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new ApiClientError('unknown', 400,
+        { errorCode: 'SMS_SEND_OUTCOME_UNKNOWN', retryAfterMs: 590_000 }));
+      await user.click(screen.getByRole('button', { name: '인증번호 재발송' }));
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('문자 발송 결과를 확인하지 못했습니다'));
+      expect(screen.getByLabelText(/인증번호 6자리/)).toHaveValue('012345');
+      expect(screen.getByRole('button', { name: '확인' })).toBeEnabled();
+    });
+  });
+
   describe('쿨다운 종료', () => {
     it('"재발송" 버튼이 활성화(outline variant)', async () => {
       const { apiClient } = await import('@/lib/api-client');

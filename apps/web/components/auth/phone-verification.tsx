@@ -33,15 +33,18 @@ type SmsVerificationPurpose =
   | 'signup'
   | 'social_registration'
   | 'profile_phone_change';
-type SendRetryReason = 'cooldown' | 'phone' | 'service' | 'unknown';
+type SendRetryReason = 'cooldown' | 'phone' | 'service' | 'outcome' | 'unknown';
 type SendRetry = { phone: string; until: number; reason?: SendRetryReason };
 
 function readSendRetry(err: unknown, phone: string, now: number): SendRetry | null {
-  if (!(err instanceof ApiClientError) || err.statusCode !== 429) return null;
+  if (!(err instanceof ApiClientError)) return null;
   const data = err.data as { retryAfterMs?: unknown; errorCode?: unknown } | null;
+  const outcomeUnknown = data?.errorCode === 'SMS_SEND_OUTCOME_UNKNOWN';
+  if (err.statusCode !== 429 && !outcomeUnknown) return null;
   const delay = data?.retryAfterMs;
   if (typeof delay !== 'number' || !Number.isFinite(delay) || delay <= 0) return null;
-  const reason: SendRetryReason = data?.errorCode === 'SMS_PHONE_SEND_LIMIT' ? 'phone'
+  const reason: SendRetryReason = outcomeUnknown ? 'outcome'
+    : data?.errorCode === 'SMS_PHONE_SEND_LIMIT' ? 'phone'
     : data?.errorCode === 'SMS_GLOBAL_SEND_LIMIT' ? 'service'
     : data?.errorCode === 'SMS_RESEND_COOLDOWN' ? 'cooldown' : 'unknown';
   return { phone, until: now + Math.min(delay, 24 * 60 * 60_000), reason };
@@ -51,6 +54,7 @@ type SmsSendErrorCode =
   | 'SMS_CAPABLE_PHONE_REQUIRED'
   | 'SMS_RECIPIENT_BLOCKED'
   | 'SMS_PROVIDER_RATE_LIMITED'
+  | 'SMS_SEND_OUTCOME_UNKNOWN'
   | 'SMS_SEND_FAILED';
 
 function readSmsErrorCode(data: unknown): SmsSendErrorCode | null {
@@ -61,6 +65,7 @@ function readSmsErrorCode(data: unknown): SmsSendErrorCode | null {
     value === 'SMS_CAPABLE_PHONE_REQUIRED' ||
     value === 'SMS_RECIPIENT_BLOCKED' ||
     value === 'SMS_PROVIDER_RATE_LIMITED' ||
+    value === 'SMS_SEND_OUTCOME_UNKNOWN' ||
     value === 'SMS_SEND_FAILED'
   ) {
     return value;
@@ -78,6 +83,7 @@ function mapSmsSendErrorCodeToCopy(
     SMS_RECIPIENT_BLOCKED: copy.recipientBlocked,
     SMS_PROVIDER_RATE_LIMITED: copy.providerRateLimited,
     SMS_SEND_FAILED: copy.sendFailed,
+    SMS_SEND_OUTCOME_UNKNOWN: copy.sendOutcomeUnknown,
   } satisfies Record<SmsSendErrorCode, string>;
 
   return byCode[errorCode];
@@ -260,6 +266,13 @@ export function PhoneVerification({
       if (retry) {
         setClockNow(now);
         setSendRetry(retry);
+        if (retry.reason === 'outcome') {
+          // A timeout is not proof of non-delivery. Let the buyer enter a
+          // received code while the server preserves that pending challenge.
+          setCodeSent(true);
+          setTimeLeft(Math.min(SMS_CODE_EXPIRY_SECONDS,
+            Math.ceil((retry.until - now) / 1000)));
+        }
       } else {
         setVerifyError(mapErrorToCopy(err, otpCopy, 'send'));
       }
@@ -325,7 +338,8 @@ export function PhoneVerification({
   const retryLabel = otpCopy.retryButtonLabel.replace('{time}', formatTime(resendCooldown));
   const retryMessage = retryReason === 'phone' ? otpCopy.phoneSendLimit
     : retryReason === 'service' ? otpCopy.sendServiceBusy
-    : retryReason === 'cooldown' ? otpCopy.resendTooSoon : otpCopy.throttled;
+    : retryReason === 'cooldown' ? otpCopy.resendTooSoon
+    : retryReason === 'outcome' ? otpCopy.sendOutcomeUnknown : otpCopy.throttled;
 
   // Button aria-label for cooldown
   const sendButtonAriaLabel =

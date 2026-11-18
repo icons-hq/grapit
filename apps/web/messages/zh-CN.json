@@ -537,6 +537,7 @@
       "retryWait": "距离可以再次请求短信还有 {time}。",
       "providerRateLimited": "验证码请求暂时受限，请稍后再试。",
       "sendFailed": "验证码发送失败，请稍后再试。",
+      "sendOutcomeUnknown": "暂时无法确认短信是否已发送。如果您已收到验证码，请在下方输入。为避免重复发送，请在等待时间结束后重试。",
       "verified": "验证完成"
     },
     "errors": {

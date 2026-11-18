@@ -109,6 +109,27 @@ function parseGa4MeasurementId(value, name) {
   return value.trim();
 }
 
+function parseSmsChinaProvider(value, name) {
+  // The workflow also uses this exact value to attach SENS secrets.
+  if (!['twilio', 'sens'].includes(value)) throw new Error(`${name} must be exactly twilio or sens`);
+  return value;
+}
+
+function parseSensServiceId(value, name) {
+  if (!/^[A-Za-z0-9:_-]{1,200}$/.test(value.trim())) throw new Error(`${name} is invalid`);
+  return value.trim();
+}
+
+function parseSensFrom(value, name) {
+  if (!/^\d{8,15}$/.test(value.trim())) throw new Error(`${name} must be a registered numeric sender`);
+  return value.trim();
+}
+
+function parseSensCompanyName(value, name) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/.test(value.trim())) throw new Error(`${name} is invalid`);
+  return value.trim();
+}
+
 /**
  * Runtime settings the services read but the workflow passes only when the
  * repository variable is set (as `RUNTIME_<NAME>` in the workflow env). Unset
@@ -143,6 +164,10 @@ export const OPTIONAL_RUNTIME_ENV = [
   { name: 'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE', targets: ['api'], parse: parseNonNegativeIntegerText },
   { name: 'SMS_GLOBAL_SEND_LIMIT_PER_HOUR', targets: ['api'], parse: parseNonNegativeIntegerText },
   { name: 'SMS_LOCAL_RATE_LIMITS_ENABLED', targets: ['api'], parse: parseStrictBooleanText },
+  { name: 'SMS_CN_PROVIDER', targets: ['api'], parse: parseSmsChinaProvider },
+  { name: 'NCP_SENS_SMS_SERVICE_ID', targets: ['api'], parse: parseSensServiceId },
+  { name: 'NCP_SENS_SMS_FROM', targets: ['api'], parse: parseSensFrom },
+  { name: 'NCP_SENS_SMS_COMPANY_NAME', targets: ['api'], parse: parseSensCompanyName },
 ];
 
 const RUNTIME_ENV_TARGETS = new Set(['api', 'worker']);
@@ -162,6 +187,11 @@ export function resolveOptionalRuntimeEnv(env, target) {
     const raw = env[`RUNTIME_${setting.name}`];
     if (raw === undefined || raw === null || String(raw).trim() === '') continue;
     pairs.push([setting.name, setting.parse(String(raw), `RUNTIME_${setting.name}`)]);
+  }
+  if (target === 'api' && pairs.some(([key, value]) => key === 'SMS_CN_PROVIDER' && value === 'sens')) {
+    for (const name of ['NCP_SENS_SMS_SERVICE_ID', 'NCP_SENS_SMS_FROM']) {
+      if (!pairs.some(([key]) => key === name)) throw new Error(`RUNTIME_${name} is required for sens`);
+    }
   }
   return pairs;
 }
