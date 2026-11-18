@@ -170,4 +170,11 @@ describe('API and web Sentry redaction parity', () => {
       .toEqual(headers.map(apiRedaction.isSensitiveHeaderName));
     expect(webRedaction.SENTRY_FILTERED_VALUE).toBe(apiRedaction.SENTRY_FILTERED_VALUE);
   });
+
+  it('redacts both SENS authentication headers in API and web telemetry', () => {
+    for (const redaction of [apiRedaction, webRedaction]) {
+      expect(redaction.isSensitiveHeaderName('x-ncp-iam-access-key')).toBe(true);
+      expect(redaction.isSensitiveHeaderName('x-ncp-apigw-signature-v2')).toBe(true);
+    }
+  });
 });

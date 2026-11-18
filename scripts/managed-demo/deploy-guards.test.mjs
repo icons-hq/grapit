@@ -676,6 +676,32 @@ test('runtime env lines survive the deploy-cloudrun KEY=VALUE parser', () => {
   );
 });
 
+test('SENS cutover is API-only and requires explicit valid sender settings', async () => {
+  const env = {
+    RUNTIME_SMS_CN_PROVIDER: 'sens',
+    RUNTIME_NCP_SENS_SMS_SERVICE_ID: 'ncp:sms:kr:123:test',
+    RUNTIME_NCP_SENS_SMS_FROM: '0212345678',
+    RUNTIME_NCP_SENS_SMS_COMPANY_NAME: 'ICONS',
+  };
+  assert.deepEqual(resolveOptionalRuntimeEnv(env, 'api'), [
+    ['SMS_CN_PROVIDER', 'sens'],
+    ['NCP_SENS_SMS_SERVICE_ID', 'ncp:sms:kr:123:test'],
+    ['NCP_SENS_SMS_FROM', '0212345678'],
+    ['NCP_SENS_SMS_COMPANY_NAME', 'ICONS'],
+  ]);
+  assert.deepEqual(resolveOptionalRuntimeEnv(env, 'worker'), []);
+  assert.throws(() => resolveOptionalRuntimeEnv({ RUNTIME_SMS_CN_PROVIDER: 'sens' }, 'api'), /required for sens/);
+  for (const override of [
+    { RUNTIME_SMS_CN_PROVIDER: 'SENS' }, { RUNTIME_NCP_SENS_SMS_SERVICE_ID: 'bad/path' },
+    { RUNTIME_NCP_SENS_SMS_FROM: '+821012345678' }, { RUNTIME_NCP_SENS_SMS_COMPANY_NAME: 'ICONS\nURL' },
+  ]) assert.throws(() => resolveOptionalRuntimeEnv({ ...env, ...override }, 'api'));
+  const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
+  assert.ok(workflow.includes("RUNTIME_SMS_CN_PROVIDER: ${{ vars.SMS_CN_PROVIDER || 'twilio' }}"));
+  for (const name of ['ACCESS_KEY', 'SECRET_KEY']) {
+    assert.ok(workflow.includes(`vars.SMS_CN_PROVIDER == 'sens' && 'NCP_SENS_${name}=ncp-sens-${name.toLowerCase().replaceAll('_', '-')}:latest' || ''`));
+  }
+});
+
 async function runGuards(args, { env = {}, files = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'deploy-guards-'));
   try {

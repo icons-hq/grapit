@@ -83,6 +83,11 @@ env:
   RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_MINUTE: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_MINUTE }}
   RUNTIME_SMS_GLOBAL_SEND_LIMIT_PER_HOUR: ${{ vars.SMS_GLOBAL_SEND_LIMIT_PER_HOUR }}
   RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: ${{ vars.SMS_LOCAL_RATE_LIMITS_ENABLED }}
+  # Explicit default avoids retaining a previous sens switch after removing the variable.
+  RUNTIME_SMS_CN_PROVIDER: ${{ vars.SMS_CN_PROVIDER || 'twilio' }}
+  RUNTIME_NCP_SENS_SMS_SERVICE_ID: ${{ vars.NCP_SENS_SMS_SERVICE_ID }}
+  RUNTIME_NCP_SENS_SMS_FROM: ${{ vars.NCP_SENS_SMS_FROM }}
+  RUNTIME_NCP_SENS_SMS_COMPANY_NAME: ${{ vars.NCP_SENS_SMS_COMPANY_NAME }}
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
@@ -422,6 +427,8 @@ jobs:
             TWILIO_API_KEY_SID=twilio-api-key-sid:latest
             TWILIO_API_KEY_SECRET=twilio-api-key-secret:latest
             TWILIO_VERIFY_SERVICE_SID=twilio-verify-service-sid:latest
+            ${{ vars.SMS_CN_PROVIDER == 'sens' && 'NCP_SENS_ACCESS_KEY=ncp-sens-access-key:latest' || '' }}
+            ${{ vars.SMS_CN_PROVIDER == 'sens' && 'NCP_SENS_SECRET_KEY=ncp-sens-secret-key:latest' || '' }}
             SENTRY_DSN=sentry-dsn:latest
             TOSS_SECRET_KEY=toss-secret-key:latest
             TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest

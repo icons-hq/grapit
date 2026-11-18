@@ -67,7 +67,7 @@ export function buildPolicies(channel, { databaseMaxConnections = 25 } = {}) {
       'SMS 앱 제한 외의 API 429 또는 Cloud Run 수용량 부족이다. 구매·로그인 요청의 제한 사유와 인스턴스 한도를 확인한다. SMS URL이라도 플랫폼의 no available instance 오류는 이 경보에 포함한다.', 'WARNING'),
     log('sms-send-failure', 'SMS provider failure or service send quota exhausted',
       `${API_RESOURCE} AND (${smsEvent('sms.send_failed')} OR ${smsEvent('sms.pending_marker_failed')} OR jsonPayload.layer=("global_send_budget" OR "global_hourly_send_budget") OR textPayload=~"layer:.*'global(_hourly)?_send_budget'")`,
-      '인증문자 발송이 실패했거나 서비스 전체 발송 한도가 소진됐다. Twilio providerCode와 전달 기록을 확인한다. 60410은 Fraud Guard 차단이며 정상 번호도 영향을 받을 수 있다. sms.sent는 접수이지 수신 완료가 아니다. 발송 실패가 API 400이어도 이 경보로 감지한다. 보호 한도와 Fraud Guard를 임의로 해제하지 않는다.', 'WARNING'),
+      '인증문자 발송이 실패했거나 서비스 전체 발송 한도가 소진됐다. provider를 먼저 확인한다. Twilio는 providerCode와 Attempts, naver_sens는 providerStatus/outcome과 SENS 메시지 결과를 확인한다. 60410은 Twilio Fraud Guard 차단이며 정상 번호도 영향을 받을 수 있다. sms.sent는 접수이지 수신 완료가 아니다. 발송 실패가 API 400이어도 이 경보로 감지한다. 보호 한도와 Fraud Guard를 임의로 해제하지 않는다.', 'WARNING'),
     policy('sms-rate-limit-burst', 'SMS request limits reached repeatedly',
       '10분 동안 SMS 앱 제한이 5건 이상 발생했다. 번호별 재전송 대기·시간당 발송 한도·인증 시도 한도와 서비스 전체 한도를 확인한다. 서버 전체 장애를 뜻하지 않는다. 소수의 정상 재요청 제한은 집계만 하고 메일을 보내지 않는다.',
       [threshold('At least 5 SMS limit rejections in 10 minutes', `metric.type="logging.googleapis.com/user/${SMS_RATE_LIMIT_METRIC.name}" AND ${API_RESOURCE}`, 4, {

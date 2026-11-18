@@ -225,6 +225,7 @@ describe('launch copy key manifest', () => {
       'retryWait',
       'providerRateLimited',
       'sendFailed',
+      'sendOutcomeUnknown',
       'verified',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.errors'].ko).toEqual([

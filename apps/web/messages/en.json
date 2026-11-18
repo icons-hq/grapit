@@ -537,6 +537,7 @@
       "retryWait": "You can request another text in {time}.",
       "providerRateLimited": "Verification requests are temporarily limited. Please try again shortly.",
       "sendFailed": "We could not send the verification code. Please try again shortly.",
+      "sendOutcomeUnknown": "We could not confirm whether the text was sent. If you received a code, enter it below. To avoid duplicate texts, you can resend after the waiting period.",
       "verified": "Verified"
     },
     "errors": {

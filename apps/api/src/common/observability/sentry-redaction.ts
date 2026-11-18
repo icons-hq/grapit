@@ -15,6 +15,7 @@ const SENSITIVE_HEADER_NAMES = new Set([
   'set-cookie',
   'x-toss-webhook-secret',
   'x-grabit-toss-webhook-secret',
+  'x-ncp-iam-access-key',
 ]);
 
 // Client IP headers. The Cloudflare edge and Cloud Run forward the visitor IP

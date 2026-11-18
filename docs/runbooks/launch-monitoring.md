@@ -9,7 +9,7 @@
 | `purchase-http-errors` | 운영 API/플랫폼 5xx 로그 — ERROR | Cloud Run 요청 수용 실패, DB 연결, Valkey 상태 확인 |
 | `api-error-ratio` | 5분 구간의 API **5xx** 비율 >1%가 5분 지속 — ERROR | 실제 오류 건수·거래 결과·재시도·로그 대조 |
 | `api-request-throttled` | SMS 앱 제한 외의 API 429 또는 플랫폼 `no available instance` — WARNING | 구매·로그인 제한 사유와 인스턴스 수용량 확인. SMS 경로의 플랫폼 거절도 포함 |
-| `sms-send-failure` | `sms.send_failed`, `sms.pending_marker_failed`, 전체 분/시간 발송 한도 소진 — WARNING | API 400이어도 감지. Twilio 오류·전달 상태와 서비스 전체 발송 한도 확인 |
+| `sms-send-failure` | `sms.send_failed`, `sms.pending_marker_failed`, 전체 분/시간 발송 한도 소진 — WARNING | API 400이어도 감지. provider별 Twilio/SENS 처리 결과와 서비스 전체 발송 한도 확인 |
 | `sms-rate-limit-burst` | 10분간 `sms.rate_limited` 5건 이상 — WARNING | 재전송 대기·번호별 한도와 실제 인증 완료 여부 확인. 서버 장애와 구분 |
 | `transaction-recovery` | API/worker의 `CRITICAL:`, `QR_REMINDER_REQUIRES_ATTENTION`, QR 복구 sweep/worker 실패, DB pool timeout | PG/DB 대조 및 [QR 메일 복구](qr-reminder-recovery.md) 절차 |
 | `worker-failed` | `/Jobs.RunJob` 종료 감사 로그의 failedCount >0 | 실행 로그, pg-boss 대기/재시도, 미완료 환불·QR 확인 |
@@ -65,7 +65,7 @@ node --test scripts/managed-demo/launch-monitoring.test.mjs
 Twilio Verify Attempts read-only 조회에서 해당 스페인 번호의 앞선 5건은 `DELIVERED`, 인증 결과는 `unconverted`였다. 전달 실패나 사용자가 문자를 읽었다는 의미로 단정하지 않는다. 별개로 11월 13일 중국 번호의 발송 실패 5건은 `60410`(Fraud Guard 차단)이었다. 정상 번호도 번호 대역 차단의 영향을 받을 수 있으므로 차단을 해제하기 전에 공급자 기록과 고객 제보를 대조한다. `DELIVERY_UNKNOWN` 또는 상태가 없는 중국·말레이시아 건은 실패 확정이 아니다. 계정·전화번호·Verification SID·자격값은 문서에 기록하지 않는다.
 
 - 서버 오류율의 분자는 5xx만 센다. 소수의 문자 재요청 제한은 `grabit_sms_rate_limited` counter에 기록되고 10분 5건 이상에서 경고한다. 이 임계값은 사용자 수가 아닌 거절 요청 수다.
-- 문자 발송 실패/서비스 전체 발송 한도는 즉시 별도 경고한다. API가 400을 반환하는 Twilio 거절도 포함한다. 전달 후 통신사 실패는 이 앱 로그 정책만으로 감지할 수 없으며 Twilio Attempts와 공급자 알림도 확인한다.
+- 문자 발송 실패/서비스 전체 발송 한도는 즉시 별도 경고한다. API가 400을 반환하는 Twilio 거절과 SENS 실패·결과 불명도 포함한다. 전달 후 통신사 실패는 이 앱 로그 정책만으로 감지할 수 없으며 Twilio Attempts 또는 SENS 메시지 결과·공급자 알림도 확인한다. SENS의 `sms.sent`에는 `provider: naver_sens`와 `requestId`가 있고, 실패에는 `providerStatus`/`outcome`이 있다. [중국 SENS 전환·조사 절차](china-sms-sens.md)를 따른다. 경보 설명 텍스트 갱신은 승인된 `--only=sms-send-failure` apply에서 반영하며, 코드 변경만으로 운영 정책이 수정되지는 않는다.
 - Nest 텍스트 로그는 event/layer가 서로 다른 줄에 있고 ANSI 색상 문자가 들어 있다. 필터는 이 형식과 `jsonPayload.event/layer` 형식을 모두 처리하며 번호나 계정 label을 만들지 않는다.
 - 새 SMS counter는 생성 이전 로그를 소급 집계하지 않는다. 과거 로그에 대한 동일 필터 조회로 분류를 확인하고, 신규 표본은 이후 자연 발생 요청에서 확인한다. 시험 문자·시험 경보를 보내지 않는다.
 - 인증 UI는 발송 제한의 종류와 실제 남은 대기시간을 표시하고 버튼을 비활성화한다. 서버의 번호별 대기시간은 Valkey의 남은 TTL을 사용한다. 기존 발송·인증 한도와 Fraud Guard는 유지한다.

@@ -16,6 +16,11 @@ import {
   getE164Country,
   parseE164,
 } from './phone.util.js';
+import { NaverSensApiError, NaverSensClient } from './naver-sens-client.js';
+import {
+  SensOtpStore, SensOtpWaitError, sensOtpKeys, SENS_OTP_TTL_MS, TWILIO_CHINA_PENDING_LUA,
+  type PreparedSensOtp,
+} from './sens-otp-store.js';
 
 // Phase 10 constants (retained)
 // Local SMS abuse limits are on unless SMS_LOCAL_RATE_LIMITS_ENABLED=false.
@@ -222,6 +227,8 @@ const SMS_PROVIDER_RATE_LIMITED_MESSAGE =
   '인증번호 요청이 제한되었습니다. 잠시 후 다시 시도해주세요.';
 const SMS_SEND_FAILED_MESSAGE =
   '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.';
+const SMS_SEND_OUTCOME_UNKNOWN_MESSAGE =
+  '문자 발송 결과를 확인하지 못했습니다. 문자를 받았다면 인증번호를 입력해주세요. 중복 발송을 막기 위해 잠시 후 재발송할 수 있습니다.';
 const SMS_LOCAL_RATE_LIMITED_MESSAGE = '잠시 후 다시 시도해주세요';
 const SMS_GLOBAL_RATE_LIMITED_MESSAGE =
   '인증번호 요청이 많아 잠시 후 다시 시도해주세요.';
@@ -236,6 +243,7 @@ const SMS_ERROR_CODES = {
   recipientBlocked: 'SMS_RECIPIENT_BLOCKED',
   providerRateLimited: 'SMS_PROVIDER_RATE_LIMITED',
   sendFailed: 'SMS_SEND_FAILED',
+  sendOutcomeUnknown: 'SMS_SEND_OUTCOME_UNKNOWN',
   // The web clears its stored token and shows phone verification again.
   phoneVerificationTokenUsed: 'PHONE_VERIFICATION_TOKEN_USED',
 } as const;
@@ -406,6 +414,26 @@ function mapTwilioSendFailure(err: TwilioVerifyApiError): BadRequestException {
   return smsBadRequest(SMS_SEND_FAILED_MESSAGE, SMS_ERROR_CODES.sendFailed, err.code);
 }
 
+export function parseChinaSmsProvider(value: string | undefined): 'twilio' | 'sens' {
+  const provider = value?.trim() || 'twilio';
+  if (provider !== 'twilio' && provider !== 'sens') {
+    throw new Error('[sms] SMS_CN_PROVIDER must be twilio or sens');
+  }
+  return provider;
+}
+
+function sensWaitResponse(err: SensOtpWaitError): HttpException {
+  if (err.reason === 'pending') return sensUnknownResponse(err.retryAfterMs);
+  return smsTooManyRequests(err.retryAfterMs, SMS_LOCAL_RATE_LIMITED_MESSAGE,
+    err.reason === 'checks' ? undefined : 'SMS_RESEND_COOLDOWN');
+}
+
+function sensUnknownResponse(retryAfterMs: number): BadRequestException {
+  const error = smsBadRequest(SMS_SEND_OUTCOME_UNKNOWN_MESSAGE, SMS_ERROR_CODES.sendOutcomeUnknown);
+  Object.assign(error.getResponse(), { retryAfterMs });
+  return error;
+}
+
 @Injectable()
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
@@ -417,6 +445,8 @@ export class SmsService {
   private readonly globalSendLimitPerHour: number;
   private readonly globalSendBudgets: readonly GlobalSendBudget[];
   private readonly allowedCountries: ReadonlySet<string> | null;
+  private readonly sensClient: NaverSensClient | null;
+  private readonly sensOtp: SensOtpStore;
 
   constructor(
     configService: ConfigService,
@@ -474,6 +504,21 @@ export class SmsService {
         );
     this.verificationTokenSecret =
       verificationTokenSecret || 'dev-sms-verification-token-secret';
+    this.sensOtp = new SensOtpStore(redis, this.verificationTokenSecret);
+    const chinaProvider = parseChinaSmsProvider(configService.get<string>('SMS_CN_PROVIDER'));
+    this.sensClient = null;
+    if (chinaProvider === 'sens') {
+      if (this.isDevMock) {
+        throw new Error('[sms] Twilio credentials are required for non-China verification when SENS is enabled');
+      }
+      this.sensClient = new NaverSensClient({
+        accessKey: configService.get<string>('NCP_SENS_ACCESS_KEY')?.trim() ?? '',
+        secretKey: configService.get<string>('NCP_SENS_SECRET_KEY')?.trim() ?? '',
+        serviceId: configService.get<string>('NCP_SENS_SMS_SERVICE_ID')?.trim() ?? '',
+        from: configService.get<string>('NCP_SENS_SMS_FROM')?.trim() ?? '',
+        companyName: configService.get<string>('NCP_SENS_SMS_COMPANY_NAME')?.trim() || 'ICONS',
+      });
+    }
     this.localRateLimitsEnabled = parseSmsLocalRateLimitsEnabled(
       configService.get<string>('SMS_LOCAL_RATE_LIMITS_ENABLED'),
     );
@@ -609,7 +654,8 @@ export class SmsService {
             // One alert per window: the budget tripping means either an abuse
             // burst or a launch spike that needs a larger configured budget.
             Sentry.withScope((scope) => {
-              scope.setTag('provider', 'twilio_verify');
+              scope.setTag('component', 'sms');
+              scope.setTag('dependency', 'send_budget');
               scope.setTag('sms_limit', budget.layer);
               scope.setLevel('warning');
               Sentry.captureMessage(budget.alertMessage);
@@ -646,6 +692,10 @@ export class SmsService {
       throw smsBadRequest(SMS_RECIPIENT_BLOCKED_MESSAGE, SMS_ERROR_CODES.recipientBlocked);
     }
 
+    if (country === 'CN' && this.sensClient && !/^\+861\d{10}$/.test(e164)) {
+      throw smsBadRequest(SMS_CAPABLE_PHONE_MESSAGE, SMS_ERROR_CODES.smsCapablePhoneRequired);
+    }
+
     // Dev mock -- cooldown/counter/Twilio all skipped
     if (this.isDevMock) {
       this.logger.log({ event: 'sms.sent', mode: 'dev_mock', phone: maskE164ForLog(e164) });
@@ -653,6 +703,10 @@ export class SmsService {
     }
 
     const releaseSendQuota = await this.reserveSendQuota(e164);
+
+    if (country === 'CN' && this.sensClient) {
+      return this.sendChinaVerification(e164, releaseSendQuota);
+    }
 
     // verifyCode calls Twilio only while this marker exists (audit #36
     // follow-up). It is recorded before the provider call: a Valkey failure
@@ -663,9 +717,10 @@ export class SmsService {
     const pendingKey = smsPendingVerificationKey(e164);
     let createdPendingMarker: boolean;
     try {
-      createdPendingMarker = await this.recordPendingVerification(pendingKey);
+      createdPendingMarker = await this.recordPendingVerification(pendingKey, e164);
     } catch (err) {
       await releaseSendQuota();
+      if (err instanceof SensOtpWaitError) throw sensWaitResponse(err);
       captureSmsValkeyException(err, { 'sms.step': 'pending_marker_set', country });
       this.logger.error({
         event: 'sms.pending_marker_failed',
@@ -725,8 +780,71 @@ export class SmsService {
     }
   }
 
+  private async sendChinaVerification(e164: string, releaseQuota: () => Promise<void>): Promise<SendResult> {
+    let prepared: PreparedSensOtp;
+    const startedAt = Date.now();
+    try {
+      prepared = await this.sensOtp.prepare(e164);
+    } catch (err) {
+      await releaseQuota();
+      if (err instanceof SensOtpWaitError) throw sensWaitResponse(err);
+      captureSmsValkeyException(err, { country: 'CN', 'sms.step': 'sens_prepare' });
+      this.logger.error({ event: 'sms.pending_marker_failed', provider: 'naver_sens', country: 'CN',
+        phone: maskE164ForLog(e164), err: errorMessageForLog(err) });
+      throw smsBadRequest(SMS_SEND_FAILED_MESSAGE, SMS_ERROR_CODES.sendFailed);
+    }
+
+    let rejected = false;
+    try {
+      const sent = await this.sensClient!.sendCode(e164, prepared.code);
+      try {
+        await this.sensOtp.commit(e164, prepared);
+      } catch (err) {
+        // The HMAC candidate was durable before the send. It remains verifiable
+        // after a lost acknowledgement; do not charge/send the buyer another code.
+        captureSmsValkeyException(err, { country: 'CN', 'sms.step': 'sens_commit' });
+        this.logger.warn({ event: 'sms.sens_commit_deferred', phone: maskE164ForLog(e164) });
+      }
+      this.logger.log({
+        event: 'sms.sent', phone: maskE164ForLog(e164), country: 'CN',
+        provider: 'naver_sens', providerStatus: 'accepted', providerChannel: 'sms',
+        requestId: sent.requestId,
+      });
+      return { success: true, message: '인증번호가 발송되었습니다' };
+    } catch (err) {
+      rejected = err instanceof NaverSensApiError && err.outcome === 'rejected';
+      // Only an explicit provider rate rejection is safe to retry immediately.
+      // Timeouts/5xx may have sent a billable SMS: retain the quota and candidate.
+      if (err instanceof NaverSensApiError && err.status === 429) await releaseQuota();
+      const safeError = err instanceof NaverSensApiError ? err : new NaverSensApiError(0, 'unknown');
+      Sentry.withScope((scope) => {
+        scope.setTag('component', 'sms');
+        scope.setTag('provider', 'naver_sens');
+        scope.setTag('country', 'CN');
+        scope.setTag('sens.status', String(safeError.status));
+        scope.setTag('sens.outcome', safeError.outcome);
+        Sentry.captureException(safeError);
+      });
+      this.logger.error({
+        event: 'sms.send_failed', phone: maskE164ForLog(e164), country: 'CN',
+        provider: 'naver_sens', providerStatus: safeError.status, outcome: safeError.outcome,
+      });
+      if (safeError.outcome === 'unknown') {
+        throw sensUnknownResponse(Math.max(1000, SENS_OTP_TTL_MS - (Date.now() - startedAt)));
+      }
+      throw smsBadRequest(
+        safeError.status === 429 ? SMS_PROVIDER_RATE_LIMITED_MESSAGE : SMS_SEND_FAILED_MESSAGE,
+        safeError.status === 429 ? SMS_ERROR_CODES.providerRateLimited : SMS_ERROR_CODES.sendFailed,
+      );
+    } finally {
+      await this.sensOtp.finish(e164, prepared, rejected).catch((err: unknown) => {
+        captureSmsValkeyException(err, { country: 'CN', 'sms.step': 'sens_finish' });
+      });
+    }
+  }
+
   /**
-   * Verify a user-supplied OTP through Twilio Verify.
+   * Verify through the provider that issued the challenge (SENS state or Twilio).
    *
    * SECURITY NOTE: `verifyCode` is NOT a standalone authentication primitive.
    * A `{ verified: true }` response means "this phone successfully verified an
@@ -770,6 +888,28 @@ export class SmsService {
         };
       }
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
+    }
+
+    if (getE164Country(e164) === 'CN') {
+      // Route by the issued challenge, not the current send switch. Codes sent
+      // through SENS remain verifiable during a config rollback to Twilio.
+      let result;
+      try {
+        result = await this.sensOtp.verify(e164, code);
+      } catch (err) {
+        if (err instanceof SensOtpWaitError) {
+          this.logger.warn({ event: 'sms.rate_limited', phone: maskE164ForLog(e164),
+            provider: 'naver_sens', country: 'CN', layer: 'phone_axis_verify' });
+          throw sensWaitResponse(err);
+        }
+        throw err;
+      }
+      if (result === 'expired') throw new GoneException(SMS_CODE_EXPIRED_MESSAGE);
+      if (result === 'wrong') return { verified: false, message: '인증번호가 일치하지 않습니다' };
+      if (result === 'verified') {
+        this.logger.log({ event: 'sms.verified', phone: maskE164ForLog(e164), country: 'CN', provider: 'naver_sens' });
+        return { verified: true, verificationToken: this.createPhoneVerificationToken(e164, purpose) };
+      }
     }
 
     // No send-code for this number in the last 10 minutes: answer without
@@ -867,7 +1007,15 @@ export class SmsService {
    * its TTL is renewed for the code about to be sent). Throws on a Valkey
    * error.
    */
-  private async recordPendingVerification(pendingKey: string): Promise<boolean> {
+  private async recordPendingVerification(pendingKey: string, e164: string): Promise<boolean> {
+    if (getE164Country(e164) === 'CN') {
+      const keys = sensOtpKeys(e164);
+      const result = await this.redis.eval(TWILIO_CHINA_PENDING_LUA, 4,
+        pendingKey, keys.active, keys.candidate, keys.lease,
+        PENDING_VERIFICATION_TTL_MS) as number | [string, number];
+      if (Array.isArray(result)) throw new SensOtpWaitError(result[1], 'switch');
+      return result === 1;
+    }
     const created = await this.redis.set(
       pendingKey, '1', 'PX', PENDING_VERIFICATION_TTL_MS, 'NX',
     );

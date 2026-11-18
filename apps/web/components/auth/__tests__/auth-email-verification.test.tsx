@@ -148,6 +148,7 @@ const expectedKeys = {
     'retryWait',
     'providerRateLimited',
     'sendFailed',
+    'sendOutcomeUnknown',
     'verified',
   ],
   'auth.errors': [
