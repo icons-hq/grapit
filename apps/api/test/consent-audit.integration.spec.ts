@@ -64,7 +64,9 @@ describe('Consent audit query and document versions on Postgres', () => {
     }
     for (const key of ['privacy', 'pipa_required']) {
       for (const locale of SUPPORTED_LOCALES) {
-        expect(active.has(`${key}|2026-04-28|${locale}`), `${key} 2026-04-28 ${locale}`).toBe(true);
+        for (const previous of ['2026-04-28', '2026-05-11']) {
+          expect(active.has(`${key}|${previous}|${locale}`), `${key} ${previous} ${locale}`).toBe(true);
+        }
       }
     }
   });
@@ -92,7 +94,7 @@ describe('Consent audit query and document versions on Postgres', () => {
       [buyer],
     );
     expect(rows).toEqual([
-      { item_key: 'privacy', item_version: '2026-05-11', language: 'en', item_version_seed: '2026-05-11' },
+      { item_key: 'privacy', item_version: '2026-11-20', language: 'en', item_version_seed: '2026-11-20' },
       { item_key: 'terms', item_version: '2026-04-28', language: 'en', item_version_seed: '2026-04-28' },
     ]);
     await pool.query('DELETE FROM consent_audit_logs');
