@@ -30,7 +30,7 @@ export const TICKET_SERVICE_FEE_KRW = 2000;
 // each: BOOKING_CONSENT_ITEM_KEYS and CONSENT_DOCUMENT_VERSIONS in @grabit/shared
 // (asserted by the unit test). k6 cannot import the shared package. pipa_required
 // is captured at signup and is not part of booking.
-export const BOOKING_CONSENT_VERSIONS = Object.freeze({ terms: '2026-04-28', privacy: '2026-05-11' });
+export const BOOKING_CONSENT_VERSIONS = Object.freeze({ terms: '2026-04-28', privacy: '2026-11-20' });
 export const FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
 export const CONFIRM_MODES = ['off', 'pg-stub'];
 const CONSENT_VERSION_PATTERN = /^[0-9A-Za-z._-]{1,40}$/;
@@ -41,7 +41,7 @@ export function consentDocumentLanguage(locale) {
   return locale === 'ko' ? 'ko' : 'en';
 }
 
-// PHASE26_CONSENT_VERSIONS='terms=2026-04-28,privacy=2026-05-11' overrides the
+// PHASE26_CONSENT_VERSIONS='terms=2026-04-28,privacy=2026-11-20' overrides the
 // version of individual booking rows, for a target that still serves an older
 // active document. The single PHASE26_CONSENT_VERSION was removed: one version
 // for every row cannot match documents with different effective dates.

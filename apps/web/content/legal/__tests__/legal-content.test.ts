@@ -95,7 +95,9 @@ describe('legal content', () => {
 
   it('discloses the runtime SMS provider in privacy policy', () => {
     expect(privacyPolicyMd).not.toContain('Infobip');
-    expect(privacyPolicyMd).toContain('SMS 발송**: Twilio Inc. 및 그 계열사');
+    expect(privacyPolicyMd).toContain('중국 본토 번호(+86) 인증문자 발송**: 네이버클라우드 주식회사(SENS)');
+    expect(privacyPolicyMd).toContain('그 외 국가·지역 번호의 SMS 인증**: Twilio Inc. 및 그 계열사');
+    expect(englishLegalDocuments['privacy-policy.en.md']).toContain('NAVER Cloud Corp. (SENS)');
     expect(privacyPolicyMd).toContain('| Twilio Inc. 및 그 계열사 | 미국 (United States) |');
     expect(privacyPolicyMd).toContain('휴대전화번호, SMS 인증 요청 및 상태 정보');
     expect(privacyPolicyMd).toContain('SMS 본인인증 OTP 발송 및 확인');

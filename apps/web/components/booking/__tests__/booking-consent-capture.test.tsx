@@ -109,7 +109,7 @@ describe('Booking consent capture', () => {
 
     expect(payload.consentItems).toEqual([
       { key: 'terms', version: '2026-04-28', language: 'ko', accepted: true, sourceFlow: 'booking' },
-      { key: 'privacy', version: '2026-05-11', language: 'ko', accepted: true, sourceFlow: 'booking' },
+      { key: 'privacy', version: '2026-11-20', language: 'ko', accepted: true, sourceFlow: 'booking' },
     ]);
   });
 

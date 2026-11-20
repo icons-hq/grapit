@@ -47,7 +47,7 @@ export const CONSENT_DOCUMENT_ITEM_KEYS = [
  * effective date printed in that document, so an audit row names the exact text
  * the buyer saw:
  * - terms: terms-of-service(.en).md, effective 2026-04-28
- * - privacy, pipa_required: privacy-policy(.en).md v1.2, effective 2026-05-11
+ * - privacy, pipa_required: privacy-policy(.en).md v1.3, effective 2026-11-20
  * - marketing: marketing-consent(.en).md, effective 2026-04-28
  *
  * Bump a version only together with an additive `consent_items` seed migration
@@ -55,8 +55,8 @@ export const CONSENT_DOCUMENT_ITEM_KEYS = [
  */
 export const CONSENT_DOCUMENT_VERSIONS = {
   terms: '2026-04-28',
-  privacy: '2026-05-11',
-  pipa_required: '2026-05-11',
+  privacy: '2026-11-20',
+  pipa_required: '2026-11-20',
   marketing: '2026-04-28',
 } as const satisfies Record<(typeof CONSENT_DOCUMENT_ITEM_KEYS)[number], string>;
 

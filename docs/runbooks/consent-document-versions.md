@@ -8,7 +8,7 @@ Use this runbook when a legal document behind a consent row changes (terms of se
 
 - A consent version is the effective date printed in the document the buyer can open. `CONSENT_DOCUMENT_VERSIONS` in `packages/shared/src/schemas/consent.schema.ts` is the single source used by signup, social completion, and booking:
   - `terms`: `terms-of-service(.en).md`, `2026-04-28`
-  - `privacy`, `pipa_required`: `privacy-policy(.en).md` v1.2, `2026-05-11`
+  - `privacy`, `pipa_required`: `privacy-policy(.en).md` v1.3, `2026-11-20`
   - `marketing`: `marketing-consent(.en).md`, `2026-04-28`
 - Versions are per key. Several keys can share the same date: `2026-04-28` is still the current `terms` and `marketing` version while it is the superseded `privacy` and `pipa_required` version. Every statement that changes `consent_items` must filter by `key` as well as `version`.
 - The recorded `language` is the document language actually rendered. Legal documents exist only in Korean and English, so `ko` records `ko` and every other locale records `en` (`resolveConsentDocumentLanguage`).

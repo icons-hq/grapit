@@ -32,9 +32,9 @@ const DOCUMENT_TEXT_SNAPSHOTS = {
     en: '8cc9e21a7f8a18715fd2cf234804de8d57d86ab957366c333357fce6a834f152',
   },
   'privacy-policy': {
-    version: '2026-05-11',
-    ko: '598ef46cf5d46e3426dbacd4df8e0c4c3db113428465194b7dcb4c216966f4e3',
-    en: 'f56f605781043740b61ceb5ad20c1e10779868992cc11abd47721b129911bb86',
+    version: '2026-11-20',
+    ko: '088a360bb48c96a40330b901c3f7038e6fcd9c8f2fcf424bc7ea89a2ef619580',
+    en: 'f0b64d6022b4ec738e41025db252971baea40fcc11dd98dc3e401134240e90ba',
   },
   'marketing-consent': {
     version: '2026-04-28',
