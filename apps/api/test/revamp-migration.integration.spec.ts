@@ -93,7 +93,7 @@ describe('Full revamp migration — existing account, payment and entitlement pr
     const after = await snapshot();
     // Additive reference seeds introduced after the boundary; every pre-existing row must stay untouched.
     const addedSeedRows: Partial<Record<(typeof protectedTables)[number], (row: Record<string, unknown>) => boolean>> = {
-      consent_items: (row) => row.version === '2026-05-11' && (row.key === 'privacy' || row.key === 'pipa_required'),
+      consent_items: (row) => (row.version === '2026-05-11' || row.version === '2026-11-20') && (row.key === 'privacy' || row.key === 'pipa_required'),
     };
     for (const table of protectedTables) {
       const originalRows = before[table]!;
@@ -105,7 +105,10 @@ describe('Full revamp migration — existing account, payment and entitlement pr
         expect(retained, `${table}: existing record`).toEqual(row);
       });
     }
-    expect(after.consent_items!.filter(addedSeedRows.consent_items!)).toHaveLength(8);
+    const privacySeeds = after.consent_items!.filter(addedSeedRows.consent_items!);
+    for (const version of ['2026-05-11', '2026-11-20']) {
+      expect(privacySeeds.filter((row) => row.version === version)).toHaveLength(8);
+    }
     expect((await pool.query('SELECT sum(amount)::int AS amount, sum(provider_charge_amount_minor)::int AS minor FROM payments')).rows[0])
       .toEqual({ amount: 104000, minor: 8000 });
     expect((await pool.query("SELECT count(*)::int AS n FROM tickets WHERE status='active'")).rows[0].n).toBe(1);

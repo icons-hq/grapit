@@ -89,9 +89,9 @@ describe('SignupStep2 itemized launch consent', () => {
     expect(screen.getAllByText('필수')).toHaveLength(requiredRows.length);
     expect(screen.getByText('선택')).toBeInTheDocument();
     // Terms and marketing documents are effective 2026-04-28; the privacy policy
-    // shown for privacy and PIPA rows is v1.2, effective 2026-05-11.
+    // shown for privacy and PIPA rows is v1.3, effective 2026-11-20.
     expect(screen.getAllByText('v2026-04-28')).toHaveLength(2);
-    expect(screen.getAllByText('v2026-05-11')).toHaveLength(2);
+    expect(screen.getAllByText('v2026-11-20')).toHaveLength(2);
     expect(screen.getAllByText(/ko/)).toHaveLength(4);
     expect(screen.getAllByRole('button', { name: '보기' })).toHaveLength(4);
 
@@ -147,7 +147,7 @@ describe('SignupStep2 itemized launch consent', () => {
         consentItems: expect.arrayContaining([
           expect.objectContaining({
             key: 'pipa_required',
-            version: '2026-05-11',
+            version: '2026-11-20',
             language: 'ko',
             accepted: true,
             required: true,
@@ -170,8 +170,8 @@ describe('SignupStep2 itemized launch consent', () => {
       ),
     ).toEqual([
       ['terms', '2026-04-28'],
-      ['privacy', '2026-05-11'],
-      ['pipa_required', '2026-05-11'],
+      ['privacy', '2026-11-20'],
+      ['pipa_required', '2026-11-20'],
       ['marketing', '2026-04-28'],
     ]);
   });

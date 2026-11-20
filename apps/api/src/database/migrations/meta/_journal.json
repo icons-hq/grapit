@@ -435,6 +435,13 @@
       "when": 1794810976402,
       "tag": "0061_fixed_ticket_cancellation_fee",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1795135768071,
+      "tag": "0062_china_sms_privacy_consent",
+      "breakpoints": true
     }
   ]
 }

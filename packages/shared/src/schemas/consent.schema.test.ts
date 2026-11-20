@@ -46,11 +46,11 @@ describe('consent capture request schema', () => {
 });
 
 describe('consent document contract', () => {
-  it('records privacy and PIPA rows against the privacy policy v1.2 effective date', () => {
+  it('records privacy and PIPA rows against the privacy policy v1.3 effective date', () => {
     expect(CONSENT_DOCUMENT_VERSIONS).toEqual({
       terms: '2026-04-28',
-      privacy: '2026-05-11',
-      pipa_required: '2026-05-11',
+      privacy: '2026-11-20',
+      pipa_required: '2026-11-20',
       marketing: '2026-04-28',
     });
   });
