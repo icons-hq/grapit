@@ -4,14 +4,41 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  NODE_ENV: test
+
 jobs:
-  check:
-    # Playwright 1.59 supports Ubuntu 24.04; ubuntu-latest now selects 26.04.
+  unit:
     runs-on: ubuntu-24.04
-    # Postgres service container for E2E runs (Phase 09-tech-debt DEBT-05).
-    # Unit tests (pnpm test) do not hit the DB — they mock it — but migrate/seed
-    # + Playwright E2E do, and the API server launched by Playwright webServer
-    # expects DATABASE_URL to resolve.
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Test managed-demo deploy scripts (worker payload, deploy guards, Valkey posture)
+        run: node --test scripts/managed-demo/*.test.mjs
+      - name: Test load-gate, smoke, preflight and cleanup scripts
+        run: >-
+          node --test scripts/k6/phase26-load.test.mjs scripts/phase26/record-k6-evidence.test.mjs
+          scripts/phase26/test-event-identity.test.mjs scripts/phase26/provision-load-buyers.test.mjs
+          scripts/phase26/infra-evidence.test.mjs scripts/phase26/rehearsal-smoke.test.mjs
+          scripts/revamp/production-preflight.test.mjs
+          scripts/revamp/pg-stub-preload.test.mjs scripts/revamp/isolated-capacity.test.mjs
+          scripts/smoke-valkey-production.test.mjs
+
+  integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-workspace
+      - run: pnpm --filter @grabit/shared build
+      - name: Integration tests (testcontainers — SC-2 Valkey Cluster CROSSSLOT guard)
+        run: pnpm --filter @grabit/api test:integration
+
+  e2e:
+    # Playwright 1.59 supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -32,39 +59,14 @@ jobs:
       # Test-only secrets — never use in production. NestJS main.ts only hard-fails
       # FRONTEND_URL https when NODE_ENV=production, so NODE_ENV=test keeps CORS
       # origin as http://localhost:3000 for Playwright.
-      NODE_ENV: test
       JWT_SECRET: ci-test-jwt-secret-not-for-production-usage-only
       JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret-not-for-production-usage-only
       FRONTEND_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
-      - name: Test managed-demo deploy scripts (worker payload, deploy guards, Valkey posture)
-        run: node --test scripts/managed-demo/*.test.mjs
-      - name: Test load-gate, smoke, preflight and cleanup scripts
-        run: >-
-          node --test scripts/k6/phase26-load.test.mjs scripts/phase26/record-k6-evidence.test.mjs
-          scripts/phase26/test-event-identity.test.mjs scripts/phase26/provision-load-buyers.test.mjs
-          scripts/phase26/infra-evidence.test.mjs scripts/phase26/rehearsal-smoke.test.mjs
-          scripts/revamp/production-preflight.test.mjs
-          scripts/revamp/pg-stub-preload.test.mjs scripts/revamp/isolated-capacity.test.mjs
-          scripts/smoke-valkey-production.test.mjs
-
-      # [Phase 14 / SC-2 / REVIEWS.md HIGH#1] Integration tests — testcontainers-based
-      # Valkey Cluster + Postgres smokes. Docker daemon on ubuntu-latest is sufficient
-      # (testcontainers uses /var/run/docker.sock). This step makes SC-2 "CI 편입" 실체화:
-      # sms-cluster-crossslot.integration.spec.ts 가 PR/push 에서 자동 실행되어 cluster
-      # CROSSSLOT 회귀를 영구 차단.
-      - name: Integration tests (testcontainers — SC-2 Valkey Cluster CROSSSLOT guard)
-        run: pnpm --filter @grabit/api test:integration
+      - uses: ./.github/actions/setup-workspace
+      # The serial workflow previously built shared through Turbo before E2E.
+      - run: pnpm --filter @grabit/shared build
 
       # DB readiness + schema + seed data for E2E runs.
       # drizzle-kit migrate reads DATABASE_URL from env (CLAUDE.md convention:
@@ -176,3 +178,18 @@ jobs:
           if [ -f api.pid ]; then
             kill "$(cat api.pid)" 2>/dev/null || true
           fi
+
+  # Branch protection requires the check named "check", also when a suite is skipped.
+  check:
+    if: ${{ always() }}
+    needs: [unit, integration, e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every suite to pass
+        env:
+          UNIT: ${{ needs.unit.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          echo "unit=$UNIT integration=$INTEGRATION e2e=$E2E"
+          [[ "$UNIT" == success && "$INTEGRATION" == success && "$E2E" == success ]]

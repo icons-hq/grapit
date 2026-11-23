@@ -670,7 +670,7 @@ Production deploy uses two Cloud Run services and one bounded Cloud Run Job:
 | `grabit-web` | `apps/web/Dockerfile` | `3000` | Next.js standalone output |
 | `grabit-background-worker` | `apps/api/Dockerfile` | N/A | runs `dist/worker-main.js` for a bounded pg-boss/expiration processing window |
 
-Both images are built from the monorepo root so `packages/shared` can be built before app packages.
+Both images use the monorepo root as their build context. Each installs its app and its workspace dependencies from the frozen lockfile and package manifests before copying source. The shared package builds before the app. Web public build arguments take effect at the Web build step. The API runtime image also copies the cutover gate ledger. When adding a workspace dependency, include its manifest and build inputs in the consuming Dockerfile.
 
 During the no-sale posture, Web and API use minimum instances `0` and request-based CPU. The [2026-11-02 production capacity profile](research/booking-production-cutover-2026-11-02.md) uses Cloud SQL 4 vCPU/15 GiB, at most eight API instances at 2 vCPU/512 MiB, API application pool eight, worker application pool two, and 150 active admissions per performance. Web is capped at twelve 1 vCPU/1 GiB instances after the public-read rehearsal. The API sets `BACKGROUND_PROCESSING_ENABLED=false`: pg-boss remains available for durable job enqueueing, while its scheduler, supervisor, queue workers, and the pending-payment interval do not run inside a CPU-throttled request service. Cloud Scheduler executes the bounded worker every five minutes with background processing explicitly enabled. Prewarm all eight API and twelve Web instances before a planned opening; run `scripts/managed-demo/warm-web-routes.mjs` and verify the serving revision and instance count; the scheduled prewarm remains paused until an event time is known. ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md` govern capacity transitions.
 
@@ -680,27 +680,19 @@ Cloud Run session affinity remains enabled for Socket.IO polling and WebSocket u
 
 ### 8.2 CI
 
-`.github/workflows/ci.yml` runs on pull requests and manual dispatch:
+On pull requests to `main` and on manual dispatch, three jobs start independently on Ubuntu 24.04. Each checks out the candidate and installs the frozen workspace on its own runner.
 
-1. checkout,
-2. install with pnpm,
-3. lint,
-4. typecheck,
-5. unit tests,
-6. managed-demo deploy script tests (background-worker payload, deploy guards, Valkey posture),
-7. API integration tests with testcontainers,
-8. Drizzle migrations against a Postgres service container,
-9. seed test data,
-10. verify Toss test credentials are configured for non-fork events,
-11. install Playwright Chromium,
-12. build API,
-13. run API server,
-14. login smoke,
-15. web E2E tests.
+- `unit` runs lint, typecheck, workspace unit tests, the managed-demo tests and the load, smoke, preflight and cleanup script tests.
+- `integration` builds the shared package and runs the API integration suite against its Testcontainers PostgreSQL and Valkey instances.
+- `e2e` builds the shared package, migrates and seeds its PostgreSQL 16 service, checks the seed, and enforces the Toss test-key check for same-repository PRs and manual dispatch. It installs Chromium, builds and starts the API, runs the login smoke and executes the Playwright suite.
+
+The required GitHub check is still named `check`. It evaluates all three job results and passes only when each succeeded.
 
 ### 8.3 Deploy
 
 `.github/workflows/deploy.yml` runs on push to `main` and manual dispatch:
+
+The migration job and both image builds start together. Each Buildx job reads its own GHA cache scope and exports with `mode=min` to limit synchronous cache writes. A fresh runner can repeat the filtered install if the intermediate layer is absent.
 
 1. validate production origins and repository-variable deploy inputs (exports migration `lock_timeout`/`statement_timeout` as `PGOPTIONS`),
 2. install dependencies,
@@ -711,8 +703,8 @@ Cloud Run session affinity remains enabled for Socket.IO polling and WebSocket u
 7. run Drizzle migrations,
 8. build and push API image,
 9. build and push web image,
-10. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
-11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job; in an `allow_booking_reopen=true` run a closed service is reopened only when it was already closed at the start of the run and its revision is unchanged, an unreadable value is reopened with a warning only for a service that was not open at the start, and a service open at the start that is unreadable now fails the job), then deploy API,
+10. after the migration and API image succeed, validate and patch the bounded background worker Job through the Cloud Run v2 API and wait for its smoke execution to succeed,
+11. after the worker smoke and both images succeed, when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job; in an `allow_booking_reopen=true` run a closed service is reopened only when it was already closed at the start of the run and its revision is unchanged, an unreadable value is reopened with a warning only for a service that was not open at the start, and a service open at the start that is unreadable now fails the job), then deploy API,
 12. re-read the live Web `BOOKING_ENABLED` the same way, then deploy web after API deploy (deploy-web also needs migrate-production for its start-of-run snapshot).
 
 API deploy injects runtime values through Cloud Run environment variables and Secret Manager bindings. Documentation must name required settings without printing raw values.

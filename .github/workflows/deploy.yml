@@ -255,7 +255,7 @@ jobs:
           push: true
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.API_SERVICE }}:${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=grabit-api
-          cache-to: type=gha,mode=max,scope=grabit-api
+          cache-to: type=gha,mode=min,scope=grabit-api
 
   build-web-image:
     runs-on: ubuntu-latest
@@ -292,7 +292,7 @@ jobs:
             NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY=${{ vars.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY }}
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.WEB_SERVICE }}:${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=grabit-web
-          cache-to: type=gha,mode=max,scope=grabit-web
+          cache-to: type=gha,mode=min,scope=grabit-web
 
   deploy-api:
     runs-on: ubuntu-latest
