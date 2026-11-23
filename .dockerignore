@@ -1,5 +1,5 @@
-node_modules
-.next
+**/node_modules
+**/.next
 .git
 .env
 .env.*
@@ -15,6 +15,7 @@ node_modules
 !.planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json
 .claude
 .agents
-dist
-coverage
-.turbo
+**/dist
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
