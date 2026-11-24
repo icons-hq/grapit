@@ -1,3 +1,5 @@
+import { matchingTicketCancelRows } from '../payment/toss-cancel-matcher.js';
+import { transactionFromVirtualAccountCancelPost, virtualAccountRefundReason } from '../payment/virtual-account-cancel-receipt.js';
 import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
 import { getVirtualAccountDetails } from '../payment/virtual-account.js';
 import { resolveEnforcedAllowedPaymentMethods } from '../payment/payment-method-policy.js';
@@ -2288,6 +2290,7 @@ export class ReservationService {
     isFullPaymentCancellation: boolean;
     command: TicketItemCancellationCommand;
   }): Promise<TicketItemPaymentCancelOutcome> {
+    let beforePayment: TossPaymentResponse;
     let matchingCancelsBefore: number | undefined;
     let matchingCancelsAfter: number | undefined;
     let unchangedAfterFailure = false;
@@ -2295,10 +2298,13 @@ export class ReservationService {
       secretKeyScope: input.request.options.secretKeyScope,
     };
     try {
-      const beforePayment = await this.tossClient.queryPayment(
+      beforePayment = await this.tossClient.queryPayment(
         input.request.paymentKey,
         queryOptions,
       );
+      if (input.request.options.sealedRefundAccount && matchingTicketCancelRows(beforePayment.cancels ?? [], input.command).length === 1) {
+        return { status: 'cancelled', providerResponse: beforePayment };
+      }
       if (
         !input.isFullPaymentCancellation
         && input.request.options.cancelAmount !== undefined
@@ -2360,6 +2366,18 @@ export class ReservationService {
         input.request.reason,
         input.request.options,
       );
+      const transactionKey = transactionFromVirtualAccountCancelPost(response, input.request, input.command, beforePayment);
+      if (transactionKey) {
+        const saved = await this.db.update(ticketItems).set({
+          cancellationCommand: sql`${ticketItems.cancellationCommand} || jsonb_build_object('transactionKey', ${transactionKey}::text)`,
+        }).where(and(eq(ticketItems.id, input.ticketItemId),
+          sql`${ticketItems.cancellationCommand}->>'id' = ${input.command.id}`,
+          sql`(${ticketItems.cancellationCommand}->>'transactionKey' IS NULL OR ${ticketItems.cancellationCommand}->>'transactionKey' = ${transactionKey})`,
+        )).returning({ id: ticketItems.id });
+        if (!saved.length) return { status: 'ambiguous' };
+        input.command.transactionKey = transactionKey;
+        return { status: 'cancelled', providerResponse: response };
+      }
       if (input.isFullPaymentCancellation) {
         return this.isFullTossCancelCompleted(response)
           ? { status: 'cancelled', providerResponse: response }
@@ -2780,7 +2798,8 @@ export class ReservationService {
         });
         if (paymentCancelRequest && !context.cancellationCommand) {
           const commandId = randomUUID();
-          paymentCancelRequest.reason = `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
+          paymentCancelRequest.reason = context.paymentMethod === 'VIRTUAL_ACCOUNT'
+            ? virtualAccountRefundReason(commandId) : `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
           paymentCancelRequest.options.idempotencyKey = `ticket-item-cancel:${ticketItemId}:${commandId}`;
           if (paymentCancelRequest.options.cancelRequestId) paymentCancelRequest.options.cancelRequestId = `cancel_${commandId}`;
           const currency = context.providerChargeCurrency === 'USD' ? 'USD' : 'KRW';

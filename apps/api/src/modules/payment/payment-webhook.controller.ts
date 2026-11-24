@@ -157,10 +157,11 @@ export class PaymentWebhookController {
   @HttpCode(HttpStatus.OK)
   async handleDepositCallback(@Body(new ZodValidationPipe(z.object({
     orderId: z.string().min(1).max(200), secret: z.string().min(1).max(256),
-    status: z.string().min(1), transactionKey: z.string().nullish(),
-  }))) body: { orderId: string; secret: string }) {
+    status: z.string().min(1), transactionKey: z.string().max(200).nullish(), createdAt: z.string().max(64).optional(),
+  }))) body: { orderId: string; secret: string; status: string; transactionKey?: string | null; createdAt?: string }) {
     // DEPOSIT_CALLBACK has a flat body and its own per-payment secret. Never store the raw event.
-    await this.paymentService.syncVirtualAccount({ orderId: body.orderId, secret: body.secret });
+    await this.paymentService.syncVirtualAccount({ orderId: body.orderId, secret: body.secret,
+      ...(body.status === 'WAITING_FOR_DEPOSIT' ? { reversalNotice: { transactionKey: body.transactionKey, createdAt: body.createdAt } } : {}) });
     return { acknowledged: true };
   }
 
@@ -278,7 +279,7 @@ export class PaymentWebhookController {
     }
     if (body.eventType === 'PAYMENT_STATUS_CHANGED' && normalizeTossApprovedMethod(providerResponse.method).category === 'VIRTUAL_ACCOUNT'
       && (['WAITING_FOR_DEPOSIT', 'DONE', 'EXPIRED', 'ABORTED'].includes(providerResponse.status)
-        || (providerResponse.status === 'PARTIAL_CANCELED' && providerResponse.balanceAmount === 0)
+        || (providerResponse.status === 'PARTIAL_CANCELED' && (providerResponse.balanceAmount === 0 || progress?.reservationStatus === 'PENDING_PAYMENT'))
         || (providerResponse.status === 'CANCELED' && progress?.reservationStatus === 'PENDING_PAYMENT'))) {
       const result = await this.paymentService.syncVirtualAccount({ orderId: providerResponse.orderId, paymentKey: providerResponse.paymentKey });
       if (result || providerResponse.status === 'WAITING_FOR_DEPOSIT') {

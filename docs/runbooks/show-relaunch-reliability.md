@@ -124,7 +124,7 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 
 reservation prepare는 공연 `allowed_payment_methods`에 없는 결제수단을 409로 거절한다. 정책 행이 없거나 목록이 비면 플랫폼 기본값 `["CARD"]`만 허용한다. 결제 단계 화면은 좌석을 유지한 채 다른 수단을 고르게 한다. 그래도 위젯에 보이는 수단이 정책에서 빠져 있으면 구매자는 그 수단으로 결제할 수 없다.
 
-서버가 강제하는 집합은 공연 정책(없으면 `["CARD"]`)과 `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`(`CARD`·`TRANSFER`·`VIRTUAL_ACCOUNT`·`SIMPLE_PAY`·`FOREIGN_EASY_PAY`)의 교집합이다. 가상계좌는 국내 전용 위젯에서 발급하고 토스의 입금을 확인한 후 발권한다. [가상계좌 연동 및 운영](toss-virtual-account.md) 이 집합을 세 지점에서 다시 본다.
+서버가 강제하는 집합은 공연 정책(없으면 `["CARD"]`)과 `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`(`CARD`·`TRANSFER`·`VIRTUAL_ACCOUNT`·`SIMPLE_PAY`·`FOREIGN_EASY_PAY`)의 교집합이다. 가상계좌는 국내 전용 위젯에서 발급하고 첫 입금 확인 후 5분이 지나 같은 거래의 입금이 유지되면 발권한다. [가상계좌 연동 및 운영](toss-virtual-account.md) 이 집합을 세 지점에서 다시 본다.
 
 - 결제 handoff(`POST /payments/branch`): 요청 수단과 예매에 저장된 수단이 모두 집합에 있어야 한다. 아니면 `checkout_started_at`을 기록하기 전에 409 `CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE`다.
 - 동기 confirm: Toss 승인 응답의 실제 결제수단(`method`, 간편결제면 `easyPay.provider`)이 저장된 결제수단·간편결제사와 같고 집합 안이어야 한다. 아니면 발권하지 않고 보상 취소한 뒤 400 `PAYMENT_APPROVAL_MISMATCH`다(아래 계약).

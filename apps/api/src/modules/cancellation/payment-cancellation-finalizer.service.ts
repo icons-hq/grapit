@@ -1,3 +1,4 @@
+import { matchingTicketCancelRows, type TossPaymentCancelRecord } from '../payment/toss-cancel-matcher.js';
 import { prepareTicketAddonRefunds } from './ticket-addon-refunds.js';
 import {
   BadRequestException,
@@ -245,7 +246,19 @@ export class PaymentCancellationFinalizerService {
     let supplementalPayment = false;
     await this.db.transaction(async (tx) => {
       const lockedReservation = await tx.execute(sql`SELECT id, status, addon_ticket_item_id, fixed_cancellation_fee FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
-      if (input.source === 'cancel_webhook') {
+      const virtualAccount = input.providerResponse?.method === '가상계좌' || input.providerResponse?.method === 'VIRTUAL_ACCOUNT';
+      // The webhook can commit before our idempotent POST returns. The exact refund row is the
+      // completion evidence; a cancelled reservation alone can still have a refund to reconcile.
+      if (virtualAccount && input.refundId && input.source !== 'cancel_webhook') {
+        const [completedRefund] = await tx.select({ id: refunds.id }).from(refunds).where(and(
+          eq(refunds.id, input.refundId), eq(refunds.paymentId, input.context.payment.id), eq(refunds.status, 'completed'),
+        )).limit(1);
+        if (completedRefund) {
+          alreadyFinalized = true;
+          return;
+        }
+      }
+      if (input.source === 'cancel_webhook' || (virtualAccount && input.source === 'ticket_item')) {
         // A webhook that read its snapshot before a concurrent finalizer
         // committed must not re-apply the cancellation (history, fees, seats).
         const lockedStatus = (lockedReservation as { rows?: Array<Record<string, unknown>> } | undefined)
@@ -271,12 +284,9 @@ export class PaymentCancellationFinalizerService {
       const command = input.ticketItemCancellation?.cancellationCommand;
       if (command) {
         const cancellations = Array.isArray(input.providerResponse?.cancels)
-          ? input.providerResponse.cancels as Array<Record<string, unknown>> : [];
-        const completed = cancellations.find((cancel) => cancel.cancelStatus === 'DONE'
-          && cancel.cancelReason === command.reason
-          && typeof cancel.cancelAmount === 'number'
-          && Math.round(cancel.cancelAmount * (command.currency === 'USD' ? 100 : 1)) === command.amountMinor
-          && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId));
+          ? input.providerResponse.cancels as TossPaymentCancelRecord[] : [];
+        const matches = matchingTicketCancelRows(cancellations, command);
+        const completed = matches.length === 1 ? matches[0] : undefined;
         if (!completed) throw new BadRequestException('취소 요청에 대응하는 결제사 완료 근거를 확인할 수 없습니다');
         await tx.update(ticketItems).set({
           cancellationCommand: sql`${ticketItems.cancellationCommand} || ${JSON.stringify({

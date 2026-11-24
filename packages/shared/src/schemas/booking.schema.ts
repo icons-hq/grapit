@@ -369,6 +369,8 @@ export const paymentInfoSchema = z.object({
     bankCode: z.string(),
     accountNumber: z.string(),
     dueDate: isoDatetime('입금기한'),
+    verifyingUntil: isoDatetime('입금 확인 시각').optional(),
+    reviewRequired: z.boolean().optional(),
   }).optional(),
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
   method: z.string().min(1, '결제 수단이 필요합니다'),

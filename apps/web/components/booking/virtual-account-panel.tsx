@@ -9,15 +9,19 @@ import { getPaymentRecoveryCopy } from '@/lib/booking/payment-recovery-copy';
 import { useServerTimeReached } from '@/hooks/use-server-clock';
 
 const copy = {
-  ko: { title: '가상계좌 입금 대기', body: '아래 계좌에 정확한 금액을 입금해 주세요. 입금이 확인되면 티켓이 발급됩니다.',
+  ko: { review: '입금 내역 확인 중', reviewBody: '일부 금액이 취소되어 입금 내역을 확인하고 있습니다. 추가 송금 없이 고객센터에 문의해 주세요.', verifying: '입금 확인 중', verifyingBody: '은행에서 입금 통보를 받았습니다. 추가 송금은 필요 없습니다. 약 5분 후 입금 상태를 다시 확인하고 예매를 확정해 QR 티켓을 발급합니다.',
+    title: '가상계좌 입금 대기', body: '아래 계좌에 정확한 금액을 입금해 주세요. 입금 통보를 받은 뒤 약 5분 후 티켓이 발급됩니다.',
     bank: '입금 은행', account: '계좌번호', amount: '입금 금액', due: '입금기한', elapsed: '입금기한이 지났습니다. 입금 결과를 확인하고 있습니다.',
     close: '미입금 예매 취소', confirm: '가상계좌를 반납하고 좌석을 취소할까요?', yes: '예매 취소하기', back: '돌아가기' },
-  en: { title: 'Awaiting bank deposit', body: 'Transfer the exact amount to the account below. Your tickets will be issued once the deposit is confirmed.',
+  en: { review: 'Deposit under review', reviewBody: 'Part of the payment was refunded. Please contact support before making another transfer.', verifying: 'Verifying your deposit', verifyingBody: 'Your bank reported the deposit. No further transfer is needed. We will check again in about 5 minutes, then confirm your booking and issue your QR ticket.',
+    title: 'Awaiting bank deposit', body: 'Transfer the exact amount to the account below. We will verify the deposit about 5 minutes after the bank reports it and then issue your tickets.',
     bank: 'Bank', account: 'Account number', amount: 'Amount to transfer', due: 'Deposit deadline', elapsed: 'The deadline has passed. We are checking the deposit.',
     close: 'Cancel unpaid booking', confirm: 'Close this account and release the seats?', yes: 'Cancel booking', back: 'Go back' },
-  'zh-CN': { title: '等待虚拟账户入账', body: '请将准确金额转入以下账户。到账确认后将出票。', bank: '银行', account: '账号', amount: '转账金额', due: '入账截止时间',
+  'zh-CN': { review: '正在核对付款记录', reviewBody: '部分款项已退回。请先联系客服，无需再次转账。', verifying: '正在核实到账', verifyingBody: '已收到银行的入账通知，无需再次转账。约5分钟后，我们将再次核实到账状态，确认预订并签发二维码门票。',
+    title: '等待虚拟账户入账', body: '请将准确金额转入以下账户。收到银行入账通知约5分钟后将核实并出票。', bank: '银行', account: '账号', amount: '转账金额', due: '入账截止时间',
     elapsed: '入账期限已过，正在核实汇款结果。', close: '取消未付款预订', confirm: '关闭此账户并释放座位吗？', yes: '确认取消', back: '返回' },
-  th: { title: 'รอโอนเงินเข้าบัญชีเสมือน', body: 'กรุณาโอนเงินตามยอดที่ระบุ ระบบจะออกบัตรเมื่อยืนยันยอดแล้ว',
+  th: { review: 'กำลังตรวจสอบรายการชำระเงิน', reviewBody: 'มีการคืนเงินบางส่วน กรุณาติดต่อฝ่ายบริการลูกค้าก่อนโอนเงินอีกครั้ง', verifying: 'กำลังตรวจสอบยอดเงิน', verifyingBody: 'ธนาคารแจ้งยอดโอนแล้ว ไม่ต้องโอนซ้ำ เราจะตรวจสอบอีกครั้งในประมาณ 5 นาที ก่อนยืนยันการจองและออกบัตร QR',
+    title: 'รอโอนเงินเข้าบัญชีเสมือน', body: 'กรุณาโอนเงินตามยอดที่ระบุ ระบบจะตรวจสอบและออกบัตรประมาณ 5 นาทีหลังได้รับแจ้งยอดจากธนาคาร',
     bank: 'ธนาคาร', account: 'เลขบัญชี', amount: 'ยอดโอน', due: 'กำหนดโอนเงิน', elapsed: 'หมดเวลาโอนเงินแล้ว กำลังตรวจสอบยอด',
     close: 'ยกเลิกการจองที่ยังไม่ชำระ', confirm: 'ปิดบัญชีนี้และคืนที่นั่งหรือไม่', yes: 'ยืนยันการยกเลิก', back: 'ย้อนกลับ' },
 };
@@ -51,6 +55,14 @@ export function VirtualAccountPanel({ account, amount, locale, orderId, onCheck,
       await onCheck?.();
       setConfirmClose(false);
     } catch { setError(true); } finally { setClosing(false); }
+  }
+  if (account.verifyingUntil || account.reviewRequired) {
+    return <section aria-live="polite" className="space-y-4 rounded-xl border border-primary/20 bg-primary/5 p-5">
+      <h2 className="text-lg font-semibold">{account.reviewRequired ? labels.review : labels.verifying}</h2>
+      <p className="text-sm">{account.reviewRequired ? labels.reviewBody : labels.verifyingBody}</p>
+      {providerUnavailable && <p role="alert">{recovery.providerUnavailable}</p>}
+      <Button disabled={checking || !onCheck} onClick={() => void onCheck?.()}>{checking ? recovery.checking : recovery.check}</Button>
+    </section>;
   }
   const rows = [
     [labels.bank, banks[account.bankCode]?.[locale === 'ko' ? 0 : 1] ?? account.bankCode],

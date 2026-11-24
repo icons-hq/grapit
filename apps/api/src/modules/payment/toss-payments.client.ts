@@ -63,6 +63,7 @@ export interface TossPaymentResponse {
   totalAmount: number;
   currency?: string;
   balanceAmount?: number;
+  lastTransactionKey?: string | null;
   status: string;
   approvedAt?: string | null;
   card?: { settlementStatus?: string | null } | null;
@@ -96,7 +97,7 @@ function minimizeVirtualAccountSnapshot(payment: TossPaymentResponse): TossPayme
   const { bankCode, dueDate, settlementStatus, expired } = payment.virtualAccount;
   return { paymentKey: payment.paymentKey, orderId: payment.orderId, method: payment.method,
     mId: payment.mId, currency: payment.currency, totalAmount: payment.totalAmount, balanceAmount: payment.balanceAmount,
-    status: payment.status, approvedAt: payment.approvedAt, isPartialCancelable: payment.isPartialCancelable,
+    status: payment.status, lastTransactionKey: payment.lastTransactionKey, approvedAt: payment.approvedAt, isPartialCancelable: payment.isPartialCancelable,
     cancels: payment.cancels, virtualAccount: { bankCode, dueDate, settlementStatus, expired } };
 }
 

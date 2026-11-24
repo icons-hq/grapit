@@ -48,6 +48,6 @@ export async function restoreDepositedOrder(db: DrizzleDB, paymentId: string, re
       AND EXISTS (SELECT 1 FROM ticket_items ti WHERE ti.id = e.ticket_item_id AND ti.status = 'active') AND e.id IN
       (SELECT jsonb_array_elements_text(provider_metadata->'suspendedBenefitIds')::uuid FROM payments WHERE id = ${paymentId})`);
     await tx.update(payments).set({ status: 'DONE', paidAt, asyncStatus: 'deposited',
-      providerMetadata: sql`${payments.providerMetadata} - 'suspendedBenefitIds'` }).where(eq(payments.id, paymentId));
+      providerMetadata: sql`${payments.providerMetadata} - 'suspendedBenefitIds' - 'depositVerification'` }).where(eq(payments.id, paymentId));
   });
 }

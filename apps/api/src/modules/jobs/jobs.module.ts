@@ -1,3 +1,5 @@
+import { PrewarmModule } from '../ops/prewarm.module.js';
+import { DepositVerificationController } from './deposit-verification.controller.js';
 import { Module } from '@nestjs/common';
 import { BookingModule } from '../booking/booking.module.js';
 import { CancellationModule } from '../cancellation/cancellation.module.js';
@@ -9,7 +11,8 @@ import { PgbossModule } from './pgboss.module.js';
 import { RefundCancelRetryWorker } from './refund-cancel-retry.worker.js';
 
 @Module({
-  imports: [PgbossModule, PaymentModule, CancellationModule, BookingModule],
+  controllers: [DepositVerificationController],
+  imports: [PrewarmModule, PgbossModule, PaymentModule, CancellationModule, BookingModule],
   providers: [
     AsyncDoneCompensationRecoveryWorker,
     CancelledSeatReleaseWorker,
