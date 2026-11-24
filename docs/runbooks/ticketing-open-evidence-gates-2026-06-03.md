@@ -842,7 +842,7 @@ for launch, not merely that fallback code exists.
 - [ ] Smoke `/support`, `/en/support`, `/th/support`, and `/zh-CN/support`.
 - [ ] Confirm API returns only public fields and published rows.
 - [ ] Confirm footer support link reaches localized support page.
-- [ ] Confirm support email is visible.
+- [ ] Confirm the support page, footer, and performance details link to Instagram DMs for @wecord_official.
 
 ### Required Evidence
 

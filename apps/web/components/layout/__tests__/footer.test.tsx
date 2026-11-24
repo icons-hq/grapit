@@ -65,8 +65,8 @@ describe('Footer (D-03, D-04)', () => {
       expect(screen.getByText(/사업자등록번호: 109-86-27576/)).toBeInTheDocument();
       expect(screen.getByText(/통신판매업 신고번호: 2025-서울마포-1494/)).toBeInTheDocument();
       expect(
-        screen.getByText('고객센터: wecordofficial_cs@mariannekate.com'),
-      ).toBeInTheDocument();
+        screen.getByRole('link', { name: /위코드 인스타그램 DM \(@wecord_official\)/ }),
+      ).toHaveAttribute('href', 'https://www.instagram.com/m/wecord_official');
       expect(screen.getByText(/개인정보 보호책임자: 정승준/)).toBeInTheDocument();
     });
 

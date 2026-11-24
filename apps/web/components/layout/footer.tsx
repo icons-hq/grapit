@@ -1,4 +1,5 @@
 import { analyticsCopy } from '@/components/analytics/analytics-copy';
+import { InstagramSupportLink } from '@/components/support/instagram-support-link';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
@@ -9,7 +10,8 @@ import {
 
 export function Footer() {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
-  const copy = getVisibleCopy(activeLocale).footer;
+  const messages = getVisibleCopy(activeLocale);
+  const copy = messages.footer;
 
   return (
     <footer className="ticket-footer mt-auto min-h-[120px]">
@@ -50,7 +52,7 @@ export function Footer() {
           <p>{copy.businessRegistration}</p>
           <p>{copy.mailOrderRegistration}</p>
           <p>{copy.businessAddress}</p>
-          <p>{copy.customerSupport}</p>
+          <p>{copy.support} · <InstagramSupportLink copy={messages.support} /></p>
           <p>{copy.privacyOfficer}</p>
           <p>
             {copy.privacyInquiry}{' '}

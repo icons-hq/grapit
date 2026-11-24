@@ -76,10 +76,10 @@ describe('SupportPage', () => {
     expect(
       screen.getByText('Booking opens from the event detail page.'),
     ).toBeInTheDocument();
-    expect(screen.getByText('wecordofficial_cs@mariannekate.com')).toHaveAttribute(
-      'href',
-      'mailto:wecordofficial_cs@mariannekate.com',
-    );
+    const dm = screen.getByRole('link', { name: /Message WECORD on Instagram \(@wecord_official\)/ });
+    expect(dm).toHaveAttribute('href', 'https://www.instagram.com/m/wecord_official');
+    expect(dm).toHaveAttribute('target', '_blank');
+    expect(dm).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
   });
 
   it('renders static launch support copy when API content is empty or unavailable', () => {
@@ -91,12 +91,13 @@ describe('SupportPage', () => {
     render(<SupportPage />);
 
     expect(
-      screen.getByText('We could not load the latest help content. Try again or contact us by email below.'),
+      screen.getByText('We could not load the latest help content. Try again or message WECORD on Instagram.'),
     ).toBeInTheDocument();
     expect(screen.getByText('When does booking open?')).toBeInTheDocument();
     expect(screen.getByText('Payment and QR entry')).toBeInTheDocument();
     expect(screen.getByText('Refund or account support')).toBeInTheDocument();
-    expect(screen.getByText('wecordofficial_cs@mariannekate.com')).toBeVisible();
+    expect(screen.getByText(/Send WECORD a DM on Instagram/)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Message WECORD on Instagram/ })).toBeVisible();
   });
 
   it('labels urgent notices with category and KST posting time (audit #134)', () => {
