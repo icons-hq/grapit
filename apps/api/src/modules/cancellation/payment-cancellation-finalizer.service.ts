@@ -212,6 +212,15 @@ export class PaymentCancellationFinalizerService {
     @Optional() @Inject(PG_BOSS) private readonly pgBoss?: PgBossContract,
   ) {}
 
+  async enqueueTicketAddonRefunds(refundIds: string[]): Promise<void> {
+    if (!this.pgBoss?.isAvailable) return;
+    for (const refundId of refundIds) {
+      // The stale-refund sweep recovers a committed request if enqueue or the process fails.
+      await this.pgBoss.send(PG_BOSS_JOB_NAMES.refundCancelRetry, { refundId, attempt: 1 }, { singletonKey: refundId })
+        .catch(() => this.logger.warn(`추가 결제 환불 재시도 대기. refundId=${refundId}`));
+    }
+  }
+
   async finalizeFullPaymentCancellation(
     input: FinalizeFullPaymentCancellationInput,
   ): Promise<FinalizeFullPaymentCancellationResult> {
@@ -724,11 +733,7 @@ export class PaymentCancellationFinalizerService {
     }
 
     if (supplementalPayment) return { releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false };
-    for (const refundId of addonRefundIds) {
-      // The stale-refund sweep also finds the committed request if this process stops before enqueue.
-      if (this.pgBoss?.isAvailable) await this.pgBoss.send(PG_BOSS_JOB_NAMES.refundCancelRetry, { refundId, attempt: 1 }, { singletonKey: refundId })
-        .catch(() => this.logger.warn(`추가 결제 환불 재시도 대기. refundId=${refundId}`));
-    }
+    await this.enqueueTicketAddonRefunds(addonRefundIds);
     const seatIdentitiesNeedingReleaseJob = seatReleaseStates
       .filter((state) => state.reopenJobId === preallocatedReleaseJobId)
       .map((state) => state.seatIdentity);

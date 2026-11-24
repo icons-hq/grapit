@@ -50,6 +50,7 @@ import {
   reservationPaymentFailureDiagnostics,
   refunds,
 } from '../../database/schema/index.js';
+import { prepareTicketAddonRefunds } from '../cancellation/ticket-addon-refunds.js';
 import { calculateTicketItemCancellationQuote } from '../cancellation/ticket-cancellation-policy.js';
 import type { TicketItemCancellationCommand } from '../../database/schema/ticket-items.js';
 import { toRefundTimeline, ticketItemRefundTimeline, hasRestoredRefundRights, reservationProviderRefund, reservationCancellationRecovery } from '../cancellation/refund-timeline.js';
@@ -190,6 +191,7 @@ type TicketItemCancellationContext = {
   providerRefundedAmountMinor?: number;
 };
 type TicketItemCancellationQuote = {
+  policyCode?: TicketItemCancellationCommand['policyCode'];
   cancellationFee: number;
   serviceFeeRefund: number;
   refundableAmount: number;
@@ -2612,6 +2614,7 @@ export class ReservationService {
   ): Promise<ReservationDetail> {
     let seatToBroadcast: { showtimeId: string; seatKey: string } | null | undefined;
     let preparedCancellation: PreparedTicketItemCancellation | null | undefined;
+    let addonRefundIds: string[] = [];
     let tossCancelAttempted = false;
     let tossCancelSucceeded = false;
 
@@ -2937,8 +2940,8 @@ export class ReservationService {
       }
 
       const committedCancellation = preparedCancellation;
-      seatToBroadcast = await this.db.transaction(async (tx) => {
-        await tx
+      const localResult = await this.db.transaction(async (tx) => {
+        const [cancelled] = await tx
           .update(ticketItems)
           .set({
             status: 'cancelled',
@@ -2953,7 +2956,8 @@ export class ReservationService {
               eq(ticketItems.reservationId, reservationId),
               eq(ticketItems.status, 'cancellation_pending'),
             ),
-          );
+          ).returning({ id: ticketItems.id });
+        if (!cancelled) return { seat: null, refundIds: [] };
 
         await this.inactivateBenefitEntitlementsForTicketItems(
           tx,
@@ -3018,13 +3022,17 @@ export class ReservationService {
             .where(eq(reservations.id, reservationId));
         }
 
-        return freedSeatInventories.length > 0
-          ? {
-              showtimeId: committedCancellation.context.showtimeId,
-              seatKey: committedCancellation.context.seatKey,
-            }
-          : null;
+        const { context, quote, now, reason: cancelReason } = committedCancellation;
+        const refundIds = await prepareTicketAddonRefunds(tx, [ticketItemId], context.fixedCancellationFee,
+          () => quote.policyCode ?? calculateTicketItemCancellationQuote({
+            price: context.price, serviceFee: context.serviceFee, bookedAt: context.bookingConfirmedAt,
+            showtimeAt: context.showtimeAt, fixedCancellationFee: context.fixedCancellationFee, now,
+          }).policyCode, cancelReason);
+        const seat = freedSeatInventories.length ? { showtimeId: context.showtimeId, seatKey: context.seatKey } : null;
+        return { seat, refundIds };
       });
+      seatToBroadcast = localResult.seat;
+      addonRefundIds = localResult.refundIds;
     } catch (error) {
       if (
         error instanceof BadRequestException ||
@@ -3073,6 +3081,7 @@ export class ReservationService {
       );
     }
 
+    if (addonRefundIds.length) await this.paymentCancellationFinalizer?.enqueueTicketAddonRefunds(addonRefundIds);
     if (seatToBroadcast) {
       this.bookingGateway.broadcastSeatUpdate(
         seatToBroadcast.showtimeId,

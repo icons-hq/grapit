@@ -70,29 +70,29 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       getMyLocks: vi.fn(async (userId: string) => ({ seatIds: locks.get(userId) ?? [], expiresAt: Date.now() + 600000 })),
       setOwnedSeatLockTtl: vi.fn().mockResolvedValue(undefined),
     };
-    const gateway = { publishAddonStockChanged: vi.fn().mockResolvedValue(true) };
+    const gateway = { publishAddonStockChanged: vi.fn().mockResolvedValue(true), broadcastSeatUpdate: vi.fn() };
     const service = new BookingAddonsService(db, booking as never, gateway as never, { assertBookingEnabled: vi.fn() } as never);
     const snapshot = await service.save(showtime!.id, { identity: 'photo', displayCopy: copy, price: 150000,
       capacity, maxPerTicket, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actors[0]!);
     return { service, gateway, booking, actors, locks, performanceId: performance!.id, showtimeId: showtime!.id, addonId: snapshot.addons[0]!.id };
   }
-  async function pending(f: Awaited<ReturnType<typeof fixture>>, index: number, bundled = true) {
+  async function pending(f: Awaited<ReturnType<typeof fixture>>, index: number, bundled = true, price = seat(index + 1).price) {
     const [order] = await db.insert(schema.reservations).values({ userId: f.actors[index]!.id, showtimeId: f.showtimeId,
-      reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount: bundled ? 532000 : 382000, addonAmount: bundled ? 150000 : 0,
+      reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount: price + 2000 + (bundled ? 150000 : 0), addonAmount: bundled ? 150000 : 0,
       paymentDeadlineAt: new Date(Date.now() + 420000), cancelDeadline: new Date('2098-12-31') }).returning();
     const selections = [{ addonId: f.addonId, seatKey: seat(index + 1).seatKey }];
     await db.insert(schema.reservationSeats).values({ reservationId: order!.id, seatId: seat(index + 1).seatKey,
-      tierName: 'SVIP', price: 380000, row: 'A', number: String(index + 1) });
+      tierName: 'SVIP', price, row: 'A', number: String(index + 1) });
     if (bundled) await db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: f.actors[index]!.id, showtimeId: f.showtimeId,
       selections, seats: [seat(index + 1)], reservationId: order!.id, expectedTotal: 150000 }));
     return order!;
   }
-  async function issue(order: typeof schema.reservations.$inferSelect, index: number) {
+  async function issue(order: typeof schema.reservations.$inferSelect, index: number, price = seat(index + 1).price) {
     return db.transaction(async (tx) => {
       await tx.update(schema.reservations).set({ status: 'CONFIRMED' }).where(eq(schema.reservations.id, order.id));
       const [payment] = await tx.insert(schema.payments).values({ reservationId: order.id, paymentKey: randomUUID(),
         tossOrderId: order.tossOrderId!, method: 'CARD', amount: order.totalAmount, status: 'DONE', paidAt: new Date() }).returning();
-      const [ticket] = await tx.insert(schema.ticketItems).values({ ...seat(index + 1), reservationId: order.id,
+      const [ticket] = await tx.insert(schema.ticketItems).values({ ...seat(index + 1), price, reservationId: order.id,
         paymentId: payment!.id, showtimeId: order.showtimeId }).returning();
       await finalizeReservationAddons(tx, order.id);
       return ticket!;
@@ -159,6 +159,17 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     expect(receipt).toMatchObject({ totalAmount: 382000, ticketAddonAccess: [{ ticketItemId: ticket.id, hasOrders: true }],
       ticketItems: [{ id: ticket.id, benefitEntitlements: [{ source: 'purchase', state: 'active' }] }] });
     expect(await checkout.getMyReservations(actor.id)).toHaveLength(1);
+    const admin = new AdminBookingService(db, f.gateway as never, {} as never);
+    for (const filters of [{}, { seatTier: 'SVIP' }, { floorKey: '1F', seatQuery: 'A-1' }]) {
+      const bookings = await admin.getBookings({ showtimeId: f.showtimeId, ...filters });
+      expect(bookings.stats.totalRevenue).toBe(532000);
+      expect(bookings.tierStats).toEqual(expect.arrayContaining([expect.objectContaining({
+        tierName: 'SVIP', soldSeats: 1, activeRevenue: 532000,
+      })]));
+    }
+    const childOnly = await admin.getBookings({ showtimeId: f.showtimeId, search: input.orderId });
+    expect(childOnly.stats.totalRevenue).toBe(150000);
+    expect(childOnly.tierStats.find(row => row.tierName === 'SVIP')).toMatchObject({ soldSeats: 0, activeRevenue: 150000 });
     const ledgerDate = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
     const ledger = await new FinanceLedgerService(db, {} as never, {} as never).getLedger({ eventId: f.performanceId,
       showtimeId: f.showtimeId, dateFrom: ledgerDate, dateTo: ledgerDate, dateBasis: 'paid_at', asOf: new Date().toISOString(),
@@ -232,15 +243,17 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
   });
 
   it.each([
-    { scope: 'seat', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
-    { scope: 'reservation', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
-    { scope: 'seat', daysToShow: 20, daysBooked: 12, originalRefund: 376000, childRefund: 150000 },
-    { scope: 'reservation', daysToShow: 8, daysBooked: 12, originalRefund: 342000, childRefund: 135000 },
-  ])('refunds the supplemental charge via its own PG key ($scope, D-$daysToShow, booked $daysBooked days ago)', async sample => {
+    { price: 380000, scope: 'seat', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
+    { price: 380000, scope: 'reservation', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
+    { price: 380000, scope: 'seat', daysToShow: 20, daysBooked: 12, originalRefund: 376000, childRefund: 150000 },
+    { price: 380000, scope: 'reservation', daysToShow: 8, daysBooked: 12, originalRefund: 342000, childRefund: 135000 },
+    { price: 0, scope: 'seat', daysToShow: 8, daysBooked: 12, originalRefund: 0, childRefund: 135000 },
+    { price: 3000, scope: 'seat', daysToShow: 20, daysBooked: 12, originalRefund: 0, childRefund: 149000 },
+  ])('refunds the supplemental charge via its own PG key ($scope, ticket $price, D-$daysToShow, booked $daysBooked days ago)', async sample => {
     const f = await fixture(1);
     const actor = f.actors[0]!;
-    const original = await pending(f, 0, false);
-    const ticket = await issue(original, 0);
+    const original = await pending(f, 0, false, sample.price);
+    const ticket = await issue(original, 0, sample.price);
     await db.update(schema.reservations).set({ fixedCancellationFee: true }).where(eq(schema.reservations.id, original.id));
     const day = 86_400_000;
     await db.update(schema.showtimes).set({ dateTime: new Date(Date.now() + sample.daysToShow * day) }).where(eq(schema.showtimes.id, f.showtimeId));
@@ -251,7 +264,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const child = await checkout.prepareReservation(input, actor);
     const childKey = randomUUID();
     await checkout.confirmAndCreateReservation({ paymentKey: childKey, orderId: input.orderId, amount: input.amount }, actor);
-    const amounts = (key: string) => key === childKey ? 150000 : 382000;
+    const amounts = (key: string) => key === childKey ? 150000 : original.totalAmount;
     const expectedRefund = (key: string) => key === childKey ? sample.childRefund : sample.originalRefund;
     const provider = { queryPayment: vi.fn(async (key: string) => ({ status: 'DONE', totalAmount: amounts(key), balanceAmount: amounts(key), isPartialCancelable: true })),
       cancelPayment: vi.fn(async (key: string, reason: string, options: { cancelAmount?: number }) => {
@@ -261,7 +274,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
           totalAmount: amounts(key), balanceAmount: amounts(key) - amount,
           cancels: [{ cancelReason: reason, cancelAmount: amount, cancelStatus: 'DONE', transactionKey: randomUUID() }] };
       }) };
-    const boss = { isAvailable: false, send: vi.fn().mockResolvedValue(null) };
+    const boss = { isAvailable: true, send: vi.fn().mockResolvedValue(null) };
     const finalizer = new PaymentCancellationFinalizerService(db, boss as never);
     if (sample.scope === 'seat') {
       const service = new ReservationService(db, provider as never, f.booking as never, f.gateway as never,
@@ -270,12 +283,16 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     } else await new RefundService(db, provider as never, finalizer).requestRefund(original.id, actor.id, 'cancel ticket');
     const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, child.reservationId));
     expect(refund).toMatchObject({ status: 'requested', providerMetadata: { cancellationQuote: { refundableAmount: sample.childRefund } } });
+    expect(boss.send).toHaveBeenCalledWith('refund-cancel-retry', { refundId: refund!.id, attempt: 1 }, { singletonKey: refund!.id });
+    const sales = await new AdminBookingService(db, f.gateway as never, {} as never).getBookings({ showtimeId: f.showtimeId });
+    expect(sales.stats.totalRevenue).toBe(0);
+    expect(sales.tierStats.find(row => row.tierName === 'SVIP')).toMatchObject({ soldSeats: 0, activeRevenue: 0, cancelledSeats: 1 });
     expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(0);
     const worker = new RefundCancelRetryWorker(db, provider as never, finalizer, boss as never);
     await worker.handleJob({ refundId: refund!.id, attempt: 1 });
     await worker.handleJob({ refundId: refund!.id, attempt: 1 });
     const [parentPayment] = await db.select().from(schema.payments).where(eq(schema.payments.id, ticket.paymentId));
-    expect(provider.cancelPayment.mock.calls.map(([key]) => key)).toEqual([parentPayment!.paymentKey, childKey]);
+    expect(provider.cancelPayment.mock.calls.map(([key]) => key)).toEqual(sample.originalRefund === 0 ? [childKey] : [parentPayment!.paymentKey, childKey]);
     expect((await f.service.ticketOptions(ticket.id, actor)).orders[0]).toMatchObject({ status: 'CANCELLED', refundStatus: 'completed', refundableAmount: sample.childRefund });
     expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(1);
   });

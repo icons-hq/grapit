@@ -30,6 +30,11 @@ function createChainMock(resolvedValue: unknown) {
   return new Proxy({}, handler);
 }
 
+function summarySelect(where: (condition: SQL) => unknown) {
+  const query = { innerJoin: () => query, leftJoin: () => query, where };
+  return { from: () => query };
+}
+
 function createMockDb() {
   return { select: vi.fn() };
 }
@@ -78,9 +83,7 @@ describe('AdminDashboardService', () => {
     it('offsets every refunded unissued charge by state, not by one cancel reason (audit #70 x u02)', async () => {
       mockCache.get.mockResolvedValue(null);
       const whereSpy = vi.fn((_condition: SQL) => createChainMock([{ count: 0, sum: 0 }]));
-      mockDb.select.mockReturnValue({
-        from: vi.fn(() => ({ innerJoin: vi.fn(() => ({ where: whereSpy })), where: whereSpy })),
-      });
+      mockDb.select.mockReturnValue(summarySelect(whereSpy));
 
       await service.getSummary();
 
@@ -100,11 +103,7 @@ describe('AdminDashboardService', () => {
     it('applies KST day boundary via where clause referencing reservations.createdAt', async () => {
       mockCache.get.mockResolvedValue(null);
       const whereSpy = vi.fn(() => createChainMock([{ count: 1 }]));
-      const fromSpy = vi.fn(() => ({
-        innerJoin: vi.fn(() => ({ where: whereSpy })),
-        where: whereSpy,
-      }));
-      mockDb.select.mockReturnValue({ from: fromSpy });
+      mockDb.select.mockReturnValue(summarySelect(whereSpy));
       await service.getSummary();
       // where가 적어도 한 번은 호출되고, 인자가 존재해야 함.
       // (구현 방식에 따라 SQL 조각에 'Asia/Seoul' 리터럴이 있을 수도, UTC boundary Date와 raw 컬럼 비교일 수도 있음.)
@@ -123,10 +122,10 @@ describe('AdminDashboardService', () => {
       const fromSpy = vi.fn(() => ({ where: whereSpy }));
       mockDb.select.mockReturnValue({ from: fromSpy });
       const result = await service.getRevenueTrend('90d' as DashboardPeriod);
-      const selectArg = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-      const serialized = JSON.stringify(selectArg);
+      const fields = mockDb.select.mock.calls[0]![0] as Record<string, SQL>;
+      const bucketSql = new PgDialect().sqlToQuery(fields.bucket!).sql;
       // 'week' granularity 표시 또는 IYYY-"W"IW 포맷 흔적
-      expect(serialized.toLowerCase()).toMatch(/week|iyyy/);
+      expect(bucketSql.toLowerCase()).toMatch(/week|iyyy/);
       // review MEDIUM 6: 빈 DB 결과에도 bucket skeleton이 채워져서 최소 1개 이상 (90d → 13 weeks skeleton)
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeGreaterThanOrEqual(1);
