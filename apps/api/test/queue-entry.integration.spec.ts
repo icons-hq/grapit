@@ -4,6 +4,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import IORedis from 'ioredis';
 import { ForbiddenException, HttpException, type ExecutionContext } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { Reflector } from '@nestjs/core';
+import { Test } from '@nestjs/testing';
+import cookieParser from 'cookie-parser';
+import request from 'supertest';
 import { eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -20,6 +26,10 @@ import {
   showtimes,
   users,
 } from '../src/database/schema/index.js';
+import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard.js';
+import { JwtStrategy } from '../src/modules/auth/strategies/jwt.strategy.js';
+import { UserRepository } from '../src/modules/user/user.repository.js';
+import { QueueController } from '../src/modules/queue/queue.controller.js';
 import { QueueService } from '../src/modules/queue/queue.service.js';
 import { AdmissionGuard } from '../src/modules/queue/guards/admission.guard.js';
 import type { QueueGateway } from '../src/modules/queue/queue.gateway.js';
@@ -91,6 +101,8 @@ describe('QueueService entry gate (integration)', () => {
   beforeEach(async () => {
     await db.delete(reservations);
     await db.delete(users);
+    await db.insert(users).values({ id: identity.userId, email: 'buyer@example.test', name: 'Buyer',
+      phone: '+821000000001', gender: 'unspecified', birthDate: '1990-01-01', isEmailVerified: true, isPhoneVerified: true });
     await db.delete(showtimes);
     await db.delete(bookingPolicies);
     await db.delete(performances);
@@ -129,6 +141,15 @@ describe('QueueService entry gate (integration)', () => {
     return performanceId;
   }
 
+  async function browserLogin(userId: string, family: string): Promise<string> {
+    const token = randomUUID();
+    await db.insert(refreshTokens).values({
+      userId, family, tokenHash: createHash('sha256').update(token).digest('hex'),
+      expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    return token;
+  }
+
   async function rejection(promise: Promise<unknown>): Promise<HttpException> {
     try {
       await promise;
@@ -153,6 +174,76 @@ describe('QueueService entry gate (integration)', () => {
     expect(error.getStatus()).toBe(404);
     expect(await queueKeysFor(unknownId)).toEqual([]);
     expect(await redis.dbsize()).toBe(0);
+  });
+
+  it.each(['isEmailVerified', 'isPhoneVerified'] as const)(
+    'refuses to allocate any queue key before %s is complete', async (flag) => {
+      const performanceId = await seedPerformance({ showtimeOffsetsMs: [3_600_000] });
+      await db.update(users).set({ [flag]: false }).where(eq(users.id, identity.userId));
+      await expect(service.enterPerformanceQueue({ performanceId, identity })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(await queueKeysFor(performanceId)).toEqual([]);
+    },
+  );
+
+  it('serves the same wait rank and admission clock to two authenticated HTTP cookie jars', async () => {
+    const performanceId = await seedPerformance({ showtimeOffsetsMs: [3_600_000] });
+    const secret = 'queue-http-integration-only';
+    const jwt = new JwtService({ secret }).sign({ sub: identity.userId }, { expiresIn: '1h' });
+    const desktop = await browserLogin(identity.userId, 'desktop');
+    const phone = await browserLogin(identity.userId, 'phone');
+    Reflect.defineMetadata('design:paramtypes', [QueueService], QueueController);
+    const module = await Test.createTestingModule({
+      controllers: [QueueController],
+      providers: [
+        { provide: QueueService, useValue: service },
+        { provide: JwtStrategy, useFactory: () =>
+          new JwtStrategy(new ConfigService({ auth: { jwtSecret: secret } }), new UserRepository(db)) },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    app.setGlobalPrefix('api/v1');
+    app.use(cookieParser());
+    app.useGlobalGuards(new JwtAuthGuard(new Reflector()));
+    try {
+      await app.listen(0, '127.0.0.1');
+      const api = request(app.getHttpServer());
+      const enter = (refresh: string) => api.post(`/api/v1/queue/performances/${performanceId}/enter`)
+        .auth(jwt, { type: 'bearer' }).set('Cookie', [`refreshToken=${refresh}`]);
+      const pcEntry = await enter(desktop).expect(201);
+      const phoneEntry = await enter(phone).expect(201);
+      const id = pcEntry.body.queueSessionId;
+      expect(phoneEntry.body).toMatchObject({ queueSessionId: id, state: 'WAITING', position: 1, waitingCount: 1 });
+      const cookie = (response: request.Response) => {
+        const setCookie = ([] as string[]).concat(response.headers['set-cookie'] ?? []);
+        return setCookie.find(value => value.startsWith('grabit_queue_admission='))!.split(';')[0]!;
+      };
+      const status = (refresh: string, admission: string) => api.get(`/api/v1/queue/sessions/${id}`)
+        .auth(jwt, { type: 'bearer' }).set('Cookie', [`refreshToken=${refresh}`, admission]);
+      await seedSeatMap(performanceId, 1);
+      await redis.del(`{queue:${performanceId}}:remaining-seats`, `{queue:${performanceId}}:reconcile-throttle`);
+      const pcStatus = await status(desktop, cookie(pcEntry)).expect(200);
+      const phoneStatus = await status(phone, cookie(phoneEntry)).expect(200);
+      expect(pcStatus.body.state).toBe('ADMITTED');
+      expect(phoneStatus.body).toMatchObject({ state: 'ADMITTED', admittedAt: pcStatus.body.admittedAt,
+        activeUntilAt: pcStatus.body.activeUntilAt, queueSessionId: id });
+      await status(phone, cookie(pcEntry)).expect(403);
+      expect(await redis.scard(`{queue:${performanceId}}:active`)).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('keeps independent positions for two performances of the same account', async () => {
+    const first = await seedPerformance({ showtimeOffsetsMs: [3_600_000] });
+    const second = await seedPerformance({ showtimeOffsetsMs: [3_600_000] });
+    const [a, b] = await Promise.all([first, second].map(performanceId =>
+      service.enterPerformanceQueue({ performanceId, identity })));
+    const phone = { ...identity, refreshTokenFamilyId: 'another-device', deviceSlotId: 'another-device' };
+    expect(a.queueSessionId).not.toBe(b.queueSessionId);
+    await expect(service.enterPerformanceQueue({ performanceId: second, identity: phone }))
+      .resolves.toMatchObject({ queueSessionId: b.queueSessionId, position: 1 });
+    await expect(service.enterPerformanceQueue({ performanceId: first.toUpperCase(), identity: phone }))
+      .resolves.toMatchObject({ queueSessionId: a.queueSessionId, position: 1 });
   });
 
   it('hides unpublished performances from public entry', async () => {
@@ -275,6 +366,7 @@ describe('QueueService entry gate (integration)', () => {
       phone: '+821012345678',
       gender: 'unspecified',
       birthDate: '1990-01-01',
+      isEmailVerified: true, isPhoneVerified: true,
     }).returning();
     const buyerIdentity = {
       userId: buyer!.id,
@@ -350,21 +442,12 @@ describe('QueueService entry gate (integration)', () => {
       phone: '+821012345679',
       gender: 'unspecified',
       birthDate: '1990-01-01',
+      isEmailVerified: true, isPhoneVerified: true,
     }).returning();
     // Two signed-in browsers of the same buyer: the PC that prepared the order
     // and a phone that opens "continue payment" from the reservation list.
-    const refreshToken = async (family: string) => {
-      const token = `refresh-${family}-${randomUUID()}`;
-      await db.insert(refreshTokens).values({
-        userId: buyer!.id,
-        tokenHash: createHash('sha256').update(token).digest('hex'),
-        family,
-        expiresAt: new Date(Date.now() + 86_400_000),
-      });
-      return token;
-    };
-    const pcRefresh = await refreshToken('family-pc');
-    const phoneRefresh = await refreshToken('family-phone');
+    const pcRefresh = await browserLogin(buyer!.id, 'family-pc');
+    const phoneRefresh = await browserLogin(buyer!.id, 'family-phone');
     const pcIdentity = {
       userId: buyer!.id,
       refreshTokenFamilyId: 'family-pc',
@@ -427,19 +510,19 @@ describe('QueueService entry gate (integration)', () => {
       admissionToken: 'order-bound',
     });
 
-    // Like payment confirm, a live admission of the other browser for the same
-    // performance is the fallback.
+    // Moving devices shares the expired place, not a new window or the PC order binding.
     const phoneAdmission = await service.enterPerformanceQueue({
       performanceId,
       identity: { userId: buyer!.id, refreshTokenFamilyId: 'family-phone', deviceSlotId: 'family-phone' },
     });
-    expect(phoneAdmission.state).toBe('ADMITTED');
+    expect(phoneAdmission).toMatchObject({ state: 'EXPIRED', queueSessionId: admitted.queueSessionId });
+    expect(phoneAdmission.recoveryOrderId).toBeUndefined();
     const admittedPhone = branchRequest({
       refreshToken: phoneRefresh,
       grabit_queue_admission: phoneAdmission.admissionToken!,
     });
-    await expect(guard.canActivate(admittedPhone.context)).resolves.toBe(true);
-    expect(admittedPhone.request.queueAdmission?.queueSessionId).toBe(phoneAdmission.queueSessionId);
+    await expect(guard.canActivate(admittedPhone.context)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(pc.context)).resolves.toBe(true);
 
     const [unchanged] = await db.select().from(reservations).where(eq(reservations.id, order!.id));
     expect(unchanged).toMatchObject({

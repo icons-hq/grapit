@@ -10,6 +10,9 @@ import {
   QUEUE_SESSION_TRANSITION_LUA,
   READ_QUEUE_CAPACITY_LUA,
 } from '../src/modules/queue/queue-redis-scripts.js';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
+import { users } from '../src/database/schema/users.js';
 import { performances } from '../src/database/schema/performances.js';
 import { reservations } from '../src/database/schema/reservations.js';
 import { seatInventories } from '../src/database/schema/seat-inventories.js';
@@ -71,7 +74,8 @@ function createQueueDb(state: DbState) {
   return {
     select: (selection: Record<string, unknown> = {}) => ({
       from: (table: unknown) => {
-        const rows = (): unknown[] => {
+        const rows = (where?: SQL): unknown[] => {
+          if (table === users && where) return new PgDialect().sqlToQuery(where).params.map(id => ({ id }));
           if (table === seatMaps) return [{ totalSeats: state.totalSeats }];
           if (table === seatInventories) return [{ total: state.soldCount }];
           if (table === reservations) return [];
@@ -95,8 +99,8 @@ function createQueueDb(state: DbState) {
           return [];
         };
         const chain = {
-          where: async () => {
-            const result = rows();
+          where: async (where?: SQL) => {
+            const result = rows(where);
             if (table === seatInventories) await state.afterSoldCountRead?.();
             return result;
           },
@@ -321,6 +325,64 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
     ].map((key) => cluster.call('CLUSTER', 'KEYSLOT', key)));
 
     expect(new Set(slots).size).toBe(1);
+  });
+
+  it('shares one position across API instances and devices until the original admission expires', async () => {
+    const phone = { ...browserA, refreshTokenFamilyId: 'phone', deviceSlotId: 'phone' };
+    const second = new QueueService(cluster as unknown as IORedis, createQueueDb(dbState) as never, gateway as never);
+    const [pc, mobile] = await Promise.all([
+      service.enterPerformanceQueue({ performanceId, identity: browserA }),
+      second.enterPerformanceQueue({ performanceId, identity: phone }),
+    ]);
+    expect(mobile).toMatchObject({ queueSessionId: pc.queueSessionId, state: 'WAITING', position: 1 });
+    expect(mobile.admissionToken).not.toBe(pc.admissionToken);
+    const prefix = `{queue:${performanceId}}`;
+    expect(await cluster.zcard(`${prefix}:waiting`)).toBe(1);
+    dbState.totalSeats = 1;
+    await cluster.del(`${prefix}:remaining-seats`, `${prefix}:reconcile-throttle`);
+    const admitted = await second.enterPerformanceQueue({ performanceId, identity: phone, presentedAdmissionToken: mobile.admissionToken });
+    expect(admitted.state).toBe('ADMITTED');
+    const desktop = await service.getQueueSessionStatus({ queueSessionId: pc.queueSessionId, identity: browserA, admissionToken: pc.admissionToken });
+    expect(desktop).toMatchObject({ state: 'ADMITTED', admittedAt: admitted.admittedAt, activeUntilAt: admitted.activeUntilAt });
+    expect(await cluster.scard(`${prefix}:active`)).toBe(1);
+    await expect(service.getQueueSessionStatus({ queueSessionId: pc.queueSessionId, identity: browserA, admissionToken: mobile.admissionToken })).rejects.toThrow();
+  });
+
+  it.each(['WAITING', 'ADMITTED'] as const)('adopts the best legacy %s place when a new device first enters', async (state) => {
+    const prefix = `{queue:${performanceId}}`;
+    const now = Date.now();
+    const ids = ['legacy-first', 'legacy-second'];
+    for (const [i, id] of ids.entries()) {
+      const admitted = state === 'ADMITTED' && i === 1;
+      const family = 'old-device-' + i;
+      const record = { queueSessionId: id, performanceId, userId: browserA.userId,
+        refreshTokenFamilyId: family, deviceSlotId: family, admissionTokenHash: hashToken('old-cookie-' + i),
+        queueOrder: String(now + i), enteredAt: new Date(now - i).toISOString(), state: admitted ? 'ADMITTED' : 'WAITING',
+        admittedAt: admitted ? new Date(now - 480_000).toISOString() : null,
+        activeUntilAt: admitted ? new Date(now + 120_000).toISOString() : null,
+        reentryGraceUntilAt: admitted ? new Date(now + 300_000).toISOString() : null,
+        paymentRecoveryUntilAt: null, expiresAt: new Date(now + 600_000).toISOString() };
+      await cluster.set(`${prefix}:session:${id}`, JSON.stringify(record), 'PX', 600_000);
+      await cluster.set(`${prefix}:identity:${browserA.userId}:${family}:${family}`, id, 'PX', 600_000);
+      await cluster.set(`{queue:session-ref}:${id}`, performanceId, 'PX', 600_000);
+      if (admitted) await cluster.sadd(`${prefix}:active`, id);
+      else await cluster.zadd(`${prefix}:waiting`, now+i, id);
+    }
+    const moved = await service.enterPerformanceQueue({ performanceId, identity: browserA });
+    expect(moved.queueSessionId).toBe(state === 'ADMITTED' ? ids[1] : ids[0]);
+    expect(moved.state).toBe(state);
+    expect(await cluster.scard(`${prefix}:active`) + await cluster.zcard(`${prefix}:waiting`)).toBe(1);
+    if (state === 'ADMITTED') expect(moved.activeUntilAt).toBe(new Date(now + 120_000).toISOString());
+    else expect(moved.position).toBe(1);
+    const losingIndex = state === 'ADMITTED' ? 0 : 1;
+    const family = 'old-device-' + losingIndex;
+    const losingBrowser = { userId: browserA.userId, refreshTokenFamilyId: family, deviceSlotId: family };
+    const migrated = await service.getQueueSessionStatus({ queueSessionId: ids[losingIndex]!,
+      identity: losingBrowser, admissionToken: 'old-cookie-' + losingIndex });
+    expect(migrated).toMatchObject({ state, queueSessionId: moved.queueSessionId, activeUntilAt: moved.activeUntilAt });
+    expect(migrated.replacementAdmissionToken).toBeTruthy();
+    await expect(service.getQueueSessionStatus({ queueSessionId: moved.queueSessionId, identity: losingBrowser,
+      admissionToken: migrated.replacementAdmissionToken! })).resolves.toMatchObject({ state });
   });
 
   it('creates exactly one queue position for concurrent first entries (#26)', async () => {

@@ -1,3 +1,4 @@
+import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
 import { quoteTicketAddons, requirePurchasableTicket, reserveTicketAddons } from '../../database/ticket-holder-addons.js';
 import { reservationAddonChoices, reservationAddonTotal, selectAddonHoldsForOrder } from '../../database/booking-addon-inventory.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
@@ -78,7 +79,6 @@ import {
   BookingService,
   BOOKING_ENDED_MESSAGE,
   BOOKING_NOT_OPEN_MESSAGE,
-  BOOKING_VERIFICATION_REQUIRED_MESSAGE,
   buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -318,12 +318,6 @@ export async function lockActiveBuyerAccount(
   }
   if ((row.account_status ?? 'active') !== 'active') {
     throw new ForbiddenException(INACTIVE_BUYER_ACCOUNT_MESSAGE);
-  }
-}
-
-function assertBookingVerificationComplete(actor: BookingActor): void {
-  if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
-    throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
   }
 }
 

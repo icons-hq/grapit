@@ -12,10 +12,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { and, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type IORedis from 'ioredis';
+import { BOOKING_VERIFICATION_REQUIRED_MESSAGE } from '../../common/booking-verification.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
+import { users } from '../../database/schema/users.js';
 import { refreshTokens } from '../../database/schema/refresh-tokens.js';
 import { reservations } from '../../database/schema/reservations.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
@@ -31,6 +33,7 @@ import {
 import { QueueGateway } from './queue.gateway.js';
 import { FreshReadBatcher, coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
+  CLAIM_QUEUE_ACCOUNT_LUA,
   CACHE_QUEUE_CAPACITY_LUA,
   COUNT_VALID_LOCKED_SEATS_LUA,
   CREATE_QUEUE_SESSION_LUA,
@@ -77,6 +80,7 @@ const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
 // any more (C1). Older releases read it as 0 remaining seats.
 const QUEUE_REMAINING_SEATS_NO_BOOKABLE_SHOWTIME = 'no-bookable-showtime';
 const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
+const QUEUE_INDEX_BATCH_SIZE = 128;
 const QUEUE_ENTER_MAX_PASSES = 2;
 // Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
 // min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active. A slot is
@@ -208,6 +212,8 @@ type QueueSessionRecord = {
   admissionTokenHash: string;
   state: QueueSessionState;
   enteredAt: string;
+  accountIndexed?: boolean;
+  mergedInto?: string;
   /** Redis-assigned registration order; absent on legacy sessions. */
   queueOrder?: string;
   admittedAt: string | null;
@@ -223,6 +229,7 @@ export type QueueSessionLease = QueueIdentity & {
   // Set when the session's active window has ended and only payment recovery
   // of this pending order (its toss order id) remains.
   recoveryOrderId?: string;
+  otherBrowserRecovery?: boolean;
 };
 
 export type QueueSessionSnapshot = {
@@ -243,6 +250,10 @@ export type QueueSessionSnapshot = {
   recoveryOrderId?: string;
 };
 
+// A secondary browser has its own opaque cookie. Its hash indexes this binding;
+// a device change never rotates the other browser's credential or the seat clock.
+type BrowserAdmissionBinding = QueueIdentity & { queueSessionId: string };
+
 type QueueEnterResult = QueueSessionSnapshot & {
   admissionToken: string;
 };
@@ -260,6 +271,7 @@ type QueueActionParams = {
   identity: QueueIdentity;
   admissionToken: string;
   action: QueueAction;
+  orderQueueSessionOnOtherDevice?: string;
 };
 
 export type ValidatedAdmission = QueueIdentity & {
@@ -290,7 +302,7 @@ type QueueSnapshotOptions = {
   context?: QueueSnapshotContext;
   // Remaining seats the caller already read; only the waiting counters are read.
   remainingSeats?: number;
-  // The pending order found by findRecoveryOrderId.
+  // The pending order found by findRecoveryOrder.
   recoveryOrderId?: string;
   // The instant the caller judged the admission window at. One request judges
   // it once, so a window that ends during the snapshot reads is not judged
@@ -402,39 +414,150 @@ export class QueueService {
     };
   }
 
+  private async readVerifiedBuyerIds(ids: readonly string[]): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+    const buyers = await this.db.select({ id: users.id }).from(users).where(and(
+      inArray(users.id, [...new Set(ids)]),
+      eq(users.accountStatus, 'active'),
+      eq(users.isEmailVerified, true),
+      eq(users.isPhoneVerified, true),
+    ));
+    return new Set(buyers.map((buyer) => buyer.id));
+  }
+
+  private readonly entryEligibility = new FreshReadBatcher<string, true>(async (ids) => {
+    const buyers = await this.readVerifiedBuyerIds(ids);
+    return new Map([...buyers].map(id => [id, true] as const));
+  });
+
+  private async claimLegacyPositions(performanceId: string, userId: string, ids: string[]): Promise<string | null> {
+    const id = await this.redis.eval(
+      CLAIM_QUEUE_ACCOUNT_LUA, 3 + ids.length,
+      this.accountKey(performanceId, userId),
+      this.waitingQueueKey(performanceId),
+      this.activeAdmissionsKey(performanceId),
+      ...ids.map((sessionId) => this.sessionKey(performanceId, sessionId)),
+      userId, new Date().toISOString(),
+    );
+    return typeof id === 'string' && id ? id : null;
+  }
+
+  // Old releases indexed by browser. Adopt all live positions before the first
+  // account-scoped entry, including a buyer returning on a previously unseen phone.
+  // Snapshot member IDs, read records in batches, and merge each account atomically.
+  private readonly indexLegacyQueue = coalesceFreshReads(async (performanceId: string) => {
+    const marker = `${this.queuePrefix(performanceId)}:accounts-indexed`;
+    if (await this.redis.get(marker)) return;
+    const [active, waiting] = await Promise.all([
+      this.redis.smembers(this.activeAdmissionsKey(performanceId)),
+      this.redis.zrange(this.waitingQueueKey(performanceId), 0, -1),
+    ]);
+    const ids = [...new Set([...active, ...waiting])];
+    const byBuyer = new Map<string, string[]>();
+    for (let i = 0; i < ids.length; i += QUEUE_INDEX_BATCH_SIZE) {
+      const records = await this.readQueueSessionRecords(performanceId, ids.slice(i, i + QUEUE_INDEX_BATCH_SIZE));
+      this.collectLegacyPositions(records, byBuyer);
+    }
+    await this.mergeLegacyAccounts(performanceId, byBuyer);
+    await this.redis.set(marker, '1');
+  });
+
+  private collectLegacyPositions(records: Array<QueueSessionRecord | null>, byBuyer: Map<string, string[]>): void {
+    for (const record of records) {
+      if (!record || record.accountIndexed || record.state === EXPIRED) continue;
+      const positions = byBuyer.get(record.userId) ?? [];
+      positions.push(record.queueSessionId);
+      byBuyer.set(record.userId, positions);
+    }
+  }
+
+  private async mergeLegacyAccounts(performanceId: string, byBuyer: Map<string, string[]>): Promise<void> {
+    const buyers = [...byBuyer.keys()];
+    for (let i = 0; i < buyers.length; i += QUEUE_INDEX_BATCH_SIZE) {
+      const batch = buyers.slice(i, i + QUEUE_INDEX_BATCH_SIZE);
+      const verified = await this.readVerifiedBuyerIds(batch);
+      await Promise.all(batch.map(async (userId) => {
+        const positions = byBuyer.get(userId)!;
+        if (verified.has(userId)) {
+          await this.claimLegacyPositions(performanceId, userId, positions);
+        } else {
+          for (const record of await this.readQueueSessionRecords(performanceId, positions)) {
+            if (record && record.state !== EXPIRED) await this.expireQueueSession(record);
+          }
+        }
+      }));
+    }
+  }
+
+  // A request already in flight on an older revision can add a browser-scoped
+  // member after the initial pass. Reconcile it before counting or promoting it.
+  private async readIndexedMembers(performanceId: string, ids: string[]): Promise<Array<QueueSessionRecord | null>> {
+    const records = await this.readQueueSessionRecords(performanceId, ids);
+    const byBuyer = new Map<string, string[]>();
+    this.collectLegacyPositions(records, byBuyer);
+    if (byBuyer.size === 0) return records;
+    await this.mergeLegacyAccounts(performanceId, byBuyer);
+    return this.readQueueSessionRecords(performanceId, ids);
+  }
+
   async ensureQueueSession(params: {
     performanceId: string;
     identity: QueueIdentity;
     presentedAdmissionToken?: string;
   }): Promise<QueueSessionLease> {
-    const { performanceId, identity } = params;
-    const identityKey = this.identityKey(performanceId, identity);
+    const performanceId = params.performanceId.toLowerCase();
+    const { identity } = params;
+    await this.indexLegacyQueue(performanceId);
+    const identityKey = this.accountKey(performanceId, identity.userId);
+    const legacyKey = `${this.queuePrefix(performanceId)}:identity:${identity.userId}:${identity.refreshTokenFamilyId}:${identity.deviceSlotId}`;
 
     // Every write below is a conditional Redis script, so a lost race (another tab
     // creating the session, or reconcile admitting it) re-reads instead of
     // overwriting the newer state.
     for (let attempt = 0; attempt < QUEUE_SESSION_SETUP_MAX_ATTEMPTS; attempt += 1) {
       const now = new Date();
-      const existingSessionId = await this.redis.get(identityKey);
+      const [owner, legacyId] = await Promise.all([this.redis.get(identityKey), this.redis.get(legacyKey)]);
+      let existingSessionId = owner;
+      if (legacyId && legacyId !== owner) {
+        if (!owner) {
+          // An expired session can still have a payable order outside both membership sets.
+          existingSessionId = await this.claimLegacyPositions(performanceId, identity.userId, [legacyId]);
+        } else {
+          const old = await this.readQueueSessionRecord(performanceId, legacyId);
+          if (old?.mergedInto && old.admittedAt && this.sameBrowser(old, identity)) {
+            const order = await this.findRecoveryOrder(old, identity, now.getTime());
+            if (order?.ownedByBrowser) {
+              const recovery = await this.reuseQueueSession(old, identity, params.presentedAdmissionToken, now, { allowExpired: true });
+              if (recovery) return { ...recovery, recoveryOrderId: order.orderId };
+            }
+          }
+        }
+      }
 
       if (existingSessionId) {
         let record = await this.readQueueSessionRecord(performanceId, existingSessionId);
 
+        if (record && (record.userId !== identity.userId || record.mergedInto)) {
+          throw new ConflictException('대기열 세션이 변경되었습니다. 다시 입장해주세요.');
+        }
         // An admission whose active window has ended is never handed out as an
         // admission again: seat lock and prepare would refuse it anyway. Only a
         // pending order bound to it keeps it, for payment recovery; otherwise it
         // is expired and the browser takes a new waiting position below.
         if (record && this.isAdmissionWindowClosed(record, now.getTime())) {
-          const recoveryOrderId = await this.findRecoveryOrderId(record, now.getTime());
-          if (recoveryOrderId) {
+          const recoveryOrder = await this.findRecoveryOrder(record, identity, now.getTime());
+          if (recoveryOrder) {
             const recovery = await this.reuseQueueSession(
               record,
+              identity,
               params.presentedAdmissionToken,
               now,
               { allowExpired: true },
             );
             if (recovery) {
-              return { ...recovery, recoveryOrderId };
+              return recoveryOrder.ownedByBrowser
+                ? { ...recovery, recoveryOrderId: recoveryOrder.orderId }
+                : { ...recovery, otherBrowserRecovery: true };
             }
             continue;
           }
@@ -449,6 +572,7 @@ export class QueueService {
         } else if (record && this.isReusable(record, now)) {
           const reused = await this.reuseQueueSession(
             record,
+            identity,
             params.presentedAdmissionToken,
             now,
           );
@@ -478,22 +602,18 @@ export class QueueService {
 
   private async reuseQueueSession(
     record: QueueSessionRecord,
+    identity: QueueIdentity,
     presentedAdmissionToken: string | undefined,
     now: Date,
     options: { allowExpired?: boolean } = {},
   ): Promise<QueueSessionLease | null> {
-    // Re-entry from the browser that already holds the current token keeps it,
-    // so several tabs sharing one cookie jar do not invalidate each other.
-    const keepPresentedToken =
-      typeof presentedAdmissionToken === 'string'
-      && presentedAdmissionToken.length > 0
-      && this.hashAdmissionToken(presentedAdmissionToken) === record.admissionTokenHash;
-    const admissionToken = keepPresentedToken
-      ? presentedAdmissionToken
-      : this.generateAdmissionToken();
-
+    const primaryBrowser = this.sameBrowser(record, identity);
+    const keepPresentedToken = presentedAdmissionToken && (primaryBrowser
+      ? this.hashAdmissionToken(presentedAdmissionToken) === record.admissionTokenHash
+      : await this.matchesSecondaryToken(record, identity, presentedAdmissionToken));
+    const admissionToken = presentedAdmissionToken && keepPresentedToken ? presentedAdmissionToken : this.generateAdmissionToken();
     const result = await this.transitionQueueSession(record, 'touch', [
-      keepPresentedToken ? '' : this.hashAdmissionToken(admissionToken),
+      primaryBrowser && !keepPresentedToken ? this.hashAdmissionToken(admissionToken) : '',
       ...this.buildWaitingRenewalArgs(record, now),
       // A retained EXPIRED session only gets a new token (payment recovery).
       options.allowExpired ? '1' : '',
@@ -503,7 +623,19 @@ export class QueueService {
     }
 
     await this.syncQueueSessionIndexes(result);
-    return this.toLease(result.record, admissionToken);
+    if (!primaryBrowser) {
+      const binding: BrowserAdmissionBinding = {
+        queueSessionId: record.queueSessionId,
+        userId: identity.userId,
+        refreshTokenFamilyId: identity.refreshTokenFamilyId,
+        deviceSlotId: identity.deviceSlotId,
+      };
+      await this.redis.set(
+        this.admissionTokenKey(this.hashAdmissionToken(admissionToken)),
+        JSON.stringify(binding), 'EX', QUEUE_WAIT_SESSION_SECONDS,
+      );
+    }
+    return { ...identity, queueSessionId: record.queueSessionId, admissionToken };
   }
 
   private async createQueueSession(
@@ -515,6 +647,7 @@ export class QueueService {
     const admissionToken = this.generateAdmissionToken();
     const record: QueueSessionRecord = {
       queueSessionId: randomUUID(),
+      accountIndexed: true,
       performanceId,
       userId: identity.userId,
       refreshTokenFamilyId: identity.refreshTokenFamilyId,
@@ -568,35 +701,39 @@ export class QueueService {
     actorRole?: string;
     presentedAdmissionToken?: string;
   }): Promise<QueueEnterResult> {
-    await this.assertPerformanceBookingOpen(params.performanceId, params.actorRole);
+    const performanceId = params.performanceId.toLowerCase();
+    await this.assertPerformanceBookingOpen(performanceId, params.actorRole);
+    if (!(await this.entryEligibility.read(params.identity.userId))) {
+      throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+    }
 
-    // Entry never answers with an expired session: when the session it found
+    // Unless another device is finishing its bound order, when the session
     // ended while this request ran (a reconcile expired it, or its recovery
     // order was paid or cancelled), the second pass replaces it with a new
     // waiting position.
     for (let attempt = 1; ; attempt += 1) {
-      const lease = await this.ensureQueueSession(params);
-      if (!lease.recoveryOrderId) {
+      const lease = await this.ensureQueueSession({ ...params, performanceId });
+      if (!lease.recoveryOrderId && !lease.otherBrowserRecovery) {
         if (params.bypassQueue) {
-          await this.admitQueueSession(params.performanceId, lease.queueSessionId);
+          await this.admitQueueSession(performanceId, lease.queueSessionId);
         } else {
-          await this.reconcilePerformanceQueueIfDue(params.performanceId);
+          await this.reconcilePerformanceQueueIfDue(performanceId);
           // The reconcile above is throttled; admit this session directly when every
           // session ahead of it also fits into the free slots.
-          await this.admitQueueSessionWithinCapacity(params.performanceId, lease.queueSessionId);
+          await this.admitQueueSessionWithinCapacity(performanceId, lease.queueSessionId);
         }
       }
 
-      const snapshot = await this.getQueueSessionStatus({
+      const { replacementAdmissionToken, ...snapshot } = await this.getQueueSessionStatus({
         queueSessionId: lease.queueSessionId,
         identity: lease,
         admissionToken: lease.admissionToken,
       });
 
-      if (snapshot.state !== EXPIRED || attempt >= QUEUE_ENTER_MAX_PASSES) {
+      if (lease.otherBrowserRecovery || snapshot.state !== EXPIRED || attempt >= QUEUE_ENTER_MAX_PASSES) {
         return {
           ...snapshot,
-          admissionToken: lease.admissionToken,
+          admissionToken: replacementAdmissionToken ?? lease.admissionToken,
         };
       }
     }
@@ -705,7 +842,7 @@ export class QueueService {
     }
   }
 
-  async getQueueSessionStatus(params: QueueStatusParams): Promise<QueueSessionSnapshot> {
+  async getQueueSessionStatus(params: QueueStatusParams): Promise<QueueSessionSnapshot & { replacementAdmissionToken?: string }> {
     const performanceId = await this.redis.get(this.sessionRefKey(params.queueSessionId));
     if (!performanceId) {
       throw new NotFoundException('대기열 세션을 찾을 수 없습니다');
@@ -713,13 +850,15 @@ export class QueueService {
 
     await this.reconcilePerformanceQueueIfDue(performanceId);
 
-    const record = await this.readQueueSessionRecord(performanceId, params.queueSessionId);
+    const record = await this.readIndexedRecord(performanceId, params.queueSessionId);
     if (!record) {
       throw new NotFoundException('대기열 세션을 찾을 수 없습니다');
     }
 
-    this.assertRecordMatchesIdentity(record, params.identity);
-    this.assertAdmissionTokenMatches(record, params.admissionToken);
+    await this.assertBrowserCredential(record, params.identity, params.admissionToken);
+    if (!this.sameBrowser(record, params.identity)) {
+      await this.redis.expire(this.admissionTokenKey(this.hashAdmissionToken(params.admissionToken)), QUEUE_WAIT_SESSION_SECONDS);
+    }
 
     // Same sales cutoff (C1) as queue entry: once every showtime has started
     // nobody is admitted any more, so the waiting line is closed.
@@ -738,9 +877,20 @@ export class QueueService {
     const now = Date.now();
     const snapshotOptions = { now, remainingSeats: seats.remainingSeats };
     if (this.isAdmissionWindowClosed(record, now)) {
-      const recoveryOrderId = await this.findRecoveryOrderId(record, now);
-      if (recoveryOrderId) {
-        return this.buildSnapshot(record, { ...snapshotOptions, recoveryOrderId });
+      const recoveryOrder = await this.findRecoveryOrder(record, params.identity, now);
+      if (recoveryOrder) {
+        return this.buildSnapshot(record, { ...snapshotOptions,
+          recoveryOrderId: recoveryOrder.ownedByBrowser ? recoveryOrder.orderId : undefined });
+      }
+      if (record.mergedInto) {
+        const winner = await this.readQueueSessionRecord(performanceId, record.mergedInto);
+        if (winner && winner.userId === record.userId && this.isReusable(winner, new Date(now)) && !this.isAdmissionWindowClosed(winner, now)) {
+          const lease = await this.reuseQueueSession(winner, params.identity, params.admissionToken, new Date(now));
+          if (lease) {
+            const snapshot = await this.getQueueSessionStatus({ ...params, queueSessionId: lease.queueSessionId, admissionToken: lease.admissionToken });
+            return { ...snapshot, replacementAdmissionToken: lease.admissionToken };
+          }
+        }
       }
       return this.buildSnapshot(
         record.state === EXPIRED ? record : await this.expireQueueSession(record),
@@ -779,10 +929,11 @@ export class QueueService {
    * refuse such an order, so it must not hold the buyer in payment recovery
    * (autoEnter false) instead of a new waiting position for another showtime.
    */
-  private async findRecoveryOrderId(
+  private async findRecoveryOrder(
     record: QueueSessionRecord,
+    identity: QueueIdentity,
     now: number,
-  ): Promise<string | null> {
+  ): Promise<{ orderId: string; ownedByBrowser: boolean } | null> {
     const nowDate = new Date(now);
     const rows = await this.db
       .select({
@@ -813,7 +964,7 @@ export class QueueService {
         ),
       );
 
-    let best: { orderId: string; endsAt: number } | null = null;
+    let best: { orderId: string; endsAt: number; ownedByBrowser: boolean } | null = null;
     for (const row of rows) {
       if (!row.tossOrderId || row.queueSessionId !== record.queueSessionId) {
         continue;
@@ -821,7 +972,14 @@ export class QueueService {
       if (isShowtimeSalesClosed(row.showtimeAt, nowDate)) {
         continue;
       }
-      const admission = this.resolveOrderBoundAdmission(row, record, record.userId, now);
+      if (!row.refreshFamilyId || !row.deviceSlotKey) continue;
+      const orderBrowser = {
+        userId: record.userId,
+        refreshTokenFamilyId: row.refreshFamilyId,
+        deviceSlotId: row.deviceSlotKey,
+      };
+      const ownedByBrowser = this.sameBrowser(orderBrowser, identity);
+      const admission = this.resolveOrderBoundAdmission(row, orderBrowser, record.userId, now);
       if (!admission || row.status !== 'PENDING_PAYMENT') {
         continue;
       }
@@ -830,12 +988,13 @@ export class QueueService {
           .filter((value): value is Date => this.isValidDate(value))
           .map((value) => value.getTime()),
       );
-      if (!best || endsAt > best.endsAt) {
-        best = { orderId: row.tossOrderId, endsAt };
+      if (!best || (ownedByBrowser && !best.ownedByBrowser)
+        || (ownedByBrowser === best.ownedByBrowser && endsAt > best.endsAt)) {
+        best = { orderId: row.tossOrderId, endsAt, ownedByBrowser };
       }
     }
 
-    return best?.orderId ?? null;
+    return best;
   }
 
   /**
@@ -941,11 +1100,16 @@ export class QueueService {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
+    const otherBrowser = reservation.refreshFamilyId && reservation.deviceSlotKey && (
+      reservation.refreshFamilyId !== params.identity.refreshTokenFamilyId ||
+      reservation.deviceSlotKey !== params.identity.deviceSlotId
+    );
     return this.assertAdmissionForPerformance({
       performanceId: reservation.performanceId,
       identity: params.identity,
       admissionToken: params.admissionToken,
       action: 'confirm-payment',
+      orderQueueSessionOnOtherDevice: otherBrowser ? reservation.queueSessionId ?? undefined : undefined,
     });
   }
 
@@ -1090,12 +1254,11 @@ export class QueueService {
   ): Promise<ValidatedAdmission> {
     // Booking mutations never run the queue reconcile inline; queue status
     // polls and entries drive it so seat locks and payment confirms stay fast.
-    const record = await this.findQueueSessionByAdmissionToken(params.admissionToken);
+    const record = await this.findQueueSessionByAdmissionToken(params.admissionToken, params.identity);
     if (!record) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
     }
 
-    this.assertRecordMatchesIdentity(record, params.identity);
     if (record.performanceId !== params.performanceId) {
       throw new ForbiddenException('대기열 입장 정보가 현재 공연과 일치하지 않습니다');
     }
@@ -1117,6 +1280,12 @@ export class QueueService {
     const hasActiveAuthority = activeUntilAt !== null && now <= activeUntilAt;
     const hasPaymentRecoveryAuthority =
       paymentRecoveryUntilAt !== null && now <= paymentRecoveryUntilAt;
+
+    // An independently authenticated device can use the normal live-admission
+    // fallback. Only the device that prepared the order inherits payment-only grace.
+    if (!hasActiveAuthority && record.queueSessionId === params.orderQueueSessionOnOtherDevice) {
+      throw new ForbiddenException('이 결제를 시작한 브라우저에서 계속해주세요.');
+    }
 
     if (params.action === 'confirm-payment') {
       if (!hasActiveAuthority && !hasPaymentRecoveryAuthority) {
@@ -1146,9 +1315,9 @@ export class QueueService {
 
     return {
       queueSessionId: currentRecord.queueSessionId,
-      userId: currentRecord.userId,
-      refreshTokenFamilyId: currentRecord.refreshTokenFamilyId,
-      deviceSlotId: currentRecord.deviceSlotId,
+      userId: params.identity.userId,
+      refreshTokenFamilyId: params.identity.refreshTokenFamilyId,
+      deviceSlotId: params.identity.deviceSlotId,
       admittedAt: currentRecord.admittedAt,
       activeUntilAt: currentRecord.activeUntilAt,
       reentryGraceUntilAt: currentRecord.reentryGraceUntilAt,
@@ -1156,6 +1325,7 @@ export class QueueService {
   }
 
   private async reconcilePerformanceQueue(performanceId: string): Promise<void> {
+    await this.indexLegacyQueue(performanceId);
     await this.expireStaleSessions(performanceId);
 
     // No showtime on sale (C1) reads as 0 remaining seats: nobody is admitted.
@@ -1222,7 +1392,8 @@ export class QueueService {
         break;
       }
 
-      const records = await this.readQueueSessionRecords(performanceId, waitingIds);
+      const records = await this.readIndexedMembers(performanceId, waitingIds);
+      const verified = await this.readVerifiedBuyerIds(records.flatMap((record) => record?.state === WAITING ? [record.userId] : []));
       const admissionArgs = [...this.buildAdmissionArgs(new Date()), String(capacity), capacityVersion];
       const results = await Promise.all(
         waitingIds.map((queueSessionId, index) => {
@@ -1231,6 +1402,9 @@ export class QueueService {
             return this.redis
               .zrem(this.waitingQueueKey(performanceId), queueSessionId)
               .then(() => null);
+          }
+          if (record.state === WAITING && !verified.has(record.userId)) {
+            return this.expireQueueSession(record).then(() => null);
           }
           return this.transitionQueueSession(record, 'admit', admissionArgs);
         }),
@@ -1304,7 +1478,7 @@ export class QueueService {
       return;
     }
 
-    const records = await this.readQueueSessionRecords(performanceId, activeIds);
+    const records = await this.readIndexedMembers(performanceId, activeIds);
     const now = Date.now();
     const missingIds: string[] = [];
     const tasks: Promise<unknown>[] = [];
@@ -1439,7 +1613,7 @@ export class QueueService {
   }
 
   /**
-   * `recoveryOrderId` is the pending order found by findRecoveryOrderId; with
+   * `recoveryOrderId` is the pending order found by findRecoveryOrder; with
    * it a session whose active window ended reports PAYMENT_RECOVERY (payment
    * of that order only, autoEnter false, no new window). `now` is the instant
    * the caller judged the window at (default: when the counters were read).
@@ -1523,44 +1697,43 @@ export class QueueService {
     return Math.max(...candidates);
   }
 
-  private assertRecordMatchesIdentity(
-    record: QueueSessionRecord,
-    identity: QueueIdentity,
-  ): void {
-    if (
-      record.userId !== identity.userId ||
-      record.refreshTokenFamilyId !== identity.refreshTokenFamilyId ||
-      record.deviceSlotId !== identity.deviceSlotId
-    ) {
+  private sameBrowser(a: QueueIdentity, b: QueueIdentity): boolean {
+    return a.userId === b.userId && a.refreshTokenFamilyId === b.refreshTokenFamilyId && a.deviceSlotId === b.deviceSlotId;
+  }
+
+  private async matchesSecondaryToken(
+    record: QueueSessionRecord, identity: QueueIdentity, token: string, indexed?: string,
+  ): Promise<boolean> {
+    const value = indexed ?? await this.redis.get(this.admissionTokenKey(this.hashAdmissionToken(token)));
+    if (!value?.startsWith('{')) return false;
+    const binding = JSON.parse(value) as BrowserAdmissionBinding;
+    return binding.queueSessionId === record.queueSessionId && record.userId === identity.userId
+      && this.sameBrowser(binding, identity);
+  }
+
+  private async assertBrowserCredential(
+    record: QueueSessionRecord, identity: QueueIdentity, token: string, indexed?: string,
+  ): Promise<void> {
+    if (this.sameBrowser(record, identity)) {
+      if (this.hashAdmissionToken(token) !== record.admissionTokenHash) {
+        throw new ForbiddenException('대기열 입장 인증이 필요합니다');
+      }
+    } else if (!(await this.matchesSecondaryToken(record, identity, token, indexed))) {
       throw new ForbiddenException('대기열 입장 정보가 현재 세션과 일치하지 않습니다');
     }
   }
 
-  private assertAdmissionTokenMatches(record: QueueSessionRecord, admissionToken: string): void {
-    const tokenHash = createHash('sha256').update(admissionToken).digest('hex');
-    if (record.admissionTokenHash !== tokenHash) {
-      throw new ForbiddenException('대기열 입장 인증이 필요합니다');
-    }
-  }
-
   private async findQueueSessionByAdmissionToken(
-    admissionToken: string,
+    token: string, identity: QueueIdentity,
   ): Promise<QueueSessionRecord | null> {
-    const tokenHash = createHash('sha256').update(admissionToken).digest('hex');
-    const queueSessionId = await this.redis.get(this.admissionTokenKey(tokenHash));
-    if (!queueSessionId) {
-      return null;
-    }
-
-    const performanceId = await this.redis.get(this.sessionRefKey(queueSessionId));
-    if (!performanceId) {
-      return null;
-    }
-
-    const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
-    // The token index is only a lookup; the record's current hash is the
-    // authority, so a token replaced by a concurrent re-entry stops working.
-    return record?.admissionTokenHash === tokenHash ? record : null;
+    const index = await this.redis.get(this.admissionTokenKey(this.hashAdmissionToken(token)));
+    if (!index) return null;
+    const id: string = index.startsWith('{') ? (JSON.parse(index) as BrowserAdmissionBinding).queueSessionId : index;
+    const performanceId = await this.redis.get(this.sessionRefKey(id));
+    if (!performanceId) return null;
+    const record = await this.readIndexedRecord(performanceId, id);
+    if (record) await this.assertBrowserCredential(record, identity, token, index);
+    return record;
   }
 
   private generateAdmissionToken(): string {
@@ -1597,7 +1770,7 @@ export class QueueService {
       this.sessionKey(record.performanceId, record.queueSessionId),
       this.waitingQueueKey(record.performanceId),
       this.activeAdmissionsKey(record.performanceId),
-      this.identityKey(record.performanceId, record),
+      this.accountKey(record.performanceId, record.userId),
       this.capacityVersionKey(record.performanceId),
       record.queueSessionId,
       op,
@@ -1667,6 +1840,16 @@ export class QueueService {
         this.readQueueSessionRecord(performanceId, queueSessionId),
       ),
     );
+  }
+
+  private async readIndexedRecord(performanceId: string, id: string): Promise<QueueSessionRecord | null> {
+    let record = await this.readQueueSessionRecord(performanceId, id);
+    if (record && !record.accountIndexed) {
+      await this.indexLegacyQueue(performanceId);
+      await this.claimLegacyPositions(performanceId, record.userId, [id]);
+      record = await this.readQueueSessionRecord(performanceId, id);
+    }
+    return record;
   }
 
   /**
@@ -1902,8 +2085,8 @@ export class QueueService {
     return `{queue:admission}:${admissionTokenHash}`;
   }
 
-  private identityKey(performanceId: string, identity: QueueIdentity): string {
-    return `${this.queuePrefix(performanceId)}:identity:${identity.userId}:${identity.refreshTokenFamilyId}:${identity.deviceSlotId}`;
+  private accountKey(performanceId: string, userId: string): string {
+    return `${this.queuePrefix(performanceId)}:account:${userId}`;
   }
 
   private queuePrefix(performanceId: string): string {

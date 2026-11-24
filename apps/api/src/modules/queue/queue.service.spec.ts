@@ -6,6 +6,7 @@ import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ADMITTED, EXPIRED, WAITING,
   QUEUE_ACTIVE_WINDOW_SECONDS,
   QUEUE_ADMISSION_COOKIE_MAX_AGE_MS,
   QUEUE_ETA_CYCLE_MAX_SECONDS,
@@ -22,6 +23,7 @@ import {
   evalQueueScriptInMemory,
   isQueueScript,
 } from './queue-redis-scripts.js';
+import { users } from '../../database/schema/users.js';
 import { performances } from '../../database/schema/performances.js';
 import { reservations } from '../../database/schema/reservations.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
@@ -292,6 +294,7 @@ type QueueDbState = {
   // Optional per-showtime start (default: far ahead, on sale) and sold seats
   // (default: soldCount for the whole performance).
   showtimeStartsAt?: Record<string, Date>;
+  unverifiedUserIds?: string[];
   soldByShowtime?: Record<string, number>;
   afterSoldCountRead?: () => Promise<void>;
   // When set, every reservations query is recorded here. The double returns
@@ -325,6 +328,10 @@ function createQueueDb(state: QueueDbState) {
     select: vi.fn((selection: Record<string, unknown> = {}) => ({
       from: (table: unknown) => {
         const rows = (where: SQL | undefined): unknown[] => {
+          if (table === users && where) {
+            return pgDialect.sqlToQuery(where).params.filter((id) =>
+              typeof id === 'string' && !state.unverifiedUserIds?.includes(id)).map((id) => ({ id }));
+          }
           if (table === seatMaps) return [{ totalSeats: state.totalSeats }];
           if (table === seatInventories) {
             if (!state.soldByShowtime) return [{ total: state.soldCount }];
@@ -867,7 +874,7 @@ describe('QueueService', () => {
         await fakeRedis.set(remainingSeatsKey, '3');
         const simulated = new QueueService(
           fakeRedis as never,
-          mockDb as never,
+          createQueueDb({ performanceId, showtimeIds: [], totalSeats: 3, soldCount: 0, orderBinding: null }) as never,
           mockGateway as unknown as QueueGateway,
         );
 
@@ -1165,13 +1172,52 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
         admissionToken: expect.any(String),
         ...browserA,
       });
-      expect(await redis.get(`{queue:${performanceId}}:identity:user-a:family-a:family-a`))
+      expect(await redis.get(`{queue:${performanceId}}:account:user-a`))
         .toBe(lease.queueSessionId);
       expect(await redis.get(`{queue:admission}:${hashToken(lease.admissionToken)}`))
         .toBe(lease.queueSessionId);
       expect(await redis.get(`{queue:session-ref}:${lease.queueSessionId}`)).toBe(performanceId);
       expect(await readRecord(lease.queueSessionId)).toMatchObject({ state: 'WAITING' });
       expect(await redis.zcard(waitingKey)).toBe(1);
+    });
+
+    it('shares a waiting rank and fixed admission deadline across verified devices without sharing their cookies', async () => {
+      const phone = { ...browserA, refreshTokenFamilyId: 'mobile', deviceSlotId: 'mobile' };
+      await enter(browserB);
+      const desktop = await enter(browserA);
+      const mobile = await enter(phone);
+      expect(desktop).toMatchObject({ state: WAITING, position: 2 });
+      expect(mobile).toMatchObject({ queueSessionId: desktop.queueSessionId, position: 2, waitingCount: 2 });
+      expect(mobile.admissionToken).not.toBe(desktop.admissionToken);
+      await expect(status(desktop.queueSessionId, phone, desktop.admissionToken)).rejects.toThrow();
+      await expect(status(mobile.queueSessionId, browserB, mobile.admissionToken)).rejects.toThrow();
+
+      dbState.totalSeats = 5;
+      setNow(minutes(1));
+      const admitted = await status(desktop.queueSessionId, browserA, desktop.admissionToken);
+      expect(admitted.state).toBe(ADMITTED);
+      setNow(minutes(9));
+      const handoff = await enter(phone, mobile.admissionToken);
+      expect(handoff).toMatchObject({ state: ADMITTED, queueSessionId: desktop.queueSessionId,
+        admittedAt: admitted.admittedAt, activeUntilAt: admitted.activeUntilAt });
+      expect(Date.parse(handoff.activeUntilAt!) - Date.now()).toBe(minutes(2));
+      const prepared = await service.assertAdmissionForShowtime({ showtimeId, identity: phone,
+        admissionToken: mobile.admissionToken, action: 'prepare-reservation' });
+      expect(prepared).toMatchObject({ ...phone, queueSessionId: desktop.queueSessionId });
+      await expect(service.assertAdmissionForShowtime({ showtimeId, identity: browserA,
+        admissionToken: mobile.admissionToken, action: 'lock-seat' })).rejects.toThrow();
+      expect(await redis.scard(activeKey)).toBe(2); // two accounts, three browsers
+    });
+
+    it('removes a waiting buyer whose verification was withdrawn before promotion', async () => {
+      const first = await enter(browserA);
+      const next = await enter(browserB);
+      dbState.unverifiedUserIds = [browserA.userId];
+      dbState.totalSeats = 1;
+      setNow(minutes(1));
+      await expect(status(next.queueSessionId, browserB, next.admissionToken)).resolves.toMatchObject({ state: ADMITTED });
+      expect(await readRecord(first.queueSessionId)).toMatchObject({ state: EXPIRED });
+      expect(await redis.scard(activeKey)).toBe(1);
     });
 
     it('reuses the session for the same identity and keeps a presented current token', async () => {
@@ -1673,7 +1719,7 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   });
 
   describe('re-entry after the active window (D2, #4 #26 #32)', () => {
-    const identityKeyA = `{queue:${performanceId}}:identity:user-a:family-a:family-a`;
+    const identityKeyA = `{queue:${performanceId}}:account:user-a`;
     const prepare = (admissionToken: string) =>
       service.assertAdmissionForShowtime({
         showtimeId,
@@ -1739,14 +1785,6 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
       ['no order', () => null],
       ['a cancelled order', (order: Record<string, unknown>) => ({ ...order, status: 'CANCELLED' })],
       [
-        'an order of another browser session',
-        (order: Record<string, unknown>) => ({
-          ...order,
-          refreshFamilyId: 'family-x',
-          deviceSlotKey: 'family-x',
-        }),
-      ],
-      [
         'an order prepared under another queue session',
         (order: Record<string, unknown>) => ({ ...order, queueSessionId: 'queue-session-other' }),
       ],
@@ -1785,6 +1823,56 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
         );
       },
     );
+
+    it('keeps a merged legacy order recoverable from its original browser without allocating a slot', async () => {
+      dbState.totalSeats = 1;
+      const pc = await enter(browserA);
+      const second = await enter(browserB); // seed the old independent waiting place
+      await prepare(pc.admissionToken);
+      dbState.orderBinding = pendingOrder(pc, new Date(T0.getTime() + minutes(16)));
+      const prefix = `{queue:${performanceId}}`;
+      const pcRecord = (await readRecord(pc.queueSessionId))!;
+      const phoneRecord = (await readRecord(second.queueSessionId))!;
+      const phone = { ...browserA, refreshTokenFamilyId: 'legacy-phone', deviceSlotId: 'legacy-phone' };
+      for (const [lease, record, identity] of [[pc, pcRecord, browserA], [second, phoneRecord, phone]] as const) {
+        await redis.set(sessionKey(lease.queueSessionId), JSON.stringify({ ...record, ...identity, accountIndexed: undefined }),
+          'PX', minutes(20));
+        await redis.set(`${prefix}:identity:${identity.userId}:${identity.refreshTokenFamilyId}:${identity.deviceSlotId}`,
+          lease.queueSessionId, 'PX', minutes(20));
+      }
+      await redis.del(`${prefix}:accounts-indexed`, `${prefix}:account:${browserA.userId}`, `${prefix}:account:${browserB.userId}`);
+      setNow(minutes(11));
+      const recovery = await enter(browserA, pc.admissionToken);
+      expect(recovery).toMatchObject({ queueSessionId: pc.queueSessionId, state: 'PAYMENT_RECOVERY', recoveryOrderId: 'ORDER-1' });
+      expect(await redis.get(`${prefix}:account:${browserA.userId}`)).toBe(second.queueSessionId);
+      expect(await redis.sismember(activeKey, pc.queueSessionId)).toBe(0);
+      const mobile = await enter(phone, second.admissionToken);
+      expect(mobile.queueSessionId).toBe(second.queueSessionId);
+      expect(mobile.recoveryOrderId).toBeUndefined();
+    });
+
+    it('retains a phone-prepared order for the phone when the desktop revisits the shared place', async () => {
+      dbState.totalSeats = 1;
+      const phone = { ...browserA, refreshTokenFamilyId: 'phone', deviceSlotId: 'phone' };
+      const pc = await enter(browserA);
+      const mobile = await enter(phone);
+      await service.assertAdmissionForShowtime({ showtimeId, identity: phone,
+        admissionToken: mobile.admissionToken, action: 'prepare-reservation' });
+      dbState.orderBinding = { performanceId, ...pendingOrder(pc, new Date(T0.getTime() + minutes(16))),
+        refreshFamilyId: phone.refreshTokenFamilyId, deviceSlotKey: phone.deviceSlotId };
+      const confirm = (identity: typeof browserA, admissionToken?: string) =>
+        service.assertAdmissionForOrder({ orderId: 'ORDER-1', userId: browserA.userId, identity, admissionToken });
+      await expect(confirm(browserA, pc.admissionToken)).resolves.toMatchObject(browserA);
+      setNow(minutes(11));
+      await expect(confirm(browserA, pc.admissionToken)).rejects.toThrow();
+      const desktop = await enter(browserA, pc.admissionToken);
+      expect(desktop).toMatchObject({ state: EXPIRED, queueSessionId: pc.queueSessionId });
+      expect(desktop).not.toHaveProperty('recoveryOrderId');
+      await expect(enter(phone, mobile.admissionToken)).resolves.toMatchObject({
+        state: 'PAYMENT_RECOVERY', recoveryOrderId: 'ORDER-1', queueSessionId: pc.queueSessionId });
+      await expect(confirm(phone)).resolves.toMatchObject({ ...phone, queueSessionId: pc.queueSessionId });
+      expect(await redis.scard(activeKey)).toBe(1);
+    });
 
     it('keeps only payment recovery while a pending order bound to the session can still be paid', async () => {
       dbState.totalSeats = 10;
@@ -2205,7 +2293,7 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   });
 
   describe('slot return of the confirmed order (#4, #3)', () => {
-    it('returns the slot of the session the order was prepared under, not the confirming browser', async () => {
+    it('returns the single shared slot after the order is confirmed from another browser', async () => {
       dbState.totalSeats = 10;
       const orderSession = await enter(browserA);
       // the same buyer confirms from another browser whose own admission passes
@@ -2228,8 +2316,8 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
 
       expect(await readRecord(orderSession.queueSessionId)).toMatchObject({ state: 'EXPIRED' });
       expect(await redis.sismember(activeKey, orderSession.queueSessionId)).toBe(0);
-      expect(await readRecord(confirmingSession.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
-      expect(await redis.sismember(activeKey, confirmingSession.queueSessionId)).toBe(1);
+      expect(confirmingSession.queueSessionId).toBe(orderSession.queueSessionId);
+      expect(await redis.scard(activeKey)).toBe(0);
     });
 
     it('releases nothing without a confirmed order bound to a queue session, and never throws', async () => {

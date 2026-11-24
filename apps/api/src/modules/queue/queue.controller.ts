@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
 import { canUseAdminBookingBypass } from '../../common/admin-booking-bypass.js';
 import {
   QUEUE_ACTIVE_WINDOW_SECONDS,
@@ -25,6 +26,8 @@ import {
 type AuthenticatedRequest = Request & {
   user: {
     id: string;
+    isEmailVerified?: boolean;
+    isPhoneVerified?: boolean;
     role?: string;
     adminCapabilityBundle?: string | null;
     adminCapabilities?: string[];
@@ -49,6 +52,7 @@ export class QueueController {
     @Req() req: AuthenticatedRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
+    assertBookingVerificationComplete(req.user);
     const identity = await this.queueService.resolveBrowserIdentity(
       req.user.id,
       readRefreshCookie(req.cookies as Record<string, string | undefined>),
@@ -93,6 +97,7 @@ export class QueueController {
     @Req() req: AuthenticatedRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
+    assertBookingVerificationComplete(req.user);
     const identity = await this.queueService.resolveBrowserIdentity(
       req.user.id,
       readRefreshCookie(req.cookies as Record<string, string | undefined>),
@@ -119,7 +124,7 @@ export class QueueController {
       };
     }
 
-    const result = await this.queueService.getQueueSessionStatus({
+    const { replacementAdmissionToken, ...result } = await this.queueService.getQueueSessionStatus({
       queueSessionId,
       identity,
       admissionToken,
@@ -128,7 +133,7 @@ export class QueueController {
     if (result.state === 'EXPIRED') {
       res.clearCookie(QUEUE_ADMISSION_COOKIE_NAME, this.cookieOptions());
     } else {
-      this.setAdmissionCookie(res, admissionToken, result.state);
+      this.setAdmissionCookie(res, replacementAdmissionToken ?? admissionToken, result.state);
     }
 
     return result;
