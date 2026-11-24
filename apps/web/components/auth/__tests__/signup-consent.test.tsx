@@ -203,18 +203,18 @@ describe('SignupStep2 itemized launch consent', () => {
     expect(screen.getByRole('button', { name: '다음' })).toBeDisabled();
   });
 
-  it('shows the canonical English legal text and records that document language for Thai consent', async () => {
+  it('shows the Thai terms and records the Thai document language', async () => {
     navigationMocks.activeLocale = 'th';
     const onComplete = vi.fn();
     const user = userEvent.setup();
     render(<SignupStep2 onComplete={onComplete} onBack={vi.fn()} defaultValues={null} />);
     await user.click(screen.getAllByRole('button', { name: 'ดู' })[0]!);
-    expect(await screen.findByRole('dialog')).toHaveTextContent('These Terms of Service set out');
-    expect(screen.getByText('ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toHaveTextContent('ข้อกำหนดนี้ระบุเงื่อนไข');
+    expect(screen.queryByText('ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ')).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     await user.click(screen.getByLabelText('ยอมรับทั้งหมด'));
     await user.click(screen.getByRole('button', { name: 'ถัดไป' }));
-    expect(onComplete.mock.calls[0]?.[0].consentItems.every((item: { language: string }) => item.language === 'en')).toBe(true);
+    expect(onComplete.mock.calls[0]?.[0].consentItems.every((item: { language: string }) => item.language === 'th')).toBe(true);
   });
 
   it('shows the final under-14 block copy without a guardian consent flow', () => {

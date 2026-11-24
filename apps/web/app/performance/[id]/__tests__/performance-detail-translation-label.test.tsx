@@ -117,8 +117,7 @@ describe('PerformanceDetailPage automatic translation label', () => {
 
     renderPage();
 
-    expect(await screen.findByText('자동 번역 검수본')).toBeInTheDocument();
-    expect(screen.getByText('Reviewed machine translation')).toBeInTheDocument();
+    expect(await screen.findByText('Reviewed machine translation')).toBeInTheDocument();
   });
 
   it('does not show the label for canonical Korean-only content', () => {

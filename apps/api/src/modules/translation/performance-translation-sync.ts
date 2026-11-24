@@ -5,7 +5,7 @@ import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts, translationSources } from '../../database/schema/index.js';
 
 export async function invalidateChangedPerformanceTranslations(db: DrizzleDB, performanceId: string, input: UpdatePerformanceInput) {
-  for (const field of ['title', 'description', 'salesInfo'] as const) {
+  for (const field of ['title', 'description', 'salesInfo', 'runtime', 'ageRating', 'subcategory'] as const) {
     if (input[field] === undefined) continue;
     const sourceText = input[field] ?? '';
     const contentHash = createHash('sha256').update(sourceText, 'utf8').digest('hex');

@@ -449,6 +449,13 @@
       "when": 1795424215665,
       "tag": "0063_ticket_holder_addons",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1795504856870,
+      "tag": "0064_buyer_locale_content",
+      "breakpoints": true
     }
   ]
 }

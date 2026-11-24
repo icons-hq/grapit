@@ -1,7 +1,6 @@
 import { getLocale } from 'next-intl/server';
-import marketingMd from '@/content/legal/marketing-consent.md?raw';
-import marketingEnMd from '@/content/legal/marketing-consent.en.md?raw';
-import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
+import { legalDocuments } from '@/content/legal/documents';
+import { resolveConsentDocumentLanguage } from '@grabit/shared';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLegalRobots } from '../robots';
@@ -28,13 +27,7 @@ export async function generateMetadata() {
 
 export default async function MarketingPage() {
   const locale = await getLocale();
-  const fallbackLocale = locale === 'th' || locale === 'zh-CN' ? locale : null;
-  const markdown = locale === 'en' || fallbackLocale ? marketingEnMd : marketingMd;
+  const markdown = legalDocuments.marketing[resolveConsentDocumentLanguage(locale)];
 
-  return (
-    <>
-      {fallbackLocale ? <LegalFallbackLabel locale={fallbackLocale} /> : null}
-      <TermsMarkdown showH1>{markdown}</TermsMarkdown>
-    </>
-  );
+  return <TermsMarkdown showH1>{markdown}</TermsMarkdown>;
 }

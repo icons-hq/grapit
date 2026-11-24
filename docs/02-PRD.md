@@ -228,6 +228,7 @@ Admin is an operational console, not a marketing CMS.
 
 ### 5.4 Accessibility And Localization
 
+- Booking add-on holds, QR email reminders, optional analytics, terms, privacy and marketing consent use the buyer’s language. Published art may retain its original typography. Operators can save English, Thai and Simplified Chinese captions on each detail image, and register reviewed translations of custom running times, age limits and subcategories in the event translation form. The shared entry guide is available as accessible text.
 - Public UI supports `ko`, `en`, `th`, and `zh-CN`.
 - Korean routes are prefixless; foreign locales use locale-prefixed routes where the routing layer applies them.
 - Localized date/time/currency formatting should be used for buyer-facing flows.

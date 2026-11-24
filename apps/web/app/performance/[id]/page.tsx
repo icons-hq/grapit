@@ -1,5 +1,7 @@
 'use client';
 
+import { catalogText, formatPerformanceAge, formatPerformanceRuntime } from '@grabit/shared';
+
 import { use, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useLocale } from 'next-intl';
@@ -67,20 +69,20 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
       </button>
       <div className="ticket-detail-title"><h1>{performance.title}</h1><TicketActions performanceId={id} /></div>
       {hasAutomaticTranslationMetadata(performance) && <div className="mt-3"><AutomaticTranslationLabel locale={locale} /></div>}
-      <div className="ticket-detail-meta"><StatusBadge status={status} locale={locale} /><span>{copy.genres[performance.genre]}{performance.subcategory ? ` · ${performance.subcategory}` : ''}</span></div>
+      <div className="ticket-detail-meta"><StatusBadge status={status} locale={locale} /><span>{copy.genres[performance.genre]}{performance.subcategory ? ` · ${catalogText(performance.subcategory, locale)}` : ''}</span></div>
       <nav className="ticket-detail-nav" aria-label={ticket.details}>{nav.map((item) => <a href={`#${item.id}`} key={item.id}>{item.label}</a>)}</nav>
       <dl className="ticket-detail-facts">
-        {performance.venue && <><dt>{copy.performance.venueLabel}</dt><dd><a href="#venue">{performance.venue.name} ›</a></dd></>}
+        {performance.venue && <><dt>{copy.performance.venueLabel}</dt><dd><a href="#venue">{catalogText(performance.venue.name, locale)} ›</a></dd></>}
         <dt>{copy.performance.scheduleLabel}</dt><dd><PerformancePeriod startDate={performance.startDate} endDate={performance.endDate} locale={locale} fallback={copy.home.dateUnknown} />
           {opening && <p className="ticket-detail-opening" data-testid="performance-booking-opens-at">{copy.home.bookingOpens.replace('{date}',opening)}</p>}</dd>
-        {performance.runtime && <><dt>{copy.performance.runtimeLabel}</dt><dd>{performance.runtime}</dd></>}
-        <dt>{copy.performance.ageLabel}</dt><dd>{performance.ageRating}</dd>
+        {performance.runtime && <><dt>{copy.performance.runtimeLabel}</dt><dd>{formatPerformanceRuntime(performance.runtime, locale)}</dd></>}
+        <dt>{copy.performance.ageLabel}</dt><dd>{formatPerformanceAge(performance.ageRating, locale)}</dd>
       </dl>
       {performance.castings.length > 0 && <section id="cast" className="ticket-detail-section"><h2>{ticket.cast}</h2><div className="ticket-cast-list">{performance.castings.map((member) => <div key={member.id}>
         <div className="ticket-cast-photo">{member.photoUrl ? <Image src={member.photoUrl} alt={member.actorName} width={88} height={88} /> : <span>{member.actorName.slice(0,1)}</span>}</div>
         {member.roleName && <p>{member.roleName}</p>}<strong>{member.actorName}</strong>
       </div>)}</div></section>}
-      <DetailImageGallery images={performance.detailImages} title={performance.title} copy={copy.performance} />
+      <DetailImageGallery locale={locale} images={performance.detailImages} title={performance.title} copy={copy.performance} />
       {showDescription && <section id="detail-copy" className="ticket-detail-section"><h2>{copy.performance.detailTab}</h2><p className="whitespace-pre-wrap">{performance.description || copy.performance.noDetail}</p></section>}
       <section id="prices" className="ticket-detail-section"><h2>{copy.performance.priceLabel}</h2>
         <dl className="ticket-price-list">{performance.priceTiers.map((tier) => <div key={tier.id}><dt>{tier.tierName}</dt><dd><CurrencyDisplay krwAmount={tier.price} /></dd></div>)}</dl>
@@ -96,10 +98,10 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
           label={copy.performance.refundTitle}
         />
       </section>
-      {performance.venue && <section id="venue" className="ticket-detail-section"><h2>{ticket.venue}</h2><h3>{performance.venue.name}</h3>
-        {performance.venue.address && <p className="flex items-start gap-2"><MapPin size={18} className="mt-1 shrink-0" />{performance.venue.address}</p>}
-        {performance.venue.transportSummary && <p className="whitespace-pre-wrap">{performance.venue.transportSummary}</p>}
-        {performance.venue.accessNotes && <p className="whitespace-pre-wrap">{performance.venue.accessNotes}</p>}
+      {performance.venue && <section id="venue" className="ticket-detail-section"><h2>{ticket.venue}</h2><h3>{catalogText(performance.venue.name, locale)}</h3>
+        {performance.venue.address && <p className="flex items-start gap-2"><MapPin size={18} className="mt-1 shrink-0" />{catalogText(performance.venue.address, locale)}</p>}
+        {performance.venue.transportSummary && <p className="whitespace-pre-wrap">{catalogText(performance.venue.transportSummary, locale)}</p>}
+        {performance.venue.accessNotes && <p className="whitespace-pre-wrap">{catalogText(performance.venue.accessNotes, locale)}</p>}
       </section>}
     </article>
     <TicketBookingPanel performance={performance} locale={locale} available={availability.bookingAvailable || (availability.bookingOpen && availability.verificationRequiredForBooking)}

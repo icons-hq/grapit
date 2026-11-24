@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   DEFAULT_LOCALE,
+  catalogText,
   isSupportedLocale,
   type PerformanceCardData,
   type PerformanceWithDetails,
@@ -14,7 +15,7 @@ import { requiresManualTranslation } from './deepl.client.js';
 
 export const REVIEWED_TRANSLATION_SOURCE = 'machine_reviewed' as const;
 
-export type PerformanceTranslationField = 'title' | 'description' | 'salesInfo';
+export type PerformanceTranslationField = 'title' | 'description' | 'salesInfo' | 'runtime' | 'ageRating' | 'subcategory';
 
 type TranslationRow = {
   entityId: string;
@@ -70,6 +71,9 @@ export async function fetchReviewedPerformanceTranslations(
             and ${translationSources.sourceText} = case ${translationSources.field}
               when 'title' then current_performance.title
               when 'description' then current_performance.description
+              when 'runtime' then current_performance.runtime
+              when 'ageRating' then current_performance.age_rating
+              when 'subcategory' then current_performance.subcategory
               when 'salesInfo' then current_performance.sales_info
             end)`,
         eq(
@@ -114,14 +118,17 @@ export async function overlayReviewedCardTranslations(
     ['title'],
   );
 
+  const locale = resolvePerformanceTranslationLocale(targetLocale);
   return cards.map((card) => {
+    const venueName = card.venueName && catalogText(card.venueName, locale);
     const title = translations.get(card.id)?.title;
     if (!title) {
-      return card;
+      return venueName === card.venueName ? card : { ...card, venueName };
     }
 
     return {
       ...card,
+      venueName,
       title,
       automaticTranslationLabel: true,
       translatedBy: REVIEWED_TRANSLATION_SOURCE,
@@ -144,7 +151,7 @@ export async function overlayReviewedDetailTranslations(
       db,
       [performance.id],
       targetLocale,
-      translateSalesInfo ? ['title', 'description', 'salesInfo'] : ['title', 'description'],
+      ['title', 'description', 'runtime', 'ageRating', 'subcategory', ...(translateSalesInfo ? ['salesInfo'] as const : [])],
     )
   ).get(performance.id);
 
@@ -157,12 +164,18 @@ export async function overlayReviewedDetailTranslations(
     title: translations.title ?? performance.title,
     description: translations.description ?? performance.description,
     salesInfo: translations.salesInfo ?? performance.salesInfo,
+    runtime: translations.runtime ?? performance.runtime,
+    ageRating: translations.ageRating ?? performance.ageRating,
+    subcategory: translations.subcategory ?? performance.subcategory,
   };
 
   const hasOverlay =
     translatedPerformance.title !== performance.title ||
     translatedPerformance.description !== performance.description ||
-    translatedPerformance.salesInfo !== performance.salesInfo;
+    translatedPerformance.salesInfo !== performance.salesInfo ||
+    translatedPerformance.runtime !== performance.runtime ||
+    translatedPerformance.ageRating !== performance.ageRating ||
+    translatedPerformance.subcategory !== performance.subcategory;
 
   if (!hasOverlay) {
     return performance;

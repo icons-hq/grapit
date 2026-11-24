@@ -16,6 +16,16 @@ describe('public performance detail images', () => {
     expect(image.getAttribute('loading')).toBe('eager');
   });
 
+  it.each(['en', 'th', 'zh-CN'] as const)('shows the localized guide and editorial caption in %s', (locale) => {
+    const labels = getVisibleCopy(locale);
+    const images = [{ imageUrl: composite, altText: '원본 이미지', sortOrder: 0, captions: { [locale]: labels.entryGuide.mobile } }];
+    render(<DetailImageGallery locale={locale} title="Show" copy={labels.performance} images={images} />);
+    expect(screen.getByRole('heading', { name: labels.entryGuide.title })).toBeDefined();
+    expect(screen.getByRole('heading', { name: labels.entryGuide.restricted })).toBeDefined();
+    expect(document.querySelector('figcaption')?.textContent).toBe(labels.entryGuide.mobile);
+    expect(document.querySelector('img')?.getAttribute('alt')).not.toContain('원본');
+  });
+
   it.each([
     { saved: ['poster.jpg', 'benefits.png'], visible: ['poster.jpg', 'benefits.png', guide] },
     { saved: [guide, 'poster.jpg', guide], visible: ['poster.jpg', guide] },

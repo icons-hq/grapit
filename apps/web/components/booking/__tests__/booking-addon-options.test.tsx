@@ -1,11 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BookingAddonSnapshot } from '@grabit/shared';
 import { BookingAddonOptions } from '../booking-addon-options';
 import { CheckoutAmountSummary } from '../order-summary';
 
-vi.mock('next-intl', () => ({ useLocale: () => 'ko' }));
+const language = vi.hoisted(() => ({ value: 'ko' }));
+vi.mock('next-intl', () => ({ useLocale: () => language.value }));
+afterEach(() => { language.value = 'ko'; });
 const seat = { seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층', tierName: 'SVIP', row: 'A', number: '1', price: 380000 };
 const displayCopy = { ko: { name: 'PHOTO 2:1 추가 구매', description: '유료 옵션' }, en: { name: 'PHOTO 2:1', description: 'Paid option' },
   th: { name: 'PHOTO 2:1', description: 'Paid option' }, 'zh-CN': { name: 'PHOTO 2:1', description: 'Paid option' } };
@@ -13,6 +15,17 @@ const snapshot: BookingAddonSnapshot = { showtimeId: 'show', generatedAt: new Da
   addons: [{ id: 'photo', identity: 'photo', displayCopy, price: 150000, capacity: 58, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0, available: 0, held: 58, sold: 0 }], selections: [] };
 
 describe('limited paid options and checkout amounts', () => {
+  it.each([
+    ['th', 'เลือกสิทธิพิเศษแบบมีค่าใช้จ่าย', 'เพิ่มตัวเลือก'],
+    ['zh-CN', '选择付费加购项目', '添加项目'],
+  ])('shows option and seat-hold controls in %s', (locale, title, add) => {
+    language.value = locale;
+    render(<BookingAddonOptions snapshot={snapshot} seats={[seat]} pending={false} onChange={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
+    expect(screen.getByText(add)).toBeInTheDocument();
+    expect(screen.queryByText('Add option')).not.toBeInTheDocument();
+  });
+
   it('blocks a sold-out option but permits its holder to release it', () => {
     const onChange = vi.fn();
     const { rerender } = render(<BookingAddonOptions snapshot={snapshot} seats={[seat]} pending={false} onChange={onChange} />);

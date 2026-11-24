@@ -168,6 +168,7 @@ function normalizeDetailImagesForSave(
     .filter((image) => typeof image.imageUrl === 'string' && image.imageUrl.length > 0)
     .map((image, index) => ({
       imageUrl: image.imageUrl,
+      ...(image.captions ? { captions: image.captions } : {}),
       altText: image.altText?.trim() ? image.altText.trim() : null,
       sortOrder: index,
     }));
@@ -1236,6 +1237,17 @@ export function PerformanceForm({
                     {...form.register(`detailImages.${index}.altText`)}
                     placeholder="예: 좌석 안내 이미지"
                   />
+                  <details className="space-y-2">
+                    <summary className="cursor-pointer text-sm">외국어 이미지 안내문</summary>
+                    {([['en', '영어'], ['th', '태국어'], ['zh-CN', '중국어 간체']] as const).map(([language, label]) => (
+                      <label key={language} className="block space-y-1 text-sm">
+                        <span>{label}</span>
+                        <Textarea maxLength={4000} rows={3}
+                          {...form.register(`detailImages.${index}.captions.${language}`)}
+                        />
+                      </label>
+                    ))}
+                  </details>
                 </div>
               </div>
             ))}

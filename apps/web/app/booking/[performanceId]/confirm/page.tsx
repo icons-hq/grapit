@@ -1,4 +1,6 @@
 'use client';
+
+import { formatCopy } from '@/lib/i18n/client-copy';
 import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
 import { trackAnalytics } from '@/lib/analytics-client';
 
@@ -263,9 +265,7 @@ function ConfirmPageContent() {
     const base = performanceTitle.length > 30 ? `${performanceTitle.slice(0, 30)}...` : performanceTitle;
     if (holderId) return `${base} · ${getTicketAddonCopy(locale).title}`;
     if (selectedSeats.length <= 1) return base;
-    return locale === 'ko'
-      ? `${base} 외 ${selectedSeats.length - 1}건`
-      : `${base} + ${selectedSeats.length - 1} more`;
+    return formatCopy(getVisibleCopy(locale).bookingAddons.otherSeats, { name: base, count: selectedSeats.length - 1 });
   }, [holderId, locale, performanceTitle, selectedSeats.length]);
 
   // Redirect if no booking data

@@ -1,5 +1,7 @@
 'use client';
 
+import { formatFloorLabel } from '@grabit/shared';
+
 import { useRouter } from 'next/navigation';
 import { useRef } from 'react';
 import { CheckCircle2, QrCode } from 'lucide-react';
@@ -487,7 +489,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                       </SeatHighlightLabel>
                     </h3>
                     {card.floorLabel && (
-                      <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
+                      <p className="mt-1 text-sm font-medium text-gray-500">{formatFloorLabel(card.floorLabel, locale)}</p>
                     )}
                   </div>
                   <Badge

@@ -2,7 +2,8 @@
 
 import { getSeatSelectionCopy, formatSeatSelectionPrice } from '@/lib/booking/seat-selection-copy';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
-import { formatCopy } from '@/lib/i18n/client-copy';
+import { catalogText, formatFloorLabel } from '@grabit/shared';
+import { formatCopy, getClientLocale } from '@/lib/i18n/client-copy';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -169,7 +170,7 @@ function toSelectionKey(seats: readonly FloorAwareSeatSelection[]): string {
 }
 
 function formatSeatLabel(seat: FloorAwareSeatSelection) {
-  return formatCopy(getSeatSelectionCopy().seatLabel, { floor: seat.floorLabel, row: seat.row, number: seat.number });
+  return formatCopy(getSeatSelectionCopy().seatLabel, { floor: formatFloorLabel(seat.floorLabel, getClientLocale()), row: seat.row, number: seat.number });
 }
 
 function SelectionTags({
@@ -665,7 +666,7 @@ export function BookingPage({
   const hasPausedAddonSelection = Boolean(addons.data?.selections.some((selection) =>
     selectedSeats.some((seat) => seat.seatKey === selection.seatKey)
     && addons.data?.addons.some((addon) => addon.id === selection.addonId && !addon.active)));
-  const pausedAddonMessage = activeLocale === 'ko' ? '판매가 중단된 추가 옵션을 해제해주세요.' : 'Remove the paused add-on to continue.';
+  const pausedAddonMessage = copy.bookingAddons.removePaused;
   const hasAddonProducts = Boolean(addons.data?.addons.length);
 
   const floorOptions = useMemo(() => {
@@ -1114,7 +1115,7 @@ export function BookingPage({
       if (hasAddonProducts || requestedAddonKeys) {
         const fresh = await refetchAddons();
         if (fresh.isError || !fresh.data) {
-          toast.error(activeLocale === 'ko' ? '애드온 선점 상태를 확인하지 못했습니다. 다시 시도해주세요.' : 'Could not verify add-on holds. Please retry.');
+          toast.error(copy.bookingAddons.verifyError);
           return;
         }
         const current = useBookingStore.getState();
@@ -1127,7 +1128,7 @@ export function BookingPage({
         }
         if (addonKey(selections) !== requestedAddonKeys || addonKey(current.selectedAddons) !== requestedAddonKeys) {
           current.setAddons(selections);
-          toast.info(activeLocale === 'ko' ? '애드온 선점 상태가 변경되었습니다. 선택을 다시 확인해주세요.' : 'Your add-on selection changed. Please review it.');
+          toast.info(copy.bookingAddons.changed);
           return;
         }
       }
@@ -1159,6 +1160,8 @@ export function BookingPage({
   }, [
     addonSelectionPending,
     addonSnapshotUnavailable,
+    copy.bookingAddons.changed,
+    copy.bookingAddons.verifyError,
     hasPausedAddonSelection,
     pausedAddonMessage,
     hasAddonProducts,
@@ -1365,7 +1368,7 @@ export function BookingPage({
       <main className="mx-auto w-full max-w-[1440px] px-4 py-4 pb-72 lg:px-6 lg:pb-8">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
           <BookingProgress step={0} />
-          <p className="text-xs text-gray-500">{performance.venue?.name}</p>
+          <p className="text-xs text-gray-500">{performance.venue && catalogText(performance.venue.name, activeLocale)}</p>
         </div>
         <section className="mb-4 overflow-hidden rounded-xl border border-border bg-white">
           <button type="button" className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
@@ -1394,17 +1397,17 @@ export function BookingPage({
                 <SeatSectionSelector sections={seatConfig.sections ?? []}
                   selected={sectionFocus && sectionFocus.floorKey === currentSeatMap.floorKey ? sectionFocus.sectionKey : null}
                   onChange={(key) => setSectionFocus(key ? { floorKey: currentSeatMap.floorKey, sectionKey: key } : null)} seatStates={viewerSeatStates} />
-                <SeatMapViewer svgUrl={currentSeatMap.svgUrl} floorKey={currentSeatMap.floorKey} floorLabel={currentSeatMap.floorLabel}
+                <SeatMapViewer svgUrl={currentSeatMap.svgUrl} floorKey={currentSeatMap.floorKey} floorLabel={formatFloorLabel(currentSeatMap.floorLabel, activeLocale)}
                   seatConfig={seatConfig} seatStates={viewerSeatStates} selectedSeatIds={selectedSeatIds} myLockedSeatIds={viewerMyLockedSeatIds}
                   onSeatClick={handleSeatClick} maxSelect={maxTicketsPerUser}
                   focusedSectionKey={sectionFocus && sectionFocus.floorKey === currentSeatMap.floorKey ? sectionFocus.sectionKey : null} />
               </div>
               <SeatLegend tiers={legendTiers} showExcluded />
               {addons.isError && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
-                <p>{activeLocale === 'ko' ? '추가 옵션의 수량을 확인하지 못했습니다. 다시 조회해주세요.' : 'Could not load optional add-ons. Please retry.'}</p>
-                <Button className="mt-2" variant="outline" onClick={() => { void addons.refetch(); }}>{activeLocale === 'ko' ? '다시 조회' : 'Retry'}</Button>
+                <p>{copy.bookingAddons.loadError}</p>
+                <Button className="mt-2" variant="outline" onClick={() => { void addons.refetch(); }}>{copy.bookingAddons.retry}</Button>
               </div>}
-              {addons.isLoading && <p role="status" className="text-sm text-muted-foreground">{activeLocale === 'ko' ? '추가 옵션을 확인하고 있습니다.' : 'Loading optional add-ons.'}</p>}
+              {addons.isLoading && <p role="status" className="text-sm text-muted-foreground">{copy.bookingAddons.loading}</p>}
               <BookingAddonOptions snapshot={addons.data} seats={sortedSelections}
                 pending={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection}
                 pendingSelections={addons.pendingSelections}

@@ -1,7 +1,8 @@
 'use client';
 
 import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
-import { formatCopy } from '@/lib/i18n/client-copy';
+import { formatFloorLabel } from '@grabit/shared';
+import { formatCopy, getClientLocale } from '@/lib/i18n/client-copy';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
@@ -26,6 +27,7 @@ export function FloorSelector({
   onChange,
 }: FloorSelectorProps) {
   const seatCopy = getSeatSelectionCopy();
+  const locale = getClientLocale();
   if (floors.length === 0) {
     return null;
   }
@@ -55,10 +57,10 @@ export function FloorSelector({
               key={floor.floorKey}
               value={floor.floorKey}
               className="h-auto min-h-12 flex-1 justify-center gap-2 rounded-lg border-2 border-border bg-white px-4 py-2 text-gray-700 transition-colors hover:bg-gray-50 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-white"
-              aria-label={floor.floorLabel}
+              aria-label={formatFloorLabel(floor.floorLabel, locale)}
             >
               <span>
-                {floor.floorLabel}
+                {formatFloorLabel(floor.floorLabel, locale)}
                 {typeof floor.totalSeats === 'number' ? (
                   <span className="ml-1 text-xs opacity-80">
                     ({formatCopy(floor.availableSeats === undefined ? seatCopy.seatCount : seatCopy.remainingSeats, { count: floor.availableSeats ?? floor.totalSeats })})

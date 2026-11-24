@@ -20,13 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import termsOfServiceMd from '@/content/legal/terms-of-service.md?raw';
-import privacyPolicyMd from '@/content/legal/privacy-policy.md?raw';
-import marketingConsentMd from '@/content/legal/marketing-consent.md?raw';
-import termsOfServiceEnMd from '@/content/legal/terms-of-service.en.md?raw';
-import privacyPolicyEnMd from '@/content/legal/privacy-policy.en.md?raw';
-import marketingConsentEnMd from '@/content/legal/marketing-consent.en.md?raw';
-import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
+import { legalDocuments } from '@/content/legal/documents';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
@@ -37,15 +31,12 @@ interface SignupStep2Props {
   sourceFlow?: SignupStep2SourceFlow;
 }
 
-// WR-07: LEGAL_CONTENT 키 집합을 타입으로 고정.
-//        LegalKey 외 임의 string 이 dialogKey 로 전달되는 경로를 차단하여
-//        LEGAL_CONTENT[dialogKey] 의 `?.` 없이 안전한 인덱싱을 가능케 한다.
 const LEGAL_CONTENT = {
-  termsOfService: { ko: termsOfServiceMd, en: termsOfServiceEnMd },
-  privacyPolicy: { ko: privacyPolicyMd, en: privacyPolicyEnMd },
-  pipaRequired: { ko: privacyPolicyMd, en: privacyPolicyEnMd },
-  marketingConsent: { ko: marketingConsentMd, en: marketingConsentEnMd },
-} as const satisfies Record<string, { ko: string; en: string }>;
+  termsOfService: legalDocuments.terms,
+  privacyPolicy: legalDocuments.privacy,
+  pipaRequired: legalDocuments.privacy,
+  marketingConsent: legalDocuments.marketing,
+};
 
 type LegalKey = keyof typeof LEGAL_CONTENT;
 type SignupStep2SourceFlow = Extract<
@@ -85,7 +76,7 @@ const CONSENT_ROWS: ConsentRowConfig[] = [
   },
 ];
 
-function initialChecked(defaultValues: SignupStep2SubmitData | null, documentLocale: 'ko' | 'en') {
+function initialChecked(defaultValues: SignupStep2SubmitData | null, documentLocale: ReturnType<typeof resolveConsentDocumentLanguage>) {
   return Object.fromEntries(
     CONSENT_ROWS.map((row) => {
       const defaultItem = defaultValues?.consentItems.find(
@@ -282,7 +273,6 @@ export function SignupStep2({
               {`${consentCopy.items[dialogKey].title} ${consentCopy.dialogDescriptionSuffix}`}
             </DialogDescription>
           </DialogHeader>
-          {(authCopy.locale === 'th' || authCopy.locale === 'zh-CN') && <LegalFallbackLabel locale={authCopy.locale} />}
           <TermsMarkdown>{LEGAL_CONTENT[dialogKey][documentLocale]}</TermsMarkdown>
         </DialogContent>
       </Dialog>
