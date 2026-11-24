@@ -67,7 +67,9 @@ export function ReservationCard({ reservation }: ReservationCardProps) {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale);
   const statusConfig = STATUS_CONFIG[reservation.status];
-  const statusLabel = copy.reservation.status[statusConfig.labelKey];
+  const statusLabel = reservation.isPartiallyCancelled
+    ? copy.reservation.status.partiallyCancelled
+    : copy.reservation.status[statusConfig.labelKey];
   const dateFormatted = formatDate(reservation.showDateTime, locale);
   const seatSummary = formatSeatSummary(
     reservation.seats,
@@ -90,10 +92,6 @@ export function ReservationCard({ reservation }: ReservationCardProps) {
         }
       }}
     >
-      <Badge className={`absolute right-4 top-4 ${statusConfig.className}`}>
-        {statusLabel}
-      </Badge>
-
       <div className="flex gap-4">
         {reservation.posterUrl ? (
           <div className="relative h-[84px] w-[60px] shrink-0 overflow-hidden rounded-md">
@@ -111,11 +109,16 @@ export function ReservationCard({ reservation }: ReservationCardProps) {
           </div>
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col justify-between pr-16">
+        <div className="flex min-w-0 flex-1 flex-col justify-between">
           <div>
-            <p className="truncate text-base font-semibold text-gray-900">
-              {reservation.performanceTitle}
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="truncate text-base font-semibold text-gray-900">
+                {reservation.performanceTitle}
+              </p>
+              <Badge className={reservation.isPartiallyCancelled ? 'bg-amber-50 text-amber-800 border-transparent' : statusConfig.className}>
+                {statusLabel}
+              </Badge>
+            </div>
             <p className="mt-1 text-sm text-gray-600">{dateFormatted}</p>
             {seatSummary && (
               <p className="mt-0.5 text-sm text-gray-600">{seatSummary}</p>

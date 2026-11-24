@@ -26,6 +26,16 @@ const performance = {
 describe('TicketBookingPanel mobile schedule recovery', () => {
   beforeEach(() => { clock.now = Date.parse('2099-01-01T17:59:00+09:00'); });
 
+  it('disables booking on desktop and mobile until a showtime exists', () => {
+    const view = render(<TicketBookingPanel performance={{ ...performance, showtimes: [] }} locale="ko"
+      available verificationRequired={false} disabledMessage={null} />);
+    for (const selector of ['aside', '.ticket-mobile-booking']) {
+      const panel = within(view.container.querySelector<HTMLElement>(selector)!);
+      expect(panel.queryByRole('link')).toBeNull();
+      expect(panel.getByRole('button', { name: '공연 일정을 준비하고 있어요.' })).toBeDisabled();
+    }
+  });
+
   it('lets the buyer open the calendar after the selected day sells no more showtimes', async () => {
     const user = userEvent.setup();
     const props = { performance, locale: 'ko' as const, available: true, verificationRequired: false, disabledMessage: null };

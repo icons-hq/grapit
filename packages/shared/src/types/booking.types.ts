@@ -291,6 +291,8 @@ export interface ReservationListItem {
   id: string;
   reservationNumber: string;
   status: ReservationStatus;
+  /** True for a confirmed reservation with a completed seat cancellation. */
+  isPartiallyCancelled?: boolean;
   performanceTitle: string;
   posterUrl: string | null;
   showDateTime: string;

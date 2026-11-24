@@ -715,6 +715,7 @@
   "reservation": {
     "status": {
       "confirmed": "已预订",
+      "partiallyCancelled": "部分取消",
       "cancelled": "已取消",
       "pendingPayment": "待付款",
       "failed": "付款失败"
@@ -985,8 +986,9 @@
     "cancelPhoneChange": "取消更改手机号"
   },
   "resetPassword": {
-    "sentTitle": "密码重置邮件已发送",
-    "sentBody": "我们已向 {email} 发送密码重置链接。请检查收件箱。",
+    "sentTitle": "已提交密码重置请求",
+    "sentBody": "如果你使用 {email} 和密码登录，请在收件箱和垃圾邮件文件夹中查找重置链接。",
+    "requestFailed": "未能提交请求，请稍后重试。",
     "backToLogin": "返回登录",
     "requestTitle": "找回密码",
     "requestBody": "请输入注册时使用的电子邮件",

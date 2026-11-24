@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import type { ReservationListItem, UserProfile } from '@grabit/shared';
@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   reservations: [
     {
       id: 'reservation-1',
+      isPartiallyCancelled: true,
       reservationNumber: 'R-001',
       status: 'CONFIRMED',
       performanceTitle: 'Seoul Spring Concert',
@@ -51,8 +52,12 @@ const mocks = vi.hoisted(() => ({
           row: 'A',
           number: '1',
         },
+        {
+          seatId: 'seat-2', floorKey: '1f', floorLabel: '1층', seatKey: 'A-2',
+          tierName: 'VIP', price: 120000, row: 'A', number: '2',
+        },
       ],
-      totalAmount: 120000,
+      totalAmount: 240000,
       createdAt: '2026-05-10T00:00:00.000Z',
     },
     {
@@ -199,6 +204,25 @@ describe('MyPage account hub', () => {
     render(<MyPage />);
 
     expect(screen.getByRole('heading', { name: '티켓 지갑' })).toBeInTheDocument();
+  });
+
+  it('counts a partially cancelled booking once in total and finds it under both wallet filters', async () => {
+    mocks.search = 'tab=wallet';
+    render(<MyPage />);
+    const user = userEvent.setup();
+    const summary = within(screen.getByTestId('ticket-wallet-summary'));
+    expect(summary.getByText('전체').parentElement).toHaveTextContent(/^3전체$/);
+    expect(summary.getByText('취소/환불').parentElement).toHaveTextContent(/^2취소\/환불$/);
+    expect(summary.getByText('예매완료').parentElement).toHaveTextContent(/^1예매완료$/);
+    const partialCard = () => screen.getByRole('link', { name: /Seoul Spring Concert.*부분취소/ });
+    expect(screen.getAllByText('Seoul Spring Concert')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '예매완료' }));
+    expect(partialCard()).toBeVisible();
+    expect(screen.queryByText('Refunded Match')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '취소/환불' }));
+    expect(screen.getByText('Refunded Match')).toBeVisible();
+    await user.click(partialCard());
+    expect(mocks.routerPush).toHaveBeenCalledWith('/mypage/reservations/reservation-1');
   });
 
   it('routes quick actions to wallet and settings tabs', async () => {

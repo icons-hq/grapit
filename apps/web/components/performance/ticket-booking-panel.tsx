@@ -29,15 +29,15 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
     for(const show of showtimes) map.set(getKstCalendarKey(show.dateTime),getKstCalendarDate(show.dateTime));
     return [...map.values()];
   },[showtimes]);
-  const bookingHref = getLocalizedPathname(`/booking/${performance.id}`,locale) + (selected ? `?showtimeId=${selected.id}` : '');
   const ended = performance.showtimes.length > 0 && showtimes.length === 0;
   // A selected day's last show can close while another day is still on sale.
   // Keep the mobile calendar reachable so the buyer can choose that other day.
-  const canChooseSchedule = available && !ended;
-  const canContinue = available && !ended && (selected !== null || performance.showtimes.length === 0);
+  const canChooseSchedule = available && showtimes.length > 0;
   const label = verificationRequired ? legacy.performance.verifyCta : legacy.performance.bookCta;
-  const cta = canContinue ? <Link className="ticket-book-cta" data-analytics-action="booking" href={bookingHref}>{label}</Link>
-    : <button type="button" disabled className="ticket-book-cta" data-analytics-action="booking">{!available ? disabledMessage : ended ? copy.noFutureShowtime : copy.selectTimePrompt}</button>;
+  const emptyScheduleMessage = ended ? copy.noFutureShowtime : copy.dateTbd;
+  const cta = available && selected
+    ? <Link className="ticket-book-cta" data-analytics-action="booking" href={getLocalizedPathname(`/booking/${performance.id}`, locale) + `?showtimeId=${selected.id}`}>{label}</Link>
+    : <button type="button" disabled className="ticket-book-cta" data-analytics-action="booking">{!available ? disabledMessage : showtimes.length ? copy.selectTimePrompt : emptyScheduleMessage}</button>;
   const time = (value:string) => new Intl.DateTimeFormat(locale,{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value));
   const schedule = <div className="ticket-booking-panel-body">
         {showtimes.length ? <>
@@ -48,7 +48,7 @@ export function TicketBookingPanel({ performance, locale, available, verificatio
               <strong>{time(show.dateTime)} <span>KST</span></strong><span>{performance.priceTiers.map((tier) => tier.tierName).join(' · ')}</span>
             </button>)}
           </fieldset>
-        </> : <p className="ticket-schedule-empty">{ended ? copy.noFutureShowtime : copy.dateTbd}</p>}
+        </> : <p className="ticket-schedule-empty">{emptyScheduleMessage}</p>}
       </div>;
   return <>
     <aside className="ticket-booking-panel">{schedule}<div className="ticket-desktop-booking">{cta}</div></aside>
