@@ -24,6 +24,8 @@ import { ProviderChargeAmount } from '@/components/booking/provider-charge-amoun
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
+import { TicketAddonPurchase } from './ticket-addon-purchase';
+import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
 import { TicketBenefitCoupons } from '@/components/reservation/ticket-benefit-coupons';
 import { AreunGlPerformancePromo } from '@/components/promo/areun-gl-promo';
 import { useRefundPreview } from '@/hooks/use-reservations';
@@ -965,6 +967,10 @@ export function ReservationDetailView({
                       locale={benefitLocale}
                     />
                   )}
+                  {card.isTicketItem && reservation.ticketAddonAccess?.some(item => item.ticketItemId === card.id) && (
+                    <TicketAddonPurchase reservation={reservation} ticketId={card.id} locale={benefitLocale}
+                      canBuy={reservation.status === 'CONFIRMED' && card.status === 'ACTIVE' && card.admissionState === 'NOT_ENTERED' && Date.parse(reservation.showDateTime) > nowMs} />
+                  )}
                   {card.cancellation && <TicketCancellationSummary cancellation={card.cancellation} locale={locale} />}
                   {card.isTicketItem && card.status === 'ACTIVE' && card.admissionState !== 'ENTERED'
                     && !card.benefitEntitlements.some((benefit) => benefit.state === 'redeemed') && canCancelSeat && (
@@ -1137,6 +1143,8 @@ export function ReservationDetailView({
       {/* Cancel modal */}
       <CancelConfirmModal
         key={cancelTicketItemId ?? 'all-active-tickets'}
+        separateRefundNotice={reservation.ticketAddonAccess?.some(item => item.hasOrders && (!cancelTicketItemId || item.ticketItemId === cancelTicketItemId))
+          ? getTicketAddonCopy(benefitLocale).separateRefund : undefined}
         open={cancelModalOpen}
         onOpenChange={setCancelModalOpen}
         refundAmount={cancelModalRefundAmount}

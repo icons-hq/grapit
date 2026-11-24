@@ -1,3 +1,4 @@
+import { ticketAddonOptions } from '../../database/ticket-holder-addons.js';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type { BookingAddonDefinition, BookingAddonSnapshot, SeatMapConfig } from '@grabit/shared';
@@ -49,6 +50,10 @@ export class BookingAddonsService implements OnModuleInit, OnModuleDestroy {
       expiresAt: new Date(String(r['expires_at'])).toISOString() })) };
   }
 
+  ticketOptions(ticketId: string, actor: AddonActor) {
+    return ticketAddonOptions(this.db, ticketId, actor.id);
+  }
+
   private async loadInventory(showtimeId: string): Promise<Omit<BookingAddonSnapshot, 'selections'>> {
     const result = await this.db.execute(sql`SELECT a.*,
       (extract(epoch FROM statement_timestamp()) * 1000000)::bigint AS snapshot_revision,
@@ -57,8 +62,8 @@ export class BookingAddonsService implements OnModuleInit, OnModuleDestroy {
         LEFT JOIN ticket_items ti ON ti.reservation_id = h.reservation_id AND ti.seat_key = h.seat_key
         WHERE h.addon_id = a.id AND ${consumingAddonHold}) AS used,
       (SELECT count(*)::int FROM booking_addon_holds h JOIN reservations r ON r.id = h.reservation_id
-        JOIN ticket_items ti ON ti.reservation_id = h.reservation_id AND ti.seat_key = h.seat_key
-        WHERE h.addon_id = a.id AND r.status = 'CONFIRMED' AND ti.status IN ('active', 'cancellation_pending')) AS sold,
+        LEFT JOIN ticket_items ti ON ti.reservation_id = h.reservation_id AND ti.seat_key = h.seat_key
+        WHERE h.addon_id = a.id AND r.status = 'CONFIRMED' AND (r.addon_ticket_item_id IS NOT NULL OR ti.status IN ('active', 'cancellation_pending'))) AS sold,
       (SELECT min(expires_at) FROM booking_addon_holds h WHERE h.addon_id = a.id
         AND reservation_id IS NULL AND expires_at > clock_timestamp()) AS next_expiry
       FROM booking_addons a WHERE a.showtime_id = ${showtimeId} ORDER BY a.sort_order, a.id`);

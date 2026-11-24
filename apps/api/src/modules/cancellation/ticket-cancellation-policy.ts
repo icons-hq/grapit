@@ -37,62 +37,28 @@ export function calculateTicketItemCancellationQuote(input: {
     throw new ForbiddenException('관람일 당일에는 취소할 수 없습니다');
   }
 
-  if (today === bookingDay) {
-    return {
-      cancellationFee: 0,
-      serviceFeeRefund: input.serviceFee,
-      refundableAmount: input.price + input.serviceFee,
-      policyCode: 'SAME_DAY_BEFORE_MIDNIGHT',
-    };
-  }
-
-  if (daysBeforeShow <= 2) {
-    const cancellationFee = Math.floor(input.price * 0.3);
-    return {
-      cancellationFee,
-      serviceFeeRefund: 0,
-      refundableAmount: Math.max(0, input.price - cancellationFee),
-      policyCode: 'SHOW_DAY_2_TO_1',
-    };
-  }
-
-  if (daysBeforeShow <= 6) {
-    const cancellationFee = Math.floor(input.price * 0.2);
-    return {
-      cancellationFee,
-      serviceFeeRefund: 0,
-      refundableAmount: Math.max(0, input.price - cancellationFee),
-      policyCode: 'SHOW_DAY_6_TO_3',
-    };
-  }
-
-  if (daysBeforeShow <= 9) {
-    const cancellationFee = Math.floor(input.price * 0.1);
-    return {
-      cancellationFee,
-      serviceFeeRefund: 0,
-      refundableAmount: Math.max(0, input.price - cancellationFee),
-      policyCode: 'SHOW_DAY_9_TO_7',
-    };
-  }
-
   const daysAfterBooking = Math.max(0, today - bookingDay);
-  const cancellationFee =
-    daysAfterBooking <= 7
-      ? 0
-      : input.fixedCancellationFee
-      ? Math.min(FIXED_TICKET_CANCELLATION_FEE_KRW, input.price)
-      : Math.min(FIXED_TICKET_CANCELLATION_FEE_KRW, Math.floor(input.price * 0.1));
+  const policyCode: TicketItemCancellationPolicyCode = today === bookingDay ? 'SAME_DAY_BEFORE_MIDNIGHT'
+    : daysBeforeShow <= 2 ? 'SHOW_DAY_2_TO_1'
+    : daysBeforeShow <= 6 ? 'SHOW_DAY_6_TO_3'
+    : daysBeforeShow <= 9 ? 'SHOW_DAY_9_TO_7'
+    : daysAfterBooking <= 7 ? 'WITHIN_7_DAYS_AFTER_BOOKING'
+    : 'BOOKING_DAY_8_TO_SHOW_DAY_10';
+  const cancellationFee = ticketCancellationFeeForSubtotal(policyCode, input.price, input.fixedCancellationFee);
+  const serviceFeeRefund = today === bookingDay ? input.serviceFee : 0;
+  return { policyCode, cancellationFee, serviceFeeRefund, refundableAmount: input.price - cancellationFee + serviceFeeRefund };
+}
 
-  return {
-    cancellationFee,
-    serviceFeeRefund: 0,
-    refundableAmount: Math.max(0, input.price - cancellationFee),
-    policyCode:
-      daysAfterBooking <= 7
-        ? 'WITHIN_7_DAYS_AFTER_BOOKING'
-        : 'BOOKING_DAY_8_TO_SHOW_DAY_10',
-  };
+/** Applied once to the cumulative seat and add-on value, even across separate payments. */
+export function ticketCancellationFeeForSubtotal(policy: TicketItemCancellationPolicyCode, subtotal: number, fixedFee: boolean) {
+  switch (policy) {
+    case 'SHOW_DAY_2_TO_1': return Math.floor(subtotal * 0.3);
+    case 'SHOW_DAY_6_TO_3': return Math.floor(subtotal * 0.2);
+    case 'SHOW_DAY_9_TO_7': return Math.floor(subtotal * 0.1);
+    case 'BOOKING_DAY_8_TO_SHOW_DAY_10':
+      return Math.min(FIXED_TICKET_CANCELLATION_FEE_KRW, fixedFee ? subtotal : Math.floor(subtotal * 0.1));
+    default: return 0;
+  }
 }
 
 function getSeoulDayOrdinal(date: Date): number {

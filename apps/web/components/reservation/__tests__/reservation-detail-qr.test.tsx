@@ -3,15 +3,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useBookingStore } from '@/stores/use-booking-store';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
 import { apiClient } from '@/lib/api-client';
 import type { BenefitEntitlement, ReservationDetail } from '@grabit/shared';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { recordServerTimeSample, resetServerClockForTests } from '@/lib/server-clock';
 
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
-    back: vi.fn(),
+    back: vi.fn(), push,
   }),
 }));
 
@@ -1364,4 +1367,26 @@ it('groups additional units on one ticket without hiding their charged total', (
   expect(screen.getByText(/하이터치 추가 구매 × 2/)).toBeInTheDocument();
   expect(screen.getByText('160,000원')).toBeInTheDocument();
   expect(screen.getByText('542,000원')).toBeInTheDocument();
+});
+
+
+it('takes only the remaining add-on slot for the selected issued ticket into checkout', async () => {
+  const reservation = createReservation({ performanceId: 'event', showtimeId, showDateTime: '2099-07-04T10:00:00Z',
+    ticketAddonAccess: [{ ticketItemId: firstTicketItemId, hasOrders: false }] });
+  vi.mocked(apiClient.get).mockResolvedValue({ seatKey: '1F:A-1', orders: [], offers: [{
+    id: 'photo', displayCopy: benefitDisplayCopy('포토'), price: 80000, available: 3, remainingUnits: [2],
+  }] });
+  try {
+    render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
+    fireEvent.click(screen.getByRole('button', { name: '애드온 추가 구매' }));
+    const quantity = await screen.findByRole('combobox', { name: '포토 · 구매 수량' });
+    expect(within(quantity).getAllByRole('option')).toHaveLength(2);
+    fireEvent.change(quantity, { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: /결제하기.*80,000/ }));
+    expect(push).toHaveBeenCalledWith(expect.stringContaining(`/booking/event/confirm?ticketId=${firstTicketItemId}`));
+    expect(useBookingStore.getState()).toMatchObject({ holderTicket: { id: firstTicketItemId, reservationId: reservation.id },
+      selectedSeats: [], selectedAddons: [{ addonId: 'photo', unitIndex: 2, price: 80000 }] });
+  } finally {
+    useBookingStore.getState().clearBooking();
+  }
 });

@@ -259,6 +259,11 @@ function createTransactionMock(options: {
     select(_selection: unknown) {
       return {
         from(table: unknown) {
+          // These ticket-only fixtures have no later add-on payments.
+          if (table === reservations) {
+            const joins = { innerJoin: () => joins, where: () => ({ orderBy: async () => [] }) };
+            return joins;
+          }
           return {
             where: vi.fn((...whereArgs: unknown[]) => {
               const call: SelectCall = { table, whereArgs };

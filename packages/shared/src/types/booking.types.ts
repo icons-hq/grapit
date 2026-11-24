@@ -300,6 +300,9 @@ export interface ReservationListItem {
 }
 
 export interface ReservationDetail extends ReservationListItem {
+  addonTicketItemId?: string;
+  addonParentReservationId?: string;
+  ticketAddonAccess?: { ticketItemId: string; hasOrders: boolean }[];
   addons?: import('../schemas/booking-addon.schema').BookingAddonChoice[];
   performanceId?: string;
   /** Booked performance's genre; lets buyer screens target genre-specific content without another catalog read. */
@@ -520,6 +523,8 @@ export interface AdminBookingSupportEvidence {
 }
 
 export interface PrepareReservationRequest {
+  /** Set by the ticket-holder checkout route, never by the ordinary seat checkout. */
+  addonTicketItemId?: string;
   addons?: import('../schemas/booking-addon.schema').BookingAddonSelection[];
   orderId: string;
   showtimeId: string;

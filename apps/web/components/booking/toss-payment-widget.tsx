@@ -563,7 +563,9 @@ export function buildWidgetPaymentRequest({
     if (!COUNTRY_OPTIONS.some(({ value }) => value === customerCountry)) {
       throw new Error(getCheckoutCopy(resolveVisibleCopyLocale(locale)).countryRequired);
     }
-    const products = branch.providerChargeQuote
+    const products = branch.providerChargeQuote && selectedSeats.length === 0
+      ? [{ name: orderName, description: orderName, quantity: 1, unitAmount: Number(branch.providerChargeQuote.amountDecimal), currency: branch.providerChargeQuote.currency }]
+      : branch.providerChargeQuote
       ? buildProviderChargeProducts({
           selectedSeats,
           providerChargeQuote: branch.providerChargeQuote,

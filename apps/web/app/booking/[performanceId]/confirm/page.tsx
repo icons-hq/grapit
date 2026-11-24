@@ -1,4 +1,5 @@
 'use client';
+import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
 import { trackAnalytics } from '@/lib/analytics-client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -134,7 +135,7 @@ function ConfirmPageContent() {
   const paymentProviderMessagePrefix = visibleCopy.booking.paymentRecovery.providerMessagePrefix;
   const performanceId = params.performanceId as string;
 
-  const { selectedSeats, selectedAddons, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
+  const { holderTicket, selectedSeats, selectedAddons, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
     useBookingStore();
   const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
   // Prepare needs the queue access window on the server, whatever the seat
@@ -202,6 +203,11 @@ function ConfirmPageContent() {
   const [newOrderId, setOrderId] = useState(generateOrderId);
   const orderId = returnOrderId ?? newOrderId;
   const recovery = useCheckoutRecovery(returnOrderId, performanceId, isProcessing);
+  const holderId = recovery.reservation?.addonTicketItemId
+    ?? (holderTicket && searchParams.get('ticketId') === holderTicket.id ? holderTicket.id : undefined);
+  const parentId = recovery.reservation?.addonParentReservationId ?? (holderId ? holderTicket?.reservationId : searchParams.get('parentId'));
+  const parentPath = parentId ? getLocalizedPathname(`/mypage/reservations/${encodeURIComponent(parentId)}`, locale) : null;
+  const hasSelection = selectedSeats.length > 0 || Boolean(holderId && selectedAddons.length);
   const { refetch: refetchRecovery } = recovery;
   const paymentCheck = useCheckPaymentStatus(returnOrderId, refetchRecovery);
   const checkoutRestart = useRestartCheckout({ refetch: refetchRecovery, beforeNavigate: () => {
@@ -254,18 +260,19 @@ function ConfirmPageContent() {
   const orderName = useMemo(() => {
     if (!performanceTitle) return '';
     const base = performanceTitle.length > 30 ? `${performanceTitle.slice(0, 30)}...` : performanceTitle;
+    if (holderId) return `${base} · ${getTicketAddonCopy(locale).title}`;
     if (selectedSeats.length <= 1) return base;
     return locale === 'ko'
       ? `${base} 외 ${selectedSeats.length - 1}건`
       : `${base} + ${selectedSeats.length - 1} more`;
-  }, [locale, performanceTitle, selectedSeats.length]);
+  }, [holderId, locale, performanceTitle, selectedSeats.length]);
 
   // Redirect if no booking data
   useEffect(() => {
-    if (selectedSeats.length === 0 && !returnOrderId && !hasPaymentErrorReturn && !paymentReturnError) {
-      router.replace(bookingPath);
+    if (!hasSelection && !returnOrderId && !hasPaymentErrorReturn && !paymentReturnError) {
+      router.replace(parentPath ?? bookingPath);
     }
-  }, [bookingPath, hasPaymentErrorReturn, paymentReturnError, returnOrderId, selectedSeats.length, router]);
+  }, [bookingPath, parentPath, hasPaymentErrorReturn, hasSelection, paymentReturnError, returnOrderId, router]);
 
   // Handle error return from Toss. Guard with useRef so React StrictMode's
   // double-effect in dev mode does not fire two toasts for the same URL.
@@ -322,17 +329,17 @@ function ConfirmPageContent() {
       if (reservationIdRef.current) await cancelPending.mutateAsync(reservationIdRef.current);
       const showtimeId = useBookingStore.getState().selectedShowtimeId;
       // A delayed unlock-all must never erase seats chosen on the next screen.
-      if (showtimeId) await unlockAll.mutateAsync({ showtimeId });
+      if (showtimeId && !holderId) await unlockAll.mutateAsync({ showtimeId });
       setPaymentReturnError(null);
       useBookingStore.getState().clearBooking();
-      router.replace(bookingPath);
+      router.replace(parentPath ?? bookingPath);
     } catch {
       if (returnOrderId) await refetchRecovery();
     } finally {
       reselectingRef.current = false;
       if (mountedRef.current) setIsReselecting(false);
     }
-  }, [bookingPath, cancelPending, refetchRecovery, returnOrderId, router, unlockAll]);
+  }, [bookingPath, parentPath, holderId, cancelPending, refetchRecovery, returnOrderId, router, unlockAll]);
 
   const handleExpire = useCallback(() => {
     const { expiresAt, queueAccessExpiresAt: accessEndsAt } = useBookingStore.getState();
@@ -442,7 +449,7 @@ function ConfirmPageContent() {
     && methodFixedByOrder
     && (Boolean(restoredReservation?.providerChargeQuote)
       || !isForeignCheckout(paymentMethod));
-  const queueAccessClosed = queueAccessWindowClosed && !resumesPreparedCheckout;
+  const queueAccessClosed = !holderId && queueAccessWindowClosed && !resumesPreparedCheckout;
   const resumeRefused = resumeAccessRefused && resumesPreparedCheckout;
 
   async function handlePayment() {
@@ -476,6 +483,7 @@ function ConfirmPageContent() {
       const current = useBookingStore.getState();
       return mountedRef.current
         && current.performanceId === requestedBooking.performanceId
+        && current.holderTicket?.id === requestedBooking.holderTicket?.id
         && current.selectedShowtimeId === requestedBooking.selectedShowtimeId
         && JSON.stringify(current.selectedSeats) === JSON.stringify(requestedBooking.selectedSeats)
         && JSON.stringify(current.selectedAddons) === JSON.stringify(requestedBooking.selectedAddons);
@@ -511,6 +519,7 @@ function ConfirmPageContent() {
       const result = resumedCheckout ?? await prepareMutation.mutateAsync({
         orderId,
         showtimeId: selectedShowtimeId ?? '',
+        ...(holderId ? { addonTicketItemId: holderId } : {}),
         seats: selectedSeats.map(toFloorAwareSeatSelection),
         addons: selectedAddons.map(({ addonId, seatKey, unitIndex }) => ({ addonId, seatKey, unitIndex: unitIndex ?? 1 })),
         amount: totalPrice,
@@ -690,7 +699,7 @@ function ConfirmPageContent() {
     );
   }
 
-  if (selectedSeats.length === 0) {
+  if (!hasSelection) {
     if (paymentReturnError) {
       return (
         <div className="flex min-h-dvh items-center justify-center px-4 py-10">
@@ -775,10 +784,10 @@ function ConfirmPageContent() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <ConfirmHeader onExpire={handleExpire} onBack={handlePaymentReturnRecovery} disabled={isProcessing || isReselecting} />
+      <ConfirmHeader backLabel={holderId ? getTicketAddonCopy(locale).back : undefined} onExpire={handleExpire} onBack={handlePaymentReturnRecovery} disabled={isProcessing || isReselecting} />
       <main className="mx-auto grid w-full max-w-7xl flex-1 items-start gap-6 px-4 py-6 md:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)] lg:gap-8">
         <div className="space-y-6 rounded-2xl border border-border bg-white p-4 sm:p-6">
-          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{checkoutCopy.title}</h1>
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{holderId ? getTicketAddonCopy(locale).title : checkoutCopy.title}</h1>
           <OrderSummary performanceTitle={performanceTitle ?? ''} posterUrl={posterUrl}
             showDateTime={showDateTime ?? ''} venue={venue ?? ''} seats={selectedSeats} />
           <Separator />
@@ -789,7 +798,7 @@ function ConfirmPageContent() {
         </div>
         <Card className="gap-5 border-border bg-white shadow-sm lg:sticky lg:top-6">
           <CardHeader className="gap-5 px-4 sm:px-6">
-            <PaymentDeadlineBanner paymentDeadlineAt={paymentDeadlineAt} lockExpiresAt={lockExpiresAt} />
+            {(!holderId || paymentDeadlineAt) && <PaymentDeadlineBanner paymentDeadlineAt={paymentDeadlineAt} lockExpiresAt={lockExpiresAt} />}
             <CheckoutAmountSummary seats={selectedSeats} addons={selectedAddons} totalPrice={totalPrice} quote={visibleQuote ?? undefined} />
           </CardHeader>
           <CardContent className="space-y-5 px-4 sm:px-6">

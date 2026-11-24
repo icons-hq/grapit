@@ -52,6 +52,7 @@ function formatDateTime(dateString: string | null | undefined, locale: string): 
 }
 
 interface CancelConfirmModalProps {
+  separateRefundNotice?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   refundAmount: number;
@@ -75,6 +76,7 @@ interface CancelConfirmModalProps {
 }
 
 export function CancelConfirmModal({
+  separateRefundNotice,
   open,
   onOpenChange,
   refundAmount,
@@ -174,6 +176,7 @@ export function CancelConfirmModal({
             <DialogDescription className="text-sm text-gray-600">
               {selectedSeats ? cancellationCopy.selectionNotice : copy.description}
             </DialogDescription>
+            {separateRefundNotice && <p className="text-sm text-muted-foreground">{separateRefundNotice}</p>}
           </DialogHeader>
 
           <div className="space-y-4">

@@ -4,7 +4,7 @@ import { getClientLocale } from '@/lib/i18n/client-copy';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
-import { use } from 'react';
+import { use, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
@@ -36,6 +36,11 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const cancelMutation = useCancelReservation();
   const cancelTicketMutation = useCancelTicketItem();
   const cancellationCopy = getCancellationCopy(locale);
+
+  const parentId = reservation?.addonParentReservationId;
+  useEffect(() => {
+    if (parentId) router.replace(getLocalizedPathname(`/mypage/reservations/${parentId}`, locale));
+  }, [parentId, router, locale]);
 
   async function handleCancel(reason: string, ticketItemId?: string, expected?: CancellationExpectation) {
     try {
@@ -92,7 +97,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
           </div>
         )}
 
-        {reservation && (
+        {reservation && !parentId && (
           <ReservationDetailView
             reservation={reservation}
             onCancel={handleCancel}

@@ -36,6 +36,13 @@ export function useRestartCheckout(options: {
         orderId: reservation.tossOrderId, keepSelection,
       }, { showErrorToast: false });
       if (useAuthStore.getState().user?.id !== buyerId) return false;
+      if (reservation.addonParentReservationId) {
+        useBookingStore.getState().clearBooking();
+        void queryClient.invalidateQueries({ queryKey: ['ticket-addons', buyerId, reservation.addonTicketItemId] });
+        options.beforeNavigate?.();
+        router.replace(getLocalizedPathname(`/mypage/reservations/${reservation.addonParentReservationId}`, locale));
+        return true;
+      }
       const base = getLocalizedPathname(`/booking/${reservation.performanceId}`, locale);
       if (result.canKeepSelection && keepSelection && result.paymentDeadlineAt) {
         useBookingStore.getState().setBookingData({

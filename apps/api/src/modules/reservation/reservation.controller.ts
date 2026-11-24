@@ -6,6 +6,7 @@ import {
   Post,
   Put,
   Param,
+  ParseUUIDPipe,
   Body,
   Query,
   Request,
@@ -18,6 +19,7 @@ import type { Request as ExpressRequest, Response as ExpressResponse } from 'exp
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   prepareReservationSchema,
+  bookingAddonSelectionsSchema,
   queueAdmissionSchema,
   confirmPaymentSchema,
   cancelReservationSchema,
@@ -32,7 +34,7 @@ import {
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
-import { QueueService } from '../queue/queue.service.js';
+import { QueueService, readRefreshCookie } from '../queue/queue.service.js';
 import { ReservationService } from './reservation.service.js';
 import { RefundService } from '../refund/refund.service.js';
 
@@ -41,6 +43,11 @@ const prepareReservationTransportSchema = prepareReservationSchema
   .extend({
     queueAdmission: queueAdmissionSchema.partial().optional(),
   });
+
+const prepareTicketAddonsSchema = prepareReservationTransportSchema.extend({
+  seats: z.array(z.never()).length(0).default([]),
+  addons: bookingAddonSelectionsSchema.refine(items => items.length > 0),
+});
 
 type PrepareReservationTransportInput = z.infer<
   typeof prepareReservationTransportSchema
@@ -108,6 +115,27 @@ export class ReservationController {
     };
   }
 
+  @Post('ticket-items/:ticketId/addons/prepare')
+  async prepareTicketAddons(
+    @Param('ticketId', new ParseUUIDPipe()) ticketId: string,
+    @Body(new ZodValidationPipe(prepareTicketAddonsSchema)) body: z.infer<typeof prepareTicketAddonsSchema>,
+    @Req() req: QueueAdmissionRequest,
+  ) {
+    // The issued ticket authorizes this purchase. Bind the payment return to the
+    // current verified browser session without consuming a seat-sale queue slot.
+    if (!this.queueService) throw new ForbiddenException('브라우저 세션이 필요합니다.');
+    const identity = await this.queueService.resolveBrowserIdentity(req.user.id, readRefreshCookie(req.cookies));
+    const now = new Date().toISOString();
+    return this.reservationService.prepareReservation({
+      ...body, addonTicketItemId: ticketId,
+      queueAdmission: {
+        queueSessionId: `ticket-addon-${ticketId}`, admissionToken: 'cookie-bound',
+        refreshFamilyId: identity.refreshTokenFamilyId, deviceSlotKey: identity.deviceSlotId,
+        admittedAt: now, activeUntilAt: now, reentryGraceUntilAt: now,
+      },
+    }, req.user, this.resolveConsentMeta(req));
+  }
+
   @UseGuards(AdmissionGuard)
   @Post('payments/confirm')
   async confirmPayment(
@@ -134,7 +162,7 @@ export class ReservationController {
     // browser: a confirm allowed through the Redis fallback carries an
     // unrelated session that must keep its admission. Best effort: the release
     // never throws, so it cannot turn a confirmed purchase into an error.
-    if (reservation.status === 'CONFIRMED') {
+    if (reservation.status === 'CONFIRMED' && !reservation.addonTicketItemId) {
       await this.queueService
         ?.releaseAdmissionForOrder(body.orderId, req.user.id)
         .catch(() => false);

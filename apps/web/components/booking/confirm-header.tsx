@@ -10,10 +10,11 @@ import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 
-export function ConfirmHeader({ onExpire, onBack, disabled }: {
+export function ConfirmHeader({ onExpire, onBack, disabled, backLabel }: {
   onExpire: () => void;
   onBack: () => void;
   disabled?: boolean;
+  backLabel?: string;
 }) {
   const expiresAt = useBookingStore((store) => store.expiresAt);
   const copy = getCheckoutCopy(resolveVisibleCopyLocale(useLocale()));
@@ -27,9 +28,9 @@ export function ConfirmHeader({ onExpire, onBack, disabled }: {
     <header className="border-b border-border bg-background">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-8">
         <Button variant="ghost" className="-ml-3 gap-2 text-muted-foreground" disabled={disabled} onClick={onBack}>
-          <ChevronLeft className="size-4" />{copy.back}
+          <ChevronLeft className="size-4" />{backLabel ?? copy.back}
         </Button>
-        <BookingProgress step={1} />
+        {!backLabel && <BookingProgress step={1} />}
       </div>
     </header>
   );

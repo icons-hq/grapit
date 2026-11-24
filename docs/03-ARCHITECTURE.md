@@ -470,6 +470,7 @@ Buyer payment-return recovery (2026-11-09):
   an external Alipay QR transaction. The [foreign-wallet guide](https://docs.tosspayments.com/guides/v2/payment-window/integration-foreignpay)
   requires asynchronous final-result handling. Immediate method switching for an unresolved
   Alipay checkout therefore remains blocked; no unverified termination API is invoked.
+- Ticket holders can start a separate add-on payment from their seat in My Reservations. The order references `reservations.addon_ticket_item_id` and uses the existing checkout, provider approval, and reconciliation flows. The purchase creates zero additional seats. Both approval paths issue paid entitlements on the original Ticket Item. Seat cancellation creates one durable refund per supplemental payment. See [paid booking add-ons](runbooks/paid-booking-addons.md).
 - Reservation detail and completion itemize frozen seat prices, each add-on, booking fees,
   and order total. A 380,000 KRW seat plus 80,000 and 150,000 KRW add-ons and a 2,000 KRW
   booking fee totals 612,000 KRW; add-ons must not disappear from the receipt. Before approval,
