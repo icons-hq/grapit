@@ -28,7 +28,6 @@ export function GNB() {
   const { user, isInitialized, accessToken, clearAuth } = useAuthStore();
   const [profileOpen, setProfileOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
-  const [search, setSearch] = useState('');
   const profileRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const authenticated = isInitialized && !!accessToken && !!user;
@@ -38,7 +37,6 @@ export function GNB() {
   const genre = PUBLIC_GENRES.find((value) => path === `/genre/${value}`);
   const mobileTitle = genre ? copy.genres[genre] : path === '/ranking' ? ticket.ranking : path === '/upcoming' ? ticket.upcoming : null;
   const href = (value: string) => getLocalizedPathname(value, locale);
-  useEffect(() => { setSearch(currentSearch); }, [currentSearch]);
   useEffect(() => {
     function dismiss(event: MouseEvent) { if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false); }
     function escape(event: KeyboardEvent) { if (event.key === 'Escape') setProfileOpen(false); }
@@ -46,10 +44,11 @@ export function GNB() {
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('mousedown', dismiss); document.removeEventListener('keydown', escape); };
   }, []);
-  function submit(event: FormEvent) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!search.trim()) { inputRef.current?.focus(); return; }
-    router.push(`${href('/search')}?q=${encodeURIComponent(search.trim())}`);
+    const term = inputRef.current?.value.trim();
+    if (!term) { inputRef.current?.focus(); return; }
+    router.push(`${href('/search')}?q=${encodeURIComponent(term)}`);
   }
   async function logout() {
     setProfileOpen(false);
@@ -69,10 +68,12 @@ export function GNB() {
         {mobileTitle && <div className="ticket-mobile-page-heading">{genre
           ? <button type="button" aria-label={`${mobileTitle}: ${ticket.allCategories}`} onClick={() => setCategoriesOpen(true)}><span>{mobileTitle}</span><ChevronDown size={16} className="shrink-0" /></button>
           : <span>{mobileTitle}</span>}</div>}
-        <form role="search" className="ticket-header-search" onSubmit={submit}>
+        <form method="get" action={href('/search')} role="search" className="ticket-header-search" onSubmit={submit}>
           {!home && <span className="ticket-search-scope">Grabit {ticket.ticket}</span>}
-          <input ref={inputRef} type="search" role="searchbox" aria-label={copy.nav.searchAriaLabel} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={ticket.searchPlaceholder} maxLength={200} />
-          {search && <button type="button" onClick={() => { setSearch(''); inputRef.current?.focus(); }} aria-label={copy.nav.clearSearch} className="ticket-search-clear"><X size={16} /></button>}
+          <input key={currentSearch} name="q" ref={inputRef} type="search" role="searchbox" aria-label={copy.nav.searchAriaLabel} defaultValue={currentSearch} placeholder={ticket.searchPlaceholder} maxLength={200} />
+          <button type="button" onClick={() => {
+            if (inputRef.current) { inputRef.current.value = ''; inputRef.current.focus(); }
+          }} aria-label={copy.nav.clearSearch} className="ticket-search-clear"><X size={16} /></button>
           <button type="submit" aria-label={ticket.search}><Search size={24} strokeWidth={1.8} /></button>
         </form>
         {!home && !detailId && <Link className={cn('ticket-mobile-page-search', !mobileTitle && 'ticket-narrow-search')} href={href('/search')} aria-label={ticket.search}><Search size={21} /></Link>}

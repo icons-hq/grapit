@@ -252,6 +252,10 @@ export const COUNTRY_OPTIONS = [
 
 export type CountryCode = (typeof COUNTRY_OPTIONS)[number]['value'];
 
+export function isCountryCode(value: string | null | undefined): value is CountryCode {
+  return COUNTRY_OPTIONS.some(country => country.value === value);
+}
+
 export function getCountryLabel(countryCode: string): string {
   return COUNTRY_OPTIONS.find((country) => country.value === countryCode)
     ?.label ?? countryCode;

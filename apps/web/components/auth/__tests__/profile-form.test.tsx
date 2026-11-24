@@ -119,6 +119,23 @@ describe('ProfileForm settings center', () => {
     expect(screen.getByRole('button', { name: '로그아웃' })).toBeInTheDocument();
   });
 
+  it('lets a buyer correct a legacy country and return to the same checkout', async () => {
+    const buyer = { ...baseUser, country: 'OTHER' };
+    const returnTo = '/en/booking/show/confirm?resumeOrderId=original-order';
+    mocks.apiPatch.mockResolvedValue({ ...buyer, country: 'JP' });
+    render(<ProfileForm user={buyer} returnTo={returnTo} />);
+    const country = screen.getByRole('combobox', { name: '국가' });
+    const save = screen.getByRole('button', { name: '변경사항 저장' });
+    expect(country).toHaveValue('');
+    expect(save).toBeDisabled();
+    const actor = userEvent.setup();
+    await actor.selectOptions(country, 'JP');
+    await actor.click(save);
+    await waitFor(() => expect(mocks.apiPatch).toHaveBeenCalledWith('/api/v1/users/me', { country: 'JP' }));
+    expect(mocks.setAuth).toHaveBeenCalledWith('access-token', expect.objectContaining({ country: 'JP' }));
+    expect(mocks.routerPush).toHaveBeenCalledWith(returnTo);
+  });
+
   it('persists preferred language and marketing consent through PATCH /users/me', async () => {
     const updatedUser: ProfileSettingsUser = {
       ...baseUser,

@@ -19,7 +19,7 @@ import { apiClient } from '@/lib/api-client';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import {
-  COUNTRY_OPTIONS,
+  isCountryCode,
   TICKET_SERVICE_FEE_KRW,
   isCheckoutConfigurablePaymentMethod,
   isForeignCheckout,
@@ -560,7 +560,7 @@ export function buildWidgetPaymentRequest({
   }
 
   if (branch.method === 'FOREIGN_EASY_PAY') {
-    if (!COUNTRY_OPTIONS.some(({ value }) => value === customerCountry)) {
+    if (!isCountryCode(customerCountry)) {
       throw new Error(getCheckoutCopy(resolveVisibleCopyLocale(locale)).countryRequired);
     }
     const products = branch.providerChargeQuote && selectedSeats.length === 0
@@ -584,7 +584,7 @@ export function buildWidgetPaymentRequest({
     return {
       ...baseRequest,
       foreignEasyPay: {
-        country: customerCountry!,
+        country: customerCountry,
         products,
       },
     };
@@ -756,7 +756,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           throw new Error(checkoutCopy.methodChanged);
         }
         if (selection.paymentMethod.method === 'FOREIGN_EASY_PAY'
-          && !COUNTRY_OPTIONS.some(({ value }) => value === customerCountry)) {
+          && !isCountryCode(customerCountry)) {
           throw new Error(checkoutCopy.countryRequired);
         }
 

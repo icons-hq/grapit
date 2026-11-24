@@ -212,6 +212,7 @@ body {
 .ticket-header-search input::-webkit-search-cancel-button { display: none; }
 .ticket-header-search button { flex-shrink: 0; color: var(--color-primary); display: grid; place-items: center; min-width: 28px; min-height: 36px; }
 .ticket-header-search .ticket-search-clear { color: var(--ticket-gray); }
+.ticket-header-search input:placeholder-shown + .ticket-search-clear { display: none; }
 .ticket-search-scope { flex-shrink: 0; padding: 3px 8px; border: 1px solid var(--color-primary); border-radius: 16px; font-size: 11px; color: var(--color-primary); white-space: nowrap; }
 .ticket-header-actions { display: flex; flex-shrink: 0; align-items: center; margin-left: auto; gap: 22px; }
 .ticket-header-action { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; white-space: nowrap; font-size: 12px; font-weight: 600; }

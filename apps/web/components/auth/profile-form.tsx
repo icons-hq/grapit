@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  COUNTRY_OPTIONS,
+  isCountryCode,
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
   type SupportedLocale,
+  type UpdateProfileInput,
   type UserProfile,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
@@ -48,14 +51,6 @@ type ProfileSettingsUser = UserProfile & {
   marketingConsent?: boolean | null;
 };
 
-type ProfileUpdatePayload = {
-  name?: string;
-  phone?: string;
-  phoneVerificationToken?: string;
-  preferredLocale?: SupportedLocale;
-  marketingConsent?: boolean;
-};
-
 function getMarketingConsent(user: UserProfile): boolean {
   return (user as ProfileSettingsUser).marketingConsent === true;
 }
@@ -63,9 +58,11 @@ function getMarketingConsent(user: UserProfile): boolean {
 export function ProfileForm({ user, returnTo }: ProfileFormProps) {
   const router = useRouter();
   const locale = getClientLocale();
-  const copy = getVisibleCopy(locale).profile;
+  const messages = getVisibleCopy(locale);
+  const copy = messages.profile;
   const { setAuth, clearAuth, accessToken } = useAuthStore();
   const [name, setName] = useState(user.name);
+  const [country, setCountry] = useState(user.country);
   const [phone, setPhone] = useState(user.phone);
   const [preferredLocale, setPreferredLocale] = useState<SupportedLocale>(
     user.preferredLocale,
@@ -89,6 +86,7 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
   const phoneChanged = phone !== user.phone;
   const hasChanges =
     name !== user.name ||
+    country !== user.country ||
     phoneChanged ||
     Boolean(phoneVerificationToken) ||
     preferredLocale !== user.preferredLocale ||
@@ -115,8 +113,9 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
 
     setIsSaving(true);
     try {
-      const payload: ProfileUpdatePayload = {};
+      const payload: UpdateProfileInput = {};
       if (name !== user.name) payload.name = name;
+      if (country !== user.country && isCountryCode(country)) payload.country = country;
       if (phoneChanged || phoneVerificationToken) {
         payload.phone = phone;
         payload.phoneVerificationToken = phoneVerificationToken;
@@ -265,6 +264,20 @@ export function ProfileForm({ user, returnTo }: ProfileFormProps) {
           isVerified={isPhoneVerified}
           purpose="profile_phone_change"
         />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="profile-country">{messages.auth.signup.countryLabel}</Label>
+        <select
+          id="profile-country"
+          autoComplete="country"
+          className="flex h-11 w-full scroll-mt-32 rounded-lg border border-input bg-background px-4 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          value={isCountryCode(country) ? country : ''}
+          onChange={event => setCountry(event.currentTarget.value)}
+        >
+          <option value="" disabled>{messages.auth.signup.countryRequired}</option>
+          {COUNTRY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
       </div>
 
       <div className="space-y-2">

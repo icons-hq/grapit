@@ -1,4 +1,5 @@
 'use client';
+import { useLayoutEffect, useRef } from 'react';
 import { useLocale } from 'next-intl';
 import type { PerformanceListResponse, PerformanceQuery } from '@grabit/shared';
 import { CatalogFilters, MobileCatalogFilters, type FilterUpdates } from './catalog-filters';
@@ -16,12 +17,30 @@ export function CatalogResults({ data, isLoading, isError, retry, value, update,
   const copy = getTicketCopy(locale);
   const labels = getVisibleCopy(locale);
   const filters = { value, onChange: update, onReset: reset, fixedGenre, hideStatus: upcoming };
+  const sort = currentSort ?? value.sort ?? (search ? 'relevance' : 'latest');
+  const sortControl = useRef<HTMLSelectElement>(null);
+  const previousSort = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const control = sortControl.current;
+    if (!control || previousSort.current === sort) return;
+    const firstRender = previousSort.current === null;
+    previousSort.current = sort;
+    const urlOption = Array.from(control.options).find(option => option.value === sort);
+    if (firstRender) {
+      // A native select can change while the server-rendered page is waiting for JavaScript.
+      if (urlOption && !urlOption.selected) {
+        update({ sort: control.value });
+      }
+    } else {
+      control.selectedIndex = urlOption?.index ?? 0;
+    }
+  }, [sort, update]);
   return <div className={`ticket-results-layout${compact ? ' ticket-results-compact' : ''}`}>
     {!compact && <CatalogFilters {...filters} />}
     <div className="min-w-0">
       <div className="ticket-results-toolbar"><h2 aria-live="polite">{data ? `${data.total} ${copy.results}` : copy.browse}</h2>
         <div className="flex items-center gap-2"><MobileCatalogFilters {...filters} />
-          <select aria-label={labels.genrePage.sort.ariaLabel} value={currentSort ?? value.sort ?? (search ? 'relevance' : 'latest')} onChange={(event) => update({ sort: event.target.value })}>
+          <select ref={sortControl} aria-label={labels.genrePage.sort.ariaLabel} defaultValue={sort} onChange={(event) => update({ sort: event.currentTarget.value })}>
             {search && <option value="relevance">{copy.relevance}</option>}
             {upcoming && <option value="opening">{copy.openingOrder}</option>}
             <option value="latest">{copy.latest}</option><option value="popular">{copy.popular}</option><option value="date">{copy.dateOrder}</option>

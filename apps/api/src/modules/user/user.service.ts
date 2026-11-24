@@ -241,10 +241,11 @@ export class UserService {
     const updateData: Partial<
       Pick<
         UserProfile,
-        'name' | 'phone' | 'preferredLocale' | 'isPhoneVerified' | 'marketingConsent'
+        'name' | 'phone' | 'country' | 'preferredLocale' | 'isPhoneVerified' | 'marketingConsent'
       >
     > = {};
     if (data.name !== undefined) updateData.name = data.name;
+    if (data.country !== undefined) updateData.country = data.country;
     if (data.preferredLocale !== undefined) {
       updateData.preferredLocale = data.preferredLocale;
     }
