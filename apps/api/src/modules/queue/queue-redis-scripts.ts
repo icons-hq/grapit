@@ -13,10 +13,68 @@
  */
 
 /**
+ * Adopt pre-upgrade sessions in place. The earliest live admission wins, then
+ * the earliest waiting position, then payment-only/retained records. A concurrent
+ * new account owner is authoritative. No clock or waiting score is rewritten.
+ * KEYS: account owner, waiting, active, candidate records (same Redis hash slot).
+ */
+export const CLAIM_QUEUE_ACCOUNT_LUA = `
+-- CLAIM_QUEUE_ACCOUNT_LUA
+local owner = redis.call('GET', KEYS[1])
+local winner = nil
+local function precedes(a, b)
+  if a.priority ~= b.priority then return a.priority < b.priority end
+  if a.rank ~= b.rank then return a.rank < b.rank end
+  if a.time ~= b.time then return a.time < b.time end
+  return a.r.queueSessionId < b.r.queueSessionId
+end
+local rows = {}
+for i = 4, #KEYS do
+  local raw = redis.call('GET', KEYS[i])
+  if raw then
+    local r = cjson.decode(raw)
+    if r.userId == ARGV[1] and not r.mergedInto then
+      local p = 3
+      local order = r.enteredAt
+      local rank = 0
+      if r.state == 'ADMITTED' and type(r.activeUntilAt) == 'string' and r.activeUntilAt >= ARGV[2] then
+        p = 1
+        order = r.admittedAt
+      elseif r.state == 'WAITING' then
+        p = 2
+        rank = redis.call('ZRANK', KEYS[2], r.queueSessionId) or math.huge
+      end
+      local candidate = { key=KEYS[i], r=r, priority=p, rank=rank, time=order }
+      rows[#rows+1] = candidate
+      if owner == r.queueSessionId or (not owner and (not winner or precedes(candidate, winner))) then
+        winner = candidate
+      end
+    end
+  end
+end
+if winner then
+  owner = winner.r.queueSessionId
+  redis.call('SET', KEYS[1], owner, 'PX', math.max(1,redis.call('PTTL', winner.key)))
+end
+for _, entry in ipairs(rows) do
+  local r = entry.r
+  r.accountIndexed = true
+  if r.queueSessionId ~= owner then
+    redis.call('ZREM', KEYS[2], r.queueSessionId)
+    redis.call('SREM', KEYS[3], r.queueSessionId)
+    r.state = 'EXPIRED'
+    r.mergedInto = owner
+  end
+  redis.call('SET', entry.key, cjson.encode(r), 'KEEPTTL')
+end
+return owner or ''
+`;
+
+/**
  * KEYS[1] = {queue:<performanceId>}:session:<queueSessionId>
  * KEYS[2] = {queue:<performanceId>}:waiting
  * KEYS[3] = {queue:<performanceId>}:active
- * KEYS[4] = {queue:<performanceId>}:identity:<userId>:<familyId>:<deviceSlotId>
+ * KEYS[4] = {queue:<performanceId>}:account:<userId>
  * KEYS[5] = {queue:<performanceId>}:capacity-version
  * ARGV[1] = queueSessionId
  * ARGV[2] = op: admit | touch | recovery | expire | release
@@ -81,7 +139,7 @@ local function save(ttlMs)
   local encoded = cjson.encode(record)
   redis.call('SET', sessionKey, encoded, 'PX', ttl)
   local owner = redis.call('GET', identityKey)
-  if (not owner) or owner == id then
+  if not record.mergedInto and (owner == id or (not owner and record.accountIndexed)) then
     redis.call('SET', identityKey, id, 'PX', ttl)
   end
   return encoded, ttl
@@ -299,6 +357,7 @@ return alive
 `;
 
 const QUEUE_SCRIPT_MARKERS = [
+  'CLAIM_QUEUE_ACCOUNT_LUA',
   'READ_QUEUE_CAPACITY_LUA',
   'CACHE_QUEUE_CAPACITY_LUA',
   'INVALIDATE_QUEUE_CAPACITY_LUA',
@@ -365,6 +424,41 @@ async function runQueueScriptInMemory(
   keys: string[],
   args: string[],
 ): Promise<unknown> {
+  if (script.includes('CLAIM_QUEUE_ACCOUNT_LUA')) {
+    const [account, waiting, active, ...candidates] = keys;
+    let owner = await store.get(account!);
+    const rows: Array<{ key: string; r: JsonRecord; ttl: number; priority: number; rank: number; order: string }> = [];
+    for (const key of candidates) {
+      const raw = await store.get(key);
+      if (!raw) continue;
+      const r = JSON.parse(raw) as JsonRecord;
+      if (r['userId'] !== args[0] || r['mergedInto']) continue;
+      const admitted = r['state'] === 'ADMITTED' && text(r['activeUntilAt']) >= args[1]!;
+      rows.push({ key, r, ttl: Math.max(1, await store.pttl(key)),
+        priority: admitted ? 1 : r['state'] === 'WAITING' ? 2 : 3,
+        rank: r['state'] === 'WAITING' ? await store.zrank(waiting!, text(r['queueSessionId'])) ?? Infinity : 0,
+        order: text(r[admitted ? 'admittedAt' : 'enteredAt']) });
+    }
+    const winner = owner ? rows.find(({ r }) => r['queueSessionId'] === owner)
+      : rows.sort((a, b) => a.priority - b.priority || a.rank - b.rank || a.order.localeCompare(b.order)
+        || text(a.r['queueSessionId']).localeCompare(text(b.r['queueSessionId'])))[0];
+    if (winner) {
+      owner = text(winner.r['queueSessionId']);
+      await store.set(account!, owner, 'PX', winner.ttl);
+    }
+    for (const { key, r, ttl } of rows) {
+      r['accountIndexed'] = true;
+      if (r['queueSessionId'] !== owner) {
+        r['state'] = 'EXPIRED';
+        r['mergedInto'] = owner;
+        await store.zrem(waiting!, text(r['queueSessionId']));
+        await store.srem(active!, text(r['queueSessionId']));
+      }
+      await store.set(key, JSON.stringify(r), 'PX', ttl);
+    }
+    return owner ?? '';
+  }
+
   if (script.includes('READ_QUEUE_CAPACITY_LUA')) {
     return [await store.get(keys[0]!) ?? '', await store.get(keys[1]!) ?? '0'];
   }
@@ -479,7 +573,7 @@ async function evalTransitionInMemory(
     const encoded = JSON.stringify(record);
     await store.set(sessionKey, encoded, 'PX', ttl);
     const owner = await store.get(identityKey);
-    if (!owner || owner === id) {
+    if (!record['mergedInto'] && (owner === id || (!owner && record['accountIndexed']))) {
       await store.set(identityKey, id, 'PX', ttl);
     }
     return [encoded, ttl];

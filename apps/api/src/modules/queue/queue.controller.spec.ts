@@ -28,7 +28,7 @@ function enter(user: Record<string, unknown>) {
   const queueService = createQueueService();
   const controller = new QueueController(queueService as never);
   const response = { cookie: vi.fn() };
-  const request = { user, cookies: { refreshToken: 'refresh-cookie' } };
+  const request = { user: { isEmailVerified: true, isPhoneVerified: true, ...user }, cookies: { refreshToken: 'refresh-cookie' } };
   return {
     queueService,
     result: controller.enterQueue('performance-1', request as never, response as never),

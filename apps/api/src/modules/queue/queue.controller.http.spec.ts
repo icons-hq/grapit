@@ -33,6 +33,7 @@ const waitingSnapshot = {
 
 describe('Queue entry HTTP contract', () => {
   let app: INestApplication;
+  let buyer = { id: 'buyer-1', role: 'user', isEmailVerified: true, isPhoneVerified: true };
   let agent: Agent;
   const queueService = {
     resolveBrowserIdentity: vi.fn(),
@@ -48,8 +49,8 @@ describe('Queue entry HTTP contract', () => {
     }).compile();
     app = module.createNestApplication();
     app.use(cookieParser());
-    app.use((req: { user?: { id: string; role?: string } }, _res: unknown, next: () => void) => {
-      req.user = { id: 'buyer-1', role: 'user' };
+    app.use((req: { user?: typeof buyer }, _res: unknown, next: () => void) => {
+      req.user = buyer;
       next();
     });
     app.useGlobalFilters(new HttpExceptionFilter());
@@ -66,6 +67,7 @@ describe('Queue entry HTTP contract', () => {
   });
 
   beforeEach(() => {
+    buyer = { ...buyer, isEmailVerified: true, isPhoneVerified: true };
     vi.clearAllMocks();
     queueService.resolveBrowserIdentity.mockResolvedValue({
       userId: 'buyer-1',
@@ -73,6 +75,20 @@ describe('Queue entry HTTP contract', () => {
       deviceSlotId: 'family-1',
     });
   });
+
+  it.each(['isEmailVerified', 'isPhoneVerified'] as const)(
+    'requires %s before creating or polling a position', async (flag) => {
+      buyer[flag] = false;
+      const api = request(app.getHttpServer());
+      for (const response of [await api.post(`/queue/performances/${performanceId}/enter`).agent(agent),
+        await api.get('/queue/sessions/previous').agent(agent)]) {
+        expect(response.status).toBe(403);
+        expect(response.headers['set-cookie']).toBeUndefined();
+      }
+      expect(queueService.resolveBrowserIdentity).not.toHaveBeenCalled();
+      expect(queueService.enterPerformanceQueue).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['not-a-uuid', 'performance-1', "1'%20OR%20'1'%3D'1"])(
     'rejects a malformed performance id with 400 before any DB or queue work (%s)',
@@ -139,6 +155,16 @@ describe('Queue entry HTTP contract', () => {
     expect(queueService.enterPerformanceQueue).toHaveBeenCalledWith(
       expect.objectContaining({ performanceId }),
     );
+  });
+
+  it('moves a legacy browser credential using an HTTP-only cookie', async () => {
+    queueService.getQueueSessionStatus.mockResolvedValue({ ...waitingSnapshot, replacementAdmissionToken: 'replacement' });
+    const response = await request(app.getHttpServer()).get('/queue/sessions/old-place').agent(agent)
+      .set('Cookie', ['refreshToken=refresh-cookie', 'grabit_queue_admission=old']);
+    expect(response.status).toBe(200);
+    expect(admissionCookie(response)).toContain('grabit_queue_admission=replacement;');
+    expect(admissionCookie(response)).toContain('HttpOnly');
+    expect(response.body).not.toHaveProperty('replacementAdmissionToken');
   });
 
   it('keeps the admission cookie of a WAITING session for the 30-minute idle window', async () => {
