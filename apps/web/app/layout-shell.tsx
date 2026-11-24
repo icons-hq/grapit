@@ -26,12 +26,8 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         className={`flex flex-1 flex-col${showMobileTabs ? ' pb-[calc(56px+env(safe-area-inset-bottom,0px))] md:pb-0' : ''}`}
       >
         {children}
+        {!hideShell && <Footer />}
       </div>
-      {!hideShell && (
-        <div className="hidden md:block">
-          <Footer />
-        </div>
-      )}
       {showMobileTabs && <MobileTabBar />}
     </div>
   );

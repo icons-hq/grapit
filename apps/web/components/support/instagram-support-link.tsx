@@ -9,7 +9,7 @@ export function InstagramSupportLink({ copy }: { copy: VisibleCopy['support'] })
       href={`https://www.instagram.com/m/${WECORD_INSTAGRAM_USERNAME}`}
       target="_blank"
       rel="noopener noreferrer"
-      className="font-semibold underline underline-offset-4"
+      className="inline-block max-w-full py-1 font-semibold underline underline-offset-4"
     >
       {formatCopy(copy.instagramDmLabel, { handle: `@${WECORD_INSTAGRAM_USERNAME}` })}
       <span className="sr-only"> ({copy.opensInNewTab})</span>
