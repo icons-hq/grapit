@@ -93,6 +93,7 @@ function normalizePerformanceDetailImages(
   return parsed.data
     .map((image, index) => ({
       imageUrl: image.imageUrl,
+      ...(image.captions ? { captions: image.captions } : {}),
       altText: image.altText ?? null,
       sortOrder: image.sortOrder ?? index,
     }))

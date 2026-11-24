@@ -1,5 +1,7 @@
 'use client';
 
+import { catalogText, formatFloorLabel } from '@grabit/shared';
+
 import { getCheckoutState } from '@/lib/booking/checkout-state';
 import { getCancellationCopy } from '@/lib/i18n/cancellation-copy';
 import { useState } from 'react';
@@ -716,7 +718,7 @@ export function ReservationDetailView({
             value={formatDateTime(reservation.showDateTime, undefined, locale)}
           />
           <Separator />
-          <InfoRow label={completeCopy.venue} value={reservation.venue} />
+          <InfoRow label={completeCopy.venue} value={catalogText(reservation.venue, locale)} />
         </CardContent>
       </Card>
 
@@ -869,7 +871,7 @@ export function ReservationDetailView({
                         </SeatHighlightLabel>
                       </h3>
                       {card.floorLabel && (
-                        <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
+                        <p className="mt-1 text-sm font-medium text-gray-500">{formatFloorLabel(card.floorLabel, locale)}</p>
                       )}
                     </div>
                     <Badge

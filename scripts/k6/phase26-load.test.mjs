@@ -510,7 +510,8 @@ test('sends each booking consent row at its current document version and languag
   }
 
   const seat = parseSeatPool(seatPool(1))[0];
-  for (const [locale, language] of [['ko', 'ko'], ['th', 'en'], ['zh-CN', 'en']]) {
+  for (const locale of shared.CONSENT_DOCUMENT_LANGUAGES) {
+    const language = shared.resolveConsentDocumentLanguage(locale);
     const config = parseConfig(env({ PHASE26_LOCALE: locale }), 'LOAD_10K_BASELINE');
     const body = buildPrepareBody({ config, seat, orderId: 'PHASE26_ORD-1', bookingPolicy: POLICY, now: new Date(0) });
     assert.deepEqual(body.consentItems, shared.BOOKING_CONSENT_ITEM_KEYS.map((key) => ({

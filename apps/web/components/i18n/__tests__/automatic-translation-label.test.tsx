@@ -8,18 +8,16 @@ describe('AutomaticTranslationLabel', () => {
     render(<AutomaticTranslationLabel />);
 
     expect(screen.getByText('자동 번역 검수본')).toBeInTheDocument();
-    expect(screen.getByText('Reviewed machine translation')).toBeInTheDocument();
   });
 
   it.each([
     ['en', 'Reviewed machine translation'],
-    ['th', 'Reviewed machine translation'],
-    ['zh-CN', 'Reviewed machine translation'],
-    ['unknown', 'Reviewed machine translation'],
-  ])('renders English fallback copy for %s', (locale, expectedCopy) => {
+    ['th', 'คำแปลอัตโนมัติที่ตรวจทานแล้ว'],
+    ['zh-CN', '已经审校的机器翻译'],
+    ['unknown', '자동 번역 검수본'],
+  ])('renders the label for %s', (locale, expectedCopy) => {
     render(<AutomaticTranslationLabel locale={locale} />);
 
-    expect(screen.getByText('자동 번역 검수본')).toBeInTheDocument();
     expect(screen.getByText(expectedCopy)).toBeInTheDocument();
   });
 });

@@ -36,6 +36,7 @@ export * from './constants/index';
 
 // I18n
 export * from './i18n/launch-copy-keys';
+export * from './i18n/catalog-display';
 
 // Feature flags
 export * from './flags';

@@ -4,7 +4,8 @@ import { Resend } from 'resend';
 import { createHash } from 'node:crypto';
 import * as Sentry from '@sentry/nestjs';
 import { PasswordResetEmail, getPasswordResetCopy } from './templates/password-reset.js';
-import type { SupportedLocale } from '@grabit/shared';
+import { isSupportedLocale, type SupportedLocale } from '@grabit/shared';
+import { qrEmailCopy } from './templates/qr-ticket-copy.js';
 import { EmailVerificationEmail } from './templates/email-verification.js';
 import { emailVerificationCopy, type EmailVerificationLocale } from './templates/email-verification.copy.js';
 
@@ -287,34 +288,38 @@ export class EmailService {
 }
 
 function buildQrTicketReminderRequest(from: string, to: string, input: SendQrTicketReminderEmailInput) {
-    const showDateTime = new Intl.DateTimeFormat('ko-KR', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Seoul',
-    }).format(new Date(input.showDateTime));
+  const locale = input.locale && isSupportedLocale(input.locale) ? input.locale : 'ko';
+  const copy = qrEmailCopy[locale];
+  const formattedTime = new Intl.DateTimeFormat(locale === 'ko' ? 'ko-KR' : locale, {
+    calendar: 'gregory',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Seoul',
+  }).format(new Date(input.showDateTime));
 
-    const html = [
-      '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827">',
-      '<h1 style="font-size:20px;margin:0 0 16px">QR 티켓 안내</h1>',
-      `<p style="margin:0 0 12px"><strong>${escapeHtml(input.performanceTitle)}</strong> 공연의 QR 티켓을 다시 보내드립니다.</p>`,
-      `<p style="margin:0 0 4px">예매번호: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
-      `<p style="margin:0 0 4px">공연일시: ${escapeHtml(showDateTime)}</p>`,
-      `<p style="margin:0 0 16px">장소: ${escapeHtml(input.venue)}</p>`,
-      `<p style="margin:0 0 8px">마이페이지에서 좌석별 QR 확인:</p>`,
-      `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
-      `<p style="margin:0 0 8px">좌석별 QR 토큰 (${input.tickets.length}매)</p>`,
-      ...input.tickets.map((ticket) => [
-        `<p style="margin:12px 0 4px"><strong>${escapeHtml(ticket.seatLabel)}</strong></p>`,
-        `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px;margin:0">${escapeHtml(ticket.token)}</pre>`,
-      ].join('')),
-      '</div>',
-    ].join('');
+  const showDateTime = locale === 'ko' ? formattedTime : `${formattedTime} (KST)`;
+  const html = [
+    `<div${locale === 'ko' ? '' : ` lang="${locale}"`} style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827">`,
+    `<h1 style="font-size:20px;margin:0 0 16px">${copy.title}</h1>`,
+    `<p style="margin:0 0 12px">${copy.introduction(escapeHtml(input.performanceTitle))}</p>`,
+    `<p style="margin:0 0 4px">${copy.reservation}: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
+    `<p style="margin:0 0 4px">${copy.date}: ${escapeHtml(showDateTime)}</p>`,
+    `<p style="margin:0 0 16px">${copy.venue}: ${escapeHtml(input.venue)}</p>`,
+    `<p style="margin:0 0 8px">${copy.link}</p>`,
+    `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
+    `<p style="margin:0 0 8px">${copy.codes(input.tickets.length)}</p>`,
+    ...input.tickets.map((ticket) => [
+      `<p style="margin:12px 0 4px"><strong>${escapeHtml(ticket.seatLabel)}</strong></p>`,
+      `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px;margin:0">${escapeHtml(ticket.token)}</pre>`,
+    ].join('')),
+    '</div>',
+  ].join('');
 
-  return { from, to, subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`, html };
+  return { from, to, subject: `[Grabit] ${copy.title} - ${input.performanceTitle}`, html };
 }
 
 function hashQrTicketReminderRequest(request: ReturnType<typeof buildQrTicketReminderRequest>): string {

@@ -114,12 +114,12 @@ describe('Booking consent capture', () => {
   });
 
   it.each(['th', 'zh-CN', 'en'] as const)(
-    'records English as the consent language for %s, because the English document is shown',
+    'records the displayed %s document language',
     async (locale) => {
       const payload = await agreeAndPay(locale);
 
       expect(payload.consentItems.map((item) => item.key)).toEqual(['terms', 'privacy']);
-      expect(payload.consentItems.every((item) => item.language === 'en')).toBe(true);
+      expect(payload.consentItems.every((item) => item.language === locale)).toBe(true);
     },
   );
 });

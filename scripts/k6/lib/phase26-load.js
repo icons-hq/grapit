@@ -35,10 +35,9 @@ export const FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
 export const CONFIRM_MODES = ['off', 'pg-stub'];
 const CONSENT_VERSION_PATTERN = /^[0-9A-Za-z._-]{1,40}$/;
 
-// Legal documents exist only in Korean and English; mirrors
-// resolveConsentDocumentLanguage in @grabit/shared.
+// k6 cannot import @grabit/shared. Its contract test compares all document languages.
 export function consentDocumentLanguage(locale) {
-  return locale === 'ko' ? 'ko' : 'en';
+  return ['ko', 'en', 'th', 'zh-CN'].includes(locale) ? locale : 'en';
 }
 
 // PHASE26_CONSENT_VERSIONS='terms=2026-04-28,privacy=2026-11-20' overrides the

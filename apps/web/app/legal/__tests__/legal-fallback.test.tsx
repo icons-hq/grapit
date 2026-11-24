@@ -17,7 +17,7 @@ async function renderPage(page: () => React.ReactNode | Promise<React.ReactNode>
   render(<>{await page()}</>);
 }
 
-describe('legal canonical locale fallback', () => {
+describe('localized legal documents', () => {
   beforeEach(() => {
     getLocaleMock.mockReset();
   });
@@ -41,33 +41,16 @@ describe('legal canonical locale fallback', () => {
   });
 
   it.each([
-    ['th', TermsPage, 'Terms of Service', 'ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ'],
-    ['zh-CN', PrivacyPage, 'Privacy Policy', '查看英文法律告知'],
-  ])(
-    'renders %s legal pages with English canonical copy and the fallback label',
-    async (locale, Page, heading, fallbackLabel) => {
-      getLocaleMock.mockResolvedValue(locale);
-
-      await renderPage(Page);
-
-      expect(screen.getByText(fallbackLabel)).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
-      expect(screen.queryByText(/자동 번역|machine translated|automatic translation/i)).not.toBeInTheDocument();
-    },
-  );
-
-  it('renders the Simplified Chinese fallback label without Japanese launch copy', async () => {
-    getLocaleMock.mockResolvedValue('zh-CN');
-
-    await renderPage(TermsPage);
-
-    const fallbackLabel = screen.getByText('查看英文法律告知');
-
-    expect(fallbackLabel).toBeInTheDocument();
-    expect(fallbackLabel.closest('[data-legal-fallback-locale]')).toHaveAttribute(
-      'data-legal-fallback-locale',
-      'zh-CN',
-    );
-    expect(screen.queryByText('英語の法的通知を確認しています')).not.toBeInTheDocument();
+    ['th', TermsPage, 'ข้อกำหนดการใช้บริการ'],
+    ['th', PrivacyPage, 'นโยบายความเป็นส่วนตัว'],
+    ['th', MarketingPage, 'ความยินยอมในการรับข้อมูลการตลาด'],
+    ['zh-CN', TermsPage, '服务条款'],
+    ['zh-CN', PrivacyPage, '隐私政策'],
+    ['zh-CN', MarketingPage, '营销信息接收同意书'],
+  ] as const)('renders the %s document %s in its own language', async (locale, Page, heading) => {
+    getLocaleMock.mockResolvedValue(locale);
+    await renderPage(Page);
+    expect(screen.getByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
+    expect(document.querySelector('[data-legal-fallback-locale]')).toBeNull();
   });
 });

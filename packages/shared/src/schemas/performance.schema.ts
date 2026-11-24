@@ -262,6 +262,11 @@ export type SaveSeatMapPayloadInput = z.infer<typeof saveSeatMapPayloadSchema>;
 export const performanceDetailImageSchema = z.object({
   imageUrl: z.string().url('올바른 상세 이미지 URL을 입력해주세요'),
   altText: z.string().max(200, '대체 텍스트는 200자 이하여야 합니다').nullable().optional(),
+  captions: z.object({
+    en: z.string().trim().max(4000).optional(),
+    th: z.string().trim().max(4000).optional(),
+    'zh-CN': z.string().trim().max(4000).optional(),
+  }).optional(),
   sortOrder: z.number().int().min(0).default(0),
 });
 export const performanceDetailImagesSchema = z

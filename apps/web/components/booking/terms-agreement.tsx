@@ -6,14 +6,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
-import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
+import { legalDocuments } from '@/content/legal/documents';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
-import termsKo from '@/content/legal/terms-of-service.md?raw';
-import termsEn from '@/content/legal/terms-of-service.en.md?raw';
-import privacyKo from '@/content/legal/privacy-policy.md?raw';
-import privacyEn from '@/content/legal/privacy-policy.en.md?raw';
 
 export function TermsAgreement({ performanceId, onAgreementChange }: {
   performanceId: string;
@@ -30,7 +26,7 @@ export function TermsAgreement({ performanceId, onAgreementChange }: {
     setBookingTerms(checked === true);
     setPrivacyNotice(checked === true);
   }, []);
-  const content = document === 'terms' ? (locale === 'ko' ? termsKo : termsEn) : (locale === 'ko' ? privacyKo : privacyEn);
+  const content = legalDocuments[document ?? 'terms'][locale];
   const title = document === 'terms' ? copy.bookingTerms : copy.privacy;
 
   return (
@@ -57,7 +53,6 @@ export function TermsAgreement({ performanceId, onAgreementChange }: {
       <Dialog open={document !== null} onOpenChange={(open) => { if (!open) setDocument(null); }}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">{copy.terms}</DialogDescription></DialogHeader>
-          {(locale === 'th' || locale === 'zh-CN') && <LegalFallbackLabel locale={locale} />}
           <TermsMarkdown>{content}</TermsMarkdown>
           <DialogFooter><Button onClick={() => setDocument(null)}>{copy.close}</Button></DialogFooter>
         </DialogContent>
