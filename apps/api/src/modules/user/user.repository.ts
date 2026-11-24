@@ -131,7 +131,7 @@ export class UserRepository {
     data: Partial<
       Pick<
         UserProfile,
-        'name' | 'phone' | 'preferredLocale' | 'isPhoneVerified' | 'marketingConsent'
+        'name' | 'phone' | 'country' | 'preferredLocale' | 'isPhoneVerified' | 'marketingConsent'
       >
     >,
   ) {

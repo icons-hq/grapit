@@ -60,6 +60,7 @@ import {
   TICKET_SERVICE_FEE_KRW,
   isCheckoutConfigurablePaymentMethod,
   isCheckoutPaymentMethodAllowed,
+  isCountryCode,
   isForeignCheckout,
   isSameCheckoutPaymentMethod,
   resolveConsentDocumentLanguage,
@@ -432,6 +433,19 @@ function ConfirmPageContent() {
   );
   const visibleQuote = preparedReview?.providerChargeQuote
     ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
+  const needsCountry = paymentMethod.method === 'FOREIGN_EASY_PAY' && !paymentMethodNotAllowed && !isCountryCode(user?.country);
+  function countrySettingsHref() {
+    const params = new URLSearchParams();
+    const savedOrderId = returnOrderId ?? preparedReview?.orderId;
+    if (savedOrderId) {
+      params.set('resumeOrderId', savedOrderId);
+    } else if (holderId && parentId) {
+      params.set('ticketId', holderId);
+      params.set('parentId', parentId);
+    }
+    const returnTo = `${bookingPath}/confirm${params.size ? `?${params}` : ''}`;
+    return `${getLocalizedPathname('/mypage', locale)}?${new URLSearchParams({ tab: 'settings', returnTo })}#profile-country`;
+  }
   // A Prepared Checkout before Provider Handoff keeps its order, seats, method and
   // quote (ADR 0010), so paying it again with the saved method needs no new prepare:
   // the handoff (`POST /payments/branch`) re-validates the method and the seat locks,
@@ -461,7 +475,7 @@ function ConfirmPageContent() {
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
-    if (paymentMethodNotAllowed) return;
+    if (paymentMethodNotAllowed || needsCountry) return;
     if (widgetLoadError) return;
     if (
       !paymentWidgetRef.current
@@ -740,6 +754,7 @@ function ConfirmPageContent() {
   const ctaDisabled = isReselecting || !bookingAvailable
     || lockedMethodMismatch
     || paymentMethodNotAllowed
+    || needsCountry
     || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
     || showtimeStarted
@@ -770,6 +785,8 @@ function ConfirmPageContent() {
     ? checkoutCopy.chooseAnotherMethod
     : widgetLoadError
     ? widgetLoadError
+    : needsCountry
+    ? checkoutCopy.countryRequired
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
@@ -922,6 +939,12 @@ function ConfirmPageContent() {
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-medium text-red-700">{checkoutCopy.methodNotAllowed}</p>
           </section>
+        )}
+        {needsCountry && (
+          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm">
+            <p>{checkoutCopy.countryRequired}</p>
+            <Link href={countrySettingsHref()} className="text-primary underline">{visibleCopy.mypage.tabs.settings}</Link>
+          </div>
         )}
         <section className="space-y-3" inert={isProcessing}>
           <h2 className="text-base font-semibold">{confirmCopy.paymentMethod}</h2>

@@ -55,6 +55,7 @@ Auth must protect scarce booking resources and admin surfaces.
 - Itemized consent capture is shared by signup, social completion, and booking flows. Each row records the version and language of the legal document actually shown; booking records only the booking terms and privacy notice rows it displays.
 - Legal pages are public and linked through the frontend legal routes.
 - Account profile update and withdrawal are available from My Page/user endpoints.
+- My Page accepts the same account country codes as the registration selector. An overseas wallet checkout with an unrecognized country links to this setting and returns to checkout after saving. A prepared order retains its order ID.
 
 ### 3.3 Queue And Booking
 

@@ -63,6 +63,26 @@ describe('first-party browser tracker', () => {
     const unsubscribe = client.subscribeAnalyticsChoice(listener);
     try { client.setAnalyticsChoice('accepted', { collectionConsent: true, overseasConsent: true }); expect(listener).toHaveBeenCalledOnce(); } finally { unsubscribe(); }
   });
+
+  it('keeps a new session when multiple subscribers process the same cross-tab re-consent', () => {
+    client.configureAnalytics(true, 'ko');
+    const collector = client.subscribeAnalyticsChoice(() => {
+      if (client.getAnalyticsChoice() === 'accepted') client.observeAnalyticsPage('/');
+    });
+    const settings = client.subscribeAnalyticsChoice(() => {});
+    try {
+      client.setAnalyticsChoice('declined');
+      const newVisitor = crypto.randomUUID();
+      localStorage.setItem('grabit-analytics-visitor-v1', JSON.stringify({ id: newVisitor, expires: Date.now() + 86400000 }));
+      const accepted = JSON.stringify({ version: 'analytics-v2-replay', value: 'accepted', at: Date.now(), collectionConsent: true, overseasConsent: true });
+      localStorage.setItem(client.ANALYTICS_CHOICE_KEY, accepted);
+      window.dispatchEvent(new StorageEvent('storage', { key: client.ANALYTICS_CHOICE_KEY, newValue: accepted }));
+      expect(JSON.parse(sessionStorage.getItem('grabit-analytics-session-v1') ?? 'null')).toMatchObject({ visitorId: newVisitor });
+    } finally {
+      collector();
+      settings();
+    }
+  });
   it.each([true, false])('uses the current browser identity after another tab withdraws and accepts again (storage event: %s)', async (receiveStorageEvent) => {
     auth.user = { id: crypto.randomUUID(), role: 'user' }; auth.accessToken = 'synthetic-token';
     const unsubscribe = client.subscribeAnalyticsChoice(() => client.configureAnalytics(true, 'ko'));

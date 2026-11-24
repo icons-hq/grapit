@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isCountryCode } from '../constants/countries';
 import { SUPPORTED_LOCALES } from '../constants/locales';
 
 export const updateProfileSchema = z.object({
@@ -13,6 +14,7 @@ export const updateProfileSchema = z.object({
     .max(20)
     .optional(),
   phoneVerificationToken: z.string().min(1, '전화번호 인증이 필요합니다').optional(),
+  country: z.string().refine(isCountryCode, '지원하지 않는 국가입니다').optional(),
   preferredLocale: z.enum(SUPPORTED_LOCALES).optional(),
   marketingConsent: z.boolean().optional(),
 });

@@ -4,6 +4,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { lateDoneRevivableFailedReservationSql } from '../../database/late-done-revivable-reservation.js';
 import { UserService } from './user.service.js';
+import { updateProfileSchema } from '@grabit/shared';
 import type { UserRepository } from './user.repository.js';
 import type { SmsService } from '../sms/sms.service.js';
 
@@ -151,6 +152,15 @@ describe('UserService preferred locale persistence', () => {
     expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
       preferredLocale: 'zh-CN',
     });
+  });
+
+  it('persists an accepted checkout country without changing phone verification', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, country: 'OTHER' } as never);
+    vi.mocked(repository.updateProfile).mockResolvedValue({ ...baseUser, country: 'JP' } as never);
+    const update = updateProfileSchema.parse({ country: 'JP' });
+    await expect(service.updateProfile('user-1', update)).resolves.toMatchObject({ country: 'JP', isPhoneVerified: true });
+    expect(repository.updateProfile).toHaveBeenCalledWith('user-1', { country: 'JP' });
+    expect(updateProfileSchema.safeParse({ country: 'OTHER' }).success).toBe(false);
   });
 
   it('persists marketing consent updates through the existing profile path', async () => {

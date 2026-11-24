@@ -32,9 +32,18 @@ export function getAnalyticsChoice(): 'accepted' | 'declined' | null {
 }
 export function subscribeAnalyticsChoice(listener: () => void) {
   const onStorage = (event: StorageEvent) => {
-    // Invalidate this tab even if a later re-consent is already in shared storage.
-    // Never remove the new visitor ID created by the tab that accepted again.
-    if (event.key === ANALYTICS_CHOICE_KEY || event.key === null) resetSession();
+    if (event.key === ANALYTICS_CHOICE_KEY || event.key === null) {
+      // Storage events can arrive after a later choice. Another subscriber may
+      // already have started the session for the new shared visitor.
+      if (getAnalyticsChoice() === 'accepted') {
+        discardStaleSession();
+        if (!session) observeAnalyticsPage(window.location.pathname);
+      } else {
+        resetSession();
+      }
+    } else if (event.key !== WITHDRAWAL_KEY) {
+      return;
+    }
     listener();
   };
   window.addEventListener(ANALYTICS_CHOICE_EVENT, listener); window.addEventListener('storage', onStorage);

@@ -303,4 +303,24 @@ describe('Checkout resume after the queue access window closed (audit #4, #32)',
       providerChargeQuote: quote,
     }));
   });
+
+  it('keeps a prepared wallet order in the return link while the buyer corrects their country', async () => {
+    const auth = useAuthStore.getState();
+    auth.setAuth(auth.accessToken!, { ...auth.user!, country: 'OTHER' });
+    const buyer = userEvent.setup();
+    boundary.read.mockResolvedValue({
+      ...preparedOrder,
+      checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'PAYPAL', currency: 'USD' },
+      providerChargeQuote: { currency: 'USD', amountMinor: 3536, amountDecimal: '35.36', rate: '0.00068', quotedAt: new Date().toISOString() },
+    });
+    mountPage();
+    await buyer.click(await screen.findByRole('button', { name: 'Choose PayPal' }));
+    const settings = new URL(screen.getByRole('link', { name: '설정' }).getAttribute('href')!, window.location.origin);
+    expect(settings.pathname).toBe('/mypage');
+    expect(settings.searchParams.get('tab')).toBe('settings');
+    expect(settings.searchParams.get('returnTo')).toBe(`/booking/performance-recovery/confirm?resumeOrderId=${ORDER_ID}`);
+    expect(screen.getAllByRole('button', { name: getCheckoutCopy('ko').countryRequired })[0]).toBeDisabled();
+    expect(boundary.prepare).not.toHaveBeenCalled();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
 });
