@@ -12,6 +12,7 @@ import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translati
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { formatBookingOpensAtKst, parseBookingStartMs, resolveBookingStartPerformanceStatus } from '@/components/performance/performance-display-status';
 import { PerformancePeriod } from '@/components/performance/performance-period';
+import { DetailImageGallery } from '@/components/performance/detail-image-gallery';
 import { SalesInfo } from '@/components/performance/sales-info';
 import { TicketActions } from '@/components/performance/ticket-actions';
 import { TicketBookingPanel } from '@/components/performance/ticket-booking-panel';
@@ -42,12 +43,11 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
   const saleStatus = resolveBookingStartPerformanceStatus(performance.status,performance.bookingPolicy?.bookingStartsAt,availability.isBeforeScheduledBookingStart);
   const status = getDisplayPerformanceStatus(saleStatus,availability.bookingEnabled,availability.isResolved);
   const opening = saleStatus === 'upcoming' ? formatBookingOpensAtKst(performance.bookingPolicy?.bookingStartsAt,locale) : null;
-  const detailImages = performance.detailImages ?? [];
   const showDescription = performance.descriptionVisible !== false;
   const showSales = performance.salesInfoVisible !== false;
   const salesInfo = showSales ? stripStandardCancellationCopy(performance.salesInfo ?? null) : null;
   const nav = [
-    ...(detailImages.length ? [{id:'detail-images',label:copy.performance.detailImagesTitle}] : []),
+    {id:'detail-images',label:copy.performance.detailImagesTitle},
     ...(performance.castings.length ? [{id:'cast',label:ticket.cast}] : []),
     ...(showDescription ? [{id:'detail-copy',label:copy.performance.detailTab}] : []),
     {id:'prices',label:ticket.prices},
@@ -79,9 +79,7 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
         <div className="ticket-cast-photo">{member.photoUrl ? <Image src={member.photoUrl} alt={member.actorName} width={88} height={88} /> : <span>{member.actorName.slice(0,1)}</span>}</div>
         {member.roleName && <p>{member.roleName}</p>}<strong>{member.actorName}</strong>
       </div>)}</div></section>}
-      {detailImages.length > 0 && <section id="detail-images" className="ticket-detail-section"><h2>{copy.performance.detailImagesTitle}</h2><div className="ticket-detail-images">
-        {detailImages.map((image,index) => <img key={`${image.imageUrl}-${index}`} src={image.imageUrl} alt={image.altText || copy.performance.detailImageAlt.replace('{title}',performance.title).replace('{index}',String(index+1))} loading={index === 0 ? 'eager':'lazy'} />)}
-      </div></section>}
+      <DetailImageGallery images={performance.detailImages} title={performance.title} copy={copy.performance} />
       {showDescription && <section id="detail-copy" className="ticket-detail-section"><h2>{copy.performance.detailTab}</h2><p className="whitespace-pre-wrap">{performance.description || copy.performance.noDetail}</p></section>}
       <section id="prices" className="ticket-detail-section"><h2>{copy.performance.priceLabel}</h2>
         <dl className="ticket-price-list">{performance.priceTiers.map((tier) => <div key={tier.id}><dt>{tier.tierName}</dt><dd><CurrencyDisplay krwAmount={tier.price} /></dd></div>)}</dl>

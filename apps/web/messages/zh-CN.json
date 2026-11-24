@@ -120,6 +120,7 @@
     "priceLabel": "价格",
     "upcomingDateLabel": "即将开售",
     "detailImagesTitle": "详情图片",
+    "ticketGuideAlt": "票务与入场须知。包括手机二维码门票、限制携带物品、拍摄与版权、观演礼仪和安全须知。",
     "detailImageAlt": "{title} 详情图片 {index}",
     "verifyCta": "验证后购票"
   },
