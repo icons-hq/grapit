@@ -7,11 +7,11 @@ Use this runbook when a legal document behind a consent row changes (terms of se
 ## Contract
 
 - A consent version is the effective date printed in the document the buyer can open. `CONSENT_DOCUMENT_VERSIONS` in `packages/shared/src/schemas/consent.schema.ts` is the single source used by signup, social completion, and booking:
-  - `terms`: `terms-of-service(.en).md`, `2026-04-28`
-  - `privacy`, `pipa_required`: `privacy-policy(.en).md` v1.3, `2026-11-20`
-  - `marketing`: `marketing-consent(.en).md`, `2026-04-28`
+  - `terms`: `terms-of-service[.en|.th|.zh-CN].md`, `2026-04-28`
+  - `privacy`, `pipa_required`: `privacy-policy[.en|.th|.zh-CN].md` v1.3, `2026-11-20`
+  - `marketing`: `marketing-consent[.en|.th|.zh-CN].md`, `2026-04-28`
 - Versions are per key. Several keys can share the same date: `2026-04-28` is still the current `terms` and `marketing` version while it is the superseded `privacy` and `pipa_required` version. Every statement that changes `consent_items` must filter by `key` as well as `version`.
-- The recorded `language` is the document language actually rendered. Legal documents exist only in Korean and English, so `ko` records `ko` and every other locale records `en` (`resolveConsentDocumentLanguage`).
+- The recorded `language` is the document language actually rendered. Signup, social completion and checkout serve the full document in `ko`, `en`, `th` or `zh-CN`. The same locale is submitted to the API. Before the November 24 localization release, Thai and Simplified Chinese pages showed and recorded English. Preserve historical rows and accept English from clients opened before the release.
 - Booking checkout shows and records only `terms` and `privacy` (`BOOKING_CONSENT_ITEM_KEYS`). `pipa_required` is captured at signup, whose wording already covers booking processing. The API ignores a `pipa_required` row submitted with `sourceFlow=booking`.
 - The API accepts a row only when `consent_items` has an active row for the same key, version, and language. A required row that names an inactive or unknown version is rejected with HTTP 400 `동의 문서가 갱신되었습니다. 페이지를 새로고침한 뒤 다시 동의해주세요.` This check runs before reservation prepare extends seat locks and before signup uses the phone verification token.
 - Guard tests:

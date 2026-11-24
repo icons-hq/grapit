@@ -14,7 +14,7 @@ export function CatalogFilters({ value, onChange, onReset, fixedGenre, hideStatu
 }) {
   const locale = useLocale();
   const copy = getTicketCopy(locale);
-  const genres = getVisibleCopy(locale).genres;
+  const { genres, catalogRegions } = getVisibleCopy(locale);
   const id = useId();
   return <aside className="ticket-filter-panel">
     <div className="ticket-filter-heading"><h2>{copy.filters}</h2><button type="button" onClick={onReset}>{copy.reset}</button></div>
@@ -28,7 +28,7 @@ export function CatalogFilters({ value, onChange, onReset, fixedGenre, hideStatu
       {GENRES.map((genre) => <button type="button" key={genre} aria-pressed={value.genre === genre} onClick={() => onChange({ genre })}>{genres[genre]}</button>)}
     </div></fieldset>}
     <div className="ticket-filter-field"><label htmlFor={id + '-region'}>{copy.region}</label><select id={id + '-region'} value={value.region ?? ''} onChange={(event) => onChange({ region: event.target.value })}>
-      <option value="">{copy.all}</option>{PERFORMANCE_REGIONS.map((region) => <option key={region} value={region}>{region}</option>)}
+      <option value="">{copy.all}</option>{PERFORMANCE_REGIONS.map((region) => <option key={region} value={region}>{catalogRegions[region]}</option>)}
     </select></div>
     <fieldset className="ticket-filter-field"><legend>{copy.date}</legend><div className="ticket-filter-dates">
       <label>{copy.dateFrom}<input type="date" value={value.dateFrom ?? ''} max={value.dateTo} onChange={(event) => onChange({ dateFrom: event.target.value })} /></label>

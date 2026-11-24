@@ -103,7 +103,7 @@ describe('legal content', () => {
     expect(privacyPolicyMd).toContain('SMS 본인인증 OTP 발송 및 확인');
   });
 
-  it('locks legal canonical markdown locales to Korean and English', () => {
+  it('includes all four supported document languages', () => {
     const legalMarkdownFiles = readdirSync(legalContentDir)
       .filter((filename) => filename.endsWith('.md'))
       .sort();
@@ -115,7 +115,7 @@ describe('legal content', () => {
       }),
     );
 
-    expect([...canonicalLocales].sort()).toEqual(['en', 'ko']);
+    expect([...canonicalLocales].sort()).toEqual(['en', 'ko', 'th', 'zh-CN']);
   });
 
   it.each(Object.entries(englishLegalDocuments))(
@@ -140,8 +140,8 @@ describe('legal content', () => {
     },
   );
 
-  it('rejects Thai and Chinese legal markdown files', () => {
-    const forbiddenLegalMarkdownFiles = [
+  it('requires Thai and Chinese versions of every document', () => {
+    const requiredLegalMarkdownFiles = [
       'terms-of-service.th.md',
       'terms-of-service.zh-CN.md',
       'privacy-policy.th.md',
@@ -150,8 +150,8 @@ describe('legal content', () => {
       'marketing-consent.zh-CN.md',
     ];
 
-    for (const filename of forbiddenLegalMarkdownFiles) {
-      expect(existsSync(path.join(legalContentDir, filename))).toBe(false);
+    for (const filename of requiredLegalMarkdownFiles) {
+      expect(existsSync(path.join(legalContentDir, filename))).toBe(true);
     }
   });
 });

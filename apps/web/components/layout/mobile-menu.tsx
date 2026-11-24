@@ -90,7 +90,7 @@ export function MobileMenu({
           <button
             onClick={onClose}
             className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100"
-            aria-label="메뉴 닫기"
+            aria-label={copy.nav.close}
           >
             <X className="h-5 w-5" />
           </button>

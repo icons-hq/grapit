@@ -1,5 +1,7 @@
 'use client';
 
+import { catalogText } from '@grabit/shared';
+
 import Image from 'next/image';
 import { useLocale } from 'next-intl';
 import { Ticket } from 'lucide-react';
@@ -38,7 +40,7 @@ export function OrderSummary({ performanceTitle, posterUrl, showDateTime, venue,
           <h2 className="text-xl font-semibold leading-snug tracking-tight md:text-2xl">{performanceTitle}</h2>
           <div className="space-y-1 text-sm text-muted-foreground md:text-base">
             <time dateTime={showDateTime}>{eventTime.kst}</time>
-            <p>{venue}</p>
+            <p>{catalogText(venue, locale)}</p>
           </div>
         </div>
       </div>

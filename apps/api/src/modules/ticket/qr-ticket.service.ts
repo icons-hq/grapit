@@ -13,7 +13,8 @@ import { JwtService } from '@nestjs/jwt';
 import * as Sentry from '@sentry/nestjs';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import type { QrTicket, QrTicketStatus } from '@grabit/shared';
+import { catalogText, formatFloorLabel, isSupportedLocale, type SupportedLocale, type QrTicket, type QrTicketStatus } from '@grabit/shared';
+import { fetchReviewedPerformanceTranslations } from '../translation/performance-translation-overlay.js';
 import type { TicketEmailDelivery } from '@grabit/shared/types/booking.types.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -111,6 +112,7 @@ type TicketEmailContextRow = {
     dateTime: Date;
   };
   performance: {
+    id: string;
     title: string;
   };
   venue: {
@@ -1006,8 +1008,18 @@ export class QrTicketService implements OnModuleInit {
         return;
       }
       this.logger.log(`QR reminder claimed. reservationId=${reservationId}, attempt=${claim.attempts}`);
-      const input = await this.buildTicketEmailInput(context);
-      const payloadHash = this.emailService.qrTicketReminderPayloadHash(context.user.email, input);
+      let input = await this.buildTicketEmailInput(context);
+      let payloadHash = this.emailService.qrTicketReminderPayloadHash(context.user.email, input);
+      // A retry already accepted by Resend must reuse the exact pre-localization
+      // payload. Compare the frozen hash before selecting that representation.
+      if (claim.payloadHash && claim.payloadHash !== payloadHash && input.locale !== 'ko') {
+        const legacyInput = await this.buildTicketEmailInput(context, 'ko');
+        const legacyHash = this.emailService.qrTicketReminderPayloadHash(context.user.email, legacyInput);
+        if (claim.payloadHash === legacyHash) {
+          input = legacyInput;
+          payloadHash = legacyHash;
+        }
+      }
       const ready = await this.reminderStore.beginSend(claim, payloadHash);
       if (ready !== 'ready') {
         if (ready !== 'lost_lease') {
@@ -1102,6 +1114,7 @@ export class QrTicketService implements OnModuleInit {
           dateTime: showtimes.dateTime,
         },
         performance: {
+          id: performances.id,
           title: performances.title,
         },
         venue: {
@@ -1159,23 +1172,27 @@ export class QrTicketService implements OnModuleInit {
     });
   }
 
-  private async buildTicketEmailInput(context: TicketEmailContext) {
+  private async buildTicketEmailInput(context: TicketEmailContext, retryLocale?: 'ko') {
+    const preferred = context.user.preferredLocale;
+    const locale = retryLocale ?? (preferred && isSupportedLocale(preferred) ? preferred : 'ko');
     const seatTickets = await Promise.all(
       context.tickets.map(async (ticket) => ({
-        seatLabel: this.buildSeatLabels(ticket.seatIdentity).join(', '),
+        seatLabel: this.buildSeatLabels(ticket.seatIdentity, locale).join(', '),
         token: await this.buildTicketToken(ticket),
       })),
     );
     const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
-    const ticketUrl = `${frontendUrl}/mypage/reservations/${context.reservation.id}`;
+    const ticketUrl = `${frontendUrl}${locale === 'ko' ? '' : `/${locale}`}/mypage/reservations/${context.reservation.id}`;
+    const translations = locale === 'ko' ? undefined
+      : await fetchReviewedPerformanceTranslations(this.db, [context.performance.id], locale, ['title']);
     return {
       reservationNumber: context.reservation.reservationNumber,
-      performanceTitle: context.performance.title,
+      performanceTitle: translations?.get(context.performance.id)?.title ?? context.performance.title,
       showDateTime: context.showtime.dateTime.toISOString(),
-      venue: context.venue?.name ?? '',
+      venue: catalogText(context.venue?.name ?? '', locale),
       tickets: seatTickets,
       ticketUrl,
-      locale: context.user.preferredLocale ?? 'ko',
+      locale,
     };
   }
 
@@ -1411,7 +1428,13 @@ export class QrTicketService implements OnModuleInit {
     };
   }
 
-  private buildSeatLabels(seatIdentity: QrTicketSeatIdentity): string[] {
+  private buildSeatLabels(seatIdentity: QrTicketSeatIdentity, locale: SupportedLocale = 'ko'): string[] {
+    if (locale !== 'ko') {
+      const { row, number, tierName } = seatIdentity;
+      const floor = formatFloorLabel(seatIdentity.floorLabel || seatIdentity.floorKey, locale);
+      const seat = { en: `Row ${row}, seat ${number}`, th: `แถว ${row} ที่นั่ง ${number}`, 'zh-CN': `${row}排${number}座` }[locale];
+      return [`${floor} · ${tierName} · ${seat}`];
+    }
     return [`${seatIdentity.floorLabel || seatIdentity.floorKey} · ${seatIdentity.tierName} ${seatIdentity.row}열 ${seatIdentity.number}번`];
   }
 

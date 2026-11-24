@@ -58,8 +58,8 @@ describe('consent document contract', () => {
   it('maps every locale to the legal document language actually rendered', () => {
     expect(resolveConsentDocumentLanguage('ko')).toBe('ko');
     expect(resolveConsentDocumentLanguage('en')).toBe('en');
-    expect(resolveConsentDocumentLanguage('th')).toBe('en');
-    expect(resolveConsentDocumentLanguage('zh-CN')).toBe('en');
+    expect(resolveConsentDocumentLanguage('th')).toBe('th');
+    expect(resolveConsentDocumentLanguage('zh-CN')).toBe('zh-CN');
   });
 
   it('requires only the rows booking shows, while signup keeps the full required set', () => {

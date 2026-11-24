@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SUPPORTED_LOCALES } from '../constants/locales';
+import { isSupportedLocale, SUPPORTED_LOCALES } from '../constants/locales';
 
 export const CONSENT_ITEM_KEYS = [
   'terms',
@@ -60,13 +60,12 @@ export const CONSENT_DOCUMENT_VERSIONS = {
   marketing: '2026-04-28',
 } as const satisfies Record<(typeof CONSENT_DOCUMENT_ITEM_KEYS)[number], string>;
 
-/** Legal documents exist only in Korean and English; other locales read English. */
-export const CONSENT_DOCUMENT_LANGUAGES = ['ko', 'en'] as const;
+export const CONSENT_DOCUMENT_LANGUAGES = SUPPORTED_LOCALES;
 
 export function resolveConsentDocumentLanguage(
   locale: string,
 ): (typeof CONSENT_DOCUMENT_LANGUAGES)[number] {
-  return locale === 'ko' ? 'ko' : 'en';
+  return isSupportedLocale(locale) ? locale : 'en';
 }
 
 export function requiredConsentItemKeysFor(

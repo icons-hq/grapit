@@ -67,6 +67,29 @@ describe('EmailService', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['ko', 'QR 티켓 안내', '마이페이지에서 좌석별 QR 확인'],
+    ['en', 'Your QR tickets', 'Open My tickets'],
+    ['th', 'บัตร QR ของคุณ', 'เปิดบัตรของฉัน'],
+    ['zh-CN', '您的二维码门票', '打开“我的票夹”'],
+  ])('renders the %s subject, instructions and both seat credentials', async (locale, title, linkText) => {
+    const send = (resendModule as unknown as { __sendMock: ReturnType<typeof vi.fn> }).__sendMock;
+    send.mockResolvedValue({ data: { id: 'localized-message' }, error: null });
+    const service = new EmailService(makeConfig({ RESEND_API_KEY: 'test', RESEND_FROM_EMAIL: 'noreply@example.test', NODE_ENV: 'test' }));
+    await service.sendQrTicketReminderEmail('guest@example.test', {
+      locale, reservationNumber: 'R-1', performanceTitle: '<Show>', venue: 'Hall',
+      showDateTime: '2027-02-13T06:00:00Z', ticketUrl: 'https://example.test/my-ticket',
+      tickets: [{ seatLabel: 'A-1', token: 'qr-one' }, { seatLabel: 'A-2', token: 'qr-two' }],
+    });
+    const [mail] = send.mock.calls[0] as [{ subject: string; html: string }];
+    expect(mail.subject).toBe(`[Grabit] ${title} - <Show>`);
+    for (const value of [linkText, '&lt;Show&gt;', '2027', 'A-1', 'qr-one', 'A-2', 'qr-two']) expect(mail.html).toContain(value);
+    if (locale !== 'ko') {
+      expect(mail.html).not.toMatch(/[가-힣]/);
+      expect(mail.html).toContain('KST');
+    }
+  });
+
   const sentryMod = sentryModule as unknown as {
     __captureExceptionMock: ReturnType<typeof vi.fn>;
     __withScopeMock: ReturnType<typeof vi.fn>;

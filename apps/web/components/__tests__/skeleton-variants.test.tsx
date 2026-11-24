@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { PerformanceCardSkeleton } from '../skeletons/performance-card-skeleton';
 import { BannerSkeleton } from '../skeletons/banner-skeleton';
@@ -6,6 +6,8 @@ import { SectionSkeleton } from '../skeletons/section-skeleton';
 import { SearchResultsSkeleton } from '../skeletons/search-results-skeleton';
 import { ReservationListSkeleton } from '../skeletons/reservation-list-skeleton';
 import { ReservationDetailSkeleton } from '../skeletons/reservation-detail-skeleton';
+
+vi.mock('next-intl', () => ({ useLocale: () => 'ko' }));
 
 describe('PerformanceCardSkeleton', () => {
   it('renders poster rectangle (aspect-[2/3]) and 3 text line Skeletons', () => {

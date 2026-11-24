@@ -33,8 +33,8 @@ export function TranslationSourceForm({
   const [sourceBody, setSourceBody] = useState('');
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [savedSourceKey, setSavedSourceKey] = useState('');
-  const performanceText = performance && ['title', 'description', 'salesInfo'].includes(field)
-    ? performance[field as 'title' | 'description' | 'salesInfo'] ?? '' : '';
+  const performanceText = performance && ['title', 'description', 'salesInfo', 'runtime', 'ageRating', 'subcategory'].includes(field)
+    ? performance[field as 'title' | 'description' | 'salesInfo' | 'runtime' | 'ageRating' | 'subcategory'] ?? '' : '';
   const currentSourceText = performance ? performanceText : `${sourceTitle.trim()}\n\n${sourceBody.trim()}`.trim();
   const sourceKey = JSON.stringify([performance ? 'performance' : entityType, performance?.id ?? entityId.trim(), field, currentSourceText]);
 
@@ -111,6 +111,9 @@ export function TranslationSourceForm({
             <option value="title">제목</option>
             <option value="description">상세 안내</option>
             <option value="salesInfo">판매 안내</option>
+            <option value="runtime">관람시간</option>
+            <option value="ageRating">관람연령</option>
+            <option value="subcategory">세부 장르</option>
           </select>
         </div>
       </div>

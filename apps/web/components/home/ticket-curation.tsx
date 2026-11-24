@@ -1,4 +1,6 @@
 'use client';
+
+import { catalogText } from '@grabit/shared';
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -43,7 +45,7 @@ export function VenueShelf() {
   return <section className="ticket-venue-shelf">
     <div className="ticket-section-heading"><h2>{copy.venueTitle}</h2><Link href={getLocalizedPathname('/venues',locale)}>{copy.viewAll}<ChevronRight size={17}/></Link></div>
     <div className="ticket-venue-rail">{query.data.map((venue)=><Link key={venue.id} href={`${getLocalizedPathname('/categories',locale)}?venueId=${venue.id}&ended=true`}>
-      <span><Image src="/images/ticket-genres/venue.png" alt="" width={72} height={72}/></span><p>{venue.name}</p>
+      <span><Image src="/images/ticket-genres/venue.png" alt="" width={72} height={72}/></span><p>{catalogText(venue.name, locale)}</p>
     </Link>)}</div>
   </section>;
 }

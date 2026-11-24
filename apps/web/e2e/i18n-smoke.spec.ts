@@ -142,9 +142,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
       ).toBeVisible();
 
       await gotoSmokeRoute(page, withLocalePrefix(localeCase.prefix, '/legal/terms'));
-      await expect(page.getByRole('heading', { level: 1, name: localeCase.locale === 'ko' ? '이용약관' : 'Terms of Service' })).toBeVisible();
-      if (localeCase.locale === 'th') await expect(page.getByText('ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ')).toBeVisible();
-      if (localeCase.locale === 'zh-CN') await expect(page.getByText('查看英文法律告知')).toBeVisible();
+      await expect(page.getByRole('heading', { level: 1, name: { ko: '이용약관', en: 'Terms of Service', th: 'ข้อกำหนดการใช้บริการ', 'zh-CN': '服务条款' }[localeCase.locale] })).toBeVisible();
 
       const performanceResponse = await gotoSmokeRoute(
         page,
@@ -157,7 +155,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
       await expect(page.getByRole('heading', { name: localeCase.detailCopy, exact: true })).toBeVisible();
       if (localeCase.expectsTranslationLabel) {
         await expect(
-          page.getByText('Reviewed machine translation').first(),
+          page.getByText({ en: 'Reviewed machine translation', th: 'คำแปลอัตโนมัติที่ตรวจทานแล้ว', 'zh-CN': '已经审校的机器翻译' }[localeCase.locale]).first(),
         ).toBeVisible();
       } else {
         await expect(

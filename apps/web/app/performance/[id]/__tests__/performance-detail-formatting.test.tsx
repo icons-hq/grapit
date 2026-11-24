@@ -131,6 +131,8 @@ describe('PerformanceDetailPage i18n formatting', () => {
     // The performance period is one KST date range, not two converted instants.
     expect(await screen.findAllByText(/KST/)).toHaveLength(1);
     expect(screen.getByText('KRW 110,000')).toBeDefined();
+    expect(screen.getByText('อายุ 7 ปีขึ้นไป')).toBeDefined();
+    expect(screen.getByText(/120\s*นาที/)).toBeDefined();
     expect(screen.queryByText(/THB|USD|approx/i)).toBeNull();
     expect(screen.queryByText(/exchange rate may change|환율/)).toBeNull();
   });

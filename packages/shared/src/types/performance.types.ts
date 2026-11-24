@@ -167,6 +167,7 @@ export interface CastMember {
 export interface PerformanceDetailImage {
   imageUrl: string;
   altText?: string | null;
+  captions?: Partial<Record<'en' | 'th' | 'zh-CN', string>>;
   sortOrder: number;
 }
 
