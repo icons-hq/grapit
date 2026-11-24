@@ -246,7 +246,19 @@ export class PaymentCancellationFinalizerService {
     let supplementalPayment = false;
     await this.db.transaction(async (tx) => {
       const lockedReservation = await tx.execute(sql`SELECT id, status, addon_ticket_item_id, fixed_cancellation_fee FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
-      if (input.source === 'cancel_webhook') {
+      const virtualAccount = input.providerResponse?.method === '가상계좌' || input.providerResponse?.method === 'VIRTUAL_ACCOUNT';
+      // The webhook can commit before our idempotent POST returns. The exact refund row is the
+      // completion evidence; a cancelled reservation alone can still have a refund to reconcile.
+      if (virtualAccount && input.refundId && input.source !== 'cancel_webhook') {
+        const [completedRefund] = await tx.select({ id: refunds.id }).from(refunds).where(and(
+          eq(refunds.id, input.refundId), eq(refunds.paymentId, input.context.payment.id), eq(refunds.status, 'completed'),
+        )).limit(1);
+        if (completedRefund) {
+          alreadyFinalized = true;
+          return;
+        }
+      }
+      if (input.source === 'cancel_webhook' || (virtualAccount && input.source === 'ticket_item')) {
         // A webhook that read its snapshot before a concurrent finalizer
         // committed must not re-apply the cancellation (history, fees, seats).
         const lockedStatus = (lockedReservation as { rows?: Array<Record<string, unknown>> } | undefined)

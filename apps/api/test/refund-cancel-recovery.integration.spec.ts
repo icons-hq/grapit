@@ -161,6 +161,12 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
       expect(result.refundTimeline?.currentState).toBe('COMPLETED');
       const row = await refundOf(f.reservation.id);
       expect(row.providerMetadata).toMatchObject({ cancelReason: reason, providerTransactionKey: f.snapshot.cancels[0]!.transactionKey });
+      const replay = await finalizer().finalizeFullPaymentCancellation({ source: 'refund_retry', refundId: row.id,
+        reason, providerResponse: { ...f.snapshot, method: '가상계좌' }, context: {
+          reservation: { id: f.reservation.id, showtimeId: f.showtime.id },
+          payment: { id: f.payment.id, paymentKey: f.payment.paymentKey }, seats: [], bookingPolicy: null,
+        } });
+      expect(replay.alreadyFinalized).toBe(true);
     } else {
       const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
         {} as never, {} as never, qr, undefined, undefined, finalizer());
