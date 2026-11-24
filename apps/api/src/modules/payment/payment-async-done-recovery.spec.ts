@@ -645,6 +645,40 @@ describe('PaymentService async DONE safety and recovery', () => {
       db.select.mockImplementationOnce(() => selectChain(rows));
     }
 
+    it('keeps the sealed refund account when retrying a deposited virtual account refund', async () => {
+      const record = compensationRecord({
+        reservationId: 'reservation-1',
+        state: 'error',
+        payment: { method: 'VIRTUAL_ACCOUNT', provider: 'TOSS', currency: 'KRW', amount: 2200, secretKeyScope: 'default' },
+        cancelRequest: {
+          paymentKey: 'pay_compensated',
+          reason: '판매 불가능 좌석으로 인한 자동 취소',
+          options: { idempotencyKey: 'va-refund', secretKeyScope: 'default', sealedRefundAccount: 'sealed-fixture' },
+        },
+        cancelRequestIds: [],
+      });
+      sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);
+      db.select
+        .mockImplementationOnce(() => selectChain([paymentRow({
+          ...record.payment, providerMetadata: { asyncDoneCompensation: record },
+        })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: record.paymentKey, orderId: 'GRP-COMP-1', totalAmount: 2200, status: 'DONE',
+      });
+      tossClient.cancelPayment.mockRejectedValueOnce(new Error('temporary provider outage'));
+      const recordUpdate = mutationChain();
+      db.update.mockImplementationOnce(() => recordUpdate).mockImplementationOnce(() => mutationChain());
+
+      await expect(service.recoverAsyncDoneCompensations(new Date('2026-10-01T01:00:00Z')))
+        .resolves.toMatchObject({ checked: 1, retried: 1 });
+      const expectedOptions = { ...record.cancelRequest.options, idempotencyKey: 'va-refund:retry-2' };
+      expect(tossClient.cancelPayment).toHaveBeenCalledWith(record.paymentKey, record.reason, expectedOptions);
+      expect(findJsonParam(recordUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensation')).toMatchObject({
+        asyncDoneCompensation: { attempts: 2, cancelRequest: { options: expectedOptions } },
+      });
+    });
+
     it('re-requests an aborted compensation cancel with a fresh idempotency key and cancelRequestId', async () => {
       const now = new Date('2026-10-01T01:00:00.000Z');
       const record = compensationRecord({
