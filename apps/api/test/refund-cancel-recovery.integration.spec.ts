@@ -143,6 +143,34 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     return row!;
   }
 
+  it.each(['reservation', 'seat'] as const)('binds the actual PG transaction after a shortened %s cancellation reason', async scope => {
+    const f = await purchase({});
+    await db.update(payments).set({ method: 'VIRTUAL_ACCOUNT', providerMetadata: { sealedRefundAccount: 'fixture' } })
+      .where(eq(payments.id, f.payment.id));
+    Object.assign(f.snapshot, { method: '가상계좌' });
+    const toss = provider(f.snapshot);
+    const send = toss.cancelPayment.getMockImplementation()!;
+    toss.cancelPayment.mockImplementation(async (...args) => {
+      const result = await send(...args);
+      result.cancels[0]!.cancelReason = '환불';
+      return { ...result, lastTransactionKey: scope === 'seat' ? undefined : result.cancels[0]!.transactionKey };
+    });
+    const reason = '구매자 요청으로 환불합니다. '.repeat(6);
+    if (scope === 'reservation') {
+      const result = await new RefundService(db, toss as never, finalizer()).requestRefund(f.reservation.id, f.userId, reason);
+      expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+      const row = await refundOf(f.reservation.id);
+      expect(row.providerMetadata).toMatchObject({ cancelReason: reason, providerTransactionKey: f.snapshot.cancels[0]!.transactionKey });
+    } else {
+      const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+        {} as never, {} as never, qr, undefined, undefined, finalizer());
+      await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, reason);
+      const [item] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.items[0]!.id));
+      expect(item).toMatchObject({ status: 'cancelled', cancelReason: reason, cancellationCommand: { transactionKey: f.snapshot.cancels[0]!.transactionKey } });
+    }
+    expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+  });
+
   it('finalizes a provider-completed refund for ticket items whose QR credential was never issued (#79)', async () => {
     const f = await purchase({ issueQr: false });
     const toss = provider(f.snapshot);

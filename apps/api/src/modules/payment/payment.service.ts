@@ -1,5 +1,5 @@
 import { issueTicketAddons, requirePurchasableTicket } from '../../database/ticket-holder-addons.js';
-import { DEPOSIT_REVERSED, getVirtualAccountDetails, matchesDepositSecret } from './virtual-account.js';
+import { DEPOSIT_REVERSED, DEPOSIT_VERIFICATION_MS, getDepositVerification, getVirtualAccountDetails, matchesDepositSecret } from './virtual-account.js';
 import { releaseCompensatedDeposit, restoreDepositedOrder, suspendDepositedOrder } from './virtual-account-inventory.js';
 import { finalizeReservationAddons, restoreEndedCheckoutAddonHolds } from '../../database/booking-addon-inventory.js';
 import {
@@ -75,6 +75,7 @@ import {
   type PaymentCancelRequest,
 } from './payment-cancel-policy.js';
 import {
+  matchingTicketCancelRows,
   buildCompletedCancelExpectation,
   getCompletedProviderCancels,
   hasMatchingCompletedProviderCancel,
@@ -1144,7 +1145,8 @@ export class PaymentService {
   }
 
   /** Re-read Toss under the same order lease as confirm. Delayed or duplicate callbacks always apply current state. */
-  async syncVirtualAccount(input: { orderId: string; secret?: string; userId?: string; paymentKey?: string; close?: boolean; deadlineMs?: number }) {
+  async syncVirtualAccount(input: { orderId: string; secret?: string; userId?: string; paymentKey?: string; close?: boolean; deadlineMs?: number;
+    reversalNotice?: { transactionKey?: string | null; createdAt?: string } }) {
     const { orderId } = input;
     const read = () => this.db.select({ payment: payments, status: reservations.status,
       userId: reservations.userId, showtimeId: reservations.showtimeId }).from(payments)
@@ -1189,6 +1191,19 @@ export class PaymentService {
         if (timeoutMs < 1) throw new ServiceUnavailableException('다음 작업에서 입금 상태를 확인합니다.');
         return { timeoutMs };
       };
+      let window = getDepositVerification(payment.providerMetadata);
+      if (input.reversalNotice && row.status === 'PENDING_PAYMENT') {
+        const key = input.reversalNotice.transactionKey || input.reversalNotice.createdAt;
+        const lastNotice = this.toProviderMetadataRecord(payment.providerMetadata).lastDepositReversal;
+        if (!key || key !== lastNotice) {
+          // Invalidate first. The provider lookup can fail, or already show a later redeposit.
+          await assertLease();
+          if (window) window = { ...window, notBefore: new Date(Date.now() + DEPOSIT_VERIFICATION_MS).toISOString() };
+          const patch = { lastDepositReversal: key ?? null, ...(window && { depositVerification: window }) };
+          await this.db.update(payments).set({ providerMetadata: sql`${payments.providerMetadata} || ${JSON.stringify(patch)}::jsonb` })
+            .where(eq(payments.id, payment.id));
+        }
+      }
       let state = validate(await client.queryPayment(payment.paymentKey, requestBudget()));
       if (state.status === 'WAITING_FOR_DEPOSIT' && row.status === 'CONFIRMED' && payment.status === 'DONE') {
         await assertLease();
@@ -1212,11 +1227,38 @@ export class PaymentService {
         providerVerified: { method: state.method ?? null, easyPayProvider: null }, data: { orderId,
           paymentKey: payment.paymentKey, method: 'VIRTUAL_ACCOUNT', totalAmount: state.totalAmount,
           currency: 'KRW', status: state.status, approvedAt: state.approvedAt ?? undefined } };
+      if (state.status !== 'DONE' && window) {
+        await this.db.update(payments).set({ providerMetadata: sql`${payments.providerMetadata} - 'depositVerification'` })
+          .where(eq(payments.id, payment.id));
+      }
       if (state.status === 'DONE') {
+        if (row.status === 'CONFIRMED') {
+          await this.upsertAsyncPaymentProgressLocked(payload, 'DONE', 'deposited', assertLease, true);
+          return 'DONE';
+        }
+        if (row.status === 'PENDING_PAYMENT' && payment.status === 'IN_PROGRESS') {
+          const transactionKey = state.lastTransactionKey ?? null;
+          const approvedAt = state.approvedAt ?? null;
+          if (state.balanceAmount !== payment.amount || (!transactionKey && !approvedAt)) {
+            throw new ServiceUnavailableException('가상계좌 입금 거래와 잔액을 재확인해야 합니다.');
+          }
+          // Start from our first verified observation, including when a delayed webhook arrives.
+          // A new approval/transaction means the bank reversed and recredited the order between reads.
+          if (!window || window.transactionKey !== transactionKey || window.approvedAt !== approvedAt) {
+            const verification = { transactionKey, approvedAt, notBefore: new Date(Date.now() + DEPOSIT_VERIFICATION_MS).toISOString() };
+            await this.db.update(payments).set({
+              providerMetadata: sql`${payments.providerMetadata} || jsonb_build_object('depositVerification', ${JSON.stringify(verification)}::jsonb)`,
+            }).where(and(eq(payments.id, payment.id), eq(payments.status, 'IN_PROGRESS')));
+            return 'VERIFYING_DEPOSIT';
+          }
+          if (Date.parse(window.notBefore) > Date.now()) return 'VERIFYING_DEPOSIT';
+        } else {
+          return 'STALE_PROGRESS_IGNORED';
+        }
         if (payment.asyncStatus === DEPOSIT_REVERSED && row.status === 'PENDING_PAYMENT') {
           await restoreDepositedOrder(this.db, payment.id, payment.reservationId, new Date(state.approvedAt ?? Date.now()));
         } else {
-          await this.upsertAsyncPaymentProgressLocked(payload, 'DONE', 'deposited', assertLease);
+          await this.upsertAsyncPaymentProgressLocked(payload, 'DONE', 'deposited', assertLease, true);
         }
       } else if (row.status === 'CONFIRMED' && (state.status === 'CANCELED' ||
         (state.status === 'PARTIAL_CANCELED' && state.balanceAmount === 0))) {
@@ -1224,11 +1266,19 @@ export class PaymentService {
       } else if (state.status === 'PARTIAL_CANCELED' && row.status === 'CONFIRMED') {
         await this.finalizePaymentStatusPartialCancelWebhook(payload, state);
       }
+      const refundedDeposit = state.status === 'PARTIAL_CANCELED' && state.balanceAmount === 0
+        && getCompletedProviderCancels(state).reduce((total, cancel) => total + cancel.cancelAmount, 0) === payment.amount;
+      const cancelledAtProvider = state.status === 'CANCELED' || refundedDeposit;
+      if (row.status === 'PENDING_PAYMENT' && state.status === 'PARTIAL_CANCELED' && !refundedDeposit) {
+        await recordReservationPaymentFailureDiagnostic(this.db, { reservationId: payment.reservationId, paymentId: payment.id,
+          tossOrderId: orderId, diagnosticKind: 'needs_review', diagnosticCode: 'VIRTUAL_ACCOUNT_PARTIAL_BEFORE_ISSUANCE',
+          diagnosticMessage: '발권 대기 중 일부 금액만 환불되어 입금 잔액 대조가 필요합니다.', diagnosticSource: 'virtual_account' });
+      }
       const expired = state.status === 'EXPIRED' || (state.status === 'WAITING_FOR_DEPOSIT' && state.virtualAccount?.expired === true)
         || (state.status === 'CANCELED' && !input.close && dueAt.getTime() <= Date.now());
-      if (expired || state.status === 'ABORTED' || state.status === 'CANCELED') {
+      if (expired || state.status === 'ABORTED' || cancelledAtProvider) {
         const released = await this.db.transaction(async tx => {
-          const cancelled = !expired && state.status === 'CANCELED';
+          const cancelled = !expired && cancelledAtProvider;
           const ended = await tx.update(reservations).set({ status: cancelled ? 'CANCELLED' : 'FAILED', updatedAt: new Date(),
             ...(cancelled ? { cancelledAt: new Date(), cancelReason: '미입금 가상계좌 반납' } : {}) })
             .where(and(eq(reservations.id, payment.reservationId), eq(reservations.status, 'PENDING_PAYMENT')))
@@ -1743,6 +1793,7 @@ export class PaymentService {
     paymentStatus: PaymentStatus,
     asyncStatus: string,
     assertLease?: () => Promise<void>,
+    verifiedDeposit = false,
   ): Promise<string | void> {
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
@@ -1805,6 +1856,7 @@ export class PaymentService {
     );
     const issuedDeposit = existingPayment?.method === 'VIRTUAL_ACCOUNT'
       && existingPayment.paymentKey === paymentKey && !!getVirtualAccountDetails(existingPayment.providerMetadata);
+    if (issuedDeposit && paymentStatus === 'DONE' && !verifiedDeposit) return 'AWAITING_DEPOSIT_VERIFICATION';
     if (reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT' && !existingPayment
       && (paymentStatus === 'READY' || paymentStatus === 'IN_PROGRESS')) return 'AWAITING_ISSUANCE_RECORD';
     if (!issuedDeposit && reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT' &&
@@ -2234,7 +2286,8 @@ export class PaymentService {
     ) {
       return 'no_local_match';
     }
-    const reason = this.resolveCancelWebhookReason(payload, providerResponse);
+    const originalReason = this.toProviderMetadataRecord(matchingRefund?.providerMetadata).cancelReason;
+    const reason = typeof originalReason === 'string' ? originalReason : this.resolveCancelWebhookReason(payload, providerResponse);
     if (
       matchingRefund
       && fullReservationCancellationQuote
@@ -2521,7 +2574,8 @@ export class PaymentService {
         : null;
 
       if (fullReservationCancellationQuote) {
-        const reason = this.resolveCancelWebhookReason(payload, providerResponse);
+        const originalReason = this.toProviderMetadataRecord(matchingRefund.providerMetadata).cancelReason;
+        const reason = typeof originalReason === 'string' ? originalReason : this.resolveCancelWebhookReason(payload, providerResponse);
         const expectedCancelRequest = readStoredPaymentCancelRequest(matchingRefund.providerMetadata) ?? buildFullReservationPaymentCancelRequest({
           payment,
           cancellationQuote: fullReservationCancellationQuote,
@@ -2676,9 +2730,7 @@ export class PaymentService {
     for (const item of preparedCommands) {
       const command = item.cancellationCommand;
       if (!command) continue;
-      const matches = completedCancels.filter((cancel) => cancel.cancelReason === command.reason
-        && Math.round(cancel.cancelAmount * (command.currency === 'USD' ? 100 : 1)) === command.amountMinor
-        && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId));
+      const matches = matchingTicketCancelRows(completedCancels, command);
       if (matches.length > 1) return null;
       if (matches.length === 1) {
         ticketItemCancellations.push({ ...item, cancelReason: item.cancelReason ?? 'Ticket cancellation' });
@@ -2942,6 +2994,7 @@ export class PaymentService {
           cancelReason: null,
           ...this.toPaymentProviderChargeValues(providerChargeQuote),
           ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
+          ...(existingPayment?.method === 'VIRTUAL_ACCOUNT' ? { providerMetadata: sql`${payments.providerMetadata} - 'depositVerification'` } : {}),
         };
 
         if (existingPayment) {

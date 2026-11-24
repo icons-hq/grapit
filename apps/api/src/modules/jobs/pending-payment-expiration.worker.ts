@@ -176,7 +176,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
       mapExpiredPendingReservationRow(row as Record<string, unknown>)
     );
     const abandonedHandoffs = await this.sweepAbandonedPaymentHandoffs(now);
-    const closedDeposits = this.paymentService ? await this.sweepVirtualAccounts(now, this.paymentService) : 0;
+    const deposits = await this.sweepVirtualAccounts(now);
     const unlockedSeats = 0;
 
     // Redis TTL owns lock expiration. A delayed sweep cannot distinguish this
@@ -190,35 +190,39 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     }
 
     return {
-      expiredReservations: expiredReservations.length + abandonedHandoffs + closedDeposits,
+      expiredReservations: expiredReservations.length + abandonedHandoffs + deposits.closed,
       unlockedSeats,
     };
   }
 
-  private async sweepVirtualAccounts(now: Date, service: PaymentService) {
-    const deadlineMs = Date.now() + boundedByRunDeadline(35_000, { reserveMs: 15_000 });
-    const due = await this.db.execute(sql`SELECT r.toss_order_id FROM reservations r
-      JOIN payments p ON p.reservation_id = r.id
-      WHERE r.status = 'PENDING_PAYMENT' AND r.payment_deadline_at <= ${now}
-        AND p.method = 'VIRTUAL_ACCOUNT' AND p.status = 'IN_PROGRESS'
-      ORDER BY r.updated_at, r.id LIMIT 32`);
-    let closed = 0;
-    for (let i = 0; i < due.rows.length; i += 4) {
-      if (Date.now() >= deadlineMs) break;
-      const results = await Promise.all(due.rows.slice(i, i + 4).map(async row => {
+  async sweepVirtualAccounts(now: Date, verificationOnly = false) {
+    const service = this.paymentService;
+    const counts = { checked: 0, closed: 0, failed: 0 };
+    if (!service) return counts;
+    const deadlineMs = Date.now() + boundedByRunDeadline(45_000, { reserveMs: 15_000 });
+    const notBefore = sql`p.provider_metadata->'depositVerification'->>'notBefore'`;
+    const due = await this.db.execute(sql`SELECT r.toss_order_id FROM payments p
+      JOIN reservations r ON p.reservation_id = r.id
+      WHERE r.status = 'PENDING_PAYMENT' AND p.method = 'VIRTUAL_ACCOUNT' AND p.status = 'IN_PROGRESS'
+        AND (${notBefore} <= ${now.toISOString()} ${verificationOnly ? sql`` : sql`OR
+          (${notBefore} IS NULL AND r.payment_deadline_at <= ${now})`})
+      ORDER BY r.updated_at, r.id LIMIT 256`);
+    for (let i = 0; i < due.rows.length && Date.now() < deadlineMs; i += 4) {
+      await Promise.all(due.rows.slice(i, i + 4).map(async row => {
         const orderId = String(row['toss_order_id']);
         try {
-          return await service.syncVirtualAccount({ orderId, deadlineMs });
+          const status = await service.syncVirtualAccount({ orderId, deadlineMs });
+          counts.checked++;
+          if (status === 'EXPIRED' || status === 'CANCELED' || status === 'ABORTED') counts.closed++;
         } catch {
-          this.logger.warn('가상계좌 기한 경과 주문의 PG 상태 재확인 필요. orderId=' + orderId);
+          counts.failed++;
+          this.logger.warn('가상계좌 입금 상태 재확인 필요. orderId=' + orderId);
           await this.db.execute(sql`UPDATE reservations SET updated_at = now()
             WHERE toss_order_id = ${orderId} AND status = 'PENDING_PAYMENT'`);
-          return null;
         }
       }));
-      closed += results.filter(status => status === 'EXPIRED' || status === 'CANCELED' || status === 'ABORTED').length;
     }
-    return closed;
+    return counts;
   }
 
   /** Handoffs with no payment require provider evidence before they can be closed. */

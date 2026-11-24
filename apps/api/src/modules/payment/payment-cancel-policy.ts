@@ -71,11 +71,12 @@ export function readStoredPaymentCancelRequest(metadata: unknown): PaymentCancel
   return value as unknown as PaymentCancelRequest;
 }
 
-export function readStoredPaymentCancelReceipt(metadata: unknown): { expectedCancelReason?: string; expectedCancelAmount?: number } {
+export function readStoredPaymentCancelReceipt(metadata: unknown): { expectedTransactionKey?: string; expectedCancelReason?: string; expectedCancelAmount?: number } {
   const command = readStoredPaymentCancelRequest(metadata);
   if (!command || !isRecord(metadata)) return {};
   const amount = metadata.providerRefund;
-  return { expectedCancelReason: command.reason,
+  return { ...(typeof metadata.providerTransactionKey === 'string' ? { expectedTransactionKey: metadata.providerTransactionKey } : {}),
+    expectedCancelReason: command.reason,
     expectedCancelAmount: isRecord(amount) && typeof amount.amountMinor === 'number'
       ? amount.amountMinor / (amount.currency === 'USD' ? 100 : 1) : command.options.cancelAmount };
 }

@@ -1,3 +1,4 @@
+import { bindVirtualAccountRefundPost, virtualAccountRefundReason } from '../payment/virtual-account-cancel-receipt.js';
 import {
   BadRequestException,
   ConflictException,
@@ -267,21 +268,9 @@ export function getRefundErrorMessage(error: unknown): string {
 export function isTossCancelCompleted(
   response: TossPaymentResponse,
   cancelRequestId?: string | null,
-  options: {
-    allowPartialStatus?: boolean;
-    expectedCancelAmount?: number;
-    expectedCancelReason?: string;
-    allowUnidentifiedPartialCancel?: boolean;
-    requestedAt?: Date | string | null;
-  } = {},
+  options: NonNullable<Parameters<typeof isTossPaymentCancelCompleted>[2]> = {},
 ): boolean {
-  return isTossPaymentCancelCompleted(response, cancelRequestId, {
-    allowPartialStatus: options.allowPartialStatus,
-    expectedCancelAmount: options.expectedCancelAmount,
-    expectedCancelReason: options.expectedCancelReason,
-    allowUnidentifiedPartialCancel: options.allowUnidentifiedPartialCancel,
-    requestedAt: options.requestedAt,
-  });
+  return isTossPaymentCancelCompleted(response, cancelRequestId, options);
 }
 
 const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
@@ -784,18 +773,14 @@ export class RefundService {
     let definitePreflightRejection = false;
     try {
       let cancelResult: TossPaymentResponse | undefined;
+      let current: TossPaymentResponse | undefined;
       if (amountSnapshot) {
-        let current: TossPaymentResponse;
         try {
           current = await this.tossPaymentsClient.queryPayment(command.paymentKey, { secretKeyScope: command.options.secretKeyScope });
         } catch {
           throw new TossPaymentError('NETWORK_ERROR', '결제사 환불 잔액을 확인하지 못했습니다');
         }
-        const scale = (amountSnapshot as { currency?: unknown }).currency === 'USD' ? 100 : 1;
-        const expectedAmountMinor = (amountSnapshot as { amountMinor?: unknown }).amountMinor;
-        const completed = current.cancels?.some((cancel) => cancel.cancelStatus === 'DONE'
-          && cancel.cancelReason === command.reason && Math.round(cancel.cancelAmount * scale) === expectedAmountMinor);
-        if (completed) cancelResult = current;
+        if (isTossCancelCompleted(current, command.options.cancelRequestId, completionOptions)) cancelResult = current;
         else if (!hasUnchangedCancellationBalance(current, amountSnapshot)) {
           if (isProviderBalanceAboveSnapshot(current, amountSnapshot) && !hasProviderCancelForCommand(current, command)) {
             const restored = await restoreRejectedRefundRights(this.db, refund, {
@@ -818,6 +803,9 @@ export class RefundService {
           command.reason,
           command.options,
         );
+        providerAccepted = true;
+        const key = await bindVirtualAccountRefundPost(this.db, refund.id, cancelResult, command, amountSnapshot, current);
+        if (key) completionOptions.expectedTransactionKey = key;
       }
       providerAccepted = true;
 
@@ -1852,7 +1840,7 @@ export class RefundService {
     // Nothing refundable means no provider command: a zero amount cannot be sent and the retained balance stays captured.
     const cancelRequest = currentQuote.refundableAmount === 0 ? null : buildFullReservationPaymentCancelRequest({
       payment: ledgerPayment, cancellationQuote: currentQuote,
-      reason: `${Array.from(reason).slice(0, 150).join('')} [${attemptId}]`,
+      reason: ledgerPayment.method === 'VIRTUAL_ACCOUNT' ? virtualAccountRefundReason(attemptId) : `${Array.from(reason).slice(0, 150).join('')} [${attemptId}]`,
       idempotencyKey: existing ? `refund-cancel:${refundId}:${attemptId}` : this.buildRefundCancelIdempotencyKey(refundId), cancelRequestIdSeed: attemptId,
     });
     const providerRefund = cancelRequest

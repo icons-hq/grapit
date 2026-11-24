@@ -182,6 +182,16 @@ describe('PrewarmService', () => {
     },
   );
 
+  it.each([true, false])('requires the deposit-specific OIDC audience (valid=%s)', async valid => {
+    const service = createService();
+    const audience = new URL('/api/v1/internal/virtual-account/verify-deposits', TEST_ENV.PREWARM_ALLOWED_AUDIENCE).href;
+    const { token, jwk } = signServiceAccountToken({ aud: valid ? audience : TEST_ENV.PREWARM_ALLOWED_AUDIENCE });
+    mockFetchSequence(oidcAndTokenResponses(jwk));
+    const authorized = service.authorizeDepositScheduler(createRequest({ authorization: 'Bearer ' + token }) as never);
+    if (valid) await expect(authorized).resolves.toBeUndefined();
+    else await expect(authorized).rejects.toThrow('PREWARM_INVALID_AUDIENCE');
+  });
+
   it('validates Scheduler OIDC claims and shared app token before scaling up', async () => {
     const service = createService();
     const { token, jwk } = signServiceAccountToken();

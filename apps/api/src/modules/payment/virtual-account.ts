@@ -7,6 +7,17 @@ import type { TossPaymentResponse } from './toss-payments.client.js';
 export const VIRTUAL_ACCOUNT_MID = 'gsangwbzqu';
 export const AWAITING_DEPOSIT = 'awaiting_deposit';
 export const DEPOSIT_REVERSED = 'deposit_reversed';
+export const DEPOSIT_VERIFICATION_MS = 5 * 60_000;
+
+const verification = z.object({
+  notBefore: z.string().datetime(),
+  transactionKey: z.string().nullable(),
+  approvedAt: z.string().nullable(),
+});
+export function getDepositVerification(metadata: unknown) {
+  const parsed = z.object({ depositVerification: verification }).safeParse(metadata);
+  return parsed.success ? parsed.data.depositVerification : null;
+}
 
 const refundAccount = z.object({
   bank: z.string().min(1).max(30),
@@ -24,7 +35,9 @@ export type RefundAccount = z.infer<typeof refundAccount>;
 
 export function getVirtualAccountDetails(metadata: unknown): PaymentInfo['virtualAccount'] {
   const parsed = z.object({ virtualAccount: bankDetails }).safeParse(metadata);
-  return parsed.success ? parsed.data.virtualAccount : undefined;
+  if (!parsed.success) return undefined;
+  const window = getDepositVerification(metadata);
+  return { ...parsed.data.virtualAccount, ...(window ? { verifyingUntil: window.notBefore } : {}) };
 }
 
 export function matchesDepositSecret(secret: string, digest: unknown): boolean {

@@ -1,3 +1,4 @@
+import { bindVirtualAccountRefundPost } from '../payment/virtual-account-cancel-receipt.js';
 import {
   Inject,
   Injectable,
@@ -458,6 +459,8 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       );
 
       providerAccepted = true;
+      const key = await bindVirtualAccountRefundPost(this.db, context.refund.id, response, command, amountSnapshot, queried);
+      if (key) completionOptions.expectedTransactionKey = key;
       if (isTossCancelCompleted(response, command.options.cancelRequestId, completionOptions)) {
         await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };

@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { issueVirtualAccountMetadata, openRefundAccount } from '../src/modules/payment/virtual-account.js';
 import { buildFullPaymentCancelRequest, buildTicketItemPaymentCancelRequest } from '../src/modules/payment/payment-cancel-policy.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -169,7 +169,10 @@ describe('Payment confirm core — PostgreSQL', () => {
       { broadcastSeatUpdate: vi.fn() } as never, qr, quoteService as never, pgBoss);
   }
 
+  afterEach(() => vi.useRealTimers());
+
   async function issuedDeposit(lostConfirmReply = false) {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01'),
       checkoutPaymentMethod: { method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' } });
     const key = randomBytes(32).toString('base64');
@@ -177,6 +180,7 @@ describe('Payment confirm core — PostgreSQL', () => {
     const paymentKey = 'va-' + randomUUID();
     const dueDate = new Date(Date.now() + 30 * 60_000).toISOString();
     const response = { orderId, paymentKey, mId: 'tgsangwbzqu', status: 'WAITING_FOR_DEPOSIT', method: '가상계좌',
+      balanceAmount: 52000, lastTransactionKey: randomUUID(), approvedAt: new Date().toISOString(),
       totalAmount: 52000, currency: 'KRW', secret: randomUUID(), virtualAccount: { dueDate, expired: false,
         bankCode: '20', accountNumber: 'X123456789012', refundReceiveAccount: {
           bankCode: '06', accountNumber: '00000000000000', holderName: 'Fixture' } } };
@@ -192,13 +196,18 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(toss.confirmPayment).toHaveBeenCalledTimes(lostConfirmReply ? 2 : 1);
     const lease = { acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
       releasePaymentConfirmLock: async () => true };
-    const sync = new PaymentService(db, undefined, undefined, toss as never, undefined, undefined, lease as never);
+    const qr = new QrTicketService(db, new ConfigService({ QR_TICKET_SECRET: 'isolated-test-signing-secret-at-least-32-characters',
+      QR_TICKET_SECRET_VERSION: 'test-v1', FRONTEND_URL: 'https://example.test' }), new JwtService(),
+      { sendTicketEmail: vi.fn() } as never, { isAvailable: false } as never);
+    const sync = new PaymentService(db, undefined, qr, toss as never, undefined, undefined, lease as never);
     const read = async () => {
       const [pay] = await db.select().from(payments).where(eq(payments.reservationId, reservation.id));
       const [order] = await db.select().from(reservations).where(eq(reservations.id, reservation.id));
       const [seat] = await db.select().from(schema.seatInventories).where(eq(schema.seatInventories.showtimeId, reservation.showtimeId));
       const items = await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.reservationId, reservation.id));
-      return { pay: pay!, order: order!, seat: seat!, items };
+      const credentials = await db.select({ id: schema.tickets.id }).from(schema.tickets)
+        .where(eq(schema.tickets.reservationId, reservation.id));
+      return { pay: pay!, order: order!, seat: seat!, items, credentials };
     };
     return { key, userId, orderId, paymentKey, response, toss, sync, read, reservation };
   }
@@ -208,7 +217,57 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(toss.confirmPayment.mock.calls[1]).toEqual(toss.confirmPayment.mock.calls[0]);
     expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, items: [] });
     response.status = 'DONE';
-    await expect(sync.syncVirtualAccount({ orderId, secret: response.secret })).resolves.toBe('DONE');
+    await expect(sync.syncVirtualAccount({ orderId, secret: response.secret })).resolves.toBe('VERIFYING_DEPOSIT');
+  });
+
+  it('holds the first DONE without issuing a QR and discards it when the bank reverses', async () => {
+    const { read, response, sync, orderId } = await issuedDeposit();
+    response.status = 'DONE';
+    await sync.syncVirtualAccount({ orderId, secret: response.secret });
+    expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, pay: { status: 'IN_PROGRESS' },
+      items: [], seat: { status: 'locked' } });
+    response.status = 'WAITING_FOR_DEPOSIT';
+    await sync.syncVirtualAccount({ orderId, secret: response.secret });
+    expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, items: [], seat: { status: 'locked' } });
+  });
+
+  it('restarts five minutes for a new bank transaction, and retries an unavailable final lookup without issuing', async () => {
+    const { sync, read, orderId, response, toss } = await issuedDeposit();
+    const callback = { orderId, secret: response.secret };
+    response.status = 'DONE';
+    await sync.syncVirtualAccount(callback);
+    vi.setSystemTime(Date.now() + 299_999);
+    response.lastTransactionKey = randomUUID();
+    await sync.syncVirtualAccount(callback);
+    vi.setSystemTime(Date.now() + 299_999);
+    await sync.syncVirtualAccount(callback);
+    expect((await read()).credentials).toHaveLength(0);
+    vi.setSystemTime(Date.now() + 1);
+    const worker = new PendingPaymentExpirationWorker(db, {} as never, undefined, undefined, sync);
+    const healthyLookup = toss.queryPayment.getMockImplementation()!;
+    toss.queryPayment.mockRejectedValue(new Error('PG unavailable'));
+    expect((await worker.sweepVirtualAccounts(new Date(), true)).failed).toBeGreaterThan(0);
+    expect((await read()).credentials).toHaveLength(0);
+    toss.queryPayment.mockImplementation(healthyLookup);
+    await worker.sweepVirtualAccounts(new Date(), true);
+    expect((await read()).credentials).toHaveLength(1);
+  });
+
+  it('persists an authenticated reversal across a lookup outage and duplicate delivery before restoring eligibility', async () => {
+    const { sync, read, orderId, response, toss } = await issuedDeposit();
+    const callback = { orderId, secret: response.secret };
+    response.status = 'DONE';
+    await sync.syncVirtualAccount(callback);
+    vi.setSystemTime(Date.now() + 295_000);
+    const reversal = { ...callback, reversalNotice: { transactionKey: 'reversal-1' } };
+    toss.queryPayment.mockRejectedValueOnce(new Error('PG unavailable'));
+    await expect(sync.syncVirtualAccount(reversal)).rejects.toThrow('PG unavailable');
+    vi.setSystemTime(Date.now() + 8000);
+    await sync.syncVirtualAccount(reversal);
+    expect((await read()).credentials).toHaveLength(0);
+    vi.setSystemTime(Date.now() + 292_000);
+    await sync.syncVirtualAccount(callback);
+    expect((await read()).credentials).toHaveLength(1);
   });
 
   it('holds a seat through issue, duplicate deposits, bank reversal and redeposit without duplicate tickets', async () => {
@@ -224,9 +283,17 @@ describe('Payment confirm core — PostgreSQL', () => {
     const callback = { orderId, secret: response.secret };
     await sync.syncVirtualAccount(callback);
     await sync.syncVirtualAccount(callback);
+    vi.setSystemTime(Date.now() + 299_999);
+    await sync.syncVirtualAccount(callback);
+    expect((await read()).items).toHaveLength(0);
+    vi.setSystemTime(Date.now() + 1);
+    const worker = new PendingPaymentExpirationWorker(db, {} as never, undefined, undefined, sync);
+    expect((await worker.sweepVirtualAccounts(new Date(), true)).checked).toBeGreaterThan(0);
+    await sync.syncVirtualAccount(callback);
     const paid = await read();
     expect(paid).toMatchObject({ order: { status: 'CONFIRMED' }, pay: { status: 'DONE' }, seat: { status: 'sold' } });
     expect(paid.items).toHaveLength(1);
+    expect(paid.credentials).toHaveLength(1);
     const full = buildFullPaymentCancelRequest({ payment: paid.pay, reason: 'refund' });
     const partial = buildTicketItemPaymentCancelRequest({ payment: paid.pay, reason: 'refund',
       ticketItem: { id: paid.items[0]!.id, refundableAmount: 40000 },
@@ -239,6 +306,9 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, items: [{ status: 'expired' }],
       pay: { status: 'IN_PROGRESS' }, seat: { status: 'locked', lockedBy: reservation.id } });
     response.status = 'DONE';
+    await sync.syncVirtualAccount(callback);
+    expect((await read()).items[0]?.status).toBe('expired');
+    vi.setSystemTime(Date.now() + 300_000);
     await sync.syncVirtualAccount(callback);
     expect(await read()).toMatchObject({ order: { status: 'CONFIRMED' }, items: [{ id: paid.items[0]!.id, status: 'active' }] });
   });
@@ -265,6 +335,9 @@ describe('Payment confirm core — PostgreSQL', () => {
       throw new Error('Toss requires a refund account on a deposited payment');
     });
     await sync.syncVirtualAccount({ orderId, userId, close: true });
+    expect((await read()).items).toHaveLength(0);
+    vi.setSystemTime(Date.now() + 300_000);
+    await sync.syncVirtualAccount({ orderId, userId });
     expect(await read()).toMatchObject({ order: { status: 'CONFIRMED' }, pay: { status: 'DONE' }, items: [{ status: 'active' }] });
   });
 
@@ -274,6 +347,8 @@ describe('Payment confirm core — PostgreSQL', () => {
     response.status = 'DONE';
     toss.cancelPayment.mockResolvedValueOnce({ ...response, status: 'CANCELED', balanceAmount: 0,
       cancels: [{ cancelStatus: 'DONE', cancelAmount: response.totalAmount }] });
+    await sync.syncVirtualAccount({ orderId, secret: response.secret });
+    vi.setSystemTime(Date.now() + 300_000);
     await sync.syncVirtualAccount({ orderId, secret: response.secret });
     expect(toss.cancelPayment).toHaveBeenCalledWith(response.paymentKey, expect.any(String),
       expect.objectContaining({ sealedRefundAccount: expect.any(String) }));

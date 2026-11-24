@@ -1,3 +1,4 @@
+import { matchingTicketCancelRows, type TossPaymentCancelRecord } from '../payment/toss-cancel-matcher.js';
 import { prepareTicketAddonRefunds } from './ticket-addon-refunds.js';
 import {
   BadRequestException,
@@ -271,12 +272,9 @@ export class PaymentCancellationFinalizerService {
       const command = input.ticketItemCancellation?.cancellationCommand;
       if (command) {
         const cancellations = Array.isArray(input.providerResponse?.cancels)
-          ? input.providerResponse.cancels as Array<Record<string, unknown>> : [];
-        const completed = cancellations.find((cancel) => cancel.cancelStatus === 'DONE'
-          && cancel.cancelReason === command.reason
-          && typeof cancel.cancelAmount === 'number'
-          && Math.round(cancel.cancelAmount * (command.currency === 'USD' ? 100 : 1)) === command.amountMinor
-          && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId));
+          ? input.providerResponse.cancels as TossPaymentCancelRecord[] : [];
+        const matches = matchingTicketCancelRows(cancellations, command);
+        const completed = matches.length === 1 ? matches[0] : undefined;
         if (!completed) throw new BadRequestException('취소 요청에 대응하는 결제사 완료 근거를 확인할 수 없습니다');
         await tx.update(ticketItems).set({
           cancellationCommand: sql`${ticketItems.cancellationCommand} || ${JSON.stringify({

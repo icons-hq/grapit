@@ -153,6 +153,12 @@ export class PrewarmService {
     return this.updateMinInstances(serviceName, minInstances ?? 0, 'step-down', claims);
   }
 
+  async authorizeDepositScheduler(req: Request) {
+    const audience = new URL('/api/v1/internal/virtual-account/verify-deposits', this.getRequiredEnv(PREWARM_ALLOWED_AUDIENCE)).href;
+    const claims = await this.verifyGoogleSignedIdToken(this.extractBearerToken(req));
+    this.assertExpectedClaims(claims, audience);
+  }
+
   private async authorizeSchedulerRequest(req: PrewarmRequestLike): Promise<PrewarmTokenClaims> {
     this.assertControlToken(req);
 
@@ -164,7 +170,7 @@ export class PrewarmService {
     return claims;
   }
 
-  private assertExpectedClaims(claims: PrewarmTokenClaims) {
+  private assertExpectedClaims(claims: PrewarmTokenClaims, audience = this.getRequiredEnv(PREWARM_ALLOWED_AUDIENCE)) {
     if (!GOOGLE_ALLOWED_ISSUERS.has(claims.iss)) {
       throw new ForbiddenException('PREWARM_INVALID_ISSUER');
     }
@@ -173,7 +179,7 @@ export class PrewarmService {
       throw new ForbiddenException('PREWARM_TOKEN_EXPIRED');
     }
 
-    if (claims.aud !== this.getRequiredEnv(PREWARM_ALLOWED_AUDIENCE)) {
+    if (claims.aud !== audience) {
       throw new ForbiddenException('PREWARM_INVALID_AUDIENCE');
     }
 

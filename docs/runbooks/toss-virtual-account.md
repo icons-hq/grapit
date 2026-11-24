@@ -7,8 +7,8 @@
 | 토스 상태 | 그랩잇 처리 |
 | --- | --- |
 | `WAITING_FOR_DEPOSIT` 발급 | 예매는 `PENDING_PAYMENT`, 결제는 `IN_PROGRESS/awaiting_deposit`다. 좌석 재고를 예매 ID로 잠그고 은행·입금 계좌·금액·기한을 구매자에게 표시한다. |
-| `DONE` | 국내 MID, 주문, 결제 키, 통화, 금액, 결제수단을 서버에서 대조한다. 같은 예매가 보유한 좌석을 판매 처리하고 티켓과 QR을 발급한다. |
-| `DONE` 이후 `WAITING_FOR_DEPOSIT` | 은행의 입금 취소다. 발권 권한과 미사용 특전을 정지하고 좌석을 보유한다. 재입금이 확인되면 기존 티켓의 권한을 복구한다. |
+| `DONE` | 국내 MID·주문·결제 키·통화·금액·수단과 입금 잔액을 대조하고 5분간 좌석을 보유한다. 5분 뒤 토스 조회에서도 같은 입금 거래와 전액이 유지될 때 예매 확정과 좌석별 QR 발급을 진행한다. |
+| `DONE` 이후 `WAITING_FOR_DEPOSIT` | 은행의 입금 취소다. 발권 전에는 확인 대기를 해제한다. 발권 후라면 티켓과 미사용 특전을 정지한다. 재입금이 확인된 시점부터 새로 5분을 기다린 뒤 발권하거나 기존 권한을 복구한다. |
 | 기한 경과 또는 구매자의 미입금 취소 | 구매자는 예매 상세에서 미입금 예매를 취소할 수 있다. 만료 스윕은 토스 거래를 조회하고 필요하면 미입금 계좌를 반납한다. 토스에서 미입금 종료가 확인되면 해당 예매 소유 좌석을 푼다. 조회 장애 중에는 좌석을 보존한다. |
 | 입금 후 취소 | 기존 예매·좌석별 환불 금액과 수수료 정책을 적용한다. 승인 때 보관한 환불계좌를 취소 API에 전달한다. 여러 번 취소하면 토스가 잔액 0원과 `PARTIAL_CANCELED`를 함께 반환할 수 있다. |
 
@@ -22,11 +22,36 @@
 4. 배포 후 해당 환경의 국내 MID에 `DEPOSIT_CALLBACK`을 별도로 등록한다. 운영 URL은 `https://api.heygrabit.com/api/v1/payments/toss/deposit-callback`이다. 테스트 환경에는 테스트 키와 격리 DB를 사용하는 공개 HTTPS 수신처를 지정한다. 2026-11-24 확인한 국내 테스트의 기존 수신처 `iconsip`은 다른 서비스 소유다. [토스 웹훅 등록](https://docs.tosspayments.com/guides/v2/webhook)
 5. 판매할 공연의 관리자 예매 정책에서 가상계좌를 선택한다. 신규 노출을 끌 때는 공연 정책에서 이 수단을 해제한다. 이미 발급한 주문은 약속된 입금기한까지 처리한다. 웹훅·워커·환불 키는 기존 주문 처리가 끝날 때까지 유지한다.
 
+6. 국내 라이브 `DEFAULT`와 `GRABIT_VA`에서 퀵계좌이체(실시간 계좌이체)를 해제하고 모바일과 PC 미리보기를 확인한다. 공개 판매 중·예정 공연의 예매 정책에서 `TRANSFER`를 `VIRTUAL_ACCOUNT`로 바꾼다. 다른 상점 MID와 외화 결제 UI는 각각의 계약에 따른다. [토스 결제 어드민](https://docs.tosspayments.com/guides/v2/payment-widget/admin)
+
 이전 버전에서 저장한 정책에도 이 수단이 남아 있을 수 있다. 운영 변수를 적용하기 전에 활성화될 공연을 읽기 전용으로 확인한다.
 
 ```sql
 SELECT performance_id FROM booking_policies WHERE allowed_payment_methods ? 'VIRTUAL_ACCOUNT';
 ```
+
+## 5분 입금 재확인
+
+확인 시작 시각은 그랩잇의 첫 토스 조회를 기준으로 한다. 계좌 발급 직후 은행이 입금을 철회하는 사례에 대응한다. 중복 완료 통지는 시간을 연장하지 않는다. 거래 키 또는 승인 시각이 바뀌면 새 입금으로 처리한다. 조회 장애 시 좌석을 유지하고 다음 실행에서 다시 조회한다. [토스 가상계좌 지연통보 안내](https://docs.tosspayments.com/resources/glossary/virtual-account)
+
+운영 Cloud Scheduler `grabit-verify-deposits-every-minute`은 매분 발권 대기 시간이 지난 주문만 조회한다. 평소 발권까지 약 5~6분이 걸린다. 기존 5분 주기 백그라운드 작업도 같은 대기 주문을 복구한다. 두 작업과 구매자 상태 조회는 기존 주문별 잠금을 공유한다. 스케줄러의 Google OIDC 서비스 계정은 기존 운영 Scheduler 계정이며 audience는 아래 요청 URL 전체다.
+
+```sh
+project=grapit-491806
+region=asia-northeast3
+service_url=$(gcloud run services describe grabit-api --project="$project" --region="$region" --format='value(status.url)')
+verify_url="$service_url/api/v1/internal/virtual-account/verify-deposits"
+gcloud scheduler jobs create http grabit-verify-deposits-every-minute \
+  --project="$project" --location="$region" --schedule='* * * * *' --time-zone=Asia/Seoul \
+  --uri="$verify_url" --http-method=POST --attempt-deadline=60s \
+  --oidc-service-account-email="scheduler-prewarm@$project.iam.gserviceaccount.com" --oidc-token-audience="$verify_url"
+```
+
+기존 스케줄을 갱신할 때는 위 명령에서 `create` 대신 `update`를 쓴다. 운영 연결 확인은 Cloud Scheduler 실행 결과와 해당 경로의 Cloud Run HTTP 200을 대조한다.
+
+## 환불 거래 식별
+
+그랩잇은 원래 취소 사유를 보관하고, 가상계좌 취소 요청에는 시도별 고유 번호를 짧은 사유로 전송한다. 개별 취소 POST의 성공 응답에서 원결제·취소 금액·전후 잔액과 완료 거래 키를 대조해 같은 환불 명령에 저장한다. 마지막 거래 키가 생략되면 직전 조회 이후 새로 생긴 완료 거래가 단 하나인지 확인한다. 이후 조회나 중복 웹훅은 저장한 키 또는 원래 요청의 고유 표기와 금액으로 대조한다. 결제 조회의 마지막 거래 키는 이후 부분취소로 바뀔 수 있다. 과거 건의 근거가 부족하면 기존 멱등 명령과 거래 원장을 확인한다. [토스 결제 취소 API](https://docs.tosspayments.com/reference#결제-취소)
 
 ## 입금 대조
 
