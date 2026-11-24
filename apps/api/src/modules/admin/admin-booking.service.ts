@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { asc, eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, type SQL } from 'drizzle-orm';
+import { asc, eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, isNull, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
@@ -652,7 +652,7 @@ function reservationSeatFilterSql(filters: AdminBookingQueryParams): SQL | undef
   const ticketItemExists = sql`exists (
     select 1
     from ticket_items admin_filter_ti
-    where admin_filter_ti.reservation_id = ${reservations.id}
+    where (admin_filter_ti.reservation_id = ${reservations.id} or admin_filter_ti.id = ${reservations.addonTicketItemId})
       and ${and(...ticketItemConditions)}
   )`;
   const fallbackExists = sql`(
@@ -728,7 +728,7 @@ function ticketItemSearchExistsSql(pattern: string): SQL {
   return sql`exists (
     select 1
     from ticket_items admin_search_ti
-    where admin_search_ti.reservation_id = ${reservations.id}
+    where (admin_search_ti.reservation_id = ${reservations.id} or admin_search_ti.id = ${reservations.addonTicketItemId})
       and (
         admin_search_ti.seat_key ilike ${pattern}
         or admin_search_ti.seat_id ilike ${pattern}
@@ -1008,6 +1008,9 @@ function completedRevenueSql(): SQL<number> {
     case
       when ${completedRevenueEligibleConditionSql()} then
         case
+          when ${reservations.addonTicketItemId} is not null then case when exists (
+            select 1 from ticket_items owner where owner.id = ${reservations.addonTicketItemId} and owner.status = 'active'
+          ) then ${reservations.totalAmount} else 0 end
           when ${hasAnyTicketItemsSql()} then ${activeTicketItemRevenueSql()}
           else ${reservations.totalAmount}
         end
@@ -1501,36 +1504,44 @@ export class AdminBookingService {
     whereClause: SQL | undefined,
   ): Promise<AdminBookingTierStats[]> {
     const ticketItemWhere = buildTicketItemStatsWhereClause(params, whereClause);
+    // Apply date, payment and order filters to the charge that earned the revenue.
+    // A supplemental order uses its owner's tier but does not sell or admit a second seat.
+    const seatOrder = isNull(reservations.addonTicketItemId);
     const tierRows = await db
       .select({
         tierName: ticketItems.tierName,
         price: sql<number>`min(${ticketItems.price})::int`,
         soldSeats: sql<number>`count(*) filter (
-          where ${ticketItems.status} = 'active'
+          where ${seatOrder} and ${ticketItems.status} = 'active'
             and ${completedRevenueEligibleConditionSql()}
         )::int`,
         activeRevenue: sql<number>`coalesce(sum(
           case
             when ${ticketItems.status} = 'active'
               and ${completedRevenueEligibleConditionSql()}
-            then ${ticketItems.price} + ${ticketItems.addonAmount} + ${ticketItems.serviceFee}
+            then case when ${seatOrder}
+              then ${ticketItems.price} + ${ticketItems.addonAmount} + ${ticketItems.serviceFee}
+              else ${reservations.totalAmount} end
             else 0
           end
         ), 0)::int`,
         cancelProcessingSeats: sql<number>`count(*) filter (
-          where ${ticketItems.status} = 'cancellation_pending'
+          where ${seatOrder} and ${ticketItems.status} = 'cancellation_pending'
         )::int`,
         cancelledSeats: sql<number>`count(*) filter (
-          where ${ticketItems.status} = 'cancelled'
+          where ${seatOrder} and ${ticketItems.status} = 'cancelled'
         )::int`,
         enteredSeats: sql<number>`count(*) filter (
-          where ${ticketItems.status} = 'active'
+          where ${seatOrder} and ${ticketItems.status} = 'active'
             and ${ticketItems.admissionState} = 'entered'
             and ${completedRevenueEligibleConditionSql()}
         )::int`,
       })
       .from(ticketItems)
-      .innerJoin(reservations, eq(ticketItems.reservationId, reservations.id))
+      .innerJoin(reservations, or(
+        eq(ticketItems.reservationId, reservations.id),
+        eq(ticketItems.id, reservations.addonTicketItemId),
+      ))
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))

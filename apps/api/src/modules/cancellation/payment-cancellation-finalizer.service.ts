@@ -1,3 +1,4 @@
+import { prepareTicketAddonRefunds } from './ticket-addon-refunds.js';
 import {
   BadRequestException,
   Inject,
@@ -211,6 +212,15 @@ export class PaymentCancellationFinalizerService {
     @Optional() @Inject(PG_BOSS) private readonly pgBoss?: PgBossContract,
   ) {}
 
+  async enqueueTicketAddonRefunds(refundIds: string[]): Promise<void> {
+    if (!this.pgBoss?.isAvailable) return;
+    for (const refundId of refundIds) {
+      // The stale-refund sweep recovers a committed request if enqueue or the process fails.
+      await this.pgBoss.send(PG_BOSS_JOB_NAMES.refundCancelRetry, { refundId, attempt: 1 }, { singletonKey: refundId })
+        .catch(() => this.logger.warn(`추가 결제 환불 재시도 대기. refundId=${refundId}`));
+    }
+  }
+
   async finalizeFullPaymentCancellation(
     input: FinalizeFullPaymentCancellationInput,
   ): Promise<FinalizeFullPaymentCancellationResult> {
@@ -231,8 +241,10 @@ export class PaymentCancellationFinalizerService {
     const seatReleaseStates: SeatReleaseState[] = [];
 
     let alreadyFinalized = false;
+    let addonRefundIds: string[] = [];
+    let supplementalPayment = false;
     await this.db.transaction(async (tx) => {
-      const lockedReservation = await tx.execute(sql`SELECT id, status FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      const lockedReservation = await tx.execute(sql`SELECT id, status, addon_ticket_item_id, fixed_cancellation_fee FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
       if (input.source === 'cancel_webhook') {
         // A webhook that read its snapshot before a concurrent finalizer
         // committed must not re-apply the cancellation (history, fees, seats).
@@ -367,6 +379,15 @@ export class PaymentCancellationFinalizerService {
         }
       }
 
+      const lockedOrder = lockedReservation?.rows?.[0];
+      supplementalPayment = Boolean(lockedOrder?.['addon_ticket_item_id']);
+      if (supplementalPayment) {
+        // A child charge may also be cancelled directly at the provider while its ticket stays active.
+        await tx.execute(sql`UPDATE ticket_benefit_entitlements e SET state = 'inactive',
+          inactive_reason = 'addon_payment_cancelled', updated_at = now() FROM booking_addon_holds h
+          WHERE e.booking_addon_hold_id = h.id AND h.reservation_id = ${input.context.reservation.id}
+          AND e.state <> 'redeemed'`);
+      }
       if (seatIdentities.length > 0) {
         const ticketItemCancellation = input.ticketItemCancellation;
         const targetTicketItemIds: string[] = [];
@@ -525,6 +546,11 @@ export class PaymentCancellationFinalizerService {
           targetTicketItemIds,
           now,
         );
+
+        addonRefundIds = await prepareTicketAddonRefunds(tx, targetTicketItemIds, Boolean(lockedOrder?.['fixed_cancellation_fee']),
+          id => fullReservationCancellationQuote?.items.find(item => item.ticketItemId === id)?.policyCode
+            ?? ticketItemCancellation?.cancellationCommand?.policyCode
+            ?? (input.localOnly ? 'BOOKING_DAY_8_TO_SHOW_DAY_10' : 'ADMIN_FULL_REFUND_OVERRIDE'), input.reason);
 
         // A provider-backed full cancellation (stored quote or quote-less provider cancel) closes the whole
         // reservation, so legacy reservation-level credentials are revoked with the target items.
@@ -706,6 +732,8 @@ export class PaymentCancellationFinalizerService {
       return { releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false, alreadyFinalized: true };
     }
 
+    if (supplementalPayment) return { releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false };
+    await this.enqueueTicketAddonRefunds(addonRefundIds);
     const seatIdentitiesNeedingReleaseJob = seatReleaseStates
       .filter((state) => state.reopenJobId === preallocatedReleaseJobId)
       .map((state) => state.seatIdentity);

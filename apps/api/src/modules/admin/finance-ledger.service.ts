@@ -85,7 +85,7 @@ export class FinanceLedgerService {
     for (const item of items) byPayment.set(item.paymentId, [...(byPayment.get(item.paymentId) ?? []), item]);
     const rows = sources.map((source) => describePayment(source, byPayment.get(source.payment.id) ?? [], query))
       .filter((row) => query.dateBasis === 'paid_at' ? within(row.paidAt, query)
-        : within(row.cancelledAt, query) || row.tickets.some((item) => item.state === 'unknown' || within(item.completedAt ?? item.requestedAt, query)));
+        : within(row.cancelledAt, query) || within(row.addonRefundRequestedAt ?? null, query) || row.tickets.some((item) => item.state === 'unknown' || within(item.completedAt ?? item.requestedAt, query)));
     const summary = { ...emptyAmounts(), paymentCount: rows.length, unknownPaymentCount: rows.filter((row) => row.warnings.length).length };
     const currencies = new Map<string, FinanceCurrencyTotal>();
     for (const row of rows) {
@@ -267,15 +267,34 @@ function describePayment(source: PaymentSource, items: Item[], query: FinanceLed
     if (ticket.state === 'cancelled') confirmedCancelMinor = addKnown(confirmedCancelMinor, amount);
     else pendingCancelMinor = addKnown(pendingCancelMinor, amount);
   }
-  if (!tickets.length || tickets.some((item) => item.state === 'unknown')) {
+  const holderPayment = Boolean(reservation.addonTicketItemId);
+  const addonRefund = holderPayment && attempt && !before(attempt.restoredAt, cutoff) ? attempt : null;
+  if (holderPayment) {
+    const cancelledAt = payment.cancelledAt?.toISOString();
+    const completed = before(addonRefund?.completedAt ?? cancelledAt, cutoff);
+    const amount = addonRefund?.cancellationQuote.refundableAmount;
+    const fee = addonRefund?.cancellationQuote.cancellationFeeTotal;
+    const refunded = typeof amount === 'number' ? amount : completed && payment.status === 'CANCELED' ? confirmedPaymentKrw : null;
+    const providerAmount = addonRefund?.providerRefund.amountMinor;
+    const refundedMinor = typeof providerAmount === 'number' ? providerAmount
+      : completed && payment.status === 'CANCELED' ? chargeMinor : null;
+    amounts.remainingTicketKrw = completed || addonRefund ? 0 : confirmedPaymentKrw;
+    amounts.pendingRefundKrw = !completed && addonRefund ? refunded : 0;
+    amounts.confirmedRefundKrw = completed ? refunded : 0;
+    amounts.retainedCancellationFeeKrw = completed ? typeof fee === 'number' ? fee : refunded === confirmedPaymentKrw ? 0 : null : 0;
+    amounts.periodRefundKrw = completed && within(addonRefund?.completedAt ?? cancelledAt ?? null, query) ? refunded : 0;
+    confirmedCancelMinor = completed ? refundedMinor : 0;
+    pendingCancelMinor = !completed && addonRefund ? refundedMinor : 0;
+  } else if (!tickets.length || tickets.some((item) => item.state === 'unknown')) {
     confirmedCancelMinor = null; pendingCancelMinor = null;
     amounts.confirmedRefundKrw = null; amounts.pendingRefundKrw = null; amounts.remainingTicketKrw = null;
     amounts.retainedCancellationFeeKrw = null; amounts.retainedServiceFeeKrw = null; amounts.periodRefundKrw = null;
   }
-  if (!tickets.length || !chargeCurrency || chargeMinor === null || confirmedCancelMinor === null || pendingCancelMinor === null
+  if ((!holderPayment && !tickets.length) || !chargeCurrency || chargeMinor === null || confirmedCancelMinor === null || pendingCancelMinor === null
     || Object.values(amounts).includes(null))
     warnings.push('일부 거래의 티켓 또는 PG 금액 증거가 없습니다. 원거래·취소 자료를 별도로 대조하세요.');
-  return { ...amounts, paymentId: payment.id, reservationNumber: reservation.reservationNumber, orderId: payment.tossOrderId,
+  return { ...amounts, ...(reservation.addonTicketItemId ? { addonTicketItemId: reservation.addonTicketItemId,
+    addonRefundRequestedAt: addonRefund?.requestedAt ?? null } : {}), paymentId: payment.id, reservationNumber: reservation.reservationNumber, orderId: payment.tossOrderId,
     showtimeId: showtime.id, showtimeAt: showtime.dateTime.toISOString(), paidAt: payment.paidAt!.toISOString(),
     cancelledAt: payment.cancelledAt && before(payment.cancelledAt.toISOString(), cutoff) ? payment.cancelledAt.toISOString() : null,
     storedPaymentAmount: payment.amount, storedPaymentCurrency: payment.currency,

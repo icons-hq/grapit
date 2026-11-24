@@ -1,3 +1,4 @@
+import { issueTicketAddons, requirePurchasableTicket } from '../../database/ticket-holder-addons.js';
 import { finalizeReservationAddons, restoreEndedCheckoutAddonHolds } from '../../database/booking-addon-inventory.js';
 import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
@@ -286,6 +287,7 @@ type WebhookReservationSnapshot = {
   status: ReservationStatus;
   totalAmount: number;
   addonAmount?: number;
+  addonTicketItemId?: string | null;
   checkoutPaymentMethod?: PaymentMethod | null;
   /** The performance's stored `booking_policies.allowed_payment_methods`. */
   allowedPaymentMethods?: unknown;
@@ -511,6 +513,7 @@ export class PaymentService {
         userId: reservations.userId,
         showtimeId: reservations.showtimeId,
         status: reservations.status,
+        addonTicketItemId: reservations.addonTicketItemId,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
         admissionActiveUntilAt: reservations.admissionActiveUntilAt,
         reentryGraceUntilAt: reservations.reentryGraceUntilAt,
@@ -541,6 +544,9 @@ export class PaymentService {
       throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
     }
 
+    if (reservation.addonTicketItemId) {
+      await requirePurchasableTicket(this.db, reservation.addonTicketItemId, reservation.userId, reservation.showtimeId);
+    }
     if (paymentMethod && reservation.checkoutStartedAt) {
       throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
     }
@@ -812,7 +818,7 @@ export class PaymentService {
   }, now = new Date()): Promise<EndCheckoutResponse> {
     const [reservation] = await this.db.select({
       id: reservations.id, showtimeId: reservations.showtimeId, status: reservations.status,
-      createdAt: reservations.createdAt,
+      createdAt: reservations.createdAt, addonTicketItemId: reservations.addonTicketItemId,
       cancelReason: reservations.cancelReason, paymentDeadlineAt: reservations.paymentDeadlineAt,
       admissionActiveUntilAt: reservations.admissionActiveUntilAt,
       checkoutStartedAt: reservations.checkoutStartedAt, checkoutPaymentMethod: reservations.checkoutPaymentMethod,
@@ -855,7 +861,7 @@ export class PaymentService {
       if (await this.bookingService.hasPaymentConfirmAttempt(input.orderId)) {
         throw new ConflictException(PAYMENT_HANDOFF_UNKNOWN_MESSAGE);
       }
-      let canKeepSelection = input.keepSelection && this.isValidDate(deadline) && deadline > now
+      let canKeepSelection = !reservation.addonTicketItemId && input.keepSelection && this.isValidDate(deadline) && deadline > now
         && this.isValidDate(reservation.admissionActiveUntilAt) && reservation.admissionActiveUntilAt > now;
       if (canKeepSelection) {
         const seats = await this.db.select({ seatId: reservationSeats.seatId }).from(reservationSeats)
@@ -1152,6 +1158,7 @@ export class PaymentService {
         id: reservations.id,
         userId: reservations.userId,
         status: reservations.status,
+        addonTicketItemId: reservations.addonTicketItemId,
         checkoutPaymentMethod: reservations.checkoutPaymentMethod,
       })
       .from(reservations)
@@ -1226,7 +1233,7 @@ export class PaymentService {
    * order lease so repeated returns cannot contend with webhook processing.
    */
   private async isAsyncReturnAlreadySettled(
-    reservation: { id: string; status: string },
+    reservation: { id: string; status: string; addonTicketItemId?: string | null },
     paymentKey: string,
   ): Promise<boolean> {
     if (reservation.status !== 'CONFIRMED' && reservation.status !== 'CANCELLED') {
@@ -1261,7 +1268,7 @@ export class PaymentService {
 
     // Issuance is idempotent and DB-only; it repairs a post-commit QR failure
     // without another provider round trip.
-    if (this.qrTicketService) {
+    if (this.qrTicketService && !reservation.addonTicketItemId) {
       await this.qrTicketService.ensureIssuedTicketsForReservation({
         reservationId: reservation.id,
         paymentId: payment.id,
@@ -1621,6 +1628,7 @@ export class PaymentService {
         status: reservations.status,
         totalAmount: reservations.totalAmount,
         addonAmount: reservations.addonAmount,
+        addonTicketItemId: reservations.addonTicketItemId,
         providerChargeCurrency: reservations.providerChargeCurrency,
         providerChargeAmountMinor: reservations.providerChargeAmountMinor,
         providerChargeRate: reservations.providerChargeRate,
@@ -2728,7 +2736,7 @@ export class PaymentService {
       && reservation.status === 'CONFIRMED'
       && existingPayment.status === 'DONE'
     ) {
-      if (this.qrTicketService) {
+      if (this.qrTicketService && !reservation.addonTicketItemId) {
         await this.qrTicketService.ensureIssuedTicketsForReservation({
           reservationId: reservation.id,
           paymentId: existingPayment.id,
@@ -2768,7 +2776,7 @@ export class PaymentService {
         const limit = await getTicketLimitSnapshot(tx, reservation.userId, reservation.id, reservation.showtimeId);
         await lockTicketLimitScope(tx, reservation.userId, limit.performanceId);
         const lockedLimit = await getTicketLimitSnapshot(tx, reservation.userId, reservation.id, reservation.showtimeId);
-        if (lockedLimit.activeTicketCount + pendingSeats.length > lockedLimit.maxTicketsPerUser) {
+        if (!reservation.addonTicketItemId && lockedLimit.activeTicketCount + pendingSeats.length > lockedLimit.maxTicketsPerUser) {
           throw new ConflictException(buildMaxTicketsPerUserExceededMessage(lockedLimit.maxTicketsPerUser));
         }
 
@@ -2815,6 +2823,12 @@ export class PaymentService {
 
         if (!committedPaymentId) {
           throw new InternalServerErrorException('결제 정보 저장에 실패했습니다');
+        }
+        if (reservation.addonTicketItemId) {
+          await issueTicketAddons(tx, { ticketId: reservation.addonTicketItemId, userId: reservation.userId,
+            reservationId: reservation.id, showtimeId: reservation.showtimeId, expectedTotal: reservation.totalAmount });
+          await input.assertLease?.();
+          return;
         }
         const ticketItemPaymentId = committedPaymentId;
 
@@ -2925,13 +2939,14 @@ export class PaymentService {
       );
     }
 
-    if (this.qrTicketService && committedPaymentId) {
+    if (this.qrTicketService && committedPaymentId && !reservation.addonTicketItemId) {
       await this.qrTicketService.ensureIssuedTicketsForReservation({
         reservationId: reservation.id,
         paymentId: committedPaymentId,
       });
     }
 
+    if (reservation.addonTicketItemId) await this.bookingGateway?.publishAddonStockChanged(reservation.showtimeId).catch(() => undefined);
     return recoveredPaymentKey ? 'DONE_RECOVERED_PAYMENT_KEY' : 'DONE_APPLIED';
   }
 

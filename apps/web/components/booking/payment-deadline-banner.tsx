@@ -66,7 +66,7 @@ export function PaymentDeadlineBanner({
       <p role="status" className="text-xs leading-relaxed">{isCritical
         ? t('paymentDeadline.criticalHelper', { threshold: CRITICAL_REMAINING_LABEL })
         : t('paymentDeadline.helper', { threshold: CRITICAL_REMAINING_LABEL })}</p>
-      <p className="sr-only">{t('paymentDeadline.seatHoldHelper', { time: lockRemainingLabel })}</p>
+      {lockExpiresAt && <p className="sr-only">{t('paymentDeadline.seatHoldHelper', { time: lockRemainingLabel })}</p>}
     </section>
   );
 }

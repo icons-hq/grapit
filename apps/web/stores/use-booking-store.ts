@@ -30,7 +30,10 @@ function normalizeSeatSelection(
   };
 }
 
+type HolderTicket = { id: string; reservationId: string };
+
 interface BookingState {
+  holderTicket: HolderTicket | null;
   selectedDate: Date | null;
   selectedShowtimeId: string | null;
   selectedSeats: FloorAwareSeatSelection[];
@@ -61,6 +64,7 @@ interface BookingState {
   expireTimer: () => void;
   setConnected: (connected: boolean) => void;
   setBookingData: (data: {
+    holderTicket?: HolderTicket | null;
     selectedSeats: Array<FloorAwareSeatSelection | SeatSelection>;
     selectedAddons?: BookingAddonChoice[];
     showtimeId: string | null;
@@ -77,6 +81,7 @@ interface BookingState {
 }
 
 const initialState = {
+  holderTicket: null,
   selectedDate: null,
   selectedShowtimeId: null,
   selectedSeats: [] as FloorAwareSeatSelection[],
@@ -176,6 +181,7 @@ export const useBookingStore = create<BookingState>((set) => ({
 
   setBookingData: (data) =>
     set({
+      holderTicket: data.holderTicket ?? null,
       selectedSeats: data.selectedSeats.map(normalizeSeatSelection),
       selectedAddons: data.selectedAddons ?? [],
       selectedShowtimeId: data.showtimeId,

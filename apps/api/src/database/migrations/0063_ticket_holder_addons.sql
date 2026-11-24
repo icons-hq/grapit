@@ -1,0 +1,3 @@
+ALTER TABLE "reservations" ADD COLUMN "addon_ticket_item_id" uuid;--> statement-breakpoint
+ALTER TABLE "reservations" ADD CONSTRAINT "reservations_addon_ticket_item_id_ticket_items_id_fk" FOREIGN KEY ("addon_ticket_item_id") REFERENCES "public"."ticket_items"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_reservations_addon_ticket" ON "reservations" USING btree ("addon_ticket_item_id") WHERE "reservations"."addon_ticket_item_id" is not null;

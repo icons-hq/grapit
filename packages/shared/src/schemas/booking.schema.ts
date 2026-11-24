@@ -545,6 +545,9 @@ export const reservationListItemSchema = z.object({
 });
 
 export const reservationDetailSchema = reservationListItemSchema.extend({
+  addonTicketItemId: z.string().uuid().optional(),
+  addonParentReservationId: z.string().uuid().optional(),
+  ticketAddonAccess: z.array(z.object({ ticketItemId: z.string().uuid(), hasOrders: z.boolean() })).optional(),
   addons: z.array(z.object({ addonId: z.string().uuid(), seatKey: z.string(), unitIndex: z.number().int().min(1).max(10).optional(), price: z.number().int().positive(),
     displayCopy: z.record(z.object({ name: z.string(), description: z.string() })), expiresAt: z.string().datetime() })).optional(),
   performanceId: z.string().uuid('유효한 performance ID가 필요합니다').optional(),

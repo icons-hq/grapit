@@ -52,3 +52,24 @@ export interface BookingAddonStockUpdate {
   nextExpiryAt: string | null;
   stocks: Pick<BookingAddonStock, 'id' | 'available' | 'held' | 'sold' | 'capacity' | 'active'>[];
 }
+
+/** Account-scoped inventory for a single issued Ticket Item. */
+export interface TicketAddonOffer {
+  id: string;
+  displayCopy: BookingAddonDefinition['displayCopy'];
+  price: number;
+  remainingUnits: number[];
+  available: number;
+}
+export interface TicketAddonOrder {
+  orderId: string;
+  amount: number;
+  status: 'PENDING_PAYMENT' | 'CONFIRMED' | 'CANCELLED' | 'FAILED';
+  refundStatus: string | null;
+  refundableAmount: number | null;
+}
+export interface TicketAddonOptions {
+  seatKey: string;
+  offers: TicketAddonOffer[];
+  orders: TicketAddonOrder[];
+}

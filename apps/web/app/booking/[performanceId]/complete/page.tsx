@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { PaymentRecoveryPanel } from '@/components/booking/payment-recovery-panel';
 import { useCheckPaymentStatus } from '@/hooks/use-check-payment-status';
@@ -425,11 +426,13 @@ function CompletePageContent() {
 
   // Focus heading on success
   useEffect(() => {
-    if (effectiveBooking) {
+    if (effectiveBooking?.addonParentReservationId) {
+      router.replace(getLocalizedPathname(`/mypage/reservations/${effectiveBooking.addonParentReservationId}`, locale));
+    } else if (effectiveBooking) {
       const heading = document.getElementById('booking-complete-heading');
       heading?.focus();
     }
-  }, [effectiveBooking]);
+  }, [effectiveBooking, locale, router]);
 
   // Handle missing params
   if (!hasConfirmParams && !hasPendingReturnParams) {
@@ -571,6 +574,9 @@ function CompletePageContent() {
     );
   }
 
+  if (effectiveBooking?.addonParentReservationId) {
+    return <main className="mx-auto max-w-xl p-6" role="status">{getTicketAddonCopy(locale).title} · {getTicketAddonCopy(locale).paid}</main>;
+  }
   // Success state
   if (effectiveBooking) {
     return (

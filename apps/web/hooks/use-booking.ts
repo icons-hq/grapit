@@ -723,9 +723,11 @@ export function usePrepareReservation() {
         ? toBookingPolicy(cachedPerformance.bookingPolicy, data.bookingPolicy)
         : data.bookingPolicy;
 
-      return apiClient.post<PrepareReservationResponse>('/api/v1/reservations/prepare', {
-        ...data,
-        seats,
+      const { addonTicketItemId, ...body } = data;
+      const path: `/${string}` = addonTicketItemId ? `/api/v1/ticket-items/${addonTicketItemId}/addons/prepare` : '/api/v1/reservations/prepare';
+      return apiClient.post<PrepareReservationResponse>(path, {
+        ...body,
+        seats: addonTicketItemId ? [] : seats,
         bookingPolicy,
       }, {
         showErrorToast: false,
@@ -735,7 +737,14 @@ export function usePrepareReservation() {
 }
 
 export function useConfirmPayment() {
+  const queryClient = useQueryClient();
   return useMutation({
+    onSuccess: (receipt: ReservationDetail) => {
+      if (receipt.status === 'CONFIRMED' && receipt.addonParentReservationId) {
+        void queryClient.invalidateQueries({ queryKey: ['reservations', receipt.addonParentReservationId] });
+        void queryClient.invalidateQueries({ queryKey: ['ticket-addons'] });
+      }
+    },
     // The confirm response renders the complete screen, so it needs the display locale too.
     mutationFn: (data: ConfirmPaymentRequest) =>
       apiClient.post<ReservationDetail>(
