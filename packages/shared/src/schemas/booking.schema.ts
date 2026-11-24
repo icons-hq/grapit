@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PERFORMANCE_ALLOWED_PAYMENT_METHODS } from '../types/performance.types';
 import { bookingAddonSelectionsSchema } from './booking-addon.schema';
 
 import { benefitEntitlementSchema } from './benefit.schema';
@@ -60,6 +61,7 @@ export const queueAdmissionSchema = z.object({
 });
 
 export const bookingPolicySchema = z.object({
+  allowedPaymentMethods: z.array(z.enum(PERFORMANCE_ALLOWED_PAYMENT_METHODS)).optional(),
   maxTicketsPerOrder: z
     .number()
     .int()

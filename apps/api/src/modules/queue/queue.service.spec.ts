@@ -995,7 +995,7 @@ describe('QueueService', () => {
     expect(serviceSource).toContain('QUEUE_REENTRY_GRACE_SECONDS = 180');
     expect(serviceSource).toContain('etaSeconds');
     expect(serviceSource).toContain('remainingSeats');
-    expect(serviceSource).toContain("['sold', 'held_cancelled', 'disabled']");
+    expect(serviceSource).toContain("['sold', 'held_cancelled', 'disabled', 'locked']");
   });
 
   it('limits waiting position broadcasts and derives positions without per-session Redis reads', async () => {

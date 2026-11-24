@@ -1,5 +1,6 @@
 import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
 import { getVirtualAccountDetails } from '../payment/virtual-account.js';
+import { resolveEnforcedAllowedPaymentMethods } from '../payment/payment-method-policy.js';
 import { quoteTicketAddons, requirePurchasableTicket, reserveTicketAddons } from '../../database/ticket-holder-addons.js';
 import { reservationAddonChoices, reservationAddonTotal, selectAddonHoldsForOrder } from '../../database/booking-addon-inventory.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
@@ -1633,6 +1634,7 @@ export class ReservationService {
         },
         policy: {
           maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+          allowedPaymentMethods: bookingPolicies.allowedPaymentMethods,
           changePolicyEnabled: bookingPolicies.changePolicyEnabled,
           paymentWindowMinutes: bookingPolicies.paymentWindowMinutes,
           seatHoldMinutes: bookingPolicies.seatHoldMinutes,
@@ -1806,12 +1808,15 @@ export class ReservationService {
         reentryGraceUntilAt: row.reservation.reentryGraceUntilAt?.toISOString() ?? new Date(0).toISOString(),
       },
       paymentDeadlineAt: row.reservation.paymentDeadlineAt?.toISOString() ?? new Date(0).toISOString(),
-      bookingPolicy: mapPerformanceBookingPolicy({
-        maxTicketsPerUser: row.policy?.maxTicketsPerUser ?? undefined,
-        changePolicyEnabled: row.policy?.changePolicyEnabled ?? undefined,
-        paymentWindowMinutes: row.policy?.paymentWindowMinutes ?? undefined,
-        seatHoldMinutes: row.policy?.seatHoldMinutes ?? undefined,
-      }, { forceCancelOnly: true }),
+      bookingPolicy: {
+        ...mapPerformanceBookingPolicy({
+          maxTicketsPerUser: row.policy?.maxTicketsPerUser ?? undefined,
+          changePolicyEnabled: row.policy?.changePolicyEnabled ?? undefined,
+          paymentWindowMinutes: row.policy?.paymentWindowMinutes ?? undefined,
+          seatHoldMinutes: row.policy?.seatHoldMinutes ?? undefined,
+        }, { forceCancelOnly: true }),
+        allowedPaymentMethods: [...resolveEnforcedAllowedPaymentMethods(row.policy?.allowedPaymentMethods)],
+      },
       refundTimeline: row.refund && !hasRestoredRefundRights(row.refund)
         ? toRefundTimeline(row.refund) : ticketItemRefundTimeline(ticketItemRows),
       cancelledSeatHold: null,

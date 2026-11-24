@@ -18,7 +18,7 @@
 
 1. 전용 국내 주문서형 위젯에 가상계좌를 추가하고 환불 정보 입력을 켠다. 테스트 위젯의 입금기한은 30분이다. 승인 응답의 실제 만료 시각이 공연 시작을 넘으면 발급을 반납한다. 기존 `DEFAULT`와 별도 위젯이므로 공연별로 선택할 수 있다. [주문서형 SDK](https://docs.tosspayments.com/sdk/v2/js/payment-widget)
 2. 환불계좌 암호화에 쓸 32바이트 난수를 Base64로 저장한다. 운영에서는 Secret Manager의 `toss-virtual-account-refund-key`를 API와 환불 재처리 워커 양쪽에 연결한다. 배포 워크플로의 변수는 `TOSS_VIRTUAL_ACCOUNT_REFUND_KEY_CONFIGURED=true`, 웹 빌드 변수는 `NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY=GRABIT_VA`다. 키 자체는 브라우저로 전달하지 않는다. 환불 가능 거래와 재처리 중인 취소 명령이 이전 키로 암호화돼 있으면 키 교체 전에 이관한다.
-3. 환불 은행·계좌번호·예금주를 동의 안내 및 개인정보처리방침의 처리 항목에 반영하고 적용일을 정한다. 서버는 승인 응답의 환불계좌를 결제 키에 결합해 AES-256-GCM으로 암호화한다. 예매 상세에는 입금용 계좌만 제공한다. [토스 가상계좌 환불](https://docs.tosspayments.com/guides/v2/cancel-payment)
+3. 결제 단계와 [구매자 개인정보 안내](https://heygrabit.com/legal/privacy#virtual-account)에서 환불 은행·계좌번호·예금주, 이용 목적과 다른 결제수단 선택 안내를 확인한다. 서버는 승인 응답의 환불계좌를 결제 키에 결합해 AES-256-GCM으로 암호화한다. 예매 상세에는 입금용 계좌만 제공한다. 기본 개인정보처리방침 자체를 개정할 때에는 기존 방침의 사전 공지 기간과 [동의 문서 버전 절차](consent-document-versions.md)를 따른다. [토스 가상계좌 환불](https://docs.tosspayments.com/guides/v2/cancel-payment)
 4. 배포 후 해당 환경의 국내 MID에 `DEPOSIT_CALLBACK`을 별도로 등록한다. 운영 URL은 `https://api.heygrabit.com/api/v1/payments/toss/deposit-callback`이다. 테스트 환경에는 테스트 키와 격리 DB를 사용하는 공개 HTTPS 수신처를 지정한다. 2026-11-24 확인한 국내 테스트의 기존 수신처 `iconsip`은 다른 서비스 소유다. [토스 웹훅 등록](https://docs.tosspayments.com/guides/v2/webhook)
 5. 판매할 공연의 관리자 예매 정책에서 가상계좌를 선택한다. 신규 노출을 끌 때는 공연 정책에서 이 수단을 해제한다. 이미 발급한 주문은 약속된 입금기한까지 처리한다. 웹훅·워커·환불 키는 기존 주문 처리가 끝날 때까지 유지한다.
 
