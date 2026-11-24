@@ -191,6 +191,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByRole('link', { name: /ข้อมูลการขาย/ })).toBeNull();
     expect(screen.queryByText('Hidden public detail body')).toBeNull();
     expect(screen.queryByText('Hidden public sales body')).toBeNull();
+    expect(screen.getByRole('link', { name: /ส่ง DM ถึง WECORD/ }).getAttribute('href')).toBe('https://www.instagram.com/m/wecord_official');
   });
 
   it('renders event sales information alongside the shared cancellation policy', async () => {
@@ -204,6 +205,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     render(<Suspense fallback={<div>loading</div>}><PerformanceDetailPage params={params} /></Suspense>);
 
     expect(await screen.findByRole('table', { name: '판매정보' })).toBeDefined();
+    expect(screen.getByRole('link', { name: /위코드 인스타그램 DM/ }).getAttribute('href')).toBe('https://www.instagram.com/m/wecord_official');
     expect(screen.getByRole('cell', { name: '팬클럽' })).toBeDefined();
     expect(screen.getByRole('table', { name: '취소/환불 안내' })).toBeDefined();
     expect(screen.getByRole('cell', { name: '장당 4,000원' })).toBeDefined();

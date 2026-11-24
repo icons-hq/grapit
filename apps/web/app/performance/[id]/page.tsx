@@ -14,6 +14,7 @@ import { formatBookingOpensAtKst, parseBookingStartMs, resolveBookingStartPerfor
 import { PerformancePeriod } from '@/components/performance/performance-period';
 import { DetailImageGallery } from '@/components/performance/detail-image-gallery';
 import { SalesInfo } from '@/components/performance/sales-info';
+import { InstagramSupportLink } from '@/components/support/instagram-support-link';
 import { TicketActions } from '@/components/performance/ticket-actions';
 import { TicketBookingPanel } from '@/components/performance/ticket-booking-panel';
 import { usePerformanceDetail } from '@/hooks/use-performances';
@@ -86,11 +87,10 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
         <p className="ticket-fee-note">{copy.home.feeSeparate}</p>
       </section>
       <section id={showSales ? 'sales-copy' : 'cancellation-policy'} className="ticket-detail-section">
-        {showSales && <h2>{copy.performance.salesTab}</h2>}
+        <h2>{showSales ? copy.performance.salesTab : copy.performance.refundTitle}</h2>
         {salesInfo && <SalesInfo text={salesInfo} label={copy.performance.salesTab} />}
-        {showSales
-          ? <h3 id="cancellation-policy" className="scroll-mt-24">{copy.performance.refundTitle}</h3>
-          : <h2>{copy.performance.refundTitle}</h2>}
+        <p className="my-4">{copy.support.title} · <InstagramSupportLink copy={copy.support} /></p>
+        {showSales && <h3 id="cancellation-policy" className="scroll-mt-24">{copy.performance.refundTitle}</h3>}
         <SalesInfo
           text={copy.performance.cancellationPolicy.join('\n').replace('{fee}', cancellationFee)}
           label={copy.performance.refundTitle}

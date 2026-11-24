@@ -71,6 +71,21 @@ const localeCases = [
 ] as const;
 
 test.describe('Phase 23 i18n canary smoke', () => {
+  test('keeps the mobile support link reachable above navigation and the booking button', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await neutralizeSessionRefresh(page);
+    await mockI18nPublicApis(page);
+
+    for (const path of ['/support', `/performance/${PHASE23_I18N_SMOKE_PERFORMANCE_ID}`]) {
+      await gotoSmokeRoute(page, path);
+      const link = page.getByRole('contentinfo').getByRole('link', { name: /위코드 인스타그램 DM/ });
+      await expect(link).toHaveAttribute('href', 'https://www.instagram.com/m/wecord_official');
+      const declineAnalytics = page.getByRole('button', { name: '거부', exact: true });
+      if (await declineAnalytics.isVisible()) await declineAnalytics.click();
+      await link.click({ trial: true });
+    }
+  });
+
   test('covers launch locale routes, translated performance detail, and booking-disabled guard', async ({
     page,
   }) => {

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { Button } from '@/components/ui/button';
+import { InstagramSupportLink } from '@/components/support/instagram-support-link';
 import { useLocale } from 'next-intl';
 
 import { useSupportContent } from '@/hooks/use-support-content';
@@ -13,8 +14,6 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
-
-const SUPPORT_EMAIL = 'wecordofficial_cs@mariannekate.com';
 
 export default function SupportPage() {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
@@ -45,13 +44,7 @@ export default function SupportPage() {
       <header className="border-b border-gray-200 pb-5">
         <h1 className="text-2xl font-semibold text-gray-950">{copy.title}</h1>
         <p className="mt-3 text-sm text-gray-600">
-          {copy.contactEmailLabel}{' '}
-          <a
-            href={`mailto:${SUPPORT_EMAIL}`}
-            className="font-semibold text-gray-950 hover:underline"
-          >
-            {SUPPORT_EMAIL}
-          </a>
+          <InstagramSupportLink copy={copy} />
         </p>
         <nav aria-label={copy.legalLinks} className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
           <Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={getLocalizedPathname('/legal/terms', activeLocale)}>{messages.footer.terms}</Link>
