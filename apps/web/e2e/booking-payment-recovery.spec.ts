@@ -11,7 +11,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
  * combinations of resume notices: (a) a resume after the queue window (pay button
  * open), (b) a resume refused with a queue 403 (no rejoin while the handoff is in
  * flight), (c) the showtime starting during a resume, (d) an unpayable method
- * (virtual account, PAYCO) chosen on a resumed order.
+ * chosen on a resumed order with a card-only policy.
  */
 
 const PERFORMANCE_ID = '00000000-0000-4000-8000-000000000032';
@@ -280,10 +280,29 @@ for (const viewport of VIEWPORTS) {
       expect(calls).toEqual({ prepare: 0, branch: 0 });
     });
 
-    test('refuses a virtual account or PAYCO chosen on a resumed order before prepare or handoff', async ({ page }) => {
+    test('offers virtual accounts on a direct return when the performance allows deposits', async ({ page }) => {
+      const calls = { prepare: 0, branch: 0 };
+      const order = preparedOrder(Date.now(), { bookingPolicy: {
+        maxTicketsPerOrder: 4, sameGradeChangeEnabled: false, cancellationChangePolicy: 'CANCEL_ONLY',
+        allowedPaymentMethods: ['CARD', 'VIRTUAL_ACCOUNT'],
+      } });
+      await mockResumedOrder(page, order, calls);
+      await page.goto(`/booking/${PERFORMANCE_ID}/confirm?resumeOrderId=${ORDER_ID}`);
+      await expect(page.getByText('E2E Recovery Show').first()).toBeVisible();
+      await agreeToAllTerms(page);
+      await page.evaluate(() => (window as unknown as { __tossSelect: (value: string) => void }).__tossSelect('VIRTUAL_ACCOUNT'));
+      await expect(page.getByText(/환불 은행·계좌번호·예금주를 받아/)).toBeVisible();
+      await expect(page.getByRole('button', { name: '결제하기' }).first()).toBeEnabled();
+      expect(calls).toEqual({ prepare: 0, branch: 0 });
+    });
+
+    test('enforces the card-only performance policy on a direct return without a performance cache', async ({ page }) => {
       const now = Date.now();
       const calls = { prepare: 0, branch: 0 };
-      await mockResumedOrder(page, preparedOrder(now), calls);
+      await mockResumedOrder(page, preparedOrder(now, { bookingPolicy: {
+        maxTicketsPerOrder: 4, sameGradeChangeEnabled: false, cancellationChangePolicy: 'CANCEL_ONLY',
+        allowedPaymentMethods: ['CARD'],
+      } }), calls);
 
       await page.goto(`/booking/${PERFORMANCE_ID}/confirm?resumeOrderId=${ORDER_ID}`);
       await expect(page.getByText('E2E Recovery Show').first()).toBeVisible();
@@ -291,7 +310,7 @@ for (const viewport of VIEWPORTS) {
       // The saved method of the order stays on screen.
       await expect(page.getByRole('status').filter({ hasText: '이 예매의 결제수단' })).toContainText('국내 카드');
 
-      for (const code of ['VIRTUAL_ACCOUNT', 'PAYCO']) {
+      for (const code of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'PAYCO']) {
         await page.evaluate((selected) => (
           window as unknown as { __tossSelect: (value: string) => void }
         ).__tossSelect(selected), code);

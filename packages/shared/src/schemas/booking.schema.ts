@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PERFORMANCE_ALLOWED_PAYMENT_METHODS } from '../types/performance.types';
 import { bookingAddonSelectionsSchema } from './booking-addon.schema';
 
 import { benefitEntitlementSchema } from './benefit.schema';
@@ -60,6 +61,7 @@ export const queueAdmissionSchema = z.object({
 });
 
 export const bookingPolicySchema = z.object({
+  allowedPaymentMethods: z.array(z.enum(PERFORMANCE_ALLOWED_PAYMENT_METHODS)).optional(),
   maxTicketsPerOrder: z
     .number()
     .int()
@@ -363,6 +365,11 @@ export const adminRefundSchema = z.object({
 export type AdminRefundInput = z.infer<typeof adminRefundSchema>;
 
 export const paymentInfoSchema = z.object({
+  virtualAccount: z.object({
+    bankCode: z.string(),
+    accountNumber: z.string(),
+    dueDate: isoDatetime('입금기한'),
+  }).optional(),
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
   method: z.string().min(1, '결제 수단이 필요합니다'),
   amount: z.number().int().min(0, '결제 금액은 0 이상이어야 합니다'),

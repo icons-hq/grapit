@@ -270,6 +270,7 @@ export function synthesizeLegacyCompensationRecord(
 }
 
 export function toCompensationCancelSnapshot(record: AsyncDoneCompensationRecord): PaymentCancelPaymentSnapshot {
+  const { sealedRefundAccount } = record.cancelRequest.options;
   return {
     paymentKey: record.paymentKey,
     method: record.payment.method,
@@ -278,7 +279,10 @@ export function toCompensationCancelSnapshot(record: AsyncDoneCompensationRecord
     amount: record.payment.amount,
     providerChargeCurrency: record.payment.providerChargeCurrency,
     providerChargeAmountMinor: record.payment.providerChargeAmountMinor,
-    providerMetadata: { secretKeyScope: record.payment.secretKeyScope },
+    providerMetadata: {
+      secretKeyScope: record.payment.secretKeyScope,
+      ...(record.payment.method === 'VIRTUAL_ACCOUNT' && sealedRefundAccount ? { sealedRefundAccount } : {}),
+    },
   };
 }
 

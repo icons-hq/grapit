@@ -1,5 +1,5 @@
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
-import type { Genre } from './performance.types';
+import type { Genre, PerformanceAllowedPaymentMethod } from './performance.types';
 import type {
   TicketItem,
   TicketItemCancellationPolicyCode,
@@ -39,6 +39,7 @@ export type CancellationChangePolicy =
   | 'MANUAL_REOPEN_ONLY';
 
 export interface BookingPolicy {
+  allowedPaymentMethods?: PerformanceAllowedPaymentMethod[];
   maxTicketsPerOrder: number;
   cancellationChangePolicy: CancellationChangePolicy;
   sameGradeChangeEnabled: boolean;
@@ -333,6 +334,7 @@ export interface ReservationDetail extends ReservationListItem {
 }
 
 export interface PaymentInfo {
+  virtualAccount?: { bankCode: string; accountNumber: string; dueDate: string };
   paymentKey: string;
   method: string;
   amount: number;

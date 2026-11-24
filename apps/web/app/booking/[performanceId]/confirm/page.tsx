@@ -425,11 +425,12 @@ function ConfirmPageContent() {
   const selectionNotPayable = selectedPaymentMethod !== null
     && (selectedPaymentMethod.unsupported === true
       || !isCheckoutConfigurablePaymentMethod(selectedPaymentMethod.paymentMethod));
+  const performanceMethods = recovery.reservation?.bookingPolicy?.allowedPaymentMethods
+    ?? (allowedPaymentMethodsKnown ? allowedPaymentMethods : undefined);
   const paymentMethodNotAllowed = paymentMethodRejected || selectionNotPayable || (
-    allowedPaymentMethodsKnown === true
-    && Array.isArray(allowedPaymentMethods)
+    Array.isArray(performanceMethods)
     && !methodFixedByOrder
-    && !isCheckoutPaymentMethodAllowed(paymentMethod, allowedPaymentMethods)
+    && !isCheckoutPaymentMethodAllowed(paymentMethod, performanceMethods)
   );
   const visibleQuote = preparedReview?.providerChargeQuote
     ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
@@ -950,6 +951,7 @@ function ConfirmPageContent() {
           <h2 className="text-base font-semibold">{confirmCopy.paymentMethod}</h2>
           {user && bookingAvailable && (
             <TossPaymentWidget
+              allowVirtualAccount={performanceMethods?.includes('VIRTUAL_ACCOUNT')}
               ref={paymentWidgetRef}
               orderId={orderId}
               orderName={orderName}
@@ -969,6 +971,8 @@ function ConfirmPageContent() {
               onLoadError={setWidgetLoadError}
             />
           )}
+          {selectedPaymentMethod?.paymentMethod.method === 'VIRTUAL_ACCOUNT' &&
+            <p className="text-sm leading-relaxed text-muted-foreground">{checkoutCopy.virtualAccountRefundNotice}</p>}
           {selectedPaymentMethod?.paymentMethod.provider === 'PAYPAL' && (
             <aside aria-label={checkoutCopy.paypalReturnTitle} className="space-y-1 rounded-lg border border-primary/20 bg-primary/5 p-4">
               <h3 className="text-sm font-semibold">{checkoutCopy.paypalReturnTitle}</h3>

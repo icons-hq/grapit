@@ -288,6 +288,12 @@ function CompletePageContent() {
         providerChargeAmount,
       }));
 
+      if (result.status === 'PENDING_PAYMENT' && result.paymentInfo?.virtualAccount) {
+        setConfirmFailed(false);
+        clearBooking();
+        router.replace(getLocalizedPathname(`/mypage/reservations/${result.id}`, locale));
+        return true;
+      }
       if (result.status !== 'CONFIRMED') {
         setConfirmRetryable(false);
         setConfirmFailed(true);
@@ -336,6 +342,7 @@ function CompletePageContent() {
     confirmCopy,
     locale,
     replaceConfirmReturnWithLookup,
+    router,
     showtimeClosedCopy,
   ]);
 

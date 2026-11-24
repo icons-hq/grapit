@@ -1,4 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
+import { issueVirtualAccountMetadata, openRefundAccount } from '../src/modules/payment/virtual-account.js';
+import { buildFullPaymentCancelRequest, buildTicketItemPaymentCancelRequest } from '../src/modules/payment/payment-cancel-policy.js';
+import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
@@ -18,7 +21,7 @@ import {
 import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS, type PaymentMethod } from '@grabit/shared';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
-import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
+import { TossPaymentError, type TossPaymentResponse } from '../src/modules/payment/toss-payments.client.js';
 import {
   buildPgBossOptions,
   loadPgBossConstructor,
@@ -165,6 +168,128 @@ describe('Payment confirm core — PostgreSQL', () => {
     return new ReservationFinalizationService(db, toss as never, bookingService as never,
       { broadcastSeatUpdate: vi.fn() } as never, qr, quoteService as never, pgBoss);
   }
+
+  async function issuedDeposit(lostConfirmReply = false) {
+    const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01'),
+      checkoutPaymentMethod: { method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' } });
+    const key = randomBytes(32).toString('base64');
+    const orderId = reservation.tossOrderId!;
+    const paymentKey = 'va-' + randomUUID();
+    const dueDate = new Date(Date.now() + 30 * 60_000).toISOString();
+    const response = { orderId, paymentKey, mId: 'tgsangwbzqu', status: 'WAITING_FOR_DEPOSIT', method: '가상계좌',
+      totalAmount: 52000, currency: 'KRW', secret: randomUUID(), virtualAccount: { dueDate, expired: false,
+        bankCode: '20', accountNumber: 'X123456789012', refundReceiveAccount: {
+          bankCode: '06', accountNumber: '00000000000000', holderName: 'Fixture' } } };
+    const toss = { virtualAccountReady: () => true, virtualAccountMid: response.mId,
+      virtualAccountMetadata: (payment: TossPaymentResponse) => issueVirtualAccountMetadata(payment, key, response.mId),
+      confirmPayment: vi.fn().mockResolvedValue(response), queryPayment: vi.fn(async () => ({ ...response, secret: null })),
+      cancelPayment: vi.fn() };
+    const service = finalization(toss);
+    if (lostConfirmReply) toss.confirmPayment.mockRejectedValueOnce(new TossPaymentError('NETWORK_ERROR', 'lost reply'));
+    const dto = { orderId, paymentKey, amount: 52000 };
+    await service.confirmAndCreateReservation(dto, userId);
+    await service.confirmAndCreateReservation(dto, userId);
+    expect(toss.confirmPayment).toHaveBeenCalledTimes(lostConfirmReply ? 2 : 1);
+    const lease = { acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
+      releasePaymentConfirmLock: async () => true };
+    const sync = new PaymentService(db, undefined, undefined, toss as never, undefined, undefined, lease as never);
+    const read = async () => {
+      const [pay] = await db.select().from(payments).where(eq(payments.reservationId, reservation.id));
+      const [order] = await db.select().from(reservations).where(eq(reservations.id, reservation.id));
+      const [seat] = await db.select().from(schema.seatInventories).where(eq(schema.seatInventories.showtimeId, reservation.showtimeId));
+      const items = await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.reservationId, reservation.id));
+      return { pay: pay!, order: order!, seat: seat!, items };
+    };
+    return { key, userId, orderId, paymentKey, response, toss, sync, read, reservation };
+  }
+
+  it('recovers the original secret using the same confirm idempotency key after a lost issuance reply', async () => {
+    const { sync, read, orderId, response, toss } = await issuedDeposit(true);
+    expect(toss.confirmPayment.mock.calls[1]).toEqual(toss.confirmPayment.mock.calls[0]);
+    expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, items: [] });
+    response.status = 'DONE';
+    await expect(sync.syncVirtualAccount({ orderId, secret: response.secret })).resolves.toBe('DONE');
+  });
+
+  it('holds a seat through issue, duplicate deposits, bank reversal and redeposit without duplicate tickets', async () => {
+    const { read, key, reservation, response, toss, sync, orderId, paymentKey } = await issuedDeposit();
+    const pending = await read();
+    expect(pending).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, pay: { status: 'IN_PROGRESS', paidAt: null },
+      seat: { status: 'locked', lockedBy: reservation.id }, items: [] });
+    expect(JSON.stringify(pending.pay.providerMetadata)).not.toContain(response.secret);
+    expect(JSON.stringify(pending.pay.providerMetadata)).not.toContain('00000000000000');
+    await expect(sync.syncVirtualAccount({ orderId, secret: 'incorrect' })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(toss.queryPayment).not.toHaveBeenCalled();
+    response.status = 'DONE';
+    const callback = { orderId, secret: response.secret };
+    await sync.syncVirtualAccount(callback);
+    await sync.syncVirtualAccount(callback);
+    const paid = await read();
+    expect(paid).toMatchObject({ order: { status: 'CONFIRMED' }, pay: { status: 'DONE' }, seat: { status: 'sold' } });
+    expect(paid.items).toHaveLength(1);
+    const full = buildFullPaymentCancelRequest({ payment: paid.pay, reason: 'refund' });
+    const partial = buildTicketItemPaymentCancelRequest({ payment: paid.pay, reason: 'refund',
+      ticketItem: { id: paid.items[0]!.id, refundableAmount: 40000 },
+      activeTicketItems: [{ id: paid.items[0]!.id, refundableAmount: 40000 }] });
+    for (const command of [full, partial]) expect(openRefundAccount(command.options.sealedRefundAccount!, paymentKey, key))
+      .toEqual({ bank: '06', accountNumber: '00000000000000', holderName: 'Fixture' });
+    expect(partial.options.cancelAmount).toBe(40000);
+    response.status = 'WAITING_FOR_DEPOSIT';
+    await sync.syncVirtualAccount(callback);
+    expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, items: [{ status: 'expired' }],
+      pay: { status: 'IN_PROGRESS' }, seat: { status: 'locked', lockedBy: reservation.id } });
+    response.status = 'DONE';
+    await sync.syncVirtualAccount(callback);
+    expect(await read()).toMatchObject({ order: { status: 'CONFIRMED' }, items: [{ id: paid.items[0]!.id, status: 'active' }] });
+  });
+
+  it('returns an unpaid account without sending a refund account, after verifying buyer and provider identity', async () => {
+    const { sync, orderId, userId, read, response, toss } = await issuedDeposit();
+    await expect(sync.syncVirtualAccount({ orderId, userId: randomUUID(), close: true })).rejects.toThrow();
+    expect(toss.queryPayment).not.toHaveBeenCalled();
+    toss.queryPayment.mockResolvedValueOnce({ ...response, totalAmount: 1, secret: null });
+    await expect(sync.syncVirtualAccount({ orderId, userId, close: true })).rejects.toThrow('거래 정보');
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+    toss.cancelPayment.mockResolvedValueOnce({ ...response, status: 'CANCELED' });
+    await sync.syncVirtualAccount({ orderId, userId, close: true });
+    expect(toss.cancelPayment).toHaveBeenCalledWith(response.paymentKey, '미입금 가상계좌 반납',
+      { idempotencyKey: 'va-close-' + orderId });
+    expect(await read()).toMatchObject({ order: { status: 'CANCELLED' }, pay: { status: 'CANCELED' }, items: [],
+      seat: { status: 'available', lockedBy: null } });
+  });
+
+  it('issues the ticket if a deposit wins the race with an unpaid cancellation', async () => {
+    const { sync, orderId, userId, read, response, toss } = await issuedDeposit();
+    toss.cancelPayment.mockImplementationOnce(() => {
+      response.status = 'DONE';
+      throw new Error('Toss requires a refund account on a deposited payment');
+    });
+    await sync.syncVirtualAccount({ orderId, userId, close: true });
+    expect(await read()).toMatchObject({ order: { status: 'CONFIRMED' }, pay: { status: 'DONE' }, items: [{ status: 'active' }] });
+  });
+
+  it('refunds an unissuable deposit with the stored refund account and releases its durable hold', async () => {
+    const { sync, orderId, response, toss, read, reservation } = await issuedDeposit();
+    await db.update(reservationSeats).set({ price: 49000 }).where(eq(reservationSeats.reservationId, reservation.id));
+    response.status = 'DONE';
+    toss.cancelPayment.mockResolvedValueOnce({ ...response, status: 'CANCELED', balanceAmount: 0,
+      cancels: [{ cancelStatus: 'DONE', cancelAmount: response.totalAmount }] });
+    await sync.syncVirtualAccount({ orderId, secret: response.secret });
+    expect(toss.cancelPayment).toHaveBeenCalledWith(response.paymentKey, expect.any(String),
+      expect.objectContaining({ sealedRefundAccount: expect.any(String) }));
+    expect(await read()).toMatchObject({ order: { status: 'FAILED' }, pay: { status: 'CANCELED' },
+      items: [], seat: { status: 'available', lockedBy: null } });
+  });
+
+  it('expires a verified unpaid account without a webhook and releases only its reserved seats', async () => {
+    const { read, response, sync, reservation, toss } = await issuedDeposit();
+    await endClientWindows(reservation.id);
+    response.virtualAccount.expired = true;
+    await new PendingPaymentExpirationWorker(db, {} as never, undefined, undefined, sync).sweepExpiredPendingPayments();
+    expect(await read()).toMatchObject({ order: { status: 'FAILED' }, pay: { status: 'EXPIRED' }, items: [],
+      seat: { status: 'available', lockedBy: null } });
+    expect(toss.cancelPayment).not.toHaveBeenCalled();
+  });
 
   it('returns the buyer receipt with a real seat QR after one issuance pass', async () => {
     const { userId, reservation } = await pendingOrder({ showtimeAt: new Date('2099-01-01') });

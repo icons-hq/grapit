@@ -168,10 +168,17 @@ export function resolvePaymentCancelSecretScope(
   return 'default';
 }
 
+function virtualAccountRefundOptions(payment: PaymentCancelPaymentSnapshot): Pick<TossPaymentCancelOptions, 'sealedRefundAccount'> {
+  if (payment.method !== 'VIRTUAL_ACCOUNT' || !isRecord(payment.providerMetadata)) return {};
+  const sealed = payment.providerMetadata.sealedRefundAccount;
+  return typeof sealed === 'string' ? { sealedRefundAccount: sealed } : {};
+}
+
 export function buildFullPaymentCancelRequest(
   input: BuildFullPaymentCancelRequestInput,
 ): PaymentCancelRequest {
   const options: TossPaymentCancelOptions = {
+    ...virtualAccountRefundOptions(input.payment),
     secretKeyScope: resolvePaymentCancelSecretScope(input.payment),
   };
 
@@ -201,6 +208,7 @@ export function buildFullReservationPaymentCancelRequest(
   }
 
   const options: TossPaymentCancelOptions = {
+    ...virtualAccountRefundOptions(input.payment),
     secretKeyScope: resolvePaymentCancelSecretScope(input.payment),
   };
 
@@ -262,6 +270,7 @@ export function buildTicketItemPaymentCancelRequest(
   }
 
   const options: TossPaymentCancelOptions = {
+    ...virtualAccountRefundOptions(input.payment),
     idempotencyKey,
     secretKeyScope: resolvePaymentCancelSecretScope(input.payment),
   };

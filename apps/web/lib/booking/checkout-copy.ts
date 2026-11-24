@@ -2,6 +2,7 @@ import { isForeignCheckout, type PaymentMethod, type SupportedLocale } from '@gr
 
 const copy = {
   ko: {
+    virtualAccountRefundNotice: '가상계좌로 결제하면 그랩잇이 토스에서 환불 은행·계좌번호·예금주를 받아 암호화해 보관하고, 예매 취소 시 환불에 사용합니다.',
     paymentTitle: '결제 금액', ticketAmount: '티켓 금액', seatStep: '좌석 선택', paymentStep: '결제', ticketStep: '티켓', back: '좌석 선택으로',
     booker: '예매자 정보', edit: '수정', name: '이름', phone: '연락처', save: '저장', cancel: '취소', emailVerified: '이메일 인증 완료',
     nameRequired: '이름을 입력해 주세요', phoneInvalid: '국가번호를 포함한 올바른 연락처를 입력해 주세요',
@@ -28,6 +29,7 @@ const copy = {
     methodNotAllowed: '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해 주세요.', chooseAnotherMethod: '다른 결제수단을 선택해 주세요',
   },
   en: {
+    virtualAccountRefundNotice: 'For virtual account payments, Grabit receives your refund bank, account number and account holder name from Toss, stores them encrypted and uses them to refund cancelled bookings.',
     paymentTitle: 'Payment summary', ticketAmount: 'Tickets', seatStep: 'Choose seats', paymentStep: 'Payment', ticketStep: 'Tickets', back: 'Back to seats',
     booker: 'Booking contact', edit: 'Edit', name: 'Name', phone: 'Phone number', save: 'Save', cancel: 'Cancel', emailVerified: 'Email verified',
     nameRequired: 'Enter your name', phoneInvalid: 'Enter a valid phone number including the country code',
@@ -54,6 +56,7 @@ const copy = {
     methodNotAllowed: 'This payment method is not available for this event. Choose another payment method.', chooseAnotherMethod: 'Choose another payment method',
   },
   th: {
+    virtualAccountRefundNotice: 'เมื่อเลือกบัญชีเสมือน Grabit จะรับชื่อธนาคาร เลขบัญชี และชื่อเจ้าของบัญชีจาก Toss และจัดเก็บแบบเข้ารหัสเพื่อคืนเงินเมื่อยกเลิกการจอง',
     paymentTitle: 'สรุปยอดชำระ', ticketAmount: 'ค่าบัตร', seatStep: 'เลือกที่นั่ง', paymentStep: 'ชำระเงิน', ticketStep: 'บัตร', back: 'กลับไปเลือกที่นั่ง',
     booker: 'ข้อมูลผู้จอง', edit: 'แก้ไข', name: 'ชื่อ', phone: 'เบอร์โทรศัพท์', save: 'บันทึก', cancel: 'ยกเลิก', emailVerified: 'ยืนยันอีเมลแล้ว',
     nameRequired: 'กรุณากรอกชื่อ', phoneInvalid: 'กรุณากรอกเบอร์โทรศัพท์ที่ถูกต้องพร้อมรหัสประเทศ',
@@ -80,6 +83,7 @@ const copy = {
     methodNotAllowed: 'วิธีชำระเงินนี้ใช้ไม่ได้กับการแสดงนี้ กรุณาเลือกวิธีชำระเงินอื่น', chooseAnotherMethod: 'กรุณาเลือกวิธีชำระเงินอื่น',
   },
   'zh-CN': {
+    virtualAccountRefundNotice: '选择虚拟账户付款时，Grabit 会从 Toss 获取退款银行、账号和户名，加密保存，用于取消预订时退款。',
     paymentTitle: '付款明细', ticketAmount: '票价', seatStep: '选择座位', paymentStep: '付款', ticketStep: '门票', back: '返回选座',
     booker: '预订人信息', edit: '修改', name: '姓名', phone: '联系电话', save: '保存', cancel: '取消', emailVerified: '邮箱已验证',
     nameRequired: '请输入姓名', phoneInvalid: '请输入包含国家区号的有效电话号码',
@@ -113,6 +117,7 @@ export function getCheckoutCopy(locale: SupportedLocale) {
 
 export function getCheckoutMethodLabel(method: PaymentMethod, locale: SupportedLocale) {
   if (method.method === 'CARD') return isForeignCheckout(method) ? copy[locale].foreignCard : copy[locale].domesticCard;
-  if (method.method === 'TRANSFER' || method.method === 'VIRTUAL_ACCOUNT') return copy[locale].transfer;
+  if (method.method === 'VIRTUAL_ACCOUNT') return { ko: '무통장입금(가상계좌)', en: 'Virtual account', 'zh-CN': '虚拟银行账户', th: 'บัญชีเสมือน' }[locale];
+  if (method.method === 'TRANSFER') return copy[locale].transfer;
   return ({ ALIPAY_PLUS: 'Alipay', PAYPAL: 'PayPal', TRUEMONEY: 'TrueMoney', TOSS_PAY: 'Toss Pay', NAVER_PAY: 'Naver Pay', KAKAOPAY: 'Kakao Pay', CARD: copy[locale].domesticCard })[method.provider];
 }

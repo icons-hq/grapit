@@ -1,4 +1,5 @@
 import { issueTicketAddons, requirePurchasableTicket } from '../../database/ticket-holder-addons.js';
+import { AWAITING_DEPOSIT, getVirtualAccountDetails } from '../payment/virtual-account.js';
 import { finalizeReservationAddons } from '../../database/booking-addon-inventory.js';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import {
@@ -277,8 +278,8 @@ const PROVIDER_NOT_APPROVED_STATUSES = new Set(['ABORTED', 'EXPIRED']);
  * Toss returns Korean method labels by default and English codes with an
  * English Accept-Language. These are the route-level labels; the performance
  * policy and the frozen checkout method are checked on top of them
- * (payment-method-policy.ts). Virtual accounts, mobile phone payments and gift
- * certificates are not sold here, and foreign easy pay only belongs to the
+ * (payment-method-policy.ts). Virtual account issuance belongs to the domestic route.
+ * Mobile phone payments and gift certificates are unsupported, and foreign easy pay only belongs to the
  * PayPal route.
  */
 const CARD_METHOD_LABELS = new Set(['카드', 'CARD']);
@@ -287,6 +288,8 @@ const DOMESTIC_METHOD_LABELS = new Set([
   ...CARD_METHOD_LABELS,
   '계좌이체',
   'TRANSFER',
+  '가상계좌',
+  'VIRTUAL_ACCOUNT',
   '간편결제',
   'EASY_PAY',
 ]);
@@ -443,6 +446,7 @@ function getExistingPaymentProviderMetadata(
 
 export interface ReservationFinalizationResult {
   reservationId: string;
+  awaitingDeposit?: true;
 }
 
 export interface ReservationFinalizationOptions {
@@ -1023,6 +1027,12 @@ export class ReservationFinalizationService {
       return { reservationId: reservation.id };
     }
 
+    if (existingPayment?.method === 'VIRTUAL_ACCOUNT' && existingPayment.status === 'IN_PROGRESS'
+      && getVirtualAccountDetails(existingPayment.providerMetadata)) {
+      if (existingPayment.paymentKey !== dto.paymentKey) throw new ConflictException('발급된 가상계좌가 있는 예매입니다.');
+      return { reservationId: reservation.id, awaitingDeposit: true };
+    }
+
     const approvalExpectation = this.buildProviderApprovalExpectation({
       isPaypal: paypalProviderCharge !== null,
       isOverseasCard: isOverseasCardConfirm,
@@ -1250,6 +1260,24 @@ export class ReservationFinalizationService {
         throw lockError;
       }
 
+      if (approvedPayment.asyncStatus === AWAITING_DEPOSIT) {
+        try {
+          await this.recordIssuedVirtualAccount(reservation, pendingSeats, ticketLimit.performanceId, approvedPayment);
+        } catch (error) {
+          if (error instanceof ConflictException) {
+            await this.cancelApprovedPaymentAfterFailure(approvedPayment, reservation.id, error.message, confirmLockToken);
+          }
+          throw error;
+        }
+        unrecordedApproval = undefined;
+        clearInterval(seatLockRefreshTimer);
+        if (pendingSeats.length) {
+          await this.bookingService.consumeOwnedSeatLocks(userId, reservation.showtimeId, pendingSeatIds, { skipUnavailableCheck: true })
+            .catch(() => this.logger.warn('입금 대기 좌석의 Redis 잠금 정리를 TTL에 위임했습니다. reservationId=' + reservation.id));
+        }
+        for (const seat of pendingSeats) this.bookingGateway.broadcastSeatUpdate(reservation.showtimeId, seat.seatKey, 'locked', userId);
+        return { reservationId: reservation.id, awaitingDeposit: true };
+      }
       const committedPaymentId = await this.commitFinalizationWithRetry({
         dto,
         userId,
@@ -1294,11 +1322,40 @@ export class ReservationFinalizationService {
     }
   }
 
-  /**
-   * Post-commit work is best effort. The payment and tickets are already
-   * committed, so these failures are logged and self-heal on the next
-   * reservation read (QR issuance) or by TTL (seat locks).
-   */
+  /** Bind the issued account and all seats in one durable transaction before showing deposit instructions. */
+  private async recordIssuedVirtualAccount(reservation: typeof reservations.$inferSelect,
+    seats: FloorAwareSeatSelection[], performanceId: string, approval: ApprovedPaymentSnapshot) {
+    const details = getVirtualAccountDetails(approval.providerMetadata);
+    if (!details) throw new ConflictException('가상계좌 발급 정보를 확인할 수 없습니다.');
+    const dueAt = new Date(details.dueDate);
+    await this.db.transaction(async tx => {
+      await lockTicketLimitScope(tx, reservation.userId, performanceId);
+      const limit = await getTicketLimitSnapshot(tx, reservation.userId, reservation.id, reservation.showtimeId);
+      if (!reservation.addonTicketItemId && limit.activeTicketCount + seats.length > limit.maxTicketsPerUser) {
+        throw new ConflictException(buildMaxTicketsPerUserExceededMessage(limit.maxTicketsPerUser));
+      }
+      const saved = await tx.update(reservations).set({ paymentDeadlineAt: dueAt, updatedAt: new Date() })
+        .where(and(eq(reservations.id, reservation.id), eq(reservations.status, 'PENDING_PAYMENT')))
+        .returning({ id: reservations.id });
+      if (!saved.length) throw new ConflictException('입금 대기 상태로 전환할 수 없습니다.');
+      await tx.insert(payments).values({ reservationId: reservation.id, paymentKey: approval.paymentKey,
+        tossOrderId: approval.orderId, method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW',
+        amount: reservation.totalAmount, status: 'IN_PROGRESS', asyncStatus: AWAITING_DEPOSIT,
+        providerMetadata: approval.providerMetadata });
+      for (const seat of [...seats].sort((a, b) => a.seatKey.localeCompare(b.seatKey))) {
+        const hold = { status: 'locked' as const, lockedBy: reservation.id, lockedUntil: dueAt };
+        const rows = await tx.insert(seatInventories).values({
+          showtimeId: reservation.showtimeId, floorKey: seat.floorKey, seatKey: seat.seatKey, seatId: seat.seatId, ...hold,
+        }).onConflictDoUpdate({
+          target: [seatInventories.showtimeId, seatInventories.floorKey, seatInventories.seatKey],
+          set: hold, setWhere: eq(seatInventories.status, 'available'),
+        }).returning({ id: seatInventories.id });
+        if (!rows.length) throw new ConflictException('가상계좌 입금 대기 좌석을 확보할 수 없습니다.');
+      }
+    });
+  }
+
+  /** The receipt repairs QR issuance and Redis holds expire if post-commit work fails. */
   private async runPostCommitSideEffects(input: {
     userId: string;
     reservationId: string;
@@ -1567,6 +1624,15 @@ export class ReservationFinalizationService {
       return retry('provider_cancel_in_progress');
     }
 
+    if (lookup.payment.status === 'DONE' && normalizeTossApprovedMethod(lookup.payment.method).category === 'VIRTUAL_ACCOUNT') {
+      await recordReservationPaymentFailureDiagnostic(this.db, {
+        reservationId: reservation.id, tossOrderId: identity.orderId, diagnosticKind: 'compensation_attention',
+        diagnosticCode: 'VIRTUAL_ACCOUNT_UNRECORDED_DEPOSIT', diagnosticSource: 'payment_confirm_reconcile',
+        diagnosticMessage: '토스에 입금이 있으나 발급 기록이 없어 담당자 확인이 필요합니다.',
+      });
+      this.logger.error('가상계좌 입금 수동 대조 필요. orderId=' + identity.orderId);
+      return { status: 'resolved', resolution: 'manual_review' };
+    }
     this.logger.error(
       `Unrecorded provider approval found by the confirm reconcile; cancelling it. paymentKey=${identity.paymentKey}, orderId=${identity.orderId}, providerStatus=${lookup.payment.status}`,
     );
@@ -1805,6 +1871,8 @@ export class ReservationFinalizationService {
       providerCharge: input.providerCharge,
     };
     const saleContext = await this.loadShowtimeSaleContext(input.reservation.showtimeId);
+    const virtualCheckout = input.reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT';
+    if (virtualCheckout && !this.tossClient.virtualAccountReady()) throw new ServiceUnavailableException('가상계좌 환불 설정이 필요합니다.');
     let providerPayment: TossPaymentResponse;
     // C1 sales cutoff, checked at the last moment before anything is charged.
     // A payment an earlier attempt already approved is not a new sale: it is
@@ -1834,6 +1902,7 @@ export class ReservationFinalizationService {
           paymentKey: dto.paymentKey,
           orderId: dto.orderId,
           amount: input.confirmAmount,
+          ...(virtualCheckout ? { idempotencyKey: 'va-issue-' + dto.orderId } : {}),
           ...(expectation.secretKeyScope ? { secretKeyScope: expectation.secretKeyScope } : {}),
         });
       } catch (confirmError) {
@@ -1854,8 +1923,39 @@ export class ReservationFinalizationService {
         saleContext.allowedPaymentMethods,
       ),
     });
+    if (!mismatch && virtualCheckout) {
+      // Lookups do not guarantee the original callback secret. Replay the
+      // same idempotent confirm to recover the issuance response after a lost reply.
+      let issuance = providerPayment;
+      if (providerPayment.status === 'DONE' || !providerPayment.secret) {
+        try {
+          const replay = await this.tossClient.confirmPayment({ paymentKey: dto.paymentKey,
+            orderId: dto.orderId, amount: input.confirmAmount, idempotencyKey: 'va-issue-' + dto.orderId });
+          if (replay.paymentKey === dto.paymentKey && replay.orderId === dto.orderId && replay.currency === 'KRW'
+            && replay.totalAmount === input.confirmAmount && normalizeTossApprovedMethod(replay.method).category === 'VIRTUAL_ACCOUNT'
+            && ['DONE', 'WAITING_FOR_DEPOSIT'].includes(replay.status)) issuance = replay;
+        } catch {
+          return this.throwOutcomeUnknown({ identity: dto, reconcile, reason: 'virtual_account_issuance_replay_unavailable' });
+        }
+      }
+      const metadata = this.tossClient.virtualAccountMetadata(issuance);
+      const due = metadata && Date.parse(metadata.virtualAccount.dueDate);
+      if (metadata && due && (due > Date.now() || providerPayment.status === 'DONE')
+        && (!saleContext.startsAt || due <= new Date(saleContext.startsAt).getTime())) {
+        return { ...approvedPayment, method: 'VIRTUAL_ACCOUNT', asyncStatus: AWAITING_DEPOSIT, providerMetadata: metadata };
+      }
+      if (providerPayment.status === 'DONE' || issuance.mId !== this.tossClient.virtualAccountMid) {
+        return this.throwOutcomeUnknown({ identity: dto, reconcile, reason: 'virtual_account_issuance_needs_review' });
+      }
+      await this.cancelApprovedPaymentAfterFailure(approvedPayment, input.reservation.id,
+        '가상계좌 기한 또는 환불계좌 정보 확인 실패', input.confirmLockToken);
+      throw new ConflictException('가상계좌 발급을 취소했습니다. 다른 결제수단을 선택해주세요.');
+    }
     if (!mismatch) {
       return approvedPayment;
+    }
+    if (providerPayment.status === 'DONE' && normalizeTossApprovedMethod(providerPayment.method).category === 'VIRTUAL_ACCOUNT') {
+      return this.throwOutcomeUnknown({ identity: dto, reconcile, reason: 'unexpected_deposited_virtual_account' });
     }
 
     // Toss validated the paymentKey/orderId pair before approving (and the
@@ -2054,7 +2154,10 @@ export class ReservationFinalizationService {
     ) {
       return { kind: 'identity' };
     }
-    if (providerPayment.status !== 'DONE') {
+    const issuedVirtualAccount = providerPayment.status === 'WAITING_FOR_DEPOSIT'
+      && policy.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT' && expectation.route === 'DOMESTIC'
+      && normalizeTossApprovedMethod(providerPayment.method).category === 'VIRTUAL_ACCOUNT';
+    if (providerPayment.status !== 'DONE' && !issuedVirtualAccount) {
       return { kind: 'status' };
     }
 

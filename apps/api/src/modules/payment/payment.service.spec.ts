@@ -708,7 +708,7 @@ describe('PaymentService', () => {
     it.each([
       ['a CARD-only policy', createPaymentMethod({ method: 'TRANSFER' }), ['CARD']],
       ['a policy without foreign easy pay', createPaymentMethod({ method: 'SIMPLE_PAY', provider: 'TOSS_PAY' }), ['CARD', 'TRANSFER']],
-      ['a stored policy of non-checkout methods only', createPaymentMethod(), ['MOBILE_PHONE', 'VIRTUAL_ACCOUNT']],
+      ['a policy without card payments', createPaymentMethod(), ['MOBILE_PHONE', 'VIRTUAL_ACCOUNT']],
     ])('rejects a handoff whose method is outside %s before recording it (D1 #70)', async (_label, method, allowed) => {
       mockDb.update.mockReturnValue(createMutationChain([{ id: 'reservation-branch-policy' }]));
 

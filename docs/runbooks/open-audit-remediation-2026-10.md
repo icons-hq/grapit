@@ -1,5 +1,7 @@
 # 2026-10 오픈 감사 수정의 운영 후속 조치
 
+> 2026-10 감사 당시의 가상계좌 차단·정리 항목은 당시 배포 기록이다. 국내 MID의 신규 가상계좌 발급, 입금 및 환불에는 [현재 가상계좌 운영 절차](toss-virtual-account.md)를 적용한다.
+
 기준: `output/audit/grabit-open-audit-2026-09-30.md`(검증된 발견 174건)를 고친 통합 브랜치 `ps/fix/open-audit-remediation`. 코드로 할 수 없는 운영 조치만 모았다. 29개 작업 단위 보고서의 운영 후속 항목을 합치고, 통합 과정에서 코드로 해결된 항목은 뺐다. 각 항목 끝의 `#번호`는 감사 발견 번호다.
 
 - 운영 DB 쓰기, Cloud Run·Secret Manager·repository variable 변경, 공급자 콘솔 변경은 승인된 절차로만 한다. read-only 쿼리도 승인된 접근 경로(Cloud SQL Auth Proxy)로 실행하고 고객 식별자를 문서·채팅에 옮기지 않는다.
