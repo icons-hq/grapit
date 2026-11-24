@@ -279,7 +279,7 @@ export class PaymentWebhookController {
     }
     if (body.eventType === 'PAYMENT_STATUS_CHANGED' && normalizeTossApprovedMethod(providerResponse.method).category === 'VIRTUAL_ACCOUNT'
       && (['WAITING_FOR_DEPOSIT', 'DONE', 'EXPIRED', 'ABORTED'].includes(providerResponse.status)
-        || (providerResponse.status === 'PARTIAL_CANCELED' && providerResponse.balanceAmount === 0)
+        || (providerResponse.status === 'PARTIAL_CANCELED' && (providerResponse.balanceAmount === 0 || progress?.reservationStatus === 'PENDING_PAYMENT'))
         || (providerResponse.status === 'CANCELED' && progress?.reservationStatus === 'PENDING_PAYMENT'))) {
       const result = await this.paymentService.syncVirtualAccount({ orderId: providerResponse.orderId, paymentKey: providerResponse.paymentKey });
       if (result || providerResponse.status === 'WAITING_FOR_DEPOSIT') {

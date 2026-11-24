@@ -1209,6 +1209,7 @@ export class PaymentService {
         await assertLease();
         await suspendDepositedOrder(this.db, payment.id, payment.reservationId, dueAt);
         row.status = 'PENDING_PAYMENT';
+        payment.status = 'IN_PROGRESS';
         payment.asyncStatus = DEPOSIT_REVERSED;
       }
       if (state.status === 'WAITING_FOR_DEPOSIT' && (input.close || dueAt.getTime() <= Date.now()) && !state.virtualAccount?.expired) {
@@ -1236,6 +1237,7 @@ export class PaymentService {
           await this.upsertAsyncPaymentProgressLocked(payload, 'DONE', 'deposited', assertLease, true);
           return 'DONE';
         }
+        if (account.reviewRequired) return 'DEPOSIT_REVIEW';
         if (row.status === 'PENDING_PAYMENT' && payment.status === 'IN_PROGRESS') {
           const transactionKey = state.lastTransactionKey ?? null;
           const approvedAt = state.approvedAt ?? null;
@@ -1270,6 +1272,9 @@ export class PaymentService {
         && getCompletedProviderCancels(state).reduce((total, cancel) => total + cancel.cancelAmount, 0) === payment.amount;
       const cancelledAtProvider = state.status === 'CANCELED' || refundedDeposit;
       if (row.status === 'PENDING_PAYMENT' && state.status === 'PARTIAL_CANCELED' && !refundedDeposit) {
+        await this.db.update(payments).set({
+          providerMetadata: sql`${payments.providerMetadata} || '{"depositReview":true}'::jsonb`,
+        }).where(eq(payments.id, payment.id));
         await recordReservationPaymentFailureDiagnostic(this.db, { reservationId: payment.reservationId, paymentId: payment.id,
           tossOrderId: orderId, diagnosticKind: 'needs_review', diagnosticCode: 'VIRTUAL_ACCOUNT_PARTIAL_BEFORE_ISSUANCE',
           diagnosticMessage: '발권 대기 중 일부 금액만 환불되어 입금 잔액 대조가 필요합니다.', diagnosticSource: 'virtual_account' });
@@ -1296,7 +1301,7 @@ export class PaymentService {
         });
         for (const seat of released) this.bookingGateway?.broadcastSeatUpdate(row.showtimeId, seat.seatKey, 'available');
       }
-      return expired ? 'EXPIRED' : state.status;
+      return expired ? 'EXPIRED' : refundedDeposit ? 'CANCELED' : state.status;
     });
     if (!result.acquired) throw new ServiceUnavailableException('가상계좌 상태를 확인 중입니다.');
     return result.value;

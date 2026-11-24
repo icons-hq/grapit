@@ -34,10 +34,11 @@ const bankDetails = z.object({
 export type RefundAccount = z.infer<typeof refundAccount>;
 
 export function getVirtualAccountDetails(metadata: unknown): PaymentInfo['virtualAccount'] {
-  const parsed = z.object({ virtualAccount: bankDetails }).safeParse(metadata);
+  const parsed = z.object({ virtualAccount: bankDetails, depositReview: z.boolean().optional() }).safeParse(metadata);
   if (!parsed.success) return undefined;
   const window = getDepositVerification(metadata);
-  return { ...parsed.data.virtualAccount, ...(window ? { verifyingUntil: window.notBefore } : {}) };
+  return { ...parsed.data.virtualAccount, ...(window ? { verifyingUntil: window.notBefore } : {}),
+    ...(parsed.data.depositReview ? { reviewRequired: true } : {}) };
 }
 
 export function matchesDepositSecret(secret: string, digest: unknown): boolean {

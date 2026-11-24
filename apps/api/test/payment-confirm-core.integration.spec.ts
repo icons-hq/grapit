@@ -270,6 +270,23 @@ describe('Payment confirm core — PostgreSQL', () => {
     expect((await read()).credentials).toHaveLength(1);
   });
 
+  it('holds a partially refunded unissued deposit for review and releases it after a verified full refund', async () => {
+    const { sync, read, orderId, response, toss } = await issuedDeposit();
+    const callback = { orderId, secret: response.secret };
+    response.status = 'DONE';
+    await sync.syncVirtualAccount(callback);
+    response.status = 'PARTIAL_CANCELED';
+    response.balanceAmount = 2000;
+    vi.setSystemTime(Date.now() + 300_000);
+    await sync.syncVirtualAccount(callback);
+    expect(await read()).toMatchObject({ order: { status: 'PENDING_PAYMENT' }, credentials: [],
+      pay: { providerMetadata: { depositReview: true } }, seat: { status: 'locked' } });
+    toss.queryPayment.mockResolvedValueOnce(Object.assign({ ...response, secret: null, balanceAmount: 0 },
+      { cancels: [{ cancelStatus: 'DONE', cancelAmount: 50000 }, { cancelStatus: 'DONE', cancelAmount: 2000 }] }));
+    await sync.syncVirtualAccount(callback);
+    expect(await read()).toMatchObject({ order: { status: 'CANCELLED' }, credentials: [], seat: { status: 'available' } });
+  });
+
   it('holds a seat through issue, duplicate deposits, bank reversal and redeposit without duplicate tickets', async () => {
     const { read, key, reservation, response, toss, sync, orderId, paymentKey } = await issuedDeposit();
     const pending = await read();
