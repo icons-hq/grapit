@@ -1,3 +1,4 @@
+import { quoteTicketAddons, requirePurchasableTicket, reserveTicketAddons } from '../../database/ticket-holder-addons.js';
 import { reservationAddonChoices, reservationAddonTotal, selectAddonHoldsForOrder } from '../../database/booking-addon-inventory.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
 import {
@@ -1095,6 +1096,20 @@ export class ReservationService {
     }
   }
 
+  private async resolveCheckoutSeats(dto: PrepareReservationRequest, showtime: ShowtimeBookingContext, userId: string) {
+    if (dto.addonTicketItemId) {
+      if (dto.seats.length || !dto.addons?.length) throw new BadRequestException('티켓에 추가할 애드온을 선택해주세요.');
+      await requirePurchasableTicket(this.db, dto.addonTicketItemId, userId, dto.showtimeId);
+      return [];
+    }
+    if (!dto.seats.length) throw new BadRequestException('최소 1개의 좌석을 선택해야 합니다.');
+    const seats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
+    this.assertSeatCountWithinPolicy(seats, showtime.maxTicketsPerUser);
+    await this.assertUserTicketLimitAvailable({ userId, performanceId: showtime.performanceId,
+      requestedSeatCount: seats.length, maxTicketsPerUser: showtime.maxTicketsPerUser });
+    return seats;
+  }
+
   async prepareReservation(
     dto: PrepareReservationRequest,
     actorOrUserId: string | BookingActor,
@@ -1132,6 +1147,7 @@ export class ReservationService {
         tossOrderId: reservations.tossOrderId,
         totalAmount: reservations.totalAmount,
         addonAmount: reservations.addonAmount,
+        addonTicketItemId: reservations.addonTicketItemId,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
         checkoutPaymentMethod: reservations.checkoutPaymentMethod,
         checkoutStartedAt: reservations.checkoutStartedAt,
@@ -1152,7 +1168,7 @@ export class ReservationService {
         throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
       }
 
-      if (existing.showtimeId !== dto.showtimeId) {
+      if (existing.showtimeId !== dto.showtimeId || (existing.addonTicketItemId ?? null) !== (dto.addonTicketItemId ?? null)) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
 
@@ -1182,17 +1198,7 @@ export class ReservationService {
       );
       assertShowtimeSalesOpen(existingShowtime.dateTime);
 
-      const canonicalSeats = await this.getCanonicalSeatSelections(
-        dto.seats,
-        existingShowtime.performanceId,
-      );
-      this.assertSeatCountWithinPolicy(canonicalSeats, existingShowtime.maxTicketsPerUser);
-      await this.assertUserTicketLimitAvailable({
-        userId,
-        performanceId: existingShowtime.performanceId,
-        requestedSeatCount: canonicalSeats.length,
-        maxTicketsPerUser: existingShowtime.maxTicketsPerUser,
-      });
+      const canonicalSeats = await this.resolveCheckoutSeats(dto, existingShowtime, userId);
       const expectedAmount = this.calculatePayableTotal(canonicalSeats)
         + ((existing.addonAmount ?? 0) > 0 || dto.addons?.length
           ? await reservationAddonTotal(this.db, existing.id, dto.addons ?? []) : 0);
@@ -1206,7 +1212,7 @@ export class ReservationService {
       }
 
       const existingSeatIds = existingSeats.map((seat) => seat.seatKey);
-      await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
+      if (existingSeatIds.length) await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
       const methodChanged = existing.checkoutPaymentMethod
         && !isSameCheckoutPaymentMethod(existing.checkoutPaymentMethod, dto.paymentMethod);
       const needsQuote = Boolean(existing.checkoutPaymentMethod)
@@ -1286,15 +1292,9 @@ export class ReservationService {
     assertPaymentMethodAllowed(dto.paymentMethod, showtime.allowedPaymentMethods);
 
     // 3. Calculate expected amount from DB and canonical seat map metadata
-    const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
-    this.assertSeatCountWithinPolicy(canonicalSeats, showtime.maxTicketsPerUser);
-    await this.assertUserTicketLimitAvailable({
-      userId,
-      performanceId: showtime.performanceId,
-      requestedSeatCount: canonicalSeats.length,
-      maxTicketsPerUser: showtime.maxTicketsPerUser,
-    });
-    const addonTotal = dto.addons?.length ? await this.db.transaction((tx) => selectAddonHoldsForOrder(tx, {
+    const canonicalSeats = await this.resolveCheckoutSeats(dto, showtime, userId);
+    // Price the provider quote on the server. Recheck under the product locks before committing.
+    const addonTotal = dto.addonTicketItemId ? await quoteTicketAddons(this.db, dto.showtimeId, dto.addons ?? []) : dto.addons?.length ? await this.db.transaction((tx) => selectAddonHoldsForOrder(tx, {
       userId, showtimeId: dto.showtimeId, selections: dto.addons ?? [], seats: canonicalSeats,
     })) : 0;
     const expectedAmount = this.calculatePayableTotal(canonicalSeats) + addonTotal;
@@ -1303,7 +1303,7 @@ export class ReservationService {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
 
-    await this.bookingService.assertOwnedSeatLocks(
+    if (canonicalSeats.length) await this.bookingService.assertOwnedSeatLocks(
       userId,
       dto.showtimeId,
       canonicalSeats.map((seat) => seat.seatKey),
@@ -1316,7 +1316,11 @@ export class ReservationService {
       preparedAt, showtime.bookingPolicy.paymentWindowMinutes
         ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.paymentWindowMinutes,
     );
-    await this.bookingService.setOwnedSeatLockTtl(
+    if (dto.addonTicketItemId) {
+      dto = { ...dto, queueAdmission: { ...dto.queueAdmission, activeUntilAt: paymentDeadlineAt.toISOString(),
+        reentryGraceUntilAt: paymentDeadlineAt.toISOString() } };
+    }
+    if (canonicalSeats.length) await this.bookingService.setOwnedSeatLockTtl(
       userId, dto.showtimeId, canonicalSeats.map((seat) => seat.seatKey),
       Math.max(1, Math.ceil((paymentDeadlineAt.getTime() - Date.now()) / 1000)),
     );
@@ -1338,12 +1342,17 @@ export class ReservationService {
       const activeCheckout = await tx.execute(sql`SELECT ${reservations.tossOrderId} AS order_id
         FROM ${reservations} WHERE ${reservations.userId} = ${userId}
         AND ${reservations.showtimeId} = ${dto.showtimeId} AND ${reservations.status} = 'PENDING_PAYMENT'
+        AND ${dto.addonTicketItemId ? sql`${reservations.addonTicketItemId} = ${dto.addonTicketItemId}` : sql`${reservations.addonTicketItemId} IS NULL`}
         AND ${reservations.tossOrderId} IS NOT NULL AND ${reservations.tossOrderId} <> ${dto.orderId}
         ORDER BY ${reservations.createdAt} DESC LIMIT 1`);
       const recoveryOrderId = activeCheckout.rows[0]?.['order_id'];
       if (typeof recoveryOrderId === 'string') throw new ConflictException({
         message: '먼저 기존 예매의 결제 상태를 확인해주세요.', code: 'PENDING_CHECKOUT_EXISTS', recoveryOrderId,
       });
+      // Lock the parent before the child insert takes its foreign-key lock on the ticket.
+      // Parent cancellation takes these same locks before revoking the seat.
+      const holderTicket = dto.addonTicketItemId
+        ? await requirePurchasableTicket(tx, dto.addonTicketItemId, userId, dto.showtimeId, true) : null;
       const [reservation] = await tx
         .insert(reservations)
         .values({
@@ -1354,6 +1363,7 @@ export class ReservationService {
           status: 'PENDING_PAYMENT',
           totalAmount: expectedAmount,
           addonAmount: addonTotal,
+          addonTicketItemId: dto.addonTicketItemId,
           checkoutPaymentMethod: dto.paymentMethod,
           queueSessionId: dto.queueAdmission?.queueSessionId,
           // The admission token is a cookie-only bearer value; it is never persisted.
@@ -1371,7 +1381,7 @@ export class ReservationService {
 
       const reservationId = reservation!.id;
 
-      await tx.insert(reservationSeats).values(
+      if (canonicalSeats.length) await tx.insert(reservationSeats).values(
         canonicalSeats.map((seat) => ({
           reservationId,
           seatId: seat.seatKey,
@@ -1382,8 +1392,13 @@ export class ReservationService {
         })),
       );
 
-      await selectAddonHoldsForOrder(tx, { userId, showtimeId: dto.showtimeId,
-        selections: dto.addons ?? [], seats: canonicalSeats, reservationId, expectedTotal: addonTotal });
+      if (holderTicket) {
+        await reserveTicketAddons(tx, { ticketId: holderTicket.id, userId, showtimeId: dto.showtimeId,
+          reservationId, expectedTotal: addonTotal }, holderTicket, dto.addons ?? []);
+      } else {
+        await selectAddonHoldsForOrder(tx, { userId, showtimeId: dto.showtimeId,
+          selections: dto.addons ?? [], seats: canonicalSeats, reservationId, expectedTotal: addonTotal });
+      }
 
       await this.consentService.captureConsent(
         userId,
@@ -1419,6 +1434,7 @@ export class ReservationService {
       }
     }
 
+    if (dto.addonTicketItemId) await this.bookingGateway.publishAddonStockChanged(dto.showtimeId).catch(() => undefined);
     return {
       reservationId: result.id,
       orderId: dto.orderId,
@@ -1494,7 +1510,7 @@ export class ReservationService {
   }
 
   async getMyReservations(userId: string, status?: ReservationStatus, locale?: string): Promise<ReservationListItem[]> {
-    const conditions = [eq(reservations.userId, userId)];
+    const conditions = [eq(reservations.userId, userId), isNull(reservations.addonTicketItemId)];
     if (status) {
       conditions.push(
         eq(reservations.status, status as typeof reservations.status.enumValues[number]),
@@ -1583,6 +1599,8 @@ export class ReservationService {
           totalAmount: reservations.totalAmount,
           queueSessionId: reservations.queueSessionId,
           addonAmount: reservations.addonAmount,
+          addonTicketItemId: reservations.addonTicketItemId,
+          addonParentReservationId: sql<string | null>`(SELECT ti.reservation_id FROM ticket_items ti WHERE ti.id = ${reservations.addonTicketItemId})`,
           refreshFamilyId: reservations.refreshFamilyId,
           deviceSlotKey: reservations.deviceSlotKey,
           admittedAt: reservations.admittedAt,
@@ -1640,6 +1658,14 @@ export class ReservationService {
             select ${ticketItems.id} from ${ticketItems} where ${ticketItems.reservationId} = ${reservations.id}
           )`,
         )!, sql`${ticketBenefitEntitlements.createdAt}, ${ticketBenefitEntitlements.id}`),
+        ticketAddonAccess: sql<Array<{ ticketItemId: string; hasOrders: boolean }>>`(
+          SELECT coalesce(jsonb_agg(jsonb_build_object('ticketItemId', t.id, 'hasOrders', owned.has_orders)), '[]'::jsonb)
+          FROM ticket_items t CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM reservations child
+            WHERE child.addon_ticket_item_id = t.id AND child.status IN ('CONFIRMED','PENDING_PAYMENT','CANCELLED')) AS has_orders) owned
+          WHERE t.reservation_id = ${reservations.id} AND (owned.has_orders OR
+            (t.status = 'active' AND t.admission_state = 'not_entered' AND ${showtimes.dateTime} > now()
+             AND EXISTS (SELECT 1 FROM booking_addons a WHERE a.showtime_id = t.showtime_id
+               AND a.active AND a.eligible_tier_names ? t.tier_name))))`,
         tierColors: jsonRows(performanceSeatTiers, eq(performanceSeatTiers.performanceId, performances.id)),
         ticketEmailUser: { email: users.email, isEmailVerified: users.isEmailVerified },
       })
@@ -1741,6 +1767,8 @@ export class ReservationService {
       performanceGenre: row.performance.genre,
       showtimeId: row.reservation.showtimeId,
       tossOrderId: row.reservation.tossOrderId ?? null,
+      ...(row.reservation.addonTicketItemId ? { addonTicketItemId: row.reservation.addonTicketItemId,
+        addonParentReservationId: row.reservation.addonParentReservationId ?? undefined } : {}),
       checkoutPaymentMethod: row.reservation.checkoutPaymentMethod ?? null,
       checkoutStartedAt: row.reservation.checkoutStartedAt?.toISOString() ?? null,
       providerChargeQuote: mapStoredChargeQuote(row.reservation),
@@ -1799,6 +1827,7 @@ export class ReservationService {
       }),
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       ticketItems: ticketItemDtos,
+      ticketAddonAccess: row.ticketAddonAccess ?? [],
       addons: (row.reservation.addonAmount ?? 0) > 0 ? await reservationAddonChoices(this.db, reservationId) : [],
     };
   }
@@ -2656,6 +2685,7 @@ export class ReservationService {
         const quote = isPendingRetry
           ? {
               cancellationFee: context.cancellationFee,
+              policyCode: context.cancellationCommand?.policyCode,
               serviceFeeRefund: context.serviceFeeRefund,
               refundableAmount: context.refundableAmount,
             }
@@ -2750,7 +2780,7 @@ export class ReservationService {
           const currency = context.providerChargeCurrency === 'USD' ? 'USD' : 'KRW';
           const chargeMinor = context.providerChargeAmountMinor ?? context.paymentAmount;
           context.cancellationCommand = {
-            version: 1, id: commandId, requestedAt: preparedAt.toISOString(),
+            version: 1, id: commandId, requestedAt: preparedAt.toISOString(), policyCode: quote.policyCode,
             reason: paymentCancelRequest.reason,
             options: { ...paymentCancelRequest.options, idempotencyKey: paymentCancelRequest.options.idempotencyKey,
               secretKeyScope: paymentCancelRequest.options.secretKeyScope ?? 'default' },
@@ -3303,6 +3333,9 @@ export class ReservationService {
 
     if (!cancelled) {
       throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
+    }
+    if (reservation.addonTicketItemId) {
+      await this.bookingGateway.publishAddonStockChanged(reservation.showtimeId).catch(() => undefined);
     }
   }
 }

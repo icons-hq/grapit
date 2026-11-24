@@ -11,7 +11,7 @@ export function financeLedgerCsv(ledger: FinanceLedger, dataset: FinanceLedgerEx
     pg_scope_results: JSON.stringify(ledger.provider.scopes), bank_evidence: ledger.bankEvidence, closing_status: ledger.closingStatus,
   };
   const entries: Array<Record<string, unknown>> = dataset === 'payments' ? ledger.rows.map((row) => ({
-    record_type: 'payment', reservation_number: row.reservationNumber, payment_id: row.paymentId, order_id: row.orderId,
+    record_type: 'payment', ...(row.addonTicketItemId ? { addon_ticket_item_id: row.addonTicketItemId } : {}), reservation_number: row.reservationNumber, payment_id: row.paymentId, order_id: row.orderId,
     showtime_id: row.showtimeId, showtime_at: row.showtimeAt, approved_at: row.paidAt,
     original_order_krw: row.originalOrderKrw, confirmed_refund_krw: row.confirmedRefundKrw, pending_refund_krw: row.pendingRefundKrw,
     stored_payment_amount: row.storedPaymentAmount, stored_payment_currency: row.storedPaymentCurrency, confirmed_payment_krw: row.confirmedPaymentKrw,

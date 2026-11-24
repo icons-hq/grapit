@@ -22,6 +22,11 @@ export class BookingAddonsController {
     return this.addons.snapshot(id, req.user);
   }
 
+  @Get('ticket-items/:ticketId/addons')
+  ticketOptions(@Param('ticketId', new ParseUUIDPipe()) ticketId: string, @Req() req: ActorRequest) {
+    return this.addons.ticketOptions(ticketId, req.user);
+  }
+
   @Put('booking/addons/holds')
   @UseGuards(AdmissionGuard)
   hold(@Body(new ZodValidationPipe(holdSchema)) body: z.infer<typeof holdSchema>, @Req() req: ActorRequest) {

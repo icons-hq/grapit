@@ -1,3 +1,4 @@
+import { issueTicketAddons, requirePurchasableTicket } from '../../database/ticket-holder-addons.js';
 import { finalizeReservationAddons } from '../../database/booking-addon-inventory.js';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import {
@@ -1086,7 +1087,7 @@ export class ReservationFinalizationService {
       reservation.id,
       reservation.showtimeId,
     );
-    if (ticketLimit.activeTicketCount + pendingSeats.length > ticketLimit.maxTicketsPerUser) {
+    if (!reservation.addonTicketItemId && ticketLimit.activeTicketCount + pendingSeats.length > ticketLimit.maxTicketsPerUser) {
       const rejection = new ConflictException(
         buildMaxTicketsPerUserExceededMessage(ticketLimit.maxTicketsPerUser),
       );
@@ -1106,7 +1107,9 @@ export class ReservationFinalizationService {
 
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
     try {
-      await this.bookingService.extendOwnedSeatLocks(
+      if (reservation.addonTicketItemId) {
+        await requirePurchasableTicket(this.db, reservation.addonTicketItemId, userId, reservation.showtimeId);
+      } else await this.bookingService.extendOwnedSeatLocks(
         userId,
         reservation.showtimeId,
         pendingSeatIds,
@@ -1131,7 +1134,7 @@ export class ReservationFinalizationService {
       throw lockError;
     }
 
-    const seatLockRefreshTimer = this.startOwnedSeatLockRefresh(
+    const seatLockRefreshTimer = reservation.addonTicketItemId ? undefined : this.startOwnedSeatLockRefresh(
       userId,
       reservation.showtimeId,
       pendingSeatIds,
@@ -1219,7 +1222,7 @@ export class ReservationFinalizationService {
       }
 
       try {
-        await this.bookingService.assertOwnedSeatLocks(
+        if (!reservation.addonTicketItemId) await this.bookingService.assertOwnedSeatLocks(
           userId,
           reservation.showtimeId,
           pendingSeatIds,
@@ -1260,6 +1263,10 @@ export class ReservationFinalizationService {
       unrecordedApproval = undefined;
 
       clearInterval(seatLockRefreshTimer);
+      if (reservation.addonTicketItemId) {
+        await this.bookingGateway.publishAddonStockChanged(reservation.showtimeId).catch(() => undefined);
+        return { reservationId: reservation.id };
+      }
       await this.runPostCommitSideEffects({
         userId,
         reservationId: reservation.id,
@@ -2819,7 +2826,7 @@ export class ReservationFinalizationService {
     tx: Parameters<Parameters<DrizzleDB['transaction']>[0]>[0],
     input: {
       userId: string;
-      reservation: { id: string; showtimeId: string; addonAmount?: number };
+      reservation: { id: string; showtimeId: string; addonAmount?: number; addonTicketItemId?: string | null };
       pendingSeats: FloorAwareSeatSelection[];
       performanceId: string;
       approvedPayment: ApprovedPaymentSnapshot;
@@ -2833,7 +2840,7 @@ export class ReservationFinalizationService {
       reservation.showtimeId,
     );
     if (
-      lockedTicketLimit.activeTicketCount + pendingSeats.length
+      !reservation.addonTicketItemId && lockedTicketLimit.activeTicketCount + pendingSeats.length
       > lockedTicketLimit.maxTicketsPerUser
     ) {
       throw new ConflictException(
@@ -2891,6 +2898,11 @@ export class ReservationFinalizationService {
 
     if (!committedPaymentId) {
       throw new InternalServerErrorException('결제 정보 저장에 실패했습니다');
+    }
+    if (reservation.addonTicketItemId) {
+      await issueTicketAddons(tx, { ticketId: reservation.addonTicketItemId, userId, reservationId: reservation.id,
+        showtimeId: reservation.showtimeId, expectedTotal: approvedPayment.totalAmount });
+      return committedPaymentId;
     }
     const ticketItemPaymentId = committedPaymentId;
 

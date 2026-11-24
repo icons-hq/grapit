@@ -19,6 +19,7 @@ export interface TicketItemCancellationCommand {
   version: 1;
   id: string;
   requestedAt: string;
+  policyCode?: import('@grabit/shared').TicketItemCancellationPolicyCode;
   reason: string;
   options: {
     idempotencyKey: string;

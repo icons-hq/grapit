@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, gte, desc, isNotNull } from 'drizzle-orm';
+import { eq, and, or, gte, desc, isNotNull, isNull } from 'drizzle-orm';
 import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -1036,7 +1036,7 @@ export class BookingService {
       this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`),
       this.db.select({ orderId: reservations.tossOrderId }).from(reservations).where(and(
         eq(reservations.userId, userId), eq(reservations.showtimeId, showtimeId),
-        eq(reservations.status, 'PENDING_PAYMENT'), isNotNull(reservations.tossOrderId),
+        eq(reservations.status, 'PENDING_PAYMENT'), isNull(reservations.addonTicketItemId), isNotNull(reservations.tossOrderId),
       )).orderBy(desc(reservations.createdAt), desc(reservations.id)).limit(1),
     ]);
     const recovery = pending[0]?.orderId ? { recoveryOrderId: pending[0].orderId } : {};

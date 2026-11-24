@@ -1,6 +1,8 @@
-import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index, jsonb, boolean } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index, jsonb, boolean, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { PaymentMethod } from '@grabit/shared';
 import { users } from './users.js';
+import { ticketItems } from './ticket-items.js';
 import { showtimes } from './showtimes.js';
 
 export const reservationStatusEnum = pgEnum('reservation_status', [
@@ -11,6 +13,8 @@ export const reservations = pgTable('reservations', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').notNull().references(() => users.id),
   showtimeId: uuid('showtime_id').notNull().references(() => showtimes.id),
+  // A supplemental payment belongs to an already issued ticket and owns no seats.
+  addonTicketItemId: uuid('addon_ticket_item_id').references((): AnyPgColumn => ticketItems.id),
   reservationNumber: varchar('reservation_number', { length: 30 }).notNull().unique(),
   tossOrderId: varchar('toss_order_id', { length: 200 }).unique(),
   queueSessionId: varchar('queue_session_id', { length: 200 }),
@@ -40,6 +44,7 @@ export const reservations = pgTable('reservations', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
+  index('idx_reservations_addon_ticket').on(table.addonTicketItemId).where(sql`${table.addonTicketItemId} is not null`),
   index('idx_reservations_user_id').on(table.userId),
   index('idx_reservations_showtime_id').on(table.showtimeId),
   index('idx_reservations_status').on(table.status),

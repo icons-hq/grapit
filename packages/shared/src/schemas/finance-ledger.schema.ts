@@ -56,6 +56,8 @@ export interface FinanceTicket {
 }
 
 export interface FinancePaymentRow extends FinanceAmounts {
+  addonTicketItemId?: string;
+  addonRefundRequestedAt?: string | null;
   paymentId: string;
   reservationNumber: string;
   orderId: string;

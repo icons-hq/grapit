@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { ProviderChargeQuoteService } from '../src/modules/payment/provider-charge-quote.service.js';
+import { ConfigService } from '@nestjs/config';
 import { ConflictException } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -10,6 +12,9 @@ import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
 import { finalizeReservationAddons, releaseUnboundAddonHolds, reservationAddonTotal, selectAddonHoldsForOrder } from '../src/database/booking-addon-inventory.js';
 import { BookingAddonsService, type AddonActor } from '../src/modules/booking-addons/booking-addons.service.js';
+import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
+import { PaymentService } from '../src/modules/payment/payment.service.js';
+import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
 import { restoreCancellationPendingBenefitEntitlements } from '../src/database/benefit-entitlement-restoration.js';
@@ -71,14 +76,14 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       capacity, maxPerTicket, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actors[0]!);
     return { service, gateway, booking, actors, locks, performanceId: performance!.id, showtimeId: showtime!.id, addonId: snapshot.addons[0]!.id };
   }
-  async function pending(f: Awaited<ReturnType<typeof fixture>>, index: number) {
+  async function pending(f: Awaited<ReturnType<typeof fixture>>, index: number, bundled = true) {
     const [order] = await db.insert(schema.reservations).values({ userId: f.actors[index]!.id, showtimeId: f.showtimeId,
-      reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount: 532000, addonAmount: 150000,
+      reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount: bundled ? 532000 : 382000, addonAmount: bundled ? 150000 : 0,
       paymentDeadlineAt: new Date(Date.now() + 420000), cancelDeadline: new Date('2098-12-31') }).returning();
     const selections = [{ addonId: f.addonId, seatKey: seat(index + 1).seatKey }];
     await db.insert(schema.reservationSeats).values({ reservationId: order!.id, seatId: seat(index + 1).seatKey,
       tierName: 'SVIP', price: 380000, row: 'A', number: String(index + 1) });
-    await db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: f.actors[index]!.id, showtimeId: f.showtimeId,
+    if (bundled) await db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: f.actors[index]!.id, showtimeId: f.showtimeId,
       selections, seats: [seat(index + 1)], reservationId: order!.id, expectedTotal: 150000 }));
     return order!;
   }
@@ -93,6 +98,187 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       return ticket!;
     });
   }
+
+  function holderCheckout(f: Awaited<ReturnType<typeof fixture>>, ticket: typeof schema.ticketItems.$inferSelect, unitIndex = 1) {
+    const now = new Date().toISOString();
+    const input: PrepareReservationRequest = { orderId: `GRP-${randomUUID()}`, showtimeId: f.showtimeId,
+      addonTicketItemId: ticket.id, seats: [], addons: [{ addonId: f.addonId, seatKey: ticket.seatKey, unitIndex }], amount: 150000,
+      paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+      consentItems: [{ key: 'terms', accepted: true, version: 'test', language: 'ko', sourceFlow: 'booking' }],
+      queueAdmission: { queueSessionId: 'holder', admissionToken: 'cookie-bound', refreshFamilyId: 'browser', deviceSlotKey: 'browser',
+        admittedAt: now, activeUntilAt: now, reentryGraceUntilAt: now }, paymentDeadlineAt: now,
+      bookingPolicy: { maxTicketsPerOrder: 4, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false,
+        paymentWindowMinutes: 7, seatHoldMinutes: 10 } };
+    const locks = { acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
+      releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined), markPaymentConfirmAttempted: vi.fn() };
+    const provider = { confirmPayment: vi.fn(async ({ paymentKey, orderId, amount }) => ({
+      paymentKey, orderId, status: 'DONE', currency: 'KRW', method: '카드', totalAmount: amount, approvedAt: now })) };
+    const fx = new ProviderChargeQuoteService(new ConfigService({
+      NODE_ENV: 'test', PAYPAL_CHECKOUT_ENABLED: 'false', ALIPAY_CHECKOUT_ENABLED: 'true', PAYPAL_KRW_USD_RATE: '0.0007',
+      TOSS_FOREIGN_EASY_PAY_SECRET_KEY: 'isolated-local-fixture',
+    }));
+    const finalizer = new ReservationFinalizationService(db, provider as never, locks as never, f.gateway as never, undefined, fx);
+    const checkout = new ReservationService(db, provider as never, f.booking as never, f.gateway as never,
+      { assertBookingEnabled: vi.fn() } as never, { assertRequiredConsents: vi.fn(), captureConsent: vi.fn() } as never,
+      undefined, finalizer, fx);
+    return { input, checkout, provider, locks, fx };
+  }
+
+  it.each(['sync', 'async'])('charges only the add-on and attaches it once to the existing seat (%s)', async (mode) => {
+    const f = await fixture(1);
+    const original = await pending(f, 0, false);
+    const ticket = await issue(original, 0);
+    const { input, checkout, provider, locks, fx } = holderCheckout(f, ticket);
+    if (mode === 'async') {
+      await db.insert(schema.bookingPolicies).values({ performanceId: f.performanceId, allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'] });
+      input.paymentMethod = { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD', pendingUrlRequired: true };
+    }
+    const actor = f.actors[0]!;
+    expect((await f.service.ticketOptions(ticket.id, actor)).offers[0]).toMatchObject({ available: 1, remainingUnits: [1] });
+    await expect(checkout.prepareReservation({ ...input, amount: 1 }, actor)).rejects.toThrow('금액');
+    const prepared = await checkout.prepareReservation(input, actor);
+    expect(await checkout.prepareReservation(input, actor)).toMatchObject({ reservationId: prepared.reservationId });
+    expect(f.booking.assertOwnedSeatLocks).not.toHaveBeenCalled();
+    expect((await f.service.ticketOptions(ticket.id, actor)).offers[0]).toMatchObject({ available: 0, remainingUnits: [] });
+    const pay = { paymentKey: randomUUID(), orderId: input.orderId, amount: 150000 };
+    if (mode === 'sync') {
+      for (let n = 0; n < 2; n++) {
+        const receipt = await checkout.confirmAndCreateReservation(pay, actor);
+        expect(receipt).toMatchObject({ addonTicketItemId: ticket.id, addonParentReservationId: original.id,
+          totalAmount: 150000, status: 'CONFIRMED', seats: [], ticketItems: [] });
+      }
+      expect(provider.confirmPayment).toHaveBeenCalledTimes(1);
+    } else {
+      expect(prepared.providerChargeQuote?.amountDecimal).toBe('105.00');
+      const service = new PaymentService(db, f.gateway as never, undefined, undefined, fx, undefined, locks as never);
+      const payload = { eventType: 'PAYMENT_STATUS_CHANGED', data: { paymentKey: pay.paymentKey, orderId: pay.orderId, status: 'DONE',
+        provider: 'ALIPAY_PLUS' as const, easyPay: 'ALIPAY', method: 'FOREIGN_EASY_PAY', currency: 'USD', totalAmount: 105 } };
+      for (let n = 0; n < 2; n++) await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
+    }
+    const receipt = await checkout.getReservationDetail(original.id, actor.id);
+    expect(receipt).toMatchObject({ totalAmount: 382000, ticketAddonAccess: [{ ticketItemId: ticket.id, hasOrders: true }],
+      ticketItems: [{ id: ticket.id, benefitEntitlements: [{ source: 'purchase', state: 'active' }] }] });
+    expect(await checkout.getMyReservations(actor.id)).toHaveLength(1);
+    const ledgerDate = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const ledger = await new FinanceLedgerService(db, {} as never, {} as never).getLedger({ eventId: f.performanceId,
+      showtimeId: f.showtimeId, dateFrom: ledgerDate, dateTo: ledgerDate, dateBasis: 'paid_at', asOf: new Date().toISOString(),
+      includeProvider: 'false', providerDateBasis: 'paidOutDate' });
+    expect(ledger.summary.remainingTicketKrw).toBe(532000);
+    expect(ledger.rows.find(row => row.addonTicketItemId === ticket.id)).toMatchObject({
+      remainingTicketKrw: 150000, originalOrderKrw: 150000, retainedServiceFeeKrw: 0, tickets: [],
+    });
+    expect(await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, prepared.reservationId))).toHaveLength(0);
+    expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]).toMatchObject({ available: 0, sold: 1 });
+    await expect(checkout.prepareReservation({ ...input, orderId: randomUUID() }, actor)).rejects.toThrow('이미 구매');
+  });
+
+  it('checks the issued ticket again when an approval races with entry, and compensates only the add-on', async () => {
+    const f = await fixture(1);
+    const actor = f.actors[0]!;
+    const original = await pending(f, 0, false);
+    const ticket = await issue(original, 0);
+    const { input, checkout, provider } = holderCheckout(f, ticket);
+    const child = await checkout.prepareReservation(input, actor);
+    const key = randomUUID();
+    provider.confirmPayment.mockImplementationOnce(async () => {
+      await db.update(schema.ticketItems).set({ admissionState: 'entered' }).where(eq(schema.ticketItems.id, ticket.id));
+      return { paymentKey: key, orderId: input.orderId, status: 'DONE', currency: 'KRW', method: '카드',
+        totalAmount: input.amount, approvedAt: new Date().toISOString() };
+    });
+    const cancel = vi.fn().mockResolvedValue({ paymentKey: key, orderId: input.orderId, status: 'CANCELED',
+      currency: 'KRW', totalAmount: input.amount, balanceAmount: 0, cancels: [{ cancelStatus: 'DONE' }] });
+    Object.assign(provider, { cancelPayment: cancel });
+    await expect(checkout.confirmAndCreateReservation({ paymentKey: key, orderId: input.orderId, amount: input.amount }, actor)).rejects.toThrow();
+    expect(cancel.mock.calls.map(args => args[0])).toEqual([key]);
+    expect(await db.select().from(schema.payments).where(eq(schema.payments.reservationId, original.id))).toMatchObject([{ status: 'DONE', amount: 382000 }]);
+    expect(await db.select().from(schema.payments).where(eq(schema.payments.reservationId, child.reservationId))).toMatchObject([{ status: 'CANCELED' }]);
+    expect(await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, ticket.id))).toHaveLength(0);
+  });
+
+  it('protects ownership, tier, the original purchased slot and the ticket status at prepare', async () => {
+    const f = await fixture(4, 2, 2);
+    const actor = f.actors[0]!;
+    await f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor);
+    const ticket = await issue(await pending(f, 0), 0);
+    const { input, checkout } = holderCheckout(f, ticket);
+    expect((await f.service.ticketOptions(ticket.id, actor)).offers[0]?.remainingUnits).toEqual([2]);
+    await expect(checkout.prepareReservation(input, f.actors[1]!)).rejects.toThrow('티켓을 찾을');
+    await expect(checkout.prepareReservation(input, actor)).rejects.toThrow('이미 구매');
+    const next = holderCheckout(f, ticket, 2).input;
+    await db.update(schema.ticketItems).set({ tierName: 'VIP' }).where(eq(schema.ticketItems.id, ticket.id));
+    await expect(checkout.prepareReservation(next, actor)).rejects.toThrow('등급');
+    await db.update(schema.ticketItems).set({ tierName: 'SVIP', admissionState: 'entered' }).where(eq(schema.ticketItems.id, ticket.id));
+    await expect(checkout.prepareReservation(next, actor)).rejects.toThrow('추가할 수 없습니다');
+    await db.update(schema.ticketItems).set({ admissionState: 'not_entered', status: 'cancellation_pending' }).where(eq(schema.ticketItems.id, ticket.id));
+    await expect(checkout.prepareReservation(next, actor)).rejects.toThrow('추가할 수 없습니다');
+    await db.update(schema.ticketItems).set({ status: 'active' }).where(eq(schema.ticketItems.id, ticket.id));
+    await db.update(schema.showtimes).set({ dateTime: new Date(Date.now() - 1000) }).where(eq(schema.showtimes.id, f.showtimeId));
+    await expect(checkout.prepareReservation(next, actor)).rejects.toThrow();
+  });
+
+  it('serializes two holders competing for the last unit and restores it after an unpaid order ends', async () => {
+    const f = await fixture(1);
+    const requests = await Promise.all(f.actors.map(async (actor, i) => {
+      const ticket = await issue(await pending(f, i, false), i);
+      return { actor, ...holderCheckout(f, ticket) };
+    }));
+    const results = await Promise.allSettled(requests.map(r => r.checkout.prepareReservation(r.input, r.actor)));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    const winner = results.findIndex(r => r.status === 'fulfilled');
+    const order = results[winner] as PromiseFulfilledResult<{ reservationId: string }>;
+    await requests[winner]!.checkout.cancelPendingReservation(order.value.reservationId, requests[winner]!.actor.id);
+    const other = requests[1-winner]!;
+    await expect(other.checkout.prepareReservation(other.input, other.actor)).resolves.toMatchObject({ orderId: other.input.orderId });
+  });
+
+  it.each([
+    { scope: 'seat', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
+    { scope: 'reservation', daysToShow: 20, daysBooked: 0, originalRefund: 382000, childRefund: 150000 },
+    { scope: 'seat', daysToShow: 20, daysBooked: 12, originalRefund: 376000, childRefund: 150000 },
+    { scope: 'reservation', daysToShow: 8, daysBooked: 12, originalRefund: 342000, childRefund: 135000 },
+  ])('refunds the supplemental charge via its own PG key ($scope, D-$daysToShow, booked $daysBooked days ago)', async sample => {
+    const f = await fixture(1);
+    const actor = f.actors[0]!;
+    const original = await pending(f, 0, false);
+    const ticket = await issue(original, 0);
+    await db.update(schema.reservations).set({ fixedCancellationFee: true }).where(eq(schema.reservations.id, original.id));
+    const day = 86_400_000;
+    await db.update(schema.showtimes).set({ dateTime: new Date(Date.now() + sample.daysToShow * day) }).where(eq(schema.showtimes.id, f.showtimeId));
+    await db.update(schema.payments).set({ paidAt: new Date(Date.now() - sample.daysBooked * day) }).where(eq(schema.payments.id, ticket.paymentId));
+    await db.insert(schema.seatInventories).values({ showtimeId: f.showtimeId, seatId: ticket.seatId,
+      seatKey: ticket.seatKey, floorKey: ticket.floorKey, status: 'sold' });
+    const { input, checkout } = holderCheckout(f, ticket);
+    const child = await checkout.prepareReservation(input, actor);
+    const childKey = randomUUID();
+    await checkout.confirmAndCreateReservation({ paymentKey: childKey, orderId: input.orderId, amount: input.amount }, actor);
+    const amounts = (key: string) => key === childKey ? 150000 : 382000;
+    const expectedRefund = (key: string) => key === childKey ? sample.childRefund : sample.originalRefund;
+    const provider = { queryPayment: vi.fn(async (key: string) => ({ status: 'DONE', totalAmount: amounts(key), balanceAmount: amounts(key), isPartialCancelable: true })),
+      cancelPayment: vi.fn(async (key: string, reason: string, options: { cancelAmount?: number }) => {
+        const amount = options.cancelAmount ?? amounts(key);
+        expect(amount).toBe(expectedRefund(key));
+        return { status: amount === amounts(key) ? 'CANCELED' : 'PARTIAL_CANCELED', currency: 'KRW',
+          totalAmount: amounts(key), balanceAmount: amounts(key) - amount,
+          cancels: [{ cancelReason: reason, cancelAmount: amount, cancelStatus: 'DONE', transactionKey: randomUUID() }] };
+      }) };
+    const boss = { isAvailable: false, send: vi.fn().mockResolvedValue(null) };
+    const finalizer = new PaymentCancellationFinalizerService(db, boss as never);
+    if (sample.scope === 'seat') {
+      const service = new ReservationService(db, provider as never, f.booking as never, f.gateway as never,
+        {} as never, {} as never, undefined, undefined, undefined, finalizer);
+      await service.cancelTicketItem(original.id, ticket.id, actor.id, 'cancel ticket');
+    } else await new RefundService(db, provider as never, finalizer).requestRefund(original.id, actor.id, 'cancel ticket');
+    const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, child.reservationId));
+    expect(refund).toMatchObject({ status: 'requested', providerMetadata: { cancellationQuote: { refundableAmount: sample.childRefund } } });
+    expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(0);
+    const worker = new RefundCancelRetryWorker(db, provider as never, finalizer, boss as never);
+    await worker.handleJob({ refundId: refund!.id, attempt: 1 });
+    await worker.handleJob({ refundId: refund!.id, attempt: 1 });
+    const [parentPayment] = await db.select().from(schema.payments).where(eq(schema.payments.id, ticket.paymentId));
+    expect(provider.cancelPayment.mock.calls.map(([key]) => key)).toEqual([parentPayment!.paymentKey, childKey]);
+    expect((await f.service.ticketOptions(ticket.id, actor)).orders[0]).toMatchObject({ status: 'CANCELLED', refundStatus: 'completed', refundableAmount: sample.childRefund });
+    expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(1);
+  });
 
   it('awards the last unit to exactly one of 20 simultaneous buyers', async () => {
     const f = await fixture(1, 20);

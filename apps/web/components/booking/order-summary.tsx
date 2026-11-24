@@ -42,7 +42,7 @@ export function OrderSummary({ performanceTitle, posterUrl, showDateTime, venue,
           </div>
         </div>
       </div>
-      <Separator />
+      {seats.length > 0 && <><Separator />
       <div className="space-y-4">
         <h2 className="text-base font-semibold">{copy.seats}</h2>
         <ul className="space-y-3">
@@ -53,7 +53,7 @@ export function OrderSummary({ performanceTitle, posterUrl, showDateTime, venue,
             </li>
           ))}
         </ul>
-      </div>
+      </div></>}
     </section>
   );
 }
@@ -83,8 +83,8 @@ export function CheckoutAmountSummary({ seats, addons = [], totalPrice, quote, a
     <section aria-label={copy.paymentTitle} className="space-y-4">
       <h2 className="text-xl font-semibold">{copy.paymentTitle}</h2>
       <dl className="space-y-3 text-sm md:text-base">
-        <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.ticketAmount}</dt><dd className="tabular-nums">{formatKrw(seats.reduce((sum, seat) => sum + seat.price, 0))}</dd></div>
-        <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.serviceFee}</dt><dd className="tabular-nums">{formatKrw(seats.length * TICKET_SERVICE_FEE_KRW)}</dd></div>
+        {seats.length > 0 && <><div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.ticketAmount}</dt><dd className="tabular-nums">{formatKrw(seats.reduce((sum, seat) => sum + seat.price, 0))}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.serviceFee}</dt><dd className="tabular-nums">{formatKrw(seats.length * TICKET_SERVICE_FEE_KRW)}</dd></div></>}
         {[...addonGroups.entries()].map(([key, { addon, quantity, amount }]) => {
           const seat = seats.find((item) => item.seatKey === addon.seatKey);
           const seatLabel = seat ? copy.seat.replace(/\{(\w+)\}/g, (_, key: string) => String(seat[key as keyof CheckoutSeat] ?? '')) : addon.seatKey;

@@ -103,7 +103,8 @@ async function restoreShowtimeEntitlements(
       if (entitlement.source === 'purchase' && entitlement.benefitKind === 'paid' && entitlement.bookingAddonHoldId) {
         await db.update(ticketBenefitEntitlements)
           .set({ state: 'active', inactiveReason: null, updatedAt: now })
-          .where(eq(ticketBenefitEntitlements.id, entitlement.id));
+          .where(and(eq(ticketBenefitEntitlements.id, entitlement.id),
+            eq(ticketBenefitEntitlements.inactiveReason, CANCELLATION_PENDING_INACTIVE_REASON)));
         continue;
       }
       if (entitlement.benefitKind === 'limited') {

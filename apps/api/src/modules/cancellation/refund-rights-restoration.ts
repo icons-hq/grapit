@@ -17,7 +17,7 @@ function metadataQuote(value: unknown): CancellationQuote | null {
 export async function restoreRejectedRefundRights(db: DrizzleDB, requested: RefundRecord,
   failure: { code: string; message: string }): Promise<RefundRecord> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT r.id FROM reservations r JOIN payments p ON p.reservation_id = r.id
+    const order = await tx.execute(sql`SELECT r.id, r.addon_ticket_item_id FROM reservations r JOIN payments p ON p.reservation_id = r.id
       WHERE r.id = ${requested.reservationId} FOR UPDATE OF r, p`);
     const [current] = await tx.select().from(refunds).where(eq(refunds.id, requested.id)).for('update');
     if (!current) throw new NotFoundException('환불 정보를 찾을 수 없습니다');
@@ -26,6 +26,16 @@ export async function restoreRejectedRefundRights(db: DrizzleDB, requested: Refu
     if (current.status === 'completed' || originalCommand?.options.idempotencyKey !== currentCommand?.options.idempotencyKey) return current;
     const quote = metadataQuote(current.providerMetadata);
     const metadata = current.providerMetadata as Record<string, unknown>;
+    if (order?.rows?.[0]?.['addon_ticket_item_id']) {
+      // The parent seat is already cancelled. Keep its rights revoked and the refund
+      // receipt available for operator reconciliation on this independent charge.
+      const message = '티켓 취소 후 애드온 환불이 완료되지 않았습니다. 결제사 거래 내역을 대조해주세요.';
+      const [failed] = await tx.update(refunds).set({ status: 'failed', failedAt: new Date(),
+        resultCode: failure.code, resultMessage: message, failureReason: message,
+        customerServiceCtaVisible: true, updatedAt: new Date(), providerMetadata: { ...metadata, manualReviewRequired: true },
+      }).where(eq(refunds.id, current.id)).returning();
+      return failed!;
+    }
     if (!quote || !Array.isArray(metadata.credentialStates)) throw new ConflictException('취소 전 권리 상태를 확인해야 합니다');
     const selectedIds = quote.items.map((item) => item.ticketItemId);
     const now = new Date();

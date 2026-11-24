@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, eq, and, gte, isNotNull, lt } from 'drizzle-orm';
+import { sql, eq, and, gte, isNotNull, isNull, lt } from 'drizzle-orm';
 import type {
   DashboardSummaryDto,
   DashboardRevenueDto,
@@ -11,6 +11,7 @@ import type {
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
+  refunds,
   payments,
   performances,
   showtimes,
@@ -78,14 +79,15 @@ export class AdminDashboardService {
         await Promise.all([
           this.db
             .select({
-              count: sql<number>`count(distinct ${reservations.id})::int`,
+              count: sql<number>`count(distinct ${reservations.id}) filter (where ${reservations.addonTicketItemId} is null)::int`,
               sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
             })
             .from(payments)
             .innerJoin(reservations, eq(payments.reservationId, reservations.id))
             .where(
               and(
-                sql`${payments.status} in ('DONE', 'CANCELED')`,
+                sql`(${payments.status} in ('DONE', 'CANCELED') or
+                  (${reservations.addonTicketItemId} is not null and ${payments.status} = 'PARTIAL_CANCELED'))`,
                 gte(payments.paidAt, startUtc),
                 lt(payments.paidAt, endUtc),
               ),
@@ -105,15 +107,18 @@ export class AdminDashboardService {
             ),
           this.db
             .select({
-              count: sql<number>`count(distinct ${reservations.id})::int`,
-              sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
+              count: sql<number>`count(distinct ${reservations.id}) filter (where ${reservations.addonTicketItemId} is null)::int`,
+              sum: sql<number>`coalesce(sum(case when ${reservations.addonTicketItemId} is not null and ${refunds.status} = 'completed'
+                then (${refunds.providerMetadata}->'cancellationQuote'->>'refundableAmount')::int else ${payments.amount} end), 0)::int`,
             })
             .from(reservations)
             .innerJoin(payments, eq(payments.reservationId, reservations.id))
+            .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
             .where(
               and(
                 eq(reservations.status, 'CANCELLED'),
-                eq(payments.status, 'CANCELED'),
+                sql`(${payments.status} = 'CANCELED' or
+                  (${reservations.addonTicketItemId} is not null and ${refunds.status} = 'completed'))`,
                 gte(legacyCancellationEventAt, startUtc),
                 lt(legacyCancellationEventAt, endUtc),
                 sql`not exists (
@@ -132,7 +137,7 @@ export class AdminDashboardService {
           // admin booking funnel's compensated cancels).
           this.db
             .select({
-              count: sql<number>`count(distinct ${payments.id})::int`,
+              count: sql<number>`count(distinct ${payments.id}) filter (where ${reservations.addonTicketItemId} is null)::int`,
               sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
             })
             .from(payments)
@@ -199,7 +204,7 @@ export class AdminDashboardService {
         .select({
           bucket: sql<string>`${bucketLabel}`,
           revenue: sql<number>`coalesce(sum(reservations.total_amount), 0)::int`,
-          count: sql<number>`count(*)::int`,
+          count: sql<number>`count(*) filter (where ${reservations.addonTicketItemId} is null)::int`,
         })
         .from(reservations)
         // review MEDIUM 4: WHERE는 raw createdAt 비교 (index eligible).
@@ -252,6 +257,7 @@ export class AdminDashboardService {
         .where(
           and(
             eq(reservations.status, 'CONFIRMED'),
+            isNull(reservations.addonTicketItemId),
             gte(reservations.createdAt, startUtc),
             lt(reservations.createdAt, endUtc),
           ),
@@ -317,6 +323,7 @@ export class AdminDashboardService {
         .where(
           and(
             eq(reservations.status, 'CONFIRMED'),
+            isNull(reservations.addonTicketItemId),
             gte(reservations.createdAt, startUtc),
             lt(reservations.createdAt, endUtc),
           ),

@@ -46,13 +46,16 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
   useEffect(() => {
     if (state !== 'ready' || !reservation?.showtimeId) return;
     const store = useBookingStore.getState();
-    const sameSelection = store.performanceId === performanceId
+    const sameSelection = (store.holderTicket?.id ?? null) === (reservation.addonTicketItemId ?? null)
+      && store.performanceId === performanceId
       && store.selectedShowtimeId === reservation.showtimeId
       && store.performanceTitle === reservation.performanceTitle
       && JSON.stringify(store.selectedSeats) === JSON.stringify(reservation.seats)
       && JSON.stringify(store.selectedAddons) === JSON.stringify(reservation.addons ?? []);
     if (!sameSelection) {
       store.setBookingData({
+        holderTicket: reservation.addonTicketItemId && reservation.addonParentReservationId
+          ? { id: reservation.addonTicketItemId, reservationId: reservation.addonParentReservationId } : null,
         selectedSeats: reservation.seats,
         selectedAddons: reservation.addons ?? [],
         showtimeId: reservation.showtimeId,

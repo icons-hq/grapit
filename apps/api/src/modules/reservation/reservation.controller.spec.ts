@@ -106,6 +106,18 @@ describe('ReservationController booking actor forwarding', () => {
     isPhoneVerified: true,
   };
 
+  it('binds a holder order to the server-resolved browser and the route ticket', async () => {
+    const service = { prepareReservation: vi.fn().mockImplementation(async dto => dto) };
+    const queue = { resolveBrowserIdentity: vi.fn().mockResolvedValue({ userId: scannerUser.id, refreshTokenFamilyId: 'verified-family', deviceSlotId: 'verified-device' }) };
+    const controller = new ReservationController(service as never, {} as never, queue as never);
+    const request = { user: scannerUser, cookies: {}, headers: {}, ip: '203.0.113.1', socket: {}, get: () => undefined };
+    await controller.prepareTicketAddons('owned-ticket', { seats: [], queueAdmission: { deviceSlotKey: 'client-value' } } as never, request as never);
+    expect(service.prepareReservation).toHaveBeenCalledWith(expect.objectContaining({
+      addonTicketItemId: 'owned-ticket', seats: [], queueAdmission: expect.objectContaining({
+        deviceSlotKey: 'verified-device', refreshFamilyId: 'verified-family', admissionToken: 'cookie-bound' }),
+    }), scannerUser, expect.anything());
+  });
+
   it('forwards capability claims and the display locale to payment confirm (audit #25, #88)', async () => {
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue({ id: 'reservation-1' }) };
     const controller = new ReservationController(service as never, {} as never);
