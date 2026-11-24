@@ -53,8 +53,8 @@ function ResetPasswordInner() {
 function RequestView({ returnTo }: { returnTo: string | null }) {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).resetPassword;
-  const [isSent, setIsSent] = useState(false);
   const [sentEmail, setSentEmail] = useState('');
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<ResetPasswordRequestInput>({
@@ -65,24 +65,28 @@ function RequestView({ returnTo }: { returnTo: string | null }) {
   });
 
   async function onSubmit(data: ResetPasswordRequestInput) {
+    setRequestError(null);
     setIsLoading(true);
     try {
-      await fetch(apiUrl('/api/v1/auth/password-reset/request'), {
+      const response = await fetch(apiUrl('/api/v1/auth/password-reset/request'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ ...data, frontendOrigin: getFrontendOrigin(), locale, ...(returnTo ? { returnTo } : {}) }),
       });
-    } catch {
-      // Always show success to prevent email enumeration
-    } finally {
+      if (!response.ok) {
+        setRequestError(response.status === 429 ? copy.tooManyRequests : copy.requestFailed);
+        return;
+      }
       setSentEmail(data.email);
-      setIsSent(true);
+    } catch {
+      setRequestError(copy.requestFailed);
+    } finally {
       setIsLoading(false);
     }
   }
 
-  if (isSent) {
+  if (sentEmail) {
     return (
       <main className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-[400px] space-y-6">
@@ -98,6 +102,7 @@ function RequestView({ returnTo }: { returnTo: string | null }) {
           <Button asChild size="lg" className="w-full">
             <Link href={buildAuthRoute('/auth', locale, { returnTo })}>{copy.backToLogin}</Link>
           </Button>
+          <Button variant="outline" className="w-full" onClick={() => setSentEmail('')}>{copy.requestAgain}</Button>
         </div>
       </main>
     );
@@ -134,6 +139,7 @@ function RequestView({ returnTo }: { returnTo: string | null }) {
               )}
             />
 
+            {requestError && <p role="alert" className="text-sm text-error">{requestError}</p>}
             <Button
               type="submit"
               size="lg"
@@ -146,7 +152,7 @@ function RequestView({ returnTo }: { returnTo: string | null }) {
                   {copy.sending}
                 </>
               ) : (
-                copy.requestCta
+                requestError ? copy.requestAgain : copy.requestCta
               )}
             </Button>
           </form>

@@ -9,12 +9,6 @@ import { getClientLocale } from '@/lib/i18n/client-copy';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import type { ReservationListItem } from '@grabit/shared';
 
-const FILTER_OPTIONS = [
-  { value: 'all', labelKey: 'all' },
-  { value: 'CONFIRMED', labelKey: 'confirmed' },
-  { value: 'CANCELLED', labelKey: 'cancelled' },
-] as const;
-
 interface ReservationListProps {
   reservations: ReservationListItem[] | undefined;
   isLoading: boolean;
@@ -31,13 +25,19 @@ export function ReservationList({
   onFilterChange,
 }: ReservationListProps) {
   const locale = getClientLocale();
-  const copy = getVisibleCopy(locale).reservation;
+  const messages = getVisibleCopy(locale);
+  const copy = messages.reservation;
+  const filters = [
+    { value: 'all', label: copy.list.all },
+    { value: 'CONFIRMED', label: copy.status.confirmed },
+    { value: 'CANCELLED', label: messages.mypage.summary.cancelled },
+  ];
 
   return (
     <div>
       {/* Filter chips */}
       <div className="flex gap-2" role="group" aria-label={copy.list.filterAria}>
-        {FILTER_OPTIONS.map((option) => (
+        {filters.map((option) => (
           <Button
             key={option.value}
             variant={filter === option.value ? 'default' : 'ghost'}
@@ -50,9 +50,7 @@ export function ReservationList({
             onClick={() => onFilterChange(option.value)}
             aria-pressed={filter === option.value}
           >
-            {option.labelKey === 'all'
-              ? copy.list.all
-              : copy.status[option.labelKey]}
+            {option.label}
           </Button>
         ))}
       </div>

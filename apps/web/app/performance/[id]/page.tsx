@@ -4,6 +4,7 @@ import { catalogText, formatPerformanceAge, formatPerformanceRuntime } from '@gr
 
 import { use, useEffect, useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { Ticket, MapPin } from 'lucide-react';
 import { FIXED_TICKET_CANCELLATION_FEE_KRW, stripStandardCancellationCopy } from '@grabit/shared';
@@ -25,6 +26,8 @@ import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { rememberPerformance } from '@/hooks/use-ticket-library';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { getTicketCopy } from '@/lib/i18n/ticket-copy';
+import { getLocalizedPathname } from '@/lib/i18n/locale-path';
+import { ApiClientError } from '@/lib/api-client';
 
 function DetailSkeleton() {
   return <main className="ticket-container ticket-detail-grid"><div><Skeleton className="aspect-[2.34] w-full rounded-3xl" /><Skeleton className="mt-6 h-7 w-2/3" /><Skeleton className="mt-6 h-40 w-full" /></div><Skeleton className="hidden h-[560px] rounded-3xl lg:block" /></main>;
@@ -36,12 +39,21 @@ export default function PerformanceDetailPage({ params }: { params: Promise<{id:
   const locale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(locale);
   const ticket = getTicketCopy(locale);
-  const { data:performance,isLoading,isError,refetch } = usePerformanceDetail(id);
+  const { data:performance,isLoading,isError,error,refetch } = usePerformanceDetail(id, { showErrorToast: false });
   const availability = useBookingAvailability({performanceStatus:performance?.status,bookingStartsAt:performance?.bookingPolicy?.bookingStartsAt});
   useRuntimeFlags({resyncClockBeforeMs:parseBookingStartMs(performance?.bookingPolicy?.bookingStartsAt)});
   const [posterOpen,setPosterOpen] = useState(false);
   useEffect(() => { if(performance?.id) rememberPerformance(performance.id); },[performance?.id]);
   if(isLoading) return <DetailSkeleton />;
+  if (isError && error instanceof ApiClientError && (error.statusCode === 400 || error.statusCode === 404)) {
+    const missing = copy.booking.queue.notFound;
+    return <main className="ticket-container ticket-page">
+      <div className="ticket-empty" role="alert">
+        <p>{missing.title}</p><span>{missing.description}</span>
+        <Link href={getLocalizedPathname('/categories', locale)}>{copy.home.browse}</Link>
+      </div>
+    </main>;
+  }
   if(isError || !performance) return <main className="ticket-container ticket-page"><div className="ticket-empty" role="alert"><p>{copy.performance.loadError}</p><button type="button" onClick={() => void refetch()}>{copy.performance.retry}</button></div></main>;
   const saleStatus = resolveBookingStartPerformanceStatus(performance.status,performance.bookingPolicy?.bookingStartsAt,availability.isBeforeScheduledBookingStart);
   const status = getDisplayPerformanceStatus(saleStatus,availability.bookingEnabled,availability.isResolved);

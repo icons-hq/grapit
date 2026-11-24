@@ -715,6 +715,7 @@
   "reservation": {
     "status": {
       "confirmed": "Booked",
+      "partiallyCancelled": "Partially cancelled",
       "cancelled": "Cancelled",
       "pendingPayment": "Payment pending",
       "failed": "Payment failed"
@@ -985,8 +986,9 @@
     "cancelPhoneChange": "Cancel phone change"
   },
   "resetPassword": {
-    "sentTitle": "Password reset email sent",
-    "sentBody": "We sent a password reset link to {email}. Check your inbox.",
+    "sentTitle": "Password reset requested",
+    "sentBody": "If you use a password to sign in with {email}, check your inbox and spam folder for a reset link.",
+    "requestFailed": "We couldn’t submit your request. Please try again shortly.",
     "backToLogin": "Back to login",
     "requestTitle": "Find password",
     "requestBody": "Enter the email address you used to sign up.",

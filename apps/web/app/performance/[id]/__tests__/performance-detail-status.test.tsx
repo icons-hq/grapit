@@ -8,13 +8,14 @@ import {
   resetServerClockForTests,
 } from '@/lib/server-clock';
 import PerformanceDetailPage from '../page';
+import { ApiClientError } from '@/lib/api-client';
 
 const localeMock = vi.hoisted(() => ({ activeLocale: 'ko' }));
-const detailMock = vi.hoisted(() => ({ performance: null as unknown, isLoading: false }));
+const detailMock = vi.hoisted(() => ({ performance: null as unknown, isLoading: false, error: null as Error | null, refetch: vi.fn() }));
 
 vi.mock('next-intl', () => ({ useLocale: () => localeMock.activeLocale }));
 vi.mock('@/hooks/use-performances', () => ({
-  usePerformanceDetail: () => ({ data: detailMock.performance, isLoading: detailMock.isLoading, isError: false }),
+  usePerformanceDetail: () => ({ data: detailMock.performance, isLoading: detailMock.isLoading, isError: !!detailMock.error, error: detailMock.error, refetch: detailMock.refetch }),
 }));
 vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: () => ({
@@ -60,7 +61,7 @@ function performance(overrides: Partial<PerformanceWithDetails> & { bookingStart
     updatedAt: '2026-09-01T00:00:00.000Z',
     venue: { id: 'venue-1', name: 'Hall', address: null },
     priceTiers: [],
-    showtimes: [],
+    showtimes: [{ id: 'st-1', performanceId: 'perf-1', dateTime: '2026-10-01T10:00:00.000Z' }],
     castings: [],
     seatMaps: [],
     bookingPolicy: {
@@ -103,11 +104,30 @@ describe('PerformanceDetailPage sale status display', () => {
     vi.setSystemTime(NOW);
     localeMock.activeLocale = 'ko';
     detailMock.isLoading = false;
+    detailMock.error = null;
+    detailMock.refetch.mockClear();
   });
 
   afterEach(() => {
     resetServerClockForTests();
     vi.useRealTimers();
+  });
+
+  it.each([400, 404])('offers the localized catalog for a missing or invalid performance (%i)', (status) => {
+    localeMock.activeLocale = 'en';
+    detailMock.performance = undefined;
+    detailMock.error = new ApiClientError('Unavailable', status);
+    renderDetail();
+    expect(screen.getByRole('link').getAttribute('href')).toBe('/en/categories');
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('can retry a temporary detail error', () => {
+    detailMock.performance = undefined;
+    detailMock.error = new ApiClientError('Unavailable', 503);
+    renderDetail();
+    screen.getByRole('button', { name: '다시 시도' }).click();
+    expect(detailMock.refetch).toHaveBeenCalledOnce();
   });
 
   it('flips the badge and schedule together with the booking CTA at the booking start', () => {
@@ -128,7 +148,7 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
     expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
-    expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+    expect(screen.getByText(/KST$/, { selector: 'time' }).textContent).toContain('2026. 10. 1.');
   });
 
   // Audit #170/#35: the list says when booking opens and the FAQ points buyers to
@@ -153,7 +173,7 @@ describe('PerformanceDetailPage sale status display', () => {
     detailMock.performance = performance({ status: 'upcoming', bookingStartsAt: null });
     renderDetail();
 
-    expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+    expect(screen.getByText(/KST$/, { selector: 'time' }).textContent).toContain('2026. 10. 1.');
     expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
   });
 
@@ -193,7 +213,7 @@ describe('PerformanceDetailPage sale status display', () => {
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
     expect(screen.queryByLabelText('상태: 오픈예정')).toBeNull();
     expect(screen.queryByTestId('performance-booking-opens-at')).toBeNull();
-    expect(screen.getByText(/KST$/).textContent).toContain('2026. 10. 1.');
+    expect(screen.getByText(/KST$/, { selector: 'time' }).textContent).toContain('2026. 10. 1.');
   });
 
   it('keeps a selling performance with a future booking start in the upcoming state', () => {
@@ -229,7 +249,7 @@ describe('PerformanceDetailPage sale status display', () => {
     detailMock.performance = performance({ status: 'selling' });
     renderDetail();
 
-    const period = screen.getByText(/KST$/);
+    const period = screen.getByText(/KST$/, { selector: 'time' });
     expect(period.tagName).toBe('TIME');
     expect(period.getAttribute('datetime')).toBe('2026-10-01');
     expect(period.textContent).toContain('1 ต.ค. 2026');

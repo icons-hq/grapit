@@ -101,6 +101,8 @@ function buildReservationSummary(reservations: ReservationListItem[]) {
     (summary, reservation) => {
       summary.total += 1;
       summary[reservation.status] += 1;
+      // The cancellation filter also includes confirmed reservations with a cancelled seat.
+      if (reservation.isPartiallyCancelled) summary.CANCELLED += 1;
       return summary;
     },
     {
@@ -149,7 +151,8 @@ export default function MyPage() {
     () =>
       filter === 'all'
         ? allReservations
-        : allReservations.filter((reservation) => reservation.status === filter),
+        : allReservations.filter((reservation) =>
+          reservation.status === filter || (filter === 'CANCELLED' && reservation.isPartiallyCancelled)),
     [allReservations, filter],
   );
   const nextReservation = useMemo(
@@ -512,7 +515,7 @@ function TicketWallet({
           label={reservationCopy.status.pendingPayment}
           value={summary.PENDING_PAYMENT}
         />
-        <StatusTile label={reservationCopy.status.cancelled} value={summary.CANCELLED} />
+        <StatusTile label={mypageCopy.summary.cancelled} value={summary.CANCELLED} />
         <StatusTile
           label={reservationCopy.status.failed}
           value={summary.FAILED}

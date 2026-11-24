@@ -542,6 +542,7 @@ export const reservationListItemSchema = z.object({
   id: z.string().uuid('유효한 reservation ID가 필요합니다'),
   reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
   status: z.enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED']),
+  isPartiallyCancelled: z.boolean().optional(),
   performanceTitle: z.string().min(1, '공연명이 필요합니다'),
   posterUrl: z.string().url().nullable(),
   showDateTime: isoDatetime('공연 시각'),

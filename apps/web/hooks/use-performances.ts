@@ -112,7 +112,7 @@ export function usePerformances(genre: string) {
   });
 }
 
-export function usePerformanceDetail(id: string) {
+export function usePerformanceDetail(id: string, options?: { showErrorToast?: boolean }) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const adminPreviewUserId = useAuthStore((state) =>
     state.isInitialized && state.accessToken && canUseAdminBookingBypass(state.user)
@@ -129,14 +129,14 @@ export function usePerformanceDetail(id: string) {
         // Keep published, localized buyer copy even for admins.
         return await apiClient.get<PerformanceWithDetails>(
           `/api/v1/performances/${id}?locale=${encodeURIComponent(locale)}`,
-          adminPreviewUserId ? { showErrorToast: false } : undefined,
+          adminPreviewUserId ? { showErrorToast: false } : options,
         );
       } catch (error) {
         if (!adminPreviewUserId || !(error instanceof Error)
           || !('statusCode' in error) || error.statusCode !== 404) throw error;
         // The existing admin API independently authenticates and authorizes this read.
         // Public catalog/detail endpoints and server-side purchase gates stay unchanged.
-        return apiClient.get<PerformanceWithDetails>(`/api/v1/admin/performances/${id}`);
+        return apiClient.get<PerformanceWithDetails>(`/api/v1/admin/performances/${id}`, options);
       }
     },
     enabled: !!id,

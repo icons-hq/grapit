@@ -26,9 +26,30 @@ describe('Ticket search i18n and filters',()=>{
     searchParams=new URLSearchParams('q=girl&page=3');render(<SearchPage />);
     expect(screen.getByRole('searchbox',{name:'Search'})).toHaveValue('girl');
     expect(screen.getByText('0 results')).toBeDefined();
-    expect(screen.getByText('No shows here yet')).toBeDefined();
+    expect(screen.getByText('No results found')).toBeDefined();
     const genres=within(screen.getByRole('group',{name:'Genre'}));
     await userEvent.setup().click(genres.getByRole('button',{name:'Concert'}));
     expect(replaceMock).toHaveBeenCalledWith('/en/search?q=girl&genre=concert',{scroll:false});
+  });
+
+  it('clears an empty search with default filters and focuses the new input', async () => {
+    searchParams = new URLSearchParams('q=missing&status=all&ended=true');
+    const view = render(<SearchPage />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Clear search' }));
+    const target = new URL(replaceMock.mock.lastCall![0], 'http://localhost');
+    expect(target.pathname).toBe('/en/search');
+    expect(target.searchParams.has('q')).toBe(false);
+    searchParams = target.searchParams;
+    view.rerender(<SearchPage />);
+    expect(screen.getByRole('searchbox')).toHaveValue('');
+    expect(screen.getByRole('searchbox')).toHaveFocus();
+  });
+
+  it('resets an active filter without removing the search term', async () => {
+    searchParams = new URLSearchParams('q=missing&genre=concert');
+    render(<SearchPage />);
+    const emptyState = screen.getByText('No results found').closest('[role="status"]') as HTMLElement;
+    await userEvent.setup().click(within(emptyState).getByRole('button', { name: 'Reset' }));
+    expect(replaceMock).toHaveBeenCalledWith('/en/search?q=missing', { scroll: false });
   });
 });

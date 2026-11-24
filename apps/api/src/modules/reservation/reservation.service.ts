@@ -1529,6 +1529,10 @@ export class ReservationService {
           totalAmount: reservations.totalAmount,
           createdAt: reservations.createdAt,
         },
+        isPartiallyCancelled: sql<boolean>`${reservations.status} = 'CONFIRMED' AND EXISTS (
+          SELECT 1 FROM ${ticketItems}
+          WHERE ${ticketItems.reservationId} = ${reservations.id} AND ${ticketItems.status} = 'cancelled'
+        )`,
         showtime: {
           dateTime: showtimes.dateTime,
         },
@@ -1571,6 +1575,7 @@ export class ReservationService {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
         status: row.reservation.status as ReservationStatus,
+        isPartiallyCancelled: row.isPartiallyCancelled,
         performanceTitle: titles.get(row.performance.id)?.title ?? row.performance.title,
         posterUrl: row.performance.posterUrl,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',

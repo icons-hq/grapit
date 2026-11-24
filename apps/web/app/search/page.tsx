@@ -1,5 +1,5 @@
 'use client';
-import type { FormEvent } from 'react';
+import { useEffect, useRef, type FormEvent } from 'react';
 import { useLocale } from 'next-intl';
 import { Search } from 'lucide-react';
 import { CatalogResults } from '@/components/performance/catalog-results';
@@ -13,6 +13,20 @@ export default function SearchPage() {
   const { params, options, update, reset } = useCatalogNavigation();
   const q = params.get('q') ?? '';
   const query = useSearch();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const focusAfterClear = useRef(false);
+  const hasFilters = Boolean(options.genre || options.region || options.venueId || options.dateFrom || options.dateTo
+    || options.status !== 'all' || options.ended === false);
+  function clearSearch() {
+    focusAfterClear.current = true;
+    update({ q: '' });
+  }
+  useEffect(() => {
+    if (!q && focusAfterClear.current) {
+      inputRef.current?.focus();
+      focusAfterClear.current = false;
+    }
+  }, [q]);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const term = new FormData(event.currentTarget).get('q');
@@ -24,10 +38,10 @@ export default function SearchPage() {
       {Array.from(params.entries()).filter(([name]) => name !== 'q' && name !== 'page').map(([name, value], index) => (
         <input key={index} type="hidden" name={name} value={value} />
       ))}
-      <input key={q} name="q" type="search" defaultValue={q} placeholder={copy.searchHint} aria-label={copy.search} maxLength={200} />
+      <input key={q} ref={inputRef} name="q" type="search" defaultValue={q} placeholder={copy.searchHint} aria-label={copy.search} maxLength={200} />
       <button type="submit" aria-label={copy.search}><Search size={23} /></button>
     </form>
-    {q ? <CatalogResults data={query.data} isLoading={query.isLoading} isError={query.isError} retry={() => void query.refetch()} value={options} update={update} reset={reset} search currentSort={params.get('sort') ?? 'relevance'} />
+    {q ? <CatalogResults data={query.data} isLoading={query.isLoading} isError={query.isError} retry={() => void query.refetch()} value={options} update={update} reset={reset} search clearSearch={hasFilters ? undefined : clearSearch} currentSort={params.get('sort') ?? 'relevance'} />
       : <><GenreGrid all /><p className="mt-10 text-center text-sm text-muted-foreground">{copy.searchHint}</p></>}
   </main>;
 }

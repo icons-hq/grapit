@@ -63,12 +63,11 @@ describe('ResetPasswordPage', () => {
       expect(screen.getByLabelText('이메일')).toBeDefined();
     });
 
-    it('API 실패 응답이어도 toast.error 없이 성공 화면을 표시한다', async () => {
+    it('요청이 접수되면 계정 존재 여부를 밝히지 않고 메일함을 안내한다', async () => {
       vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.heygrabit.com');
       const fetchMock = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        json: async () => ({ message: '메일 발송 실패' }),
+        ok: true,
+        status: 200,
       } as Response);
       vi.stubGlobal('fetch', fetchMock);
       const { apiClient } = await import('@/lib/api-client');
@@ -81,7 +80,7 @@ describe('ResetPasswordPage', () => {
       );
 
       await vi.waitFor(() => {
-        expect(screen.getByText('비밀번호 재설정 메일 발송 완료')).toBeDefined();
+        expect(screen.getByRole('heading', { name: '비밀번호 재설정을 요청했습니다' })).toBeDefined();
       });
 
       expect(fetchMock).toHaveBeenCalledWith(
@@ -98,6 +97,25 @@ describe('ResetPasswordPage', () => {
       );
       expect((apiClient.post as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it.each(['503', '429', 'offline'])('%s 실패 후 같은 주소로 다시 요청할 수 있다', async (failure) => {
+      const fetchMock = vi.fn();
+      if (failure === 'offline') fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      else fetchMock.mockResolvedValueOnce({ ok: false, status: Number(failure) });
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<ResetPasswordPage />);
+      const user = userEvent.setup();
+      const email = screen.getByLabelText<HTMLInputElement>('이메일');
+      await user.type(email, 'member@example.com');
+      await user.click(screen.getByRole('button', { name: '비밀번호 재설정 링크 발송' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain(failure === '429' ? '요청이 너무 많습니다' : '요청을 보내지 못했습니다');
+      expect(email.value).toBe('member@example.com');
+      await user.click(screen.getByRole('button', { name: '다시 요청하기' }));
+      expect(await screen.findByRole('heading', { name: '비밀번호 재설정을 요청했습니다' })).toBeDefined();
+      expect(fetchMock.mock.calls[1]).toEqual(fetchMock.mock.calls[0]);
     });
   });
 

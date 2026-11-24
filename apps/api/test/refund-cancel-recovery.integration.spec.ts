@@ -483,16 +483,25 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
       policyCodes: ['BOOKING_DAY_8_TO_SHOW_DAY_10'],
     });
     const partial = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);
+    expect(await buyer.getMyReservations(f.userId)).toEqual([
+      expect.objectContaining({ id: f.reservation.id, status: 'CONFIRMED', isPartiallyCancelled: false }),
+    ]);
     expect(partial).toMatchObject({ refundableAmount: 30000 - fee, providerRefund: { amountMinor: 30000 - fee } });
     const cancellation = {
       expectedRefundableAmount: 30000 - fee,
       expectedProviderRefundAmountMinor: 30000 - fee,
     };
     await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, '한 좌석 취소', cancellation);
+    expect(await buyer.getMyReservations(f.userId)).toEqual([
+      expect.objectContaining({ id: f.reservation.id, status: 'CONFIRMED', isPartiallyCancelled: true }),
+    ]);
     expect(toss.cancelPayment.mock.calls[0]?.[2].cancelAmount).toBe(30000 - fee);
     const remaining = await refund.getRefundPreview(f.reservation.id, f.userId);
     expect(remaining).toMatchObject({ refundableAmount: 30000 - fee, providerRefund: { amountMinor: 30000 - fee } });
     await refund.requestRefund(f.reservation.id, f.userId, '나머지 좌석 취소', cancellation);
+    expect(await buyer.getMyReservations(f.userId)).toEqual([
+      expect.objectContaining({ id: f.reservation.id, status: 'CANCELLED', isPartiallyCancelled: false }),
+    ]);
     expect(toss.cancelPayment.mock.calls[1]?.[2].cancelAmount).toBe(30000 - fee);
     expect(f.snapshot.balanceAmount).toBe(2 * (fee + 2000));
   });
