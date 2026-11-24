@@ -120,6 +120,7 @@
     "priceLabel": "가격",
     "upcomingDateLabel": "오픈예정",
     "detailImagesTitle": "상세 이미지",
+    "ticketGuideAlt": "티켓 관련 안내. 모바일 QR 티켓과 입장, 반입 제한 물품, 촬영·저작권, 관람 매너와 안전 수칙",
     "detailImageAlt": "{title} 상세 이미지 {index}",
     "verifyCta": "인증 후 예매하기"
   },

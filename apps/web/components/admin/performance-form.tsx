@@ -1112,7 +1112,7 @@ export function PerformanceForm({
           <div>
             <h2 className="text-xl font-semibold">상세페이지 이미지</h2>
             <p className="mt-1 text-sm text-gray-600">
-              공연 상세페이지 본문에 노출될 이미지를 순서대로 관리합니다.
+              공연별 이미지를 표시할 순서대로 등록하세요. 모든 공연에 공통 티켓 관련 안내가 자동으로 표시됩니다.
             </p>
           </div>
           <Button

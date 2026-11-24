@@ -120,6 +120,7 @@
     "priceLabel": "Price",
     "upcomingDateLabel": "Coming soon",
     "detailImagesTitle": "Detail images",
+    "ticketGuideAlt": "Ticket and admission guide. Mobile QR tickets, restricted items, photography and copyright, audience etiquette and safety.",
     "detailImageAlt": "{title} detail image {index}",
     "verifyCta": "Verify to book"
   },
