@@ -333,6 +333,7 @@ export interface ReservationDetail extends ReservationListItem {
 }
 
 export interface PaymentInfo {
+  virtualAccount?: { bankCode: string; accountNumber: string; dueDate: string };
   paymentKey: string;
   method: string;
   amount: number;

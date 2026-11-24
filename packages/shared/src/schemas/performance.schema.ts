@@ -189,10 +189,7 @@ export const performanceBookingPolicySchema = z.object({
     .number()
     .int()
     .positive('최대 예매 가능 매수는 1 이상이어야 합니다'),
-  // Only categories buyer checkout can submit and the admin form offers. VIRTUAL_ACCOUNT and
-  // MOBILE_PHONE stay readable on legacy rows (PERFORMANCE_ALLOWED_PAYMENT_METHODS) but
-  // can no longer be stored, so an API call or draft apply cannot allow a method no
-  // operator can see.
+  // Legacy MOBILE_PHONE rows stay readable. Writes use the same options as the admin form.
   allowedPaymentMethods: z
     .array(z.enum(CHECKOUT_CONFIGURABLE_PAYMENT_METHODS))
     .min(1, '최소 1개의 결제 수단이 필요합니다'),

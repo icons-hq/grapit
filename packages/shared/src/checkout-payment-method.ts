@@ -6,15 +6,15 @@ import type { PerformanceAllowedPaymentMethod } from './types/performance.types'
  * admin performance form offers exactly this list, and isCheckoutPaymentMethodAllowed
  * accepts nothing outside it, so the admin choices and the server-enforced set are the same.
  *
- * The checkout widget classifies VIRTUAL_ACCOUNT and MOBILE_PHONE selections as such (never
- * as CARD) and the server rejects them under every policy: an asynchronous deposit (virtual
- * account) or a phone-bill charge is not part of the checkout contract. Widget selections
+ * Virtual accounts require a separate deposit after merchant confirmation. Mobile phone
+ * payments are unsupported. Widget selections
  * with no category here (PAYCO, Samsung Pay, gift certificates, unknown codes) are flagged
  * unsupported in the browser and never reach the server.
  */
 export const CHECKOUT_CONFIGURABLE_PAYMENT_METHODS = [
   'CARD',
   'TRANSFER',
+  'VIRTUAL_ACCOUNT',
   'SIMPLE_PAY',
   'FOREIGN_EASY_PAY',
 ] as const satisfies readonly PerformanceAllowedPaymentMethod[];
@@ -23,7 +23,7 @@ export const CHECKOUT_CONFIGURABLE_PAYMENT_METHODS = [
 export function isMerchantConfirmedCheckoutMethod(method: PaymentMethod | null | undefined): boolean {
   if (!method) return false;
   if (method.method === 'CARD') return method.provider === 'CARD';
-  if (method.method === 'TRANSFER') return method.provider === 'CARD';
+  if (method.method === 'TRANSFER' || method.method === 'VIRTUAL_ACCOUNT') return method.provider === 'CARD';
   if (method.method === 'SIMPLE_PAY') {
     return ['TOSS_PAY', 'NAVER_PAY', 'KAKAOPAY'].includes(method.provider);
   }
@@ -66,7 +66,7 @@ export function isCheckoutConfigurablePaymentMethod(method: Pick<PaymentMethod, 
 /**
  * Whether checkout may use this method category for a performance: it must be a category
  * checkout supports and one the performance allows. A stored policy that still lists
- * VIRTUAL_ACCOUNT or MOBILE_PHONE does not enable them.
+ * MOBILE_PHONE does not enable it.
  */
 export function isCheckoutPaymentMethodAllowed(
   method: Pick<PaymentMethod, 'method'>,

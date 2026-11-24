@@ -128,6 +128,7 @@ interface TossPaymentWidgetProps {
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
   onPaymentDeadlineChange?: (paymentDeadlineAt: string) => void;
+  allowVirtualAccount?: boolean;
   /**
    * The widget could not load (missing client key, SDK or render failure): the message
    * it shows in place of the payment methods and terms, or null once a load starts again
@@ -611,6 +612,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       onPaymentMethodChange,
       onWidgetAgreementChange,
       onPaymentDeadlineChange,
+      allowVirtualAccount = false,
       onLoadError,
     },
     ref,
@@ -970,7 +972,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
           const paymentMethodWidget = await activeWidgets.renderPaymentMethods({
             selector: '#payment-method',
-            variantKey: resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
+            variantKey: allowVirtualAccount && paymentWidgetVariantKey === 'DEFAULT' && process.env.NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY
+              ? process.env.NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY : resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
           });
           if (!mounted) {
             await destroyWidgetInstance(paymentMethodWidget);
@@ -1033,6 +1036,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       };
     }, [
       widgets,
+      allowVirtualAccount,
       amount,
       onReady,
       updateSelectedPaymentMethod,

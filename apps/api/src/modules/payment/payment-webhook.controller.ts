@@ -152,6 +152,19 @@ export class PaymentWebhookController {
   ) {}
 
   @Public()
+  @SkipThrottle()
+  @Post('deposit-callback')
+  @HttpCode(HttpStatus.OK)
+  async handleDepositCallback(@Body(new ZodValidationPipe(z.object({
+    orderId: z.string().min(1).max(200), secret: z.string().min(1).max(256),
+    status: z.string().min(1), transactionKey: z.string().nullish(),
+  }))) body: { orderId: string; secret: string }) {
+    // DEPOSIT_CALLBACK has a flat body and its own per-payment secret. Never store the raw event.
+    await this.paymentService.syncVirtualAccount({ orderId: body.orderId, secret: body.secret });
+    return { acknowledged: true };
+  }
+
+  @Public()
   // Toss sends every webhook from a few fixed IPs, so an IP bucket would 429
   // (and delay by Toss' retry backoff) legitimate events at ticket-open peaks.
   // TossWebhookGuard's secret check and the webhook event ledger guard abuse.
@@ -257,6 +270,21 @@ export class PaymentWebhookController {
     progress: AsyncPaymentProgressSnapshot | null,
     providerResponse: TossPaymentResponse,
   ): Promise<{ code: string; message?: string }> {
+    if (body.eventType === 'CANCEL_STATUS_CHANGED' && body.data.cancelStatus === 'DONE'
+      && progress?.reservationStatus === 'PENDING_PAYMENT' && providerResponse.status === 'CANCELED'
+      && normalizeTossApprovedMethod(providerResponse.method).category === 'VIRTUAL_ACCOUNT') {
+      const closed = await this.paymentService.syncVirtualAccount({ orderId: providerResponse.orderId, paymentKey: providerResponse.paymentKey });
+      if (closed) return { code: 'VIRTUAL_ACCOUNT_CANCELED' };
+    }
+    if (body.eventType === 'PAYMENT_STATUS_CHANGED' && normalizeTossApprovedMethod(providerResponse.method).category === 'VIRTUAL_ACCOUNT'
+      && (['WAITING_FOR_DEPOSIT', 'DONE', 'EXPIRED', 'ABORTED'].includes(providerResponse.status)
+        || (providerResponse.status === 'PARTIAL_CANCELED' && providerResponse.balanceAmount === 0)
+        || (providerResponse.status === 'CANCELED' && progress?.reservationStatus === 'PENDING_PAYMENT'))) {
+      const result = await this.paymentService.syncVirtualAccount({ orderId: providerResponse.orderId, paymentKey: providerResponse.paymentKey });
+      if (result || providerResponse.status === 'WAITING_FOR_DEPOSIT') {
+        return { code: result ? 'VIRTUAL_ACCOUNT_' + result : 'AWAITING_ISSUANCE_RECORD' };
+      }
+    }
     if (body.eventType === 'CANCEL_STATUS_CHANGED' || this.hasTerminalFullCancel(body, providerResponse)) {
       if (body.eventType === 'CANCEL_STATUS_CHANGED' && body.data.cancelStatus === 'ABORTED') {
         // A compensation cancel the PG aborted leaves the captured money in
@@ -615,6 +643,10 @@ export class PaymentWebhookController {
     }
 
     const statusDiffers = queried.status !== body.data.status;
+    if (mismatches.length === 0 && statusDiffers && normalizeTossApprovedMethod(queried.method).category === 'VIRTUAL_ACCOUNT'
+      && ['WAITING_FOR_DEPOSIT', 'DONE'].includes(queried.status) && ['WAITING_FOR_DEPOSIT', 'DONE'].includes(body.data.status ?? '')) {
+      return { stale: false };
+    }
     if (
       mismatches.length === 0
       && statusDiffers

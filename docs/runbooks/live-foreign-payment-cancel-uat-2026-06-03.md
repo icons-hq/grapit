@@ -220,8 +220,8 @@ provider (TrueMoney), a payment method the order or the performance policy
 does not allow (`payment_method_not_allowed`: the provider lookup's `method`
 and `easyPay.provider` must match the frozen Checkout Payment Method and be in
 the performance's allowed methods intersected with
-`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`; virtual account and mobile phone never
-pass), or a second paymentKey for an order whose payment is already accepted,
+`CHECKOUT_CONFIGURABLE_PAYMENT_METHODS`; virtual accounts have a separate
+[domestic deposit flow](toss-virtual-account.md)), or a second paymentKey for an order whose payment is already accepted,
 cancelled or compensated (including a buyer-cancelled reservation or an
 earlier refunded late DONE).
 
@@ -232,7 +232,7 @@ earlier refunded late DONE).
   gets 409 without a provider call, and the browser's `provider` parameter is
   ignored (the wallet comes from the provider lookup or the frozen checkout
   method).
-- A deposited virtual account DONE is never cancelled automatically: its full
+- An unexpected virtual account DONE on a foreign checkout needs manual review. Its full
   refund needs the buyer's refund account. The row stays `DONE/cancel_pending`
   (unissuable) with an `attention` record (`attempts=0`), a
   `ASYNC_DONE_COMPENSATION_ATTENTION` diagnostic and an error log; refund it at

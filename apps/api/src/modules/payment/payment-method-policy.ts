@@ -12,14 +12,13 @@ import {
  *
  * The server-enforced set is `CHECKOUT_CONFIGURABLE_PAYMENT_METHODS` from
  * `@grabit/shared`, the same list the admin performance form offers. A method
- * outside it (virtual account, mobile phone, gift certificates, unsupported
+ * outside it (mobile phone, gift certificates, unsupported
  * easy pay providers) is never issued, whatever the performance policy says.
  */
 export type CheckoutConfigurablePaymentMethod = typeof CHECKOUT_CONFIGURABLE_PAYMENT_METHODS[number];
 
 export type ApprovedPaymentMethodCategory =
   | CheckoutConfigurablePaymentMethod
-  | 'VIRTUAL_ACCOUNT'
   | 'MOBILE_PHONE'
   | 'UNSUPPORTED';
 
@@ -33,7 +32,7 @@ export interface ApprovedPaymentMethod {
 }
 
 export type ApprovedMethodPolicyMismatch =
-  /** Virtual account, mobile phone, gift certificate, unknown label, easy pay provider or foreign wallet. */
+  /** Mobile phone, gift certificate, unknown label, easy pay provider or foreign wallet. */
   | 'unsupported_method'
   /** The performance policy (or the platform default) does not allow the category. */
   | 'not_allowed_by_policy'
@@ -222,13 +221,12 @@ export function isEnforcedCheckoutPaymentMethod(
  */
 export function findApprovedMethodPolicyMismatch(
   approved: ApprovedPaymentMethod,
-  checkoutPaymentMethod: Pick<PaymentMethod, 'method' | 'provider'> | null | undefined,
+  checkoutPaymentMethod: Pick<PaymentMethod, 'method' | 'provider' | 'currency' | 'overseasPaymentConsent'> | null | undefined,
   enforced: readonly string[],
 ): ApprovedMethodPolicyMismatch | null {
   const { category } = approved;
   if (
     category === 'UNSUPPORTED'
-    || category === 'VIRTUAL_ACCOUNT'
     || category === 'MOBILE_PHONE'
     || (category === 'FOREIGN_EASY_PAY' && !approved.provider)
   ) {
@@ -242,6 +240,10 @@ export function findApprovedMethodPolicyMismatch(
   }
   if (checkoutPaymentMethod.method !== category) {
     return 'checkout_method_mismatch';
+  }
+  if (category === 'VIRTUAL_ACCOUNT' && (checkoutPaymentMethod.provider !== 'CARD'
+    || (checkoutPaymentMethod.currency ?? 'KRW') !== 'KRW' || checkoutPaymentMethod.overseasPaymentConsent?.required)) {
+    return 'checkout_provider_mismatch';
   }
   if (
     (category === 'SIMPLE_PAY' || category === 'FOREIGN_EASY_PAY')

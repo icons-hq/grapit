@@ -417,6 +417,14 @@ describe('TossPaymentWidget', () => {
     expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
   });
 
+  it('renders the dedicated domestic widget for a performance that accepts deposits', async () => {
+    vi.stubEnv('NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY', 'GRABIT_VA');
+    try {
+      render(<TossPaymentWidget {...defaultProps} allowVirtualAccount />);
+      await waitFor(() => expect(renderPaymentMethodsMock).toHaveBeenCalledWith(expect.objectContaining({ variantKey: 'GRABIT_VA' })));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('does not record a handoff when the live widget selection differs from the last selection event', async () => {
     const onPaymentMethodChange = vi.fn();
     const ref = createRef<TossPaymentWidgetRef>();
@@ -435,7 +443,6 @@ describe('TossPaymentWidget', () => {
   });
 
   it.each([
-    ['VIRTUAL_ACCOUNT', 'VIRTUAL_ACCOUNT'],
     ['휴대폰', 'MOBILE_PHONE'],
     ['PAYCO', 'SIMPLE_PAY'],
   ])('refuses a live %s selection before any handoff is recorded (audit #70)', async (code, method) => {
@@ -762,7 +769,7 @@ describe('resolvePaymentMethodSelection widget code table (audit #70)', () => {
     }
   });
 
-  it.each(['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'])('classifies %s exactly but never as payable', (code) => {
+  it.each(['MOBILE_PHONE'])('classifies %s exactly but never as payable', (code) => {
     const selection = resolvePaymentMethodSelection(code);
     expect(selection.unsupported).toBeUndefined();
     expect(isPayableWidgetSelection(selection)).toBe(false);

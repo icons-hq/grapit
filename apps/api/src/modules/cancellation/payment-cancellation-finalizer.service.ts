@@ -119,7 +119,7 @@ const RESULT_MESSAGE_BY_SOURCE: Record<CancellationSource, string> = {
 const REDACTED_PROVIDER_METADATA_VALUE = '[REDACTED]';
 const LOCAL_ONLY_RESULT_CODE = 'NO_PROVIDER_REFUND';
 const SENSITIVE_PROVIDER_METADATA_KEY =
-  /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
+  /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key|refundReceiveAccount|accountNumber|holderName|depositorName)/i;
 
 
 function resolveLocalPaymentStatus(

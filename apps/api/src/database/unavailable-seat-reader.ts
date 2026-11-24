@@ -5,7 +5,7 @@ import type { DrizzleDB } from './drizzle.provider.js';
 import { seatInventories } from './schema/seat-inventories.js';
 
 type SeatIdentity = { floorKey: string; seatKey: string; seatId: string };
-type UnavailableSeat = { status: 'sold' | 'held_cancelled' | 'disabled' };
+type UnavailableSeat = { status: 'sold' | 'held_cancelled' | 'disabled' | 'locked' };
 
 /** Fresh prechecks only: Redis ownership and confirm's transaction stay authoritative. */
 export function createUnavailableSeatReader(executor: () => Pick<DrizzleDB, 'select' | 'execute'>) {
@@ -20,7 +20,7 @@ export function createUnavailableSeatReader(executor: () => Pick<DrizzleDB, 'sel
         eq(seatInventories.showtimeId, request.showtime_id),
         eq(seatInventories.floorKey, request.floor_key),
         or(eq(seatInventories.seatKey, request.seat_key), and(isNull(seatInventories.seatKey), eq(seatInventories.seatId, request.seat_id))),
-        or(eq(seatInventories.status, 'sold'), eq(seatInventories.status, 'held_cancelled'), eq(seatInventories.status, 'disabled')),
+        or(eq(seatInventories.status, 'sold'), eq(seatInventories.status, 'held_cancelled'), eq(seatInventories.status, 'disabled'), eq(seatInventories.status, 'locked')),
       ));
       return new Map([[request.request_key, row as UnavailableSeat | undefined ?? null]]);
     }
@@ -32,14 +32,14 @@ export function createUnavailableSeatReader(executor: () => Pick<DrizzleDB, 'sel
         SELECT inventory.status FROM seat_inventories inventory
         WHERE inventory.showtime_id = request.showtime_id AND inventory.floor_key = request.floor_key
           AND (inventory.seat_key = request.seat_key OR (inventory.seat_key IS NULL AND inventory.seat_id = request.seat_id))
-          AND inventory.status IN ('sold', 'held_cancelled', 'disabled')
+          AND inventory.status IN ('sold', 'held_cancelled', 'disabled', 'locked')
         LIMIT 1
       ) unavailable ON true
     `);
     const rows = new Map<string, UnavailableSeat | null>();
     for (const row of result.rows as Array<{ request_key: unknown; status: unknown }>) {
       if (typeof row.request_key !== 'string' || rows.has(row.request_key)
-        || (row.status !== null && row.status !== 'sold' && row.status !== 'held_cancelled' && row.status !== 'disabled')) {
+        || (row.status !== null && row.status !== 'sold' && row.status !== 'held_cancelled' && row.status !== 'disabled' && row.status !== 'locked')) {
         throw new InternalServerErrorException('좌석 상태를 확인하지 못했습니다');
       }
       rows.set(row.request_key, row.status === null ? null : { status: row.status });

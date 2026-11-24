@@ -311,9 +311,9 @@ describe('performance price and sale-time input guards', () => {
   it('stores exactly the payment methods checkout can submit and the admin form offers (audit #70)', () => {
     expect(performanceBookingPolicySchema.parse({
       ...policy, allowedPaymentMethods: [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS],
-    }).allowedPaymentMethods).toEqual(['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY']);
+    }).allowedPaymentMethods).toEqual(['CARD', 'TRANSFER', 'VIRTUAL_ACCOUNT', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY']);
 
-    for (const hidden of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE']) {
+    for (const hidden of ['MOBILE_PHONE']) {
       const policyResult = performanceBookingPolicySchema.safeParse({ ...policy, allowedPaymentMethods: ['CARD', hidden] });
       expect(policyResult.success, hidden).toBe(false);
       expect(policyResult.error?.issues.map((issue) => issue.path.join('.'))).toEqual(['allowedPaymentMethods.1']);

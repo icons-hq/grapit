@@ -2020,7 +2020,7 @@ export class QueueService {
         and(
           eq(showtimes.performanceId, performanceId),
           showtimeOnSaleCondition(now),
-          inArray(seatInventories.status, ['sold', 'held_cancelled', 'disabled']),
+          inArray(seatInventories.status, ['sold', 'held_cancelled', 'disabled', 'locked']),
         ),
       );
 

@@ -1,4 +1,6 @@
 import { issueTicketAddons, requirePurchasableTicket } from '../../database/ticket-holder-addons.js';
+import { DEPOSIT_REVERSED, getVirtualAccountDetails, matchesDepositSecret } from './virtual-account.js';
+import { releaseCompensatedDeposit, restoreDepositedOrder, suspendDepositedOrder } from './virtual-account-inventory.js';
 import { finalizeReservationAddons, restoreEndedCheckoutAddonHolds } from '../../database/booking-addon-inventory.js';
 import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
@@ -384,6 +386,14 @@ export class PaymentService {
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
     const { orderId, paymentMethod, successUrl, failUrl, pendingUrl, userId } = input;
     this.assertSupportedTossCheckoutProvider(paymentMethod);
+    if (paymentMethod.method === 'VIRTUAL_ACCOUNT') {
+      if (paymentMethod.provider !== 'CARD' || (paymentMethod.currency ?? 'KRW') !== 'KRW' ||
+        paymentMethod.overseasPaymentConsent?.required || !this.tossClient?.virtualAccountReady()) {
+        throw new ConflictException('가상계좌 결제를 시작할 수 없습니다. 다른 결제수단을 선택해주세요.');
+      }
+      return this.withPaymentProcessingGrace({ orderId, method: 'VIRTUAL_ACCOUNT', provider: 'CARD',
+        currency: 'KRW', successUrl, failUrl, asyncStatus: 'sync', useInternationalCardOnly: false }, userId, paymentMethod);
+    }
 
     if (this.usesProviderChargeQuoteForPaymentMethod(paymentMethod)) {
       if (this.requiresAsyncWebhookBranch(paymentMethod) && !pendingUrl) {
@@ -1100,6 +1110,13 @@ export class PaymentService {
     if (reservation.status !== 'PENDING_PAYMENT' || !reservation.checkoutStartedAt) {
       return { outcome: 'not_needed' };
     }
+    if (reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT') {
+      try {
+        if (await this.syncVirtualAccount(input)) return { outcome: 'checked' };
+      } catch {
+        return { outcome: 'unavailable' };
+      }
+    }
     if (isMerchantConfirmedCheckoutMethod(reservation.checkoutPaymentMethod)) {
       const review = await this.abandonedHandoffService?.reviewOwnedOrder(input);
       return { outcome: review?.failedReservations === 1 ? 'checked' : 'not_needed' };
@@ -1124,6 +1141,115 @@ export class PaymentService {
     } catch {
       return { outcome: 'unavailable' };
     }
+  }
+
+  /** Re-read Toss under the same order lease as confirm. Delayed or duplicate callbacks always apply current state. */
+  async syncVirtualAccount(input: { orderId: string; secret?: string; userId?: string; paymentKey?: string; close?: boolean; deadlineMs?: number }) {
+    const { orderId } = input;
+    const read = () => this.db.select({ payment: payments, status: reservations.status,
+      userId: reservations.userId, showtimeId: reservations.showtimeId }).from(payments)
+      .innerJoin(reservations, eq(reservations.id, payments.reservationId))
+      .where(and(eq(payments.tossOrderId, orderId), eq(payments.method, 'VIRTUAL_ACCOUNT')));
+    const [initial] = await read();
+    if (!initial || !getVirtualAccountDetails(initial.payment.providerMetadata)) {
+      if (input.secret !== undefined) {
+        // The domestic MID is shared. Only our own pending issuance needs a retry.
+        const [order] = await this.db.select({ method: reservations.checkoutPaymentMethod, status: reservations.status })
+          .from(reservations).where(eq(reservations.tossOrderId, orderId));
+        if (order?.status === 'PENDING_PAYMENT' && order.method?.method === 'VIRTUAL_ACCOUNT') {
+          throw new ServiceUnavailableException('가상계좌 발급 기록을 확인 중입니다.');
+        }
+      }
+      return null;
+    }
+    if ((input.userId && initial.userId !== input.userId) || (input.paymentKey && initial.payment.paymentKey !== input.paymentKey)) {
+      throw new NotFoundException('가상계좌를 찾을 수 없습니다.');
+    }
+    if (input.secret !== undefined && !matchesDepositSecret(input.secret, this.toProviderMetadataRecord(initial.payment.providerMetadata).depositSecretHash)) {
+      throw new ForbiddenException('입금 통지 인증에 실패했습니다.');
+    }
+    const client = this.tossClient;
+    if (!client || !this.bookingService) throw new ServiceUnavailableException('결제 확인 서비스를 사용할 수 없습니다.');
+    const result = await this.withPaymentOrderLease(orderId, async assertLease => {
+      const [row] = await read();
+      if (!row) throw new NotFoundException('가상계좌가 없습니다.');
+      const { payment } = row;
+      const account = getVirtualAccountDetails(payment.providerMetadata)!;
+      const dueAt = new Date(account.dueDate);
+      const validate = (state: TossPaymentResponse) => {
+        if (state.orderId !== orderId || state.paymentKey !== payment.paymentKey || state.mId !== client.virtualAccountMid
+          || state.currency !== 'KRW' || state.totalAmount !== payment.amount || categorizeTossMethodLabel(state.method) !== 'VIRTUAL_ACCOUNT') {
+          throw new ConflictException('가상계좌 거래 정보가 예매와 일치하지 않습니다.');
+        }
+        return state;
+      };
+      const requestBudget = () => {
+        if (input.deadlineMs === undefined) return {};
+        const timeoutMs = input.deadlineMs - Date.now();
+        if (timeoutMs < 1) throw new ServiceUnavailableException('다음 작업에서 입금 상태를 확인합니다.');
+        return { timeoutMs };
+      };
+      let state = validate(await client.queryPayment(payment.paymentKey, requestBudget()));
+      if (state.status === 'WAITING_FOR_DEPOSIT' && row.status === 'CONFIRMED' && payment.status === 'DONE') {
+        await assertLease();
+        await suspendDepositedOrder(this.db, payment.id, payment.reservationId, dueAt);
+        row.status = 'PENDING_PAYMENT';
+        payment.asyncStatus = DEPOSIT_REVERSED;
+      }
+      if (state.status === 'WAITING_FOR_DEPOSIT' && (input.close || dueAt.getTime() <= Date.now()) && !state.virtualAccount?.expired) {
+        await assertLease();
+        try {
+          state = validate(await client.cancelPayment(payment.paymentKey, '미입금 가상계좌 반납',
+            { idempotencyKey: 'va-close-' + orderId, ...requestBudget() }));
+        } catch (error) {
+          // A deposit can win the race with returning the unpaid account.
+          state = validate(await client.queryPayment(payment.paymentKey, requestBudget()));
+          if (state.status === 'WAITING_FOR_DEPOSIT' && !state.virtualAccount?.expired) throw error;
+        }
+      }
+      await assertLease();
+      const payload: TossWebhookRequestBody = { eventType: 'PAYMENT_STATUS_CHANGED', eventId: 'deposit-' + orderId,
+        providerVerified: { method: state.method ?? null, easyPayProvider: null }, data: { orderId,
+          paymentKey: payment.paymentKey, method: 'VIRTUAL_ACCOUNT', totalAmount: state.totalAmount,
+          currency: 'KRW', status: state.status, approvedAt: state.approvedAt ?? undefined } };
+      if (state.status === 'DONE') {
+        if (payment.asyncStatus === DEPOSIT_REVERSED && row.status === 'PENDING_PAYMENT') {
+          await restoreDepositedOrder(this.db, payment.id, payment.reservationId, new Date(state.approvedAt ?? Date.now()));
+        } else {
+          await this.upsertAsyncPaymentProgressLocked(payload, 'DONE', 'deposited', assertLease);
+        }
+      } else if (row.status === 'CONFIRMED' && (state.status === 'CANCELED' ||
+        (state.status === 'PARTIAL_CANCELED' && state.balanceAmount === 0))) {
+        await this.finalizeConfirmedCancelWebhook(payload, state);
+      } else if (state.status === 'PARTIAL_CANCELED' && row.status === 'CONFIRMED') {
+        await this.finalizePaymentStatusPartialCancelWebhook(payload, state);
+      }
+      const expired = state.status === 'EXPIRED' || (state.status === 'WAITING_FOR_DEPOSIT' && state.virtualAccount?.expired === true)
+        || (state.status === 'CANCELED' && !input.close && dueAt.getTime() <= Date.now());
+      if (expired || state.status === 'ABORTED' || state.status === 'CANCELED') {
+        const released = await this.db.transaction(async tx => {
+          const cancelled = !expired && state.status === 'CANCELED';
+          const ended = await tx.update(reservations).set({ status: cancelled ? 'CANCELLED' : 'FAILED', updatedAt: new Date(),
+            ...(cancelled ? { cancelledAt: new Date(), cancelReason: '미입금 가상계좌 반납' } : {}) })
+            .where(and(eq(reservations.id, payment.reservationId), eq(reservations.status, 'PENDING_PAYMENT')))
+            .returning({ id: reservations.id });
+          if (!ended.length) return [];
+          const status = expired ? 'EXPIRED' : state.status === 'ABORTED' ? 'ABORTED' : 'CANCELED';
+          await tx.update(payments).set({ status, cancelledAt: new Date(), asyncStatus: 'deposit_closed',
+            providerMetadata: sql`${payments.providerMetadata} - 'sealedRefundAccount'` }).where(eq(payments.id, payment.id));
+          const seats = await tx.update(seatInventories).set({ status: 'available', lockedBy: null, lockedUntil: null })
+            .where(and(eq(seatInventories.showtimeId, row.showtimeId), eq(seatInventories.status, 'locked'), eq(seatInventories.lockedBy, payment.reservationId)))
+            .returning({ seatKey: seatInventories.seatKey });
+          await recordReservationPaymentFailureDiagnostic(tx, { reservationId: payment.reservationId, paymentId: payment.id,
+            tossOrderId: orderId, ...paymentTerminalFailureDiagnostic(status), diagnosticSource: 'virtual_account' });
+          return seats;
+        });
+        for (const seat of released) this.bookingGateway?.broadcastSeatUpdate(row.showtimeId, seat.seatKey, 'available');
+      }
+      return expired ? 'EXPIRED' : state.status;
+    });
+    if (!result.acquired) throw new ServiceUnavailableException('가상계좌 상태를 확인 중입니다.');
+    return result.value;
   }
 
   private async findAsyncCheckoutPaymentKey(orderId: string, createdAt: Date | null): Promise<string | null> {
@@ -1677,6 +1803,14 @@ export class PaymentService {
     const existingPayment = existingPayments.find((payment) =>
       payment.reservationId === reservation.id
     );
+    const issuedDeposit = existingPayment?.method === 'VIRTUAL_ACCOUNT'
+      && existingPayment.paymentKey === paymentKey && !!getVirtualAccountDetails(existingPayment.providerMetadata);
+    if (reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT' && !existingPayment
+      && (paymentStatus === 'READY' || paymentStatus === 'IN_PROGRESS')) return 'AWAITING_ISSUANCE_RECORD';
+    if (!issuedDeposit && reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT' &&
+      categorizeTossMethodLabel(payload.providerVerified?.method) === 'VIRTUAL_ACCOUNT' && paymentStatus === 'DONE') {
+      throw new ServiceUnavailableException('입금 계좌 발급 기록을 확인 중입니다.');
+    }
 
     if (
       paymentStatus === 'DONE'
@@ -1798,7 +1932,8 @@ export class PaymentService {
         // Same payment method policy as synchronous confirm, decided on the
         // provider-verified method before anything is issued.
         const methodPolicy = this.findAsyncDoneMethodPolicyMismatch(payload, reservation);
-        if (methodPolicy.mismatch) {
+        if (methodPolicy.mismatch && !(issuedDeposit && methodPolicy.mismatch === 'not_allowed_by_policy'
+          && methodPolicy.approved.category === 'VIRTUAL_ACCOUNT' && reservation.checkoutPaymentMethod?.method === 'VIRTUAL_ACCOUNT')) {
           this.logger.error(
             `CRITICAL: async DONE payment method is not allowed for the order; not issuing. mismatch=${methodPolicy.mismatch}, approvedCategory=${methodPolicy.approved.category}, approvedProvider=${methodPolicy.approved.provider ?? 'none'}, orderId=${orderId}, paymentKey=${paymentKey}, reservationId=${reservation.id}`,
           );
@@ -2094,6 +2229,8 @@ export class PaymentService {
       providerResponse.status === 'PARTIAL_CANCELED'
       && !ticketItemCancellation
       && !fullReservationCancellationQuote
+      && !(payment.method === 'VIRTUAL_ACCOUNT' && providerResponse.balanceAmount === 0
+        && completedCancels.reduce((total, cancel) => total + cancel.cancelAmount, 0) === payment.amount)
     ) {
       return 'no_local_match';
     }
@@ -2882,12 +3019,17 @@ export class PaymentService {
                     eq(seatInventories.seatId, seat.seatId),
                   ),
                 ),
-                eq(seatInventories.status, 'available'),
+                existingPayment?.method === 'VIRTUAL_ACCOUNT' && getVirtualAccountDetails(existingPayment.providerMetadata)
+                  ? and(eq(seatInventories.status, 'locked'), eq(seatInventories.lockedBy, reservation.id))
+                  : eq(seatInventories.status, 'available'),
               ),
             )
             .returning({ id: seatInventories.id });
 
           if (updated.length > 0) continue;
+          if (existingPayment?.method === 'VIRTUAL_ACCOUNT' && getVirtualAccountDetails(existingPayment.providerMetadata)) {
+            throw new ConflictException('입금 대기 좌석을 확인할 수 없습니다.');
+          }
 
           const inserted = await tx
             .insert(seatInventories)
@@ -2984,6 +3126,7 @@ export class PaymentService {
 
     if (
       !this.bookingService
+      || (existingPayment?.method === 'VIRTUAL_ACCOUNT' && !!getVirtualAccountDetails(existingPayment.providerMetadata))
       || seatKeys.length === 0
       || (
         reservation.status !== 'PENDING_PAYMENT'
@@ -3477,6 +3620,8 @@ export class PaymentService {
       : payload.data.currency ?? 'KRW';
     const ledgerCharge = this.toPaymentLedgerCharge(amount, currency, reservation);
     const scopeMetadata = this.resolveWebhookPaymentScopeMetadata(payload, provider);
+    const sealedRefundAccount = existingPayment?.paymentKey === paymentKey
+      ? this.toProviderMetadataRecord(existingPayment.providerMetadata).sealedRefundAccount : undefined;
     const paymentSnapshot: PaymentCancelPaymentSnapshot = {
       id: existingPayment?.id,
       paymentKey,
@@ -3486,7 +3631,8 @@ export class PaymentService {
       amount,
       providerChargeCurrency: providerChargeQuote?.currency,
       providerChargeAmountMinor: providerChargeQuote?.amountMinor,
-      ...(scopeMetadata ? { providerMetadata: scopeMetadata } : {}),
+      ...(typeof sealedRefundAccount === 'string' ? { providerMetadata: { ...scopeMetadata, sealedRefundAccount } }
+        : scopeMetadata ? { providerMetadata: scopeMetadata } : {}),
     };
     const cancelCommand = buildFullPaymentCancelRequest({
       payment: paymentSnapshot,
@@ -3557,7 +3703,9 @@ export class PaymentService {
     }
 
     if (terminalCancelCompleted && reservation.status !== 'CONFIRMED') {
-      await this.db
+      if (existingPayment?.method === 'VIRTUAL_ACCOUNT' && getVirtualAccountDetails(existingPayment.providerMetadata)) {
+        await releaseCompensatedDeposit(this.db, reservation.id, now);
+      } else await this.db
         .update(reservations)
         .set({
           status: 'FAILED',
@@ -4351,7 +4499,9 @@ export class PaymentService {
       return false;
     }
 
-    if (reservation.status === 'PENDING_PAYMENT') {
+    if (payment.method === 'VIRTUAL_ACCOUNT' && getVirtualAccountDetails(payment.providerMetadata)) {
+      await releaseCompensatedDeposit(this.db, reservation.id, cancelledAt);
+    } else if (reservation.status === 'PENDING_PAYMENT') {
       await this.db
         .update(reservations)
         .set({ status: 'FAILED', updatedAt: new Date() })

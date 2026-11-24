@@ -162,7 +162,9 @@ export class ReservationController {
     // browser: a confirm allowed through the Redis fallback carries an
     // unrelated session that must keep its admission. Best effort: the release
     // never throws, so it cannot turn a confirmed purchase into an error.
-    if (reservation.status === 'CONFIRMED' && !reservation.addonTicketItemId) {
+    const checkoutFinished = reservation.status === 'CONFIRMED'
+      || (reservation.status === 'PENDING_PAYMENT' && !!reservation.paymentInfo?.virtualAccount);
+    if (checkoutFinished && !reservation.addonTicketItemId) {
       await this.queueService
         ?.releaseAdmissionForOrder(body.orderId, req.user.id)
         .catch(() => false);

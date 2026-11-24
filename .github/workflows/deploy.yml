@@ -290,6 +290,7 @@ jobs:
             NEXT_PUBLIC_TOSS_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_CLIENT_KEY }}
             NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY }}
             NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY=${{ vars.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY }}
+            NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY=${{ vars.NEXT_PUBLIC_TOSS_VIRTUAL_ACCOUNT_VARIANT_KEY }}
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.WEB_SERVICE }}:${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=grabit-web
           cache-to: type=gha,mode=min,scope=grabit-web
@@ -431,6 +432,7 @@ jobs:
             ${{ vars.SMS_CN_PROVIDER == 'sens' && 'NCP_SENS_SECRET_KEY=ncp-sens-secret-key:latest' || '' }}
             SENTRY_DSN=sentry-dsn:latest
             TOSS_SECRET_KEY=toss-secret-key:latest
+            ${{ vars.TOSS_VIRTUAL_ACCOUNT_REFUND_KEY_CONFIGURED == 'true' && 'TOSS_VIRTUAL_ACCOUNT_REFUND_KEY=toss-virtual-account-refund-key:latest' || '' }}
             TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest
             TOSS_FOREIGN_EASY_PAY_SECRET_KEY=toss-foreign-easy-pay-secret-key:latest
             TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest
@@ -468,6 +470,7 @@ jobs:
           export GOOGLE_OAUTH_ACCESS_TOKEN
           node scripts/managed-demo/deploy-background-worker-v2.mjs
         env:
+          TOSS_VIRTUAL_ACCOUNT_REFUND_KEY_CONFIGURED: ${{ vars.TOSS_VIRTUAL_ACCOUNT_REFUND_KEY_CONFIGURED }}
           CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
           CLOUD_RUN_WEB_URL: ${{ vars.CLOUD_RUN_WEB_URL }}
           PAYPAL_KRW_USD_RATE: ${{ vars.PAYPAL_KRW_USD_RATE }}

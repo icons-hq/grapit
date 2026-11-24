@@ -201,7 +201,7 @@ describe('PerformanceForm legacy draft payment methods (audit #70)', () => {
     await waitFor(() => expect(apiClient.put).toHaveBeenCalled());
     const [, body] = vi.mocked(apiClient.put).mock.calls[0]!;
     expect((body as { data: { bookingPolicy: { allowedPaymentMethods: string[] } } }).data.bookingPolicy.allowedPaymentMethods)
-      .toEqual(['CARD']);
+      .toEqual(['VIRTUAL_ACCOUNT', 'CARD']);
   });
 });
 

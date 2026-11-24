@@ -11,6 +11,8 @@ import { sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { BookingService } from '../booking/booking.service.js';
 import { AbandonedPaymentHandoffService } from '../payment/abandoned-payment-handoff.service.js';
+import { PaymentService } from '../payment/payment.service.js';
+import { boundedByRunDeadline } from '../../common/run-deadline.js';
 import { isBackgroundProcessingEnabled } from './pgboss.provider.js';
 
 export const PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS = 60_000;
@@ -63,6 +65,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     _bookingService: BookingService,
     @Optional() private readonly configService?: ConfigService,
     @Optional() private readonly abandonedHandoffs?: AbandonedPaymentHandoffService,
+    @Optional() private readonly paymentService?: PaymentService,
   ) {}
 
   onModuleInit(): void {
@@ -130,6 +133,11 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
           )
         RETURNING r.id, r.user_id, r.showtime_id, r.toss_order_id
       ),
+      released_deposits AS (
+        UPDATE seat_inventories seat SET status = 'available', locked_by = NULL, locked_until = NULL
+        FROM expired WHERE seat.showtime_id = expired.showtime_id AND seat.locked_by = expired.id
+          AND seat.status = 'locked'
+      ),
       diagnostics AS (
         INSERT INTO reservation_payment_failure_diagnostics (
           reservation_id,
@@ -168,6 +176,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
       mapExpiredPendingReservationRow(row as Record<string, unknown>)
     );
     const abandonedHandoffs = await this.sweepAbandonedPaymentHandoffs(now);
+    const closedDeposits = this.paymentService ? await this.sweepVirtualAccounts(now, this.paymentService) : 0;
     const unlockedSeats = 0;
 
     // Redis TTL owns lock expiration. A delayed sweep cannot distinguish this
@@ -181,16 +190,38 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     }
 
     return {
-      expiredReservations: expiredReservations.length + abandonedHandoffs,
+      expiredReservations: expiredReservations.length + abandonedHandoffs + closedDeposits,
       unlockedSeats,
     };
   }
 
-  /**
-   * A handoff that never reached the provider has no Payment and gets no webhook.
-   * Only provider transaction evidence (never the local deadline alone) may fail it.
-   * Review errors never fail the regular expiration sweep.
-   */
+  private async sweepVirtualAccounts(now: Date, service: PaymentService) {
+    const deadlineMs = Date.now() + boundedByRunDeadline(35_000, { reserveMs: 15_000 });
+    const due = await this.db.execute(sql`SELECT r.toss_order_id FROM reservations r
+      JOIN payments p ON p.reservation_id = r.id
+      WHERE r.status = 'PENDING_PAYMENT' AND r.payment_deadline_at <= ${now}
+        AND p.method = 'VIRTUAL_ACCOUNT' AND p.status = 'IN_PROGRESS'
+      ORDER BY r.updated_at, r.id LIMIT 32`);
+    let closed = 0;
+    for (let i = 0; i < due.rows.length; i += 4) {
+      if (Date.now() >= deadlineMs) break;
+      const results = await Promise.all(due.rows.slice(i, i + 4).map(async row => {
+        const orderId = String(row['toss_order_id']);
+        try {
+          return await service.syncVirtualAccount({ orderId, deadlineMs });
+        } catch {
+          this.logger.warn('가상계좌 기한 경과 주문의 PG 상태 재확인 필요. orderId=' + orderId);
+          await this.db.execute(sql`UPDATE reservations SET updated_at = now()
+            WHERE toss_order_id = ${orderId} AND status = 'PENDING_PAYMENT'`);
+          return null;
+        }
+      }));
+      closed += results.filter(status => status === 'EXPIRED' || status === 'CANCELED' || status === 'ABORTED').length;
+    }
+    return closed;
+  }
+
+  /** Handoffs with no payment require provider evidence before they can be closed. */
   private async sweepAbandonedPaymentHandoffs(now: Date): Promise<number> {
     if (
       !this.abandonedHandoffs

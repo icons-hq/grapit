@@ -7,7 +7,7 @@ import {
 import { PERFORMANCE_ALLOWED_PAYMENT_METHODS } from './types/performance.types';
 
 describe('isCheckoutPaymentMethodAllowed (audit #70)', () => {
-  it.each(['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'] as const)(
+  it.each(['MOBILE_PHONE'] as const)(
     'never allows %s, even when a stored policy lists it',
     (method) => {
       expect(isCheckoutConfigurablePaymentMethod({ method })).toBe(false);

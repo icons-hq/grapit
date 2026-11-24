@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
+import { issueVirtualAccountMetadata, openRefundAccount, virtualAccountRefundConfigured, VIRTUAL_ACCOUNT_MID, type RefundAccount } from './virtual-account.js';
 
 /**
  * Upper bounds for Toss calls so a stalled provider cannot hold a confirm
@@ -51,6 +52,8 @@ export function parseTossPaymentResponse(data: unknown): TossPaymentResponse | n
 }
 
 export interface TossPaymentResponse {
+  mId?: string;
+  secret?: string | null;
   paymentKey: string;
   orderId: string;
   method?: string | null;
@@ -64,7 +67,11 @@ export interface TossPaymentResponse {
   approvedAt?: string | null;
   card?: { settlementStatus?: string | null } | null;
   transfer?: { settlementStatus?: string | null } | null;
-  virtualAccount?: { settlementStatus?: string | null } | null;
+  virtualAccount?: {
+    settlementStatus?: string | null;
+    bankCode?: string; accountNumber?: string; dueDate?: string;
+    expired?: boolean; refundReceiveAccount?: { bankCode: string; accountNumber: string; holderName: string } | null;
+  } | null;
   cancels?: Array<{
     cancelAmount: number;
     cancelReason: string;
@@ -77,7 +84,20 @@ export interface TossPaymentResponse {
 
 export interface TossPaymentRequestOptions {
   idempotencyKey?: string;
+  /** A bounded background job may shorten a provider request's timeout. */
+  timeoutMs?: number;
   secretKeyScope?: 'default' | 'overseas-card' | 'foreign-easy-pay';
+}
+
+/** Only the initial confirm is allowed to pass refund details to encrypted storage.
+ * Lookup/cancel snapshots are also used in refund ledgers and diagnostics. */
+function minimizeVirtualAccountSnapshot(payment: TossPaymentResponse): TossPaymentResponse {
+  if (!payment?.virtualAccount) return payment;
+  const { bankCode, dueDate, settlementStatus, expired } = payment.virtualAccount;
+  return { paymentKey: payment.paymentKey, orderId: payment.orderId, method: payment.method,
+    mId: payment.mId, currency: payment.currency, totalAmount: payment.totalAmount, balanceAmount: payment.balanceAmount,
+    status: payment.status, approvedAt: payment.approvedAt, isPartialCancelable: payment.isPartialCancelable,
+    cancels: payment.cancels, virtualAccount: { bankCode, dueDate, settlementStatus, expired } };
 }
 
 export interface TossSettlementQueryOptions extends TossPaymentRequestOptions {
@@ -129,6 +149,7 @@ export interface TossTransactionRow {
 }
 
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
+  sealedRefundAccount?: string;
   cancelAmount?: number;
   currency?: string;
   cancelRequestId?: string;
@@ -177,6 +198,18 @@ export class TossPaymentsClient {
       this.configService.get<string>('TOSS_OVERSEAS_CARD_SECRET_KEY', '');
     this.foreignEasyPaySecretKey =
       this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY', '');
+  }
+
+  get virtualAccountMid(): string {
+    return this.secretKey.startsWith('test_') ? 't' + VIRTUAL_ACCOUNT_MID : VIRTUAL_ACCOUNT_MID;
+  }
+
+  virtualAccountReady(): boolean {
+    return virtualAccountRefundConfigured(this.configService.get<string>('TOSS_VIRTUAL_ACCOUNT_REFUND_KEY', ''));
+  }
+
+  virtualAccountMetadata(payment: TossPaymentResponse) {
+    return issueVirtualAccountMetadata(payment, this.configService.get<string>('TOSS_VIRTUAL_ACCOUNT_REFUND_KEY', ''), this.virtualAccountMid);
   }
 
   getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
@@ -370,6 +403,7 @@ export class TossPaymentsClient {
   ): Promise<TossPaymentResponse> {
     const body: {
       cancelReason: string;
+      refundReceiveAccount?: RefundAccount;
       cancelAmount?: number;
       currency?: string;
       cancelRequestId?: string;
@@ -379,6 +413,10 @@ export class TossPaymentsClient {
 
     if (options.cancelAmount !== undefined) {
       body.cancelAmount = options.cancelAmount;
+    }
+    if (options.sealedRefundAccount) {
+      body.refundReceiveAccount = openRefundAccount(options.sealedRefundAccount, paymentKey,
+        this.configService.get<string>('TOSS_VIRTUAL_ACCOUNT_REFUND_KEY', ''));
     }
     if (options.currency !== undefined) {
       body.currency = options.currency;
@@ -393,7 +431,7 @@ export class TossPaymentsClient {
         method: 'POST',
         // A timeout leaves the cancel outcome unknown; callers retry with the
         // same idempotency key or reconcile through queryPayment.
-        signal: AbortSignal.timeout(TOSS_CANCEL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(TOSS_CANCEL_TIMEOUT_MS, options.timeoutMs ?? TOSS_CANCEL_TIMEOUT_MS)),
         headers: this.buildHeaders(options),
         body: JSON.stringify(body),
       },
@@ -406,7 +444,7 @@ export class TossPaymentsClient {
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
-    return data as TossPaymentResponse;
+    return minimizeVirtualAccountSnapshot(data as TossPaymentResponse);
   }
 
   /** Some widget MIDs do not support order lookup. An error is never non-payment evidence. */
@@ -421,7 +459,7 @@ export class TossPaymentsClient {
     if (!payment || payment.orderId !== orderId) {
       throw new TossPaymentError('INVALID_PROVIDER_RESPONSE', '결제 상태 응답을 확인할 수 없습니다', 502);
     }
-    return payment;
+    return minimizeVirtualAccountSnapshot(payment);
   }
 
   async queryPayment(
@@ -432,7 +470,7 @@ export class TossPaymentsClient {
       `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}`,
       {
         method: 'GET',
-        signal: AbortSignal.timeout(TOSS_QUERY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(TOSS_QUERY_TIMEOUT_MS, options.timeoutMs ?? TOSS_QUERY_TIMEOUT_MS)),
         headers: {
           Authorization: this.getAuthHeader(options.secretKeyScope),
         },
@@ -446,7 +484,7 @@ export class TossPaymentsClient {
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
-    return data as TossPaymentResponse;
+    return minimizeVirtualAccountSnapshot(data as TossPaymentResponse);
   }
 
   /**

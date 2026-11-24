@@ -189,6 +189,13 @@ describe('PerformanceForm allowed payment methods (audit #70)', () => {
     await expect(applyAndReadSavedPaymentMethods(user)).resolves.toEqual(['CARD', 'SIMPLE_PAY']);
   });
 
+  it('lets an operator enable virtual accounts for one performance', async () => {
+    const user = userEvent.setup();
+    renderForm(['CARD']);
+    await user.click(screen.getByRole('checkbox', { name: '가상계좌' }));
+    await expect(applyAndReadSavedPaymentMethods(user)).resolves.toEqual(['CARD', 'VIRTUAL_ACCOUNT']);
+  });
+
   it('offers exactly the categories checkout can submit, with no CARD fallback for other widget methods', () => {
     renderForm(['CARD']);
     const widgetCodes = [
@@ -216,13 +223,13 @@ describe('PerformanceForm allowed payment methods (audit #70)', () => {
       expect(selection.paymentMethod.method).toMatch(/^(VIRTUAL_ACCOUNT|MOBILE_PHONE)$/);
     }
 
-    for (const label of ['카드 결제(국내/해외)', '계좌이체', '국내 간편결제', '해외 간편결제']) {
+    for (const label of ['카드 결제(국내/해외)', '계좌이체', '가상계좌', '국내 간편결제', '해외 간편결제']) {
       expect(screen.getByRole('checkbox', { name: label })).toBeInTheDocument();
     }
   });
 
-  it('never allows virtual account or phone payments, under any stored policy', () => {
-    for (const method of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'] as const) {
+  it('keeps phone payments unavailable under any stored policy', () => {
+    for (const method of ['MOBILE_PHONE'] as const) {
       expect(isCheckoutPaymentMethodAllowed({ method }, [...PERFORMANCE_ALLOWED_PAYMENT_METHODS])).toBe(false);
       expect(isCheckoutPaymentMethodAllowed({ method }, [method])).toBe(false);
     }
@@ -233,12 +240,12 @@ describe('PerformanceForm allowed payment methods (audit #70)', () => {
 
   it('opens a stored policy with only unsupported methods unchecked and blocks saving until one is chosen (audit #70)', async () => {
     const user = userEvent.setup();
-    renderForm(['VIRTUAL_ACCOUNT']);
+    renderForm(['MOBILE_PHONE']);
 
-    for (const label of ['카드 결제(국내/해외)', '계좌이체', '국내 간편결제', '해외 간편결제']) {
+    for (const label of ['카드 결제(국내/해외)', '계좌이체', '가상계좌', '국내 간편결제', '해외 간편결제']) {
       expect(screen.getByRole('checkbox', { name: label })).not.toBeChecked();
     }
-    expect(screen.getByRole('note')).toHaveTextContent('기존 정책의 미지원 결제수단(가상계좌)은 저장되지 않습니다.');
+    expect(screen.getByRole('note')).toHaveTextContent('기존 정책의 미지원 결제수단(휴대폰 결제)은 저장되지 않습니다.');
 
     await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
     await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));

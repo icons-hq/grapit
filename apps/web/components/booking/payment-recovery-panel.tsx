@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { VirtualAccountPanel } from './virtual-account-panel';
 import Link from 'next/link';
 import type { ReservationDetail, SupportedLocale } from '@grabit/shared';
 import { isMerchantConfirmedCheckoutMethod } from '@grabit/shared';
@@ -14,7 +15,7 @@ import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 
 export type PaymentRecoverySnapshot = Pick<ReservationDetail,
-  'status' | 'paymentInfo' | 'paymentDeadlineAt' | 'checkoutStartedAt' | 'checkoutPaymentMethod'>;
+  'status' | 'paymentInfo' | 'paymentDeadlineAt' | 'checkoutStartedAt' | 'checkoutPaymentMethod' | 'tossOrderId'>;
 
 /** Presentation only. Neither a browser return nor elapsed time unlocks payment. */
 export function PaymentRecoveryPanel({ reservation, locale, onCheck, checking = false,
@@ -48,6 +49,10 @@ export function PaymentRecoveryPanel({ reservation, locale, onCheck, checking = 
   const deadline = Date.parse(reservation.paymentDeadlineAt);
   const asyncWallet = ['ALIPAY_PLUS', 'TRUEMONEY'].includes(reservation.checkoutPaymentMethod?.provider ?? '');
   const deadlinePassed = useServerTimeReached(Number.isFinite(deadline) ? deadline : null);
+  if (reservation.status === 'PENDING_PAYMENT' && reservation.paymentInfo?.virtualAccount && pending) {
+    return <VirtualAccountPanel account={reservation.paymentInfo.virtualAccount} amount={reservation.paymentInfo.amount}
+      orderId={reservation.tossOrderId} locale={locale} onCheck={onCheck} checking={checking} providerUnavailable={providerUnavailable} />;
+  }
   const title = ended ? copy.endedTitle : approved ? copy.finalizingTitle
     : delayed ? copy.delayedTitle : pending ? copy.pendingTitle : copy.unknownTitle;
   const body = ended ? copy.endedBody : approved ? copy.finalizingBody

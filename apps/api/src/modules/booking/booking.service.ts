@@ -1302,6 +1302,7 @@ export class BookingService {
           eq(seatInventories.showtimeId, showtimeId),
           or(
             eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'locked'),
             eq(seatInventories.status, 'held_cancelled'),
             eq(seatInventories.status, 'disabled'),
           ),
@@ -1317,7 +1318,7 @@ export class BookingService {
 
     for (const row of unavailableSeats) {
       const soldSeatKey = row.seatKey ?? (row.floorKey ? `${row.floorKey}:${row.seatId}` : row.seatId);
-      seats[soldSeatKey] = row.status === 'held_cancelled'
+      seats[soldSeatKey] = row.status === 'locked' ? 'locked' : row.status === 'held_cancelled'
         ? 'held'
         : row.status === 'disabled'
           ? 'disabled'

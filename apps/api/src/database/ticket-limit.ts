@@ -18,7 +18,7 @@ type BuyerTicketCountRow = {
  * over every Buyer Account that verified the same phone number (E.164). An
  * account without a verified phone keeps the account-only limit. Seat lock and
  * prepare also count seats the other accounts of that phone hold in unexpired
- * pending payments; the confirm-time snapshot counts confirmed tickets only.
+ * pending payments. Confirm includes both issued virtual-account holds and confirmed tickets.
  *
  * Stored phones keep the submitted format ("010-…", "+82…", "+82 0…"), so SQL
  * narrows candidates by the last 8 digits — identical for every format of one
@@ -30,12 +30,13 @@ function verifiedPhoneSuffix(phoneColumn: SQL): SQL {
   return sql`right(regexp_replace(translate(${phoneColumn}, '０１２３４５６７８９', '0123456789'), '[^0-9]', '', 'g'), 8)`;
 }
 
-function confirmedTicketCount(input: {
+/** An issued deposit consumes the same purchase allowance as an active ticket until it is returned. */
+function committedSeatCount(input: {
   userId: SQL;
   performanceId: SQL;
   excludeReservationId?: string;
 }): SQL {
-  return sql`(
+  return sql`((
     SELECT count(*)::int
     FROM ticket_items ti
     INNER JOIN reservations r ON r.id = ti.reservation_id
@@ -45,7 +46,15 @@ function confirmedTicketCount(input: {
       AND ticket_showtimes.performance_id = ${input.performanceId}
       AND r.status = 'CONFIRMED'
       AND ti.status IN ('active', 'cancellation_pending')
-  )`;
+  ) + (
+    SELECT count(*)::int FROM reservations deposit
+    JOIN payments pay ON pay.reservation_id = deposit.id
+    JOIN showtimes st ON st.id = deposit.showtime_id
+    JOIN reservation_seats rs ON rs.reservation_id = deposit.id
+    WHERE deposit.user_id = ${input.userId} AND st.performance_id = ${input.performanceId}
+      AND deposit.status = 'PENDING_PAYMENT' AND pay.method = 'VIRTUAL_ACCOUNT' AND pay.status = 'IN_PROGRESS'
+      ${input.excludeReservationId ? sql`AND deposit.id <> ${input.excludeReservationId}` : sql``}
+  ))`;
 }
 
 /*
@@ -53,7 +62,7 @@ function confirmedTicketCount(input: {
  * lock/prepare pre-checks add these for linked accounts, so a second account of the
  * same phone is stopped before payment instead of being compensation-cancelled after
  * Toss approval. The buyer's own pending orders stay excluded: Redis seat holds already
- * bound them, and a retried order must not count against itself.
+ * bound them. Issued deposit holds are counted separately for every account.
  */
 function unexpiredPendingSeatCount(input: { userId: SQL; performanceId: SQL }): SQL {
   return sql`(
@@ -64,6 +73,8 @@ function unexpiredPendingSeatCount(input: { userId: SQL; performanceId: SQL }): 
     WHERE pending.user_id = ${input.userId}
       AND pending_showtimes.performance_id = ${input.performanceId}
       AND pending.status = 'PENDING_PAYMENT'
+      AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.reservation_id = pending.id
+        AND pay.method = 'VIRTUAL_ACCOUNT' AND pay.status = 'IN_PROGRESS')
       AND pending.payment_deadline_at > now()
   )`;
 }
@@ -79,7 +90,7 @@ function buyerPhoneColumns(input: {
     (
       SELECT coalesce(json_agg(json_build_object(
         'phone', linked.phone,
-        'active_ticket_count', ${confirmedTicketCount({
+        'active_ticket_count', ${committedSeatCount({
           userId: sql`linked.id`,
           performanceId: input.performanceId,
           excludeReservationId: input.excludeReservationId,
@@ -151,7 +162,7 @@ export async function countBuyerActiveTicketsForPerformance(
 ): Promise<number> {
   const result = await executor.execute(sql`
     SELECT
-      ${confirmedTicketCount({ userId: sql`${userId}`, performanceId: sql`${performanceId}` })} AS active_ticket_count,
+      ${committedSeatCount({ userId: sql`${userId}`, performanceId: sql`${performanceId}` })} AS active_ticket_count,
       ${buyerPhoneColumns({ performanceId: sql`${performanceId}`, includeLinkedPendingSeats: true })}
     FROM (SELECT 1) AS anchor
     LEFT JOIN users buyer ON buyer.id = ${userId}
@@ -176,7 +187,7 @@ export function createBuyerTicketCountReader(executor: () => TicketLimitExecutor
     }
     const result = await executor().execute(sql`
       SELECT request.request_key,
-        ${confirmedTicketCount({ userId: sql`request.user_id`, performanceId: sql`request.performance_id` })} AS active_ticket_count,
+        ${committedSeatCount({ userId: sql`request.user_id`, performanceId: sql`request.performance_id` })} AS active_ticket_count,
         ${buyerPhoneColumns({ performanceId: sql`request.performance_id`, includeLinkedPendingSeats: true })}
       FROM jsonb_to_recordset(${JSON.stringify(requests)}::jsonb)
         AS request(request_key text, user_id uuid, performance_id uuid)
@@ -214,7 +225,7 @@ export async function getTicketLimitSnapshot(
         bp.max_tickets_per_user,
         ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
       )::int AS max_tickets_per_user,
-      ${confirmedTicketCount({
+      ${committedSeatCount({
         userId: sql`${userId}`,
         performanceId: sql`s.performance_id`,
         excludeReservationId: reservationId,

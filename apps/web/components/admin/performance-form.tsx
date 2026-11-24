@@ -94,7 +94,7 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
 };
 
 // Reservation prepare enforces the saved list, so offer every category checkout can submit.
-// The server stores only these (legacy VIRTUAL_ACCOUNT/MOBILE_PHONE rows stay readable).
+// The server stores only these (legacy MOBILE_PHONE rows stay readable).
 const ACTIVE_BOOKING_PAYMENT_METHODS = CHECKOUT_CONFIGURABLE_PAYMENT_METHODS;
 type ActiveBookingPaymentMethod = (typeof ACTIVE_BOOKING_PAYMENT_METHODS)[number];
 
@@ -276,7 +276,7 @@ function copyVisibilityChipClasses(visible: boolean): string {
 
 /**
  * Only a missing policy falls back to the platform default. A stored list keeps just
- * the methods the form can show, even when none is left (a legacy VIRTUAL_ACCOUNT or
+ * the methods the form can show, even when none is left (a legacy
  * MOBILE_PHONE-only policy), so the "at least one method" validation blocks saving
  * instead of the form silently storing CARD (audit #70). Same rule as drafts.
  */

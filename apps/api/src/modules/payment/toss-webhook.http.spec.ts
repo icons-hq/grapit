@@ -12,6 +12,7 @@ describe('Toss webhook HTTP acknowledgement', () => {
   let app: INestApplication;
   let agent: Agent | undefined;
   const service = {
+    syncVirtualAccount: vi.fn(),
     recordWebhookEvent: vi.fn(),
     findAsyncPaymentProgress: vi.fn(),
     upsertAsyncPaymentProgress: vi.fn(),
@@ -72,6 +73,17 @@ describe('Toss webhook HTTP acknowledgement', () => {
       .post('/payments/toss/webhook').agent(agent).send(event);
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ acknowledged: true, duplicate: false });
+  });
+
+  it('accepts the flat DEPOSIT_CALLBACK body and forwards only the order and secret for verification', async () => {
+    service.syncVirtualAccount.mockResolvedValue('DONE');
+    await request(app.getHttpServer()).post('/payments/toss/deposit-callback')
+      .send({ orderId: 'deposit-test', secret: 'fixture-only', status: 'DONE', transactionKey: 'tx-1' })
+      .expect(200, { acknowledged: true });
+    expect(service.syncVirtualAccount).toHaveBeenCalledWith({ orderId: 'deposit-test', secret: 'fixture-only' });
+    expect(service.recordWebhookEvent).not.toHaveBeenCalled();
+    await request(app.getHttpServer()).post('/payments/toss/deposit-callback')
+      .send({ orderId: 'deposit-test', status: 'DONE' }).expect(400);
   });
 
   it('acknowledges an already processed event with HTTP 200', async () => {

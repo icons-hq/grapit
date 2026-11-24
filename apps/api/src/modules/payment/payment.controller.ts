@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, NotFoundException, Post, Request, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { paymentMethodSchema } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -126,6 +126,15 @@ export class PaymentController {
     @Request() req: { user: { id: string } },
   ) {
     return this.paymentService.checkPaymentStatus({ orderId: body.orderId, userId: req.user.id });
+  }
+
+  @Post('virtual-account/close')
+  @HttpCode(200)
+  async closeVirtualAccount(@Body(new ZodValidationPipe(paymentBranchReleaseSchema)) body: PaymentBranchReleaseDto,
+    @Request() req: { user: { id: string } }) {
+    const status = await this.paymentService.syncVirtualAccount({ orderId: body.orderId, userId: req.user.id, close: true });
+    if (!status) throw new NotFoundException('가상계좌를 찾을 수 없습니다.');
+    return { status };
   }
 
   /** Pending return of an asynchronously approved foreign wallet order (others get 409). */

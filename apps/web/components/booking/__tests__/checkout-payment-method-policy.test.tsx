@@ -233,6 +233,19 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
     expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
   });
 
+  it('allows a deposit on an opted-in performance and explains how the refund account is used', async () => {
+    const user = userEvent.setup();
+    boundary.policy = { allowedPaymentMethods: ['CARD', 'VIRTUAL_ACCOUNT'], allowedPaymentMethodsKnown: true };
+    useBookingStore.getState().setBookingData({
+      ...booking, selectedSeats: seats, expiresAt: Date.parse(booking.paymentDeadlineAt),
+    });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getByRole('button', { name: 'Choose VIRTUAL_ACCOUNT' }));
+    expect(await screen.findByText(copy.virtualAccountRefundNotice)).toBeVisible();
+    expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
+  });
+
   it('leaves the decision to the server while the policy is only a fallback', async () => {
     const user = userEvent.setup();
     useBookingStore.getState().setBookingData({
@@ -247,10 +260,10 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
   });
 
   it.each<[string, typeof boundary.policy]>([
-    ['VIRTUAL_ACCOUNT', { allowedPaymentMethods: ['CARD', 'VIRTUAL_ACCOUNT'], allowedPaymentMethodsKnown: true }],
+    ['VIRTUAL_ACCOUNT', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: true }],
     ['MOBILE_PHONE', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
     ['PAYCO', { allowedPaymentMethods: ['CARD', 'SIMPLE_PAY'], allowedPaymentMethodsKnown: true }],
-    ['가상계좌', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
+    ['가상계좌', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: true }],
     // Even where card and transfer are both allowed: the code cannot tell them apart.
     ...CARD_ISSUER_SHORTCUTS.map((code): [string, typeof boundary.policy] => [
       code, { allowedPaymentMethods: ['CARD', 'TRANSFER'], allowedPaymentMethodsKnown: true },

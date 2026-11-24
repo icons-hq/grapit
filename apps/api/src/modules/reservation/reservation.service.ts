@@ -1,4 +1,5 @@
 import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
+import { getVirtualAccountDetails } from '../payment/virtual-account.js';
 import { quoteTicketAddons, requirePurchasableTicket, reserveTicketAddons } from '../../database/ticket-holder-addons.js';
 import { reservationAddonChoices, reservationAddonTotal, selectAddonHoldsForOrder } from '../../database/booking-addon-inventory.js';
 import { coalesceFreshReads } from '../../common/fresh-read-batcher.js';
@@ -328,7 +329,7 @@ function isBookingStartReached(value: Date | null | undefined, now: Date = new D
 function mapPaymentToReservationPaymentInfo(
   payment: Pick<
     typeof payments.$inferSelect,
-    'paymentKey' | 'method' | 'amount' | 'status' | 'paidAt' | 'provider' | 'currency'
+    'paymentKey' | 'method' | 'amount' | 'status' | 'paidAt' | 'provider' | 'currency' | 'providerMetadata'
     | 'providerChargeCurrency' | 'providerChargeAmountMinor' | 'providerChargeRate' | 'providerChargeQuotedAt'
   >,
   paymentDeadlineAt: Date | null | undefined,
@@ -336,6 +337,8 @@ function mapPaymentToReservationPaymentInfo(
   const paymentMethod = mapStoredPaymentMethod(payment);
   return {
     paymentKey: payment.paymentKey,
+    ...(payment.method === 'VIRTUAL_ACCOUNT' && payment.status === 'IN_PROGRESS'
+      ? { virtualAccount: getVirtualAccountDetails(payment.providerMetadata) } : {}),
     method: payment.method,
     amount: payment.amount,
     status: payment.status as PaymentStatus,
@@ -1500,7 +1503,8 @@ export class ReservationService {
         detailError instanceof Error ? detailError.stack : String(detailError),
       );
       throw new ServiceUnavailableException(
-        '결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.',
+        result.awaitingDeposit ? '가상계좌가 발급되었습니다. 예매 내역에서 입금 정보를 확인해주세요.'
+          : '결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.',
       );
     }
   }

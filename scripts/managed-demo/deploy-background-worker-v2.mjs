@@ -142,6 +142,8 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('BACKGROUND_WORKER_WINDOW_MS', '30000'),
               ...optionalRuntimeEnv.map(([envName, value]) => plainEnv(envName, value)),
               ...SECRET_BINDINGS.map(([envName, secret]) => secretEnv(envName, secret)),
+              ...(env.TOSS_VIRTUAL_ACCOUNT_REFUND_KEY_CONFIGURED === 'true'
+                ? [secretEnv('TOSS_VIRTUAL_ACCOUNT_REFUND_KEY', 'toss-virtual-account-refund-key')] : []),
             ],
             resources: {
               limits: {

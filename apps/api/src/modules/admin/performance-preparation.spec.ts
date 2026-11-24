@@ -173,7 +173,7 @@ describe('readPerformancePreparation locale and payment readiness', () => {
   });
 
   it('requires at least one payment method checkout can submit (audit #70)', async () => {
-    const legacyOnly = await readPerformancePreparation(createDb({ allowedPaymentMethods: ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE'] }), 'perf-1', NOW);
+    const legacyOnly = await readPerformancePreparation(createDb({ allowedPaymentMethods: ['MOBILE_PHONE'] }), 'perf-1', NOW);
     expect(check(legacyOnly, 'sales').ready).toBe(false);
     expect(check(legacyOnly, 'sales').detail).toContain('결제 수단을 1개 이상 선택해주세요');
 

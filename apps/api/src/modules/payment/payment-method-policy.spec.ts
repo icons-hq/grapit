@@ -82,7 +82,7 @@ describe('resolveEnforcedAllowedPaymentMethods', () => {
 
   it('intersects the stored policy with the checkout-configurable methods', () => {
     expect(resolveEnforcedAllowedPaymentMethods(['VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'TRANSFER', 'CARD']))
-      .toEqual(['CARD', 'TRANSFER']);
+      .toEqual(['CARD', 'TRANSFER', 'VIRTUAL_ACCOUNT']);
     expect(resolveEnforcedAllowedPaymentMethods([...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS]))
       .toEqual([...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS]);
     expect(resolveEnforcedAllowedPaymentMethods('["SIMPLE_PAY"]')).toEqual(['SIMPLE_PAY']);
@@ -172,7 +172,8 @@ describe('findApprovedMethodPolicyMismatch', () => {
 
   it('rejects methods checkout never sells, whatever the policy says', () => {
     expect(findApprovedMethodPolicyMismatch({ category: 'MOBILE_PHONE' }, card, all)).toBe('unsupported_method');
-    expect(findApprovedMethodPolicyMismatch({ category: 'VIRTUAL_ACCOUNT' }, card, all)).toBe('unsupported_method');
+    expect(findApprovedMethodPolicyMismatch({ category: 'VIRTUAL_ACCOUNT' }, card, all)).toBe('checkout_method_mismatch');
+    expect(findApprovedMethodPolicyMismatch({ category: 'VIRTUAL_ACCOUNT' }, { method: 'VIRTUAL_ACCOUNT', provider: 'CARD' }, all)).toBeNull();
     expect(findApprovedMethodPolicyMismatch({ category: 'UNSUPPORTED' }, card, all)).toBe('unsupported_method');
   });
 
