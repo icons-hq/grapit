@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GRABIT_ZONE_DDOS_MONITOR: ${{ vars.GRABIT_ZONE_DDOS_MONITOR }}
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: asia-northeast3
   AR_REPO: grabit
@@ -376,12 +377,14 @@ jobs:
             ${{ env.API_CPU_ALLOCATION_FLAG }}
             --session-affinity
             --allow-unauthenticated
+            ${{ vars.GRABIT_ORIGIN_RESTRICTED == 'true' && '--ingress=internal-and-cloud-load-balancing' || '' }}
             --network=default
             --subnet=default
             --vpc-egress=private-ranges-only
           env_vars: |
             NODE_ENV=production
             VALKEY_MODE=${{ env.VALKEY_MODE }}
+            GRABIT_BOOKING_MACRO=${{ vars.GRABIT_BOOKING_MACRO || 'false' }}
             FRONTEND_URL=${{ vars.CLOUD_RUN_WEB_URL }}
             KAKAO_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/kakao/callback
             NAVER_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/naver/callback
@@ -407,6 +410,7 @@ jobs:
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest
             JWT_REFRESH_SECRET=jwt-refresh-secret:latest
+            ${{ vars.GRABIT_BOOKING_MACRO == 'true' && 'BOOKING_TURNSTILE_CONFIG=booking-turnstile-config:latest' || '' }}
             KAKAO_CLIENT_ID=kakao-client-id:latest
             KAKAO_CLIENT_SECRET=kakao-client-secret:latest
             NAVER_CLIENT_ID=naver-client-id:latest
@@ -541,6 +545,7 @@ jobs:
             --cpu=1
             --port=3000
             --allow-unauthenticated
+            ${{ vars.GRABIT_ORIGIN_RESTRICTED == 'true' && '--ingress=internal-and-cloud-load-balancing' || '' }}
           env_vars: |
             NODE_ENV=production
             BOOKING_ENABLED=${{ steps.booking_gate.outputs.booking_enabled }}

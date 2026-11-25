@@ -45,8 +45,8 @@
         }
       },
       "vars": {
-        "WEB_ORIGIN": "https://grabit-web-d3c6wrfdbq-du.a.run.app",
-        "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app",
+        "WEB_ORIGIN": "https://web.origin.heygrabit.com",
+        "API_ORIGIN": "https://api.origin.heygrabit.com",
         "ALLOW_STAGING_HOSTS": "false"
       }
     }

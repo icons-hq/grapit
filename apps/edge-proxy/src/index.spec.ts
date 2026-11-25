@@ -18,6 +18,23 @@ afterEach(() => {
 });
 
 describe('origin routing', () => {
+  it('authenticates only the configured origin and preserves buyer authorization and request bodies', async () => {
+    const origin = { ...env, ALLOW_STAGING_HOSTS: 'false', API_ORIGIN: 'https://api.origin.heygrabit.com', ORIGIN_ROUTE_KEY: 'fixture-route' } as const;
+    const send = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', send);
+    const makeRequest = (): Parameters<typeof worker.fetch>[0] => new Request('https://api.heygrabit.com/booking', {
+      method: 'POST', headers: { authorization: 'Bearer buyer-fixture', 'x-grabit-origin-secret': 'untrusted' }, body: 'selection',
+    });
+    const denied = await worker.fetch(makeRequest(), { ...origin, ORIGIN_ROUTE_KEY: undefined });
+    expect(denied.status).toBe(503);
+    expect(send).not.toHaveBeenCalled();
+    await worker.fetch(makeRequest(), origin);
+    const forwarded: Request = send.mock.calls[0]![0];
+    expect(forwarded.headers.get('x-grabit-origin-secret')).toBe('fixture-route');
+    expect(forwarded.headers.get('authorization')).toBe('Bearer buyer-fixture');
+    expect(forwarded.redirect).toBe('manual');
+    expect(await forwarded.text()).toBe('selection');
+  });
   it('does not pin API requests to a socket instance or replace its affinity cookie', async () => {
     const authCookie = 'refreshToken=test-value==; Path=/; HttpOnly; Secure; SameSite=None';
     const headers = new Headers({ 'content-type': 'application/json' });

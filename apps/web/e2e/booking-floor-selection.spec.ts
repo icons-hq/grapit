@@ -555,6 +555,44 @@ async function createMobilePage(browser: Browser) {
   return { context, page };
 }
 
+test('verification preserves the current admission and resumes seat selection', async ({ page }, testInfo) => {
+  const locks: Array<{ seatId?: string }> = [];
+  await stubFloorBrowserRoutes(page, locks);
+  let admissions = 0;
+  page.on('request', req => { if (req.url().endsWith('/enter') && req.method() === 'POST') admissions++; });
+  await page.route('**/api/v1/booking/seats/lock', route => route.fulfill({
+    status: 403, json: { message: 'SECURITY_CHALLENGE_REQUIRED', sitekey: 'test-widget', binding: 'fixture-binding' },
+  }), { times: 1 });
+  // The browser fixture exercises the provider callback; the API integration test
+  // separately validates its signed result, session binding and expiry.
+  await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit', route => route.fulfill({
+    contentType: 'application/javascript', body: [
+      'window.turnstile = { render(node, options) {',
+      ' const button = document.createElement("button"); button.textContent = "Complete fixture check";',
+      ' button.onclick = () => options.callback("fixture-response"); node.appendChild(button); return "test-widget";',
+      '}, remove() {} };',
+    ].join('\n'),
+  }));
+  await page.route('**/api/v1/booking/seats/verify', route => {
+    expect(route.request().postDataJSON()).toEqual({ showtimeId: FLOOR_BROWSER_SHOWTIME_ID, token: 'fixture-response' });
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/booking/' + FLOOR_BROWSER_PERFORMANCE_ID);
+  await selectDateAndShowtime(page);
+  const initialAdmissions = admissions;
+  await clickSeatLabelCenter(page);
+  const dialog = page.getByRole('dialog', { name: '좌석 선택 전 보안 확인' });
+  await expect(dialog).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('booking-verification.png') });
+  await dialog.getByRole('button', { name: 'Complete fixture check' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(locks).toHaveLength(0);
+  await clickSeatLabelCenter(page);
+  await assertPostSelectionState(page);
+  expect(admissions).toBe(initialAdmissions);
+  expect(locks).toHaveLength(1);
+});
+
 test.describe('booking floor-browser seat selection', () => {
   test('desktop center click updates summary, timer, CTA, and preserves 1F selection across floor switches', async ({ page }) => {
     const lockRequests: Array<{ seatId?: string }> = [];

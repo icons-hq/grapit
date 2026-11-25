@@ -15,6 +15,9 @@ export default function proxy(request: NextRequest) {
   const { locale: pathLocale, pathnameWithoutLocale } =
     resolveLocaleFromPathname(request.nextUrl.pathname);
 
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.delete('x-grabit-origin-secret');
+
   // Admin auth is handled client-side in admin/layout.tsx.
   // Server-side cookie check removed because the refreshToken cookie
   // is set on the API domain (separate Cloud Run service) and is not
@@ -23,15 +26,12 @@ export default function proxy(request: NextRequest) {
     isBypassedPathname(request.nextUrl.pathname) ||
     isBypassedPathname(pathnameWithoutLocale)
   ) {
-    const requestHeaders = new Headers(request.headers);
-
     requestHeaders.delete(NEXT_INTL_LOCALE_HEADER);
 
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const activeLocale = pathLocale;
-  const requestHeaders = new Headers(request.headers);
 
   requestHeaders.set(NEXT_INTL_LOCALE_HEADER, activeLocale);
 

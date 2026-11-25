@@ -17,6 +17,7 @@ import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { BookingService } from './booking.service.js';
+import { BookingMacroGuard } from './booking-macro.guard.js';
 import { lockSeatSchema, type LockSeatBody } from './dto/lock-seat.dto.js';
 import { SEAT_STATUS_THROTTLE } from './seat-status-throttle.js';
 
@@ -37,7 +38,7 @@ export class BookingController {
    * POST /api/v1/booking/seats/lock
    * Auth required. Locks a seat for the authenticated user.
    */
-  @UseGuards(AdmissionGuard)
+  @UseGuards(AdmissionGuard, BookingMacroGuard)
   @Post('seats/lock')
   @HttpCode(HttpStatus.CREATED)
   async lockSeat(

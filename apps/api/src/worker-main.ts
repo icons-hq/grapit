@@ -9,6 +9,7 @@ import {
   scheduleForcedWorkerExit,
 } from './background-worker-runtime.js';
 import { boundedByRunDeadline, setRunDeadline } from './common/run-deadline.js';
+import { checkZoneDdos } from './modules/traffic/zone-ddos-monitor.js';
 import { PendingPaymentExpirationWorker } from './modules/jobs/pending-payment-expiration.worker.js';
 import { QrReminderRecoveryWorker } from './modules/ticket/qr-reminder-recovery.worker.js';
 import { DRIZZLE, type DrizzleDB } from './database/drizzle.provider.js';
@@ -70,6 +71,9 @@ async function bootstrap(): Promise<void> {
   );
 }
 
+// Start before Nest connects to PostgreSQL and Valkey so an origin incident
+// cannot suppress the independent edge signal. It has its own short timeout.
+const edgeCheck = checkZoneDdos(process.env['GRABIT_ZONE_SECURITY_ANALYTICS'], 5000);
 void bootstrap()
   .catch((error: unknown) => {
     logger.error(
@@ -78,7 +82,8 @@ void bootstrap()
     );
     process.exitCode = 1;
   })
-  .finally(() => {
+  .finally(async () => {
+    await edgeCheck;
     scheduleForcedWorkerExit({
       onForcedExit: () => {
         logger.warn('Background worker still had open handles after cleanup; forcing exit');
