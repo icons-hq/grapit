@@ -23,6 +23,7 @@ function client(id: string) {
 beforeAll(async () => {
   container = await new GenericContainer('valkey/valkey:8').withExposedPorts(6379).start();
   redis = new Redis(container.getMappedPort(6379), container.getHost());
+  vi.stubEnv('GRABIT_BOOKING_MACRO', 'true');
   vi.stubEnv('BOOKING_TURNSTILE_CONFIG', JSON.stringify({ secret: 'fixture-only', sitekey: 'public-test-key' }));
   service = new BookingMacroService(redis, new TrafficDefenseService());
 }, 120000);

@@ -36,12 +36,12 @@ type Widget = { sitekey: string; secret: string };
 export class BookingMacroService {
   private readonly widget: Widget | undefined;
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis, private readonly traffic: TrafficDefenseService) {
+    if (process.env['GRABIT_BOOKING_MACRO'] !== 'true') return;
     const raw = process.env['BOOKING_TURNSTILE_CONFIG'];
-    if (raw) {
-      const config = JSON.parse(raw) as Partial<Widget>;
-      if (!config.secret || !config.sitekey) throw new Error('Missing booking verification configuration');
-      this.widget = { secret: config.secret, sitekey: config.sitekey };
-    }
+    if (!raw) throw new Error('Missing booking verification configuration');
+    const config = JSON.parse(raw) as Partial<Widget>;
+    if (!config.secret || !config.sitekey) throw new Error('Incomplete booking verification configuration');
+    this.widget = { secret: config.secret, sitekey: config.sitekey };
   }
 
   private digest(value: string): string {
