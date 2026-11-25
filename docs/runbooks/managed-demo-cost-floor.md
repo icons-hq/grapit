@@ -2,6 +2,8 @@
 
 > Visitor analytics adds one hard-capped PostgreSQL connection per API instance and worker task, including when collection is off (admin reads/retention remain available). Deploy preflight includes it. Historical micro-profile budgets below do not include that later addition and must not be reapplied unchanged. Collection defaults off; policy, capacity and activation gates plus storage scenarios are in [visitor analytics](visitor-analytics.md).
 
+현재 운영 원본 접근과 복구 순서는 [예매 원본 방어 절차](booking-origin-defense.md)를 따른다. 아래 과거 직접 원본 전환 기록에는 당시 설정을 보존했다.
+
 ## 2026-10-27 release profile
 
 The bounded 600-seat release keeps the API at 1 vCPU/512 MiB, Web at 1 vCPU/1 GiB and Cloud SQL at `db-f1-micro`/10 GB. API maximum is two, API application pool five, worker application pool two, active admission cap 200 and request concurrency 1000 for waiting sockets. The Valkey replacement profile uses two `CUSTOM_PICO` nodes (primary plus one replica), standalone protocol, multi-zone placement and `noeviction`. A single-zone instance cannot be changed in place to multi-zone: provision, validate, cut over, then retire the unbound instance. The legacy DB is retired only after a fresh export is restored and verified in isolation; preserve both regional backup copies. The external load balancer is outside this retirement scope. See [release evidence and validation limits](../research/girl-rules-600-capacity-2026-10-27.md).

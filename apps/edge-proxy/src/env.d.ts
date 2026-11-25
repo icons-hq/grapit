@@ -7,5 +7,6 @@ declare namespace Cloudflare {
      * Optional so the Worker keeps proxying before the secret is provisioned.
      */
     EDGE_PROXY_SHARED_SECRET?: string;
+    ORIGIN_ROUTE_KEY?: string;
   }
 }

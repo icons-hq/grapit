@@ -1,6 +1,7 @@
 import './instrument.js';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import type IORedis from 'ioredis';
@@ -51,6 +52,10 @@ async function bootstrap() {
   checkEdgeProxySecretAtStartup();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    delete req.headers['x-grabit-origin-secret'];
+    next();
+  });
   app.set('trust proxy', 1);
   app.use('/api/v1/admin', adminBodyParser());
   app.use('/api/v1/analytics', analyticsBodyParser());

@@ -60,6 +60,7 @@ import {
 } from '@/lib/i18n/visible-copy';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { BookingSecurityCheck, readBookingChallenge, type BookingChallenge } from './booking-security-check';
 import { BookingHeader } from './booking-header';
 import { DatePicker } from './date-picker';
 import { FloorSelector } from './floor-selector';
@@ -903,7 +904,18 @@ export function BookingPage({
     selectedShowtimeId,
   ]);
 
+  const [challenge, setChallenge] = useState<BookingChallenge | null>(null);
+  const closeChallenge = useCallback((message?: string) => {
+    setChallenge(null);
+    if (message) toast.success(message);
+  }, []);
+
   const handleLockRejected = useCallback(({ error, showtimeId, stillWanted }: SeatLockRejection) => {
+    const required = readBookingChallenge(error, showtimeId);
+    if (required) {
+      if (stillWanted) setChallenge(previous => previous?.binding === required.binding ? previous : required);
+      return;
+    }
     if (isShowtimeSalesClosedError(error)) {
       closeStartedShowtime(showtimeId);
       return;
@@ -1356,6 +1368,7 @@ export function BookingPage({
 
   return (
     <div className="flex flex-1 flex-col">
+      {challenge && challenge.showtimeId === activeShowtimeId && <BookingSecurityCheck challenge={challenge} locale={activeLocale} onClose={closeChallenge} />}
       <BookingHeader
         performanceTitle={performance.title}
         expiresAt={bookingDeadlineAt}

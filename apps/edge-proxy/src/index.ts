@@ -5,6 +5,7 @@ const LOCAL_STAGING_HOSTS = new Set(['localhost', '127.0.0.1']);
 // EDGE_PROXY_SHARED_SECRET (apps/api/src/common/request-ip.ts).
 export const EDGE_SECRET_HEADER = 'x-grabit-edge-secret';
 export const EDGE_CLIENT_IP_HEADER = 'x-grabit-client-ip';
+const ORIGIN_ROUTE_HEADER = 'x-grabit-origin-secret';
 const CLOUD_RUN_AFFINITY_COOKIE = 'GAESA';
 
 function isSocketPath(pathname: string): boolean {
@@ -74,13 +75,16 @@ export function buildOriginRequest(
   request: Request,
   origin: string,
   edgeSecret?: string,
+  routeKey?: string,
 ): Request {
   const incomingUrl = new URL(request.url);
   const targetUrl = new URL(origin);
   targetUrl.pathname = incomingUrl.pathname;
   targetUrl.search = incomingUrl.search;
 
-  const originRequest = new Request(targetUrl, request);
+  const originRequest = new Request(new Request(targetUrl, request), { redirect: 'manual' });
+  originRequest.headers.delete(ORIGIN_ROUTE_HEADER);
+  if (routeKey) originRequest.headers.set(ORIGIN_ROUTE_HEADER, routeKey);
   originRequest.headers.delete('host');
   originRequest.headers.set('x-forwarded-host', incomingUrl.host);
   originRequest.headers.set('x-forwarded-proto', 'https');
@@ -142,7 +146,11 @@ async function proxy(request: Request, env: Env): Promise<Response> {
 
   // Only the API consumes the edge identity headers; keep the secret off the Web origin.
   const edgeSecret = origin === env.API_ORIGIN ? env.EDGE_PROXY_SHARED_SECRET : undefined;
-  const originRequest = buildOriginRequest(request, origin, edgeSecret);
+  const protectedOrigin = ['web.origin.heygrabit.com', 'api.origin.heygrabit.com'].includes(new URL(origin).hostname);
+  if (protectedOrigin && !env.ORIGIN_ROUTE_KEY) {
+    return new Response('Origin authentication unavailable', { status: 503, headers: { 'cache-control': 'no-store' } });
+  }
+  const originRequest = buildOriginRequest(request, origin, edgeSecret, protectedOrigin ? env.ORIGIN_ROUTE_KEY : undefined);
   // Stateless API calls may use any instance. Only Socket.IO polling/upgrade
   // needs Cloud Run affinity; API responses must not replace that socket cookie.
   const isolateApi = origin === env.API_ORIGIN && !isSocketPath(incomingUrl.pathname);

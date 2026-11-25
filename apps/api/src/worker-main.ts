@@ -9,6 +9,7 @@ import {
   scheduleForcedWorkerExit,
 } from './background-worker-runtime.js';
 import { boundedByRunDeadline, setRunDeadline } from './common/run-deadline.js';
+import { checkZoneDdos } from './modules/traffic/zone-ddos-monitor.js';
 import { PendingPaymentExpirationWorker } from './modules/jobs/pending-payment-expiration.worker.js';
 import { QrReminderRecoveryWorker } from './modules/ticket/qr-reminder-recovery.worker.js';
 import { DRIZZLE, type DrizzleDB } from './database/drizzle.provider.js';
@@ -55,7 +56,9 @@ async function bootstrap(): Promise<void> {
         );
       },
       isQueueProcessing: () => pgBoss.isAvailable && pgBoss.processesJobs !== false,
-      wait,
+      wait: async (ms) => {
+        await Promise.all([wait(ms), checkZoneDdos(process.env['GRABIT_ZONE_SECURITY_ANALYTICS'], boundedByRunDeadline(ms))]);
+      },
       // No-op once PgBossShutdownService stopped it during closeApplication.
       stopQueue: () => stopPgBossForShutdown(pgBoss),
       closeApplication: () => app.close(),

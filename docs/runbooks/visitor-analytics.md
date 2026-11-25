@@ -118,7 +118,7 @@ Meta/Kakao/Naver/Clarity는 설치하지 않는다. 후속 Google 관심사 분�
 
 ### 전송·운영 설정
 
-배포 Web build arg `NEXT_PUBLIC_ANALYTICS_API_URL`은 repository variable `ANALYTICS_API_ORIGIN`에서 가져온다. 운영 값은 **https://grabit-api-d3c6wrfdbq-du.a.run.app** (프로젝트 grapit-491806, asia-northeast3, 기존 grabit-api)이다. `/api/v1/analytics`와 `/api/v1/admin/analytics`만 이 origin을 사용한다. 일반 API와 예매·결제는 기존 public API를 유지한다. 기존 공개 origin의 Origin 검증·JWT·관리자 권한·throttle은 그대로 적용되며 새 공개 bypass를 만들지 않는다. 개인별 payload 및 상세 응답을 Cloudflare CDN으로 보내지 않는다. 향후 API origin 교체 시 이 build 변수를 함께 갱신하고 재배포한다.
+배포 Web build arg `NEXT_PUBLIC_ANALYTICS_API_URL`은 repository variable `ANALYTICS_API_ORIGIN`에서 가져온다. 운영 값은 **https://analytics.origin.heygrabit.com** (Cloudflare 프록시를 사용하지 않는 Google HTTPS 부하 분산기, 기존 grabit-api)이다. `/api/v1/analytics`와 `/api/v1/admin/analytics`만 이 origin을 사용한다. 일반 API와 예매·결제는 기존 public API를 유지한다. 기존 공개 origin의 Origin 검증·JWT·관리자 권한·throttle은 그대로 적용되며 새 공개 bypass를 만들지 않는다. 개인별 payload 및 상세 응답을 Cloudflare CDN으로 보내지 않는다. 향후 API origin 교체 시 이 build 변수를 함께 갱신하고 재배포한다.
 
 선택 분석 endpoint는 Sentry 오류/transaction/HTTP breadcrumb 및 span의 식별정보에서 제외한다. Cloud Logging `_Default` sink의 `personal-analytics-request-logs` exclusion은 `grabit-api`의 `/api/v1/(admin/)?analytics` 요청 메타데이터 저장만 제외한다. 다른 서비스 로그는 유지한다. 일반 사이트·보안 로그 전체가 동의로 중단된다고 고지하지 않는다.
 
