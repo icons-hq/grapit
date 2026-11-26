@@ -232,6 +232,13 @@ export function validateDeployConfig(env) {
     throw new Error('API_MIN_INSTANCES must not exceed API_MAX_INSTANCES');
   }
 
+  const apiCpu = parseInteger(env.API_CPU ?? '1', 'API_CPU', { min: 1, max: 4 });
+  if (apiCpu === 3) throw new Error('API_CPU must be 1, 2, or 4');
+  const apiMemory = apiCpu === 4 ? '2Gi' : '512Mi';
+  if (env.API_MEMORY !== undefined && env.API_MEMORY !== apiMemory) {
+    throw new Error(`API_MEMORY must be ${apiMemory} for ${apiCpu} vCPU`);
+  }
+
   const prewarmScalingScope =
     typeof env.PREWARM_SCALING_SCOPE === 'string' ? env.PREWARM_SCALING_SCOPE.trim() : '';
   if (!PREWARM_SCALING_SCOPES.has(prewarmScalingScope)) {
@@ -268,9 +275,8 @@ export function validateDeployConfig(env) {
     migrationFreeze: parseStrictBoolean(env.MIGRATION_FREEZE, 'MIGRATION_FREEZE'),
     apiMinInstances,
     apiMaxInstances,
-    // The API memory profile stays at 512 MiB; validate CPU changes before
-    // migrations rather than discovering an invalid size during deployment.
-    apiCpu: parseInteger(env.API_CPU ?? '1', 'API_CPU', { min: 1, max: 2 }),
+    apiCpu,
+    apiMemory,
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     apiNodeHeapMaxMb: parseInteger(env.API_NODE_HEAP_MAX_MB ?? '256', 'API_NODE_HEAP_MAX_MB', { min: 128, max: 384 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),

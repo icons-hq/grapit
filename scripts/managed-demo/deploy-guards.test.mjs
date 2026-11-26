@@ -60,6 +60,8 @@ test('validates workflow defaults and builds fail-fast migration session options
   assert.equal(config.queueMaxActiveAdmissions, 200);
   assert.equal(config.apiNodeHeapMaxMb, 256);
   assert.equal(config.apiCpu, 1);
+  assert.equal(config.apiMemory, '512Mi');
+  assert.equal(validateDeployConfig({ ...workflowDefaults, API_CPU: '4', API_MEMORY: '2Gi' }).apiMemory, '2Gi');
   assert.equal(validateDeployConfig({ ...workflowDefaults, API_CPU: '2' }).apiCpu, 2);
   assert.equal(buildMigrationPgOptions(config), '-c lock_timeout=5s -c statement_timeout=60s');
 });
@@ -76,6 +78,13 @@ test('API and Web deployment update both Cloud Run caps when resizing an existin
   }
 });
 
+test('passes the supported API CPU and memory pair to Cloud Run', async () => {
+  const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
+  assert.ok(workflow.includes("API_MEMORY: ${{ vars.API_CPU == '4' && '2Gi' || '512Mi' }}"));
+  assert.ok(workflow.includes('--memory=${{ env.API_MEMORY }}'));
+  assert.ok(workflow.includes('--cpu=${{ env.API_CPU }}'));
+});
+
 test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
   const invalid = [
     [{ BOOKING_ENABLED: 'flase' }, /BOOKING_ENABLED must be exactly/],
@@ -87,7 +96,9 @@ test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
     [{ API_MIN_INSTANCES: '5', API_MAX_INSTANCES: '4' }, /API_MIN_INSTANCES must not exceed/],
     [{ API_CONCURRENCY: '0' }, /API_CONCURRENCY must be between/],
     [{ API_CPU: '0' }, /API_CPU must be between/],
-    [{ API_CPU: '4' }, /API_CPU must be between/],
+    [{ API_CPU: '3' }, /API_CPU must be 1, 2, or 4/],
+    [{ API_CPU: '5' }, /API_CPU must be between/],
+    [{ API_CPU: '4', API_MEMORY: '512Mi' }, /API_MEMORY must be 2Gi/],
     [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '0' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
     [{ QUEUE_MAX_ACTIVE_ADMISSIONS: '1001' }, /QUEUE_MAX_ACTIVE_ADMISSIONS must be between/],
     [{ API_NODE_HEAP_MAX_MB: '512' }, /API_NODE_HEAP_MAX_MB must be between/],
