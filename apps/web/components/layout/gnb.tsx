@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
-import { Search, Menu, Heart, Clock3, Ticket, UserRound, LogOut, ChevronDown, X } from 'lucide-react';
+import { Search, Menu, Heart, Clock3, Ticket, UserRound, LogOut, ChevronDown, LayoutDashboard, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
@@ -94,6 +94,14 @@ export function GNB() {
     {home && <nav className="ticket-main-nav" aria-label={ticket.ticket}>
       <div className="ticket-container ticket-main-nav-inner">
         <button type="button" className="ticket-all-categories" onClick={() => setCategoriesOpen(true)}><Menu size={20} />{ticket.allCategories}</button>
+        {authenticated && user.role === 'admin' && (
+          <Link href="/admin" prefetch={false} className="group">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary group-hover:bg-primary/15">
+              <LayoutDashboard size={16} aria-hidden="true" />
+              {copy.nav.adminDashboard}
+            </span>
+          </Link>
+        )}
         {links.map((link) => <Link key={link.href} href={href(link.href)} aria-current={path === link.href ? 'page' : undefined}>{link.label}</Link>)}
       </div>
     </nav>}
