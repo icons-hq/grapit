@@ -9,6 +9,8 @@
 
 Set the repository variable `QUEUE_MAX_ACTIVE_ADMISSIONS=200` for the November 27 19:00 KST opening. The queue admits at most 200 buyers and uses the remaining sellable seats when fewer are available. An issued virtual account gives its queue slot to the next buyer. Its seats stay bound to the deposit order under the [virtual account procedure](toss-virtual-account.md).
 
+The opening API profile uses four vCPU and 2 GiB per instance with an application pool of four. Cloud Run may grow to twelve API instances. The worker uses its own application pool of two and Cloud SQL stays on four vCPU and 15 GiB.
+
 The single [opening workflow execution](https://console.cloud.google.com/workflows/workflow/asia-northeast3/grabit-namtanfilm-opening-20261127/execution/2b4aeb14-299e-4230-8ec9-8dcf6baf26eb?project=grapit-491806) starts prewarming at **18:30 KST**. It raises the service minimums to eight API and twelve Web instances, then requests the homepage and runtime flags 384 times with concurrency capped at 16. At **November 28 01:00 KST** it restores the minimums captured before warmup. An intervening operator change to a service minimum is preserved. Autoscaling continues within the deployed maxima. The November 26 rehearsal observed HTTP 200 on both Web routes from each of twelve instances and restored both minima to one.
 
 ## 2026-10-27 release profile
@@ -555,7 +557,7 @@ The Deploy workflow validates these repository variables before any job changes 
 | `MIGRATION_LOCK_TIMEOUT` | `5s` | `lock_timeout` for every migration-job session, applied through `PGOPTIONS`. |
 | `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
 | `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
-| `API_CPU` | `1` | API vCPU count, integer 1–2 for the fixed 512 MiB memory profile. Independent of API instance count, worker resources, DB pools and admission cap. Read the serving revision after changing this repository variable. |
+| `API_CPU` | `1` | API vCPU count. One or two vCPU use 512 MiB and four vCPU use 2 GiB. Independent of API instance count, worker resources, DB pools and admission cap. Read the serving revision after changing this repository variable. |
 | `API_CONCURRENCY` | `1000` | API Cloud Run request slots, including seat WebSockets and any old waiting clients. The 300-admission profile overrides this to `250`. This is separate from the admission cap and does not enlarge DB pools. |
 | `QUEUE_MAX_ACTIVE_ADMISSIONS` | `200` | Per-performance active admission cap, integer 1–1000; the 300-admission profile explicitly sets `300`. Direct API startup without this setting retains the legacy 1000 default. Wait estimates use the configured cap. |
 | `API_NODE_HEAP_MAX_MB` | `256` | API Node old-space cap via `NODE_OPTIONS`; guard accepts 128–384. RSS also includes native memory, buffers and other heaps; this is not a 256 MiB total-memory cap. |
