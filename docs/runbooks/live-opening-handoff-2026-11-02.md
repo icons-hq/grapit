@@ -22,7 +22,7 @@
 | 항목 | 현재 값 / 채울 내용 |
 | --- | --- |
 | 공연 / 회차 / 판매 시작·종료 KST | 미정 |
-| 예상 동시 방문 / 좌석 / 예매 입장 상한 | 운영에 DB 4 vCPU·15GiB / API 최대 8대·pool 8 / Web 최대 12대 / 입장 150명 적용 완료. 2026-11-03 조회에서 평상시 API·Web 최소 각 1대 확인. 1,500명 방문·600석의 시험 범위와 비용은 [전환 기록](../research/booking-production-cutover-2026-11-02.md) 확인. 실제 공연 규모가 달라지면 다시 판단 |
+| 예상 동시 방문 / 좌석 / 예매 입장 상한 | 운영에 DB 4 vCPU·15GiB / API 최대 8대·pool 8 / Web 최대 12대 / 입장 150명 적용 완료. 2026-11-03 조회에서 평상시 API·Web 최소 각 1대 확인. 1,500명 방문·600석의 시험 범위와 비용은 [전환 기록](../research/booking-production-cutover-2026-11-02.md) 확인. 11월 27일 NAMTANFILM은 [입장 200명·예열 일정](managed-demo-cost-floor.md#namtanfilm-ticket-opening-on-2026-11-27)을 적용 |
 | iPhone 모델 / iOS / Safari 버전 | iPhone 17 Pro Max / iOS 27.0.1. 한국어 국내 카드 앱 왕복·승인·QR 조회·전액 취소 검증 완료. 해외 지갑·영문 전체 구매 여정은 미실행 |
 | Android 모델 / OS / Chrome 버전 | 사용자 요청으로 후속 검증에 보류. 실제 Android 합격 기록 없음 |
 | 현장 리허설 책임자 | 박상우 |

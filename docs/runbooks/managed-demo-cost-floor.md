@@ -4,6 +4,13 @@
 
 현재 운영 원본 접근과 복구 순서는 [예매 원본 방어 절차](booking-origin-defense.md)를 따른다. 아래 과거 직접 원본 전환 기록에는 당시 설정을 보존했다.
 
+
+## NAMTANFILM ticket opening on 2026-11-27
+
+Set the repository variable `QUEUE_MAX_ACTIVE_ADMISSIONS=200` for the November 27 19:00 KST opening. The queue admits at most 200 buyers and uses the remaining sellable seats when fewer are available. An issued virtual account gives its queue slot to the next buyer. Its seats stay bound to the deposit order under the [virtual account procedure](toss-virtual-account.md).
+
+The single [opening workflow execution](https://console.cloud.google.com/workflows/workflow/asia-northeast3/grabit-namtanfilm-opening-20261127/execution/2b4aeb14-299e-4230-8ec9-8dcf6baf26eb?project=grapit-491806) starts prewarming at **18:30 KST**. It raises the service minimums to eight API and twelve Web instances, then requests the homepage and runtime flags 384 times with concurrency capped at 16. At **November 28 01:00 KST** it restores the minimums captured before warmup. An intervening operator change to a service minimum is preserved. Autoscaling continues within the deployed maxima. The November 26 rehearsal observed HTTP 200 on both Web routes from each of twelve instances and restored both minima to one.
+
 ## 2026-10-27 release profile
 
 The bounded 600-seat release keeps the API at 1 vCPU/512 MiB, Web at 1 vCPU/1 GiB and Cloud SQL at `db-f1-micro`/10 GB. API maximum is two, API application pool five, worker application pool two, active admission cap 200 and request concurrency 1000 for waiting sockets. The Valkey replacement profile uses two `CUSTOM_PICO` nodes (primary plus one replica), standalone protocol, multi-zone placement and `noeviction`. A single-zone instance cannot be changed in place to multi-zone: provision, validate, cut over, then retire the unbound instance. The legacy DB is retired only after a fresh export is restored and verified in isolation; preserve both regional backup copies. The external load balancer is outside this retirement scope. See [release evidence and validation limits](../research/girl-rules-600-capacity-2026-10-27.md).
