@@ -21,7 +21,6 @@ import type {
   AdminRefundResult,
   PaymentStatus,
   RefundPreviewResponse,
-  TicketItemRefundPreviewResponse,
   CancellationExpectation,
   TicketEmailDelivery,
   UserProfile,
@@ -84,25 +83,24 @@ export function useCancelReservation() {
   });
 }
 
-export function useRefundPreview(id: string | null, enabled = true, ticketItemId?: string | null) {
+export function useRefundPreview(id: string | null, enabled = true) {
   const userId = useAuthStore((state) => state.user?.id);
   return useQuery({
-    queryKey: ['reservations', id, 'refund-preview', userId, ticketItemId ?? null],
+    queryKey: ['reservations', id, 'refund-preview', userId],
     queryFn: () =>
-      apiClient.get<RefundPreviewResponse | TicketItemRefundPreviewResponse>(
-        ticketItemId ? `/api/v1/reservations/${id}/ticket-items/${ticketItemId}/refund-preview`
-          : `/api/v1/reservations/${id}/refund-preview`,
+      apiClient.get<RefundPreviewResponse>(
+        `/api/v1/reservations/${id}/refund-preview`,
         { showErrorToast: false },
       ),
     enabled: Boolean(id) && enabled,
   });
 }
 
-export function useCancelTicketItem() {
+export function useCheckTicketCancellation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ticketItemId, reason, expected }: { id: string; ticketItemId: string; reason: string; expected?: CancellationExpectation }) =>
-      apiClient.put<ReservationDetail>(`/api/v1/reservations/${id}/ticket-items/${ticketItemId}/cancel`, { reason, ...expected }),
+    mutationFn: ({ id, ticketItemId }: { id: string; ticketItemId: string }) =>
+      apiClient.post<ReservationDetail>(`/api/v1/reservations/${id}/ticket-items/${ticketItemId}/cancellation-status`, {}),
     onSettled: () => { invalidateAfterCancellation(queryClient); },
   });
 }

@@ -11,7 +11,7 @@ import { ReservationDetailView } from '@/components/reservation/reservation-deta
 import {
   useReservationDetail,
   useCancelReservation,
-  useCancelTicketItem,
+  useCheckTicketCancellation,
 } from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const paymentCheck = useCheckPaymentStatus(reservation?.tossOrderId, refetch);
   const checkoutRestart = useRestartCheckout({ refetch });
   const cancelMutation = useCancelReservation();
-  const cancelTicketMutation = useCancelTicketItem();
+  const checkTicketMutation = useCheckTicketCancellation();
   const cancellationCopy = getCancellationCopy(locale);
 
   const parentId = reservation?.addonParentReservationId;
@@ -42,19 +42,30 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
     if (parentId) router.replace(getLocalizedPathname(`/mypage/reservations/${parentId}`, locale));
   }, [parentId, router, locale]);
 
-  async function handleCancel(reason: string, ticketItemId?: string, expected?: CancellationExpectation) {
+  async function handleCancel(reason: string, expected?: CancellationExpectation) {
     try {
-      if (ticketItemId) await cancelTicketMutation.mutateAsync({ id, ticketItemId, reason, expected });
-      else {
-        const result = await cancelMutation.mutateAsync({ id, reason, expected });
-        if (result.refundTimeline?.currentState === 'FAILED') throw new Error(cancellationCopy.unknown);
-      }
+      const result = await cancelMutation.mutateAsync({ id, reason, expected });
+      if (result.refundTimeline?.currentState === 'FAILED') throw new Error(cancellationCopy.unknown);
       toast.success(cancellationCopy.requested);
       await refetch();
     } catch (error) {
       toast.error(cancellationCopy.unknown);
       await refetch();
       throw error;
+    }
+  }
+
+  async function handleCheckCancellation(recovery: NonNullable<ReservationDetail['cancellationRecovery']>) {
+    if (recovery.kind === 'reservation') {
+      await handleCancel(cancellationCopy.checkCancellation).catch(() => undefined);
+      return;
+    }
+    try {
+      await checkTicketMutation.mutateAsync({ id, ticketItemId: recovery.ticketItemId });
+    } catch {
+      toast.error(cancellationCopy.unknown);
+    } finally {
+      await refetch();
     }
   }
 
@@ -101,7 +112,8 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
           <ReservationDetailView
             reservation={reservation}
             onCancel={handleCancel}
-            isCancelling={cancelMutation.isPending || cancelTicketMutation.isPending}
+            onCheckCancellation={handleCheckCancellation}
+            isCancelling={cancelMutation.isPending || checkTicketMutation.isPending}
             onResumePayment={handleResumePayment}
             onCheckPayment={paymentCheck.check}
             isCheckingPayment={paymentCheck.checking}

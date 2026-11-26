@@ -81,8 +81,19 @@ export function reservationProviderRefund(items: Array<typeof ticketItems.$infer
     amountDecimal: (amountMinor / (currency === 'USD' ? 100 : 1)).toFixed(currency === 'USD' ? 2 : 0) };
 }
 
+// A legacy zero-refund seat has no provider command. Require its recorded cancellation and fee
+// as evidence: an untouched free ticket also has zero amounts.
+export function hasStoredZeroRefund(item: {
+  cancelledAt: Date | null; cancelReason: string | null; refundableAmount: number;
+  cancellationFee: number; price: number; addonAmount?: number;
+}): boolean {
+  return Boolean(item.cancelledAt && item.cancelReason) && item.refundableAmount === 0
+    && item.cancellationFee === item.price + (item.addonAmount ?? 0);
+}
+
 export function reservationCancellationRecovery(items: Array<typeof ticketItems.$inferSelect>, refund: RefundRecord | null): ReservationDetail['cancellationRecovery'] {
   if (refund && ['requested', 'sent_to_pg', 'processing_at_pg'].includes(refund.status)) return { kind: 'reservation' };
-  const item = items.find((item) => item.status === 'cancellation_pending' && item.cancellationCommand);
+  if (refund && !hasRestoredRefundRights(refund)) return null;
+  const item = items.find((item) => item.status === 'cancellation_pending' && (item.cancellationCommand || hasStoredZeroRefund(item)));
   return item ? { kind: 'ticket', ticketItemId: item.id } : null;
 }

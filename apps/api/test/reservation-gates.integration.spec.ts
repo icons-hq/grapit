@@ -23,7 +23,7 @@ import {
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/included-benefit-entitlements.js';
 import { restoreCancellationPendingBenefitEntitlements } from '../src/database/benefit-entitlement-restoration.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
-import { ReservationService } from '../src/modules/reservation/reservation.service.js';
+import { HistoricalSeatCancellationFixture } from './helpers/historical-seat-cancellation.js';
 import { RefundService } from '../src/modules/refund/refund.service.js';
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 
@@ -346,7 +346,7 @@ describe('Reservation gates — PostgreSQL', () => {
     }
 
     function buyerCancellations(provider: unknown) {
-      return new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never,
+      return new HistoricalSeatCancellationFixture(db, provider as never, {} as never, {} as never, {} as never, {} as never,
         qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
     }
 

@@ -544,7 +544,8 @@ function InfoRow({
 
 interface ReservationDetailProps {
   reservation: ReservationDetailType;
-  onCancel: (reason: string, ticketItemId?: string, expected?: import('@grabit/shared').CancellationExpectation) => Promise<void> | void;
+  onCheckCancellation?: (recovery: NonNullable<ReservationDetailType['cancellationRecovery']>) => Promise<void> | void;
+  onCancel: (reason: string, expected?: import('@grabit/shared').CancellationExpectation) => Promise<void> | void;
   isCancelling: boolean;
   onResumePayment?: (reservation: ReservationDetailType) => void;
   onCheckPayment?: () => void | Promise<unknown>;
@@ -560,6 +561,7 @@ interface ReservationDetailProps {
 export function ReservationDetailView({
   reservation,
   onCancel,
+  onCheckCancellation,
   isCancelling,
   onResumePayment,
   onCheckPayment, isCheckingPayment, paymentCheckedAt, providerUnavailable, onReselectSeats,
@@ -574,7 +576,6 @@ export function ReservationDetailView({
   const completeCopy = visibleCopy.bookingExtra.completeCard;
   const cancellationCopy = getCancellationCopy(locale);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const [cancelTicketItemId, setCancelTicketItemId] = useState<string | null>(null);
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
   const savedPaymentMethod = reservation.paymentInfo?.paymentMethod ?? reservation.checkoutPaymentMethod;
@@ -598,13 +599,7 @@ export function ReservationDetailView({
   const nowMs = getServerNowMs();
   const isDeadlinePassed = Date.parse(reservation.cancelDeadline) < nowMs;
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
-  const canCancelSeat = canCancel && !hasCancellationInProgress(reservation);
-  const refundPreviewQuery = useRefundPreview(
-    reservation.id,
-    canCancel && cancelModalOpen && !isCancelling &&
-      (!cancelTicketItemId || reservation.ticketItems.some((item) => item.id === cancelTicketItemId && item.status === 'ACTIVE')),
-    cancelTicketItemId,
-  );
+  const refundPreviewQuery = useRefundPreview(reservation.id, canCancel && cancelModalOpen && !isCancelling);
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
     ? reservation.ticketItems.filter((item) => item.status === 'CANCELLED').reduce(
@@ -787,11 +782,9 @@ export function ReservationDetailView({
               <Separator />
               <InfoRow label={detailCopy.progressEstimate} value={progressGuidance.estimate} />
             </div>
-            {reservation.cancellationRecovery && (
+            {reservation.cancellationRecovery && onCheckCancellation && (
               <Button variant="outline" disabled={isCancelling} onClick={() => {
-                const recovery = reservation.cancellationRecovery!;
-                void Promise.resolve(onCancel(cancellationCopy.checkCancellation,
-                  recovery.kind === 'ticket' ? recovery.ticketItemId : undefined)).catch(() => undefined);
+                if (reservation.cancellationRecovery) void onCheckCancellation(reservation.cancellationRecovery);
               }}>{cancellationCopy.checkCancellation}</Button>
             )}
             {paymentFailureGuidance && (
@@ -974,13 +967,6 @@ export function ReservationDetailView({
                       canBuy={reservation.status === 'CONFIRMED' && card.status === 'ACTIVE' && card.admissionState === 'NOT_ENTERED' && Date.parse(reservation.showDateTime) > nowMs} />
                   )}
                   {card.cancellation && <TicketCancellationSummary cancellation={card.cancellation} locale={locale} />}
-                  {card.isTicketItem && card.status === 'ACTIVE' && card.admissionState !== 'ENTERED'
-                    && !card.benefitEntitlements.some((benefit) => benefit.state === 'redeemed') && canCancelSeat && (
-                    <Button variant="outline" className="mt-4" disabled={isCancelling} onClick={() => {
-                      setCancelTicketItemId(card.id); setCancelModalOpen(true);
-                    }}>{cancellationCopy.cancelOne}</Button>
-                  )}
-
                 </div>
               ))}
             </div>
@@ -1114,7 +1100,7 @@ export function ReservationDetailView({
             <Button
               variant="destructive"
               className="h-12 w-full"
-              onClick={() => { setCancelTicketItemId(null); setCancelModalOpen(true); }}
+              onClick={() => setCancelModalOpen(true)}
             >
               {copy.detail.cancelReservation}
             </Button>
@@ -1144,8 +1130,7 @@ export function ReservationDetailView({
 
       {/* Cancel modal */}
       <CancelConfirmModal
-        key={cancelTicketItemId ?? 'all-active-tickets'}
-        separateRefundNotice={reservation.ticketAddonAccess?.some(item => item.hasOrders && (!cancelTicketItemId || item.ticketItemId === cancelTicketItemId))
+        separateRefundNotice={reservation.ticketAddonAccess?.some(item => item.hasOrders)
           ? getTicketAddonCopy(benefitLocale).separateRefund : undefined}
         open={cancelModalOpen}
         onOpenChange={setCancelModalOpen}
@@ -1156,13 +1141,12 @@ export function ReservationDetailView({
         releaseWindowMinutes={refundPreviewQuery.data?.cancelledSeatHoldWindowMinutes ?? null}
         isPreviewLoading={refundPreviewQuery.isLoading}
         isPreviewError={refundPreviewQuery.isError}
-        selectedSeats={qrCards.filter((card) => card.status === 'ACTIVE' && (!cancelTicketItemId || card.id === cancelTicketItemId)).map((card) => card.seatLabel)}
-        remainingSeats={qrCards.filter((card) => card.status === 'ACTIVE' && cancelTicketItemId && card.id !== cancelTicketItemId).map((card) => card.seatLabel)}
+        seats={qrCards.filter((card) => card.status === 'ACTIVE').map((card) => card.seatLabel)}
         providerRefund={refundPreviewQuery.data?.providerRefund}
         blockedReason={refundPreviewQuery.data?.blockedReason}
         canConfirm={refundPreviewQuery.data?.canRequestRefund === true}
         onRetryPreview={() => { void refundPreviewQuery.refetch(); }}
-        onConfirm={(reason) => onCancel(reason, cancelTicketItemId ?? undefined, {
+        onConfirm={(reason) => onCancel(reason, {
           expectedRefundableAmount: refundPreviewQuery.data!.refundableAmount,
           expectedProviderRefundAmountMinor: refundPreviewQuery.data?.providerRefund?.amountMinor,
         })}

@@ -1,6 +1,7 @@
 import {
   Controller,
   ForbiddenException,
+  GoneException,
   Get,
   Optional,
   Post,
@@ -23,19 +24,17 @@ import {
   queueAdmissionSchema,
   confirmPaymentSchema,
   cancelReservationSchema,
-  cancelTicketItemSchema,
   type PrepareReservationInput,
   type ConfirmPaymentInput,
   type ConfirmPaymentRequest,
   type CancelReservationInput,
-  type CancelTicketItemInput,
   type ReservationStatus,
 } from '@grabit/shared';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { QueueService, readRefreshCookie } from '../queue/queue.service.js';
-import { ReservationService } from './reservation.service.js';
+import { FULL_RESERVATION_ONLY_MESSAGE, ReservationService } from './reservation.service.js';
 import { RefundService } from '../refund/refund.service.js';
 
 const prepareReservationTransportSchema = prepareReservationSchema
@@ -218,19 +217,22 @@ export class ReservationController {
   }
 
   @Put('reservations/:id/ticket-items/:ticketItemId/cancel')
-  async cancelTicketItem(
-    @Param('id') id: string,
-    @Param('ticketItemId') ticketItemId: string,
-    @Body(new ZodValidationPipe(cancelTicketItemSchema)) body: CancelTicketItemInput,
-    @Request() req: { user: { id: string } },
-  ) {
-    return this.reservationService.cancelTicketItem(id, ticketItemId, req.user.id, body.reason, body);
+  cancelTicketItem(): never {
+    throw new GoneException(FULL_RESERVATION_ONLY_MESSAGE);
   }
 
   @Get('reservations/:id/ticket-items/:ticketItemId/refund-preview')
-  async getTicketItemRefundPreview(@Param('id') id: string, @Param('ticketItemId') ticketItemId: string,
-    @Request() req: { user: { id: string } }) {
-    return this.reservationService.getTicketItemCancellationPreview(id, ticketItemId, req.user.id);
+  getTicketItemRefundPreview(): never {
+    throw new GoneException(FULL_RESERVATION_ONLY_MESSAGE);
+  }
+
+  @Post('reservations/:id/ticket-items/:ticketItemId/cancellation-status')
+  checkTicketItemCancellation(
+    @Param('id') id: string,
+    @Param('ticketItemId') ticketItemId: string,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.reservationService.recoverTicketItemCancellation(id, ticketItemId, req.user.id);
   }
 
   @Put('reservations/:id/cancel-pending')

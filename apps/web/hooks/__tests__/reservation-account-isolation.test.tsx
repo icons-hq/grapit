@@ -2,17 +2,17 @@ import type { ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useMyReservations, useReservationDetail, useRefundPreview, useCancelTicketItem } from '../use-reservations';
+import { useMyReservations, useReservationDetail, useRefundPreview, useCancelReservation } from '../use-reservations';
 import { useAuthStore } from '@/stores/use-auth-store';
 
 const get = vi.hoisted(() => vi.fn());
-const put = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/api-client', () => ({ apiClient: { get, put } }));
+const post = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/api-client', () => ({ apiClient: { get, post } }));
 
 describe('Buyer reservation cache isolation', () => {
   beforeEach(() => {
     get.mockReset();
-    put.mockReset();
+    post.mockReset();
     window.history.replaceState({}, '', '/');
     useAuthStore.setState({ user: { id: 'buyer-a' } as never, accessToken: 'test-a' });
   });
@@ -37,16 +37,17 @@ describe('Buyer reservation cache isolation', () => {
     unmount(); client.clear();
   });
 
-  it('does not refetch an obsolete refund quote after the seat cancellation succeeds', async () => {
+  it('does not refetch an obsolete refund quote after the full cancellation succeeds', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
     get.mockResolvedValue({ refundableAmount: 52000 });
-    put.mockResolvedValue({ id: 'order-a' });
-    const { result } = renderHook(() => ({ preview: useRefundPreview('order-a', true, 'seat-a'), cancel: useCancelTicketItem() }), { wrapper });
+    post.mockResolvedValue({ id: 'order-a' });
+    const { result } = renderHook(() => ({ preview: useRefundPreview('order-a', true), cancel: useCancelReservation() }), { wrapper });
     await waitFor(() => expect(result.current.preview.isSuccess).toBe(true));
-    await act(() => result.current.cancel.mutateAsync({ id: 'order-a', ticketItemId: 'seat-a', reason: 'Changed plans' }));
+    await act(() => result.current.cancel.mutateAsync({ id: 'order-a', reason: 'Changed plans' }));
+    expect(post).toHaveBeenCalledWith('/api/v1/reservations/order-a/refund', { reason: 'Changed plans' });
     expect(get).toHaveBeenCalledTimes(1);
-    expect(client.getQueryState(['reservations', 'order-a', 'refund-preview', 'buyer-a', 'seat-a'])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(['reservations', 'order-a', 'refund-preview', 'buyer-a'])?.isInvalidated).toBe(true);
   });
 
   it.each(['list', 'detail'])('refetches a %s in the selected language instead of retaining the previous title', async (kind) => {

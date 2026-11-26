@@ -1065,7 +1065,7 @@ describe('ReservationDetailView QR ticket card', () => {
 
     expect(screen.getAllByTestId('qr-ticket-image')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: '이 좌석 취소' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '예매 취소' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '예매 전체 취소' })).not.toBeInTheDocument();
     const pendingCard = screen.getByTestId('qr-ticket-card-00000000-0000-4000-8000-000000000102');
     expect(within(pendingCard).getAllByText('취소 확인 중').length).toBeGreaterThan(0);
     expect(within(pendingCard).getByText('취소 확인 중입니다.')).toBeInTheDocument();
@@ -1120,8 +1120,8 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '이 좌석 취소' })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: '예매 전체 취소' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 좌석 취소' })).not.toBeInTheDocument();
     expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
   });
 
@@ -1187,7 +1187,7 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '예매 취소' }));
+    fireEvent.click(screen.getByRole('button', { name: '예매 전체 취소' }));
 
     expect(await screen.findByText('취소수수료')).toBeInTheDocument();
     expect(screen.getAllByText('환불 예정 금액').length).toBeGreaterThan(0);
@@ -1209,7 +1209,7 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 전체 취소' })).toBeInTheDocument();
   });
 
   it('shows whole-reservation cancellation for legacy fallback ticket items', () => {
@@ -1229,11 +1229,11 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 전체 취소' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '이 좌석 취소' })).not.toBeInTheDocument();
   });
 
-  it('offers individual cancellation only for active, unused ticket cards before the deadline', () => {
+  it('never offers separate cancellation for unused or entered ticket cards', () => {
     const reservation = createReservation();
     render(
       <ReservationDetailView
@@ -1253,7 +1253,7 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(screen.getAllByRole('button', { name: '이 좌석 취소' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '이 좌석 취소' })).not.toBeInTheDocument();
     expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
     expect(screen.getAllByText('VIP A열 1번').length).toBeGreaterThan(0);
   });
@@ -1274,7 +1274,7 @@ describe('ReservationDetailView QR ticket card', () => {
     );
 
     expect(screen.queryByRole('button', { name: '이 좌석 취소' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 전체 취소' })).toBeInTheDocument();
   });
 });
 
@@ -1309,14 +1309,16 @@ it('keeps a completed partial refund visible with the refunded amount while the 
 
 it.each(['reservation', 'ticket'] as const)('checks a pending %s cancellation through its existing command', (kind) => {
   const original = createReservation();
-  const onCancel = vi.fn().mockResolvedValue(undefined);
+  const onCheckCancellation = vi.fn();
+  const onCancel = vi.fn();
   render(<ReservationDetailView reservation={createReservation({
     cancellationRecovery: kind === 'reservation' ? { kind } : { kind, ticketItemId: original.ticketItems[0]!.id },
     ticketItems: original.ticketItems.map((item) => ({ ...item, status: 'CANCELLATION_PENDING', qrCredential: null })),
-  })} onCancel={onCancel} isCancelling={false} />);
+  })} onCancel={onCancel} onCheckCancellation={onCheckCancellation} isCancelling={false} />);
   fireEvent.click(screen.getByRole('button', { name: '취소 상태 확인' }));
-  expect(onCancel).toHaveBeenCalledWith('취소 상태 확인', kind === 'ticket' ? original.ticketItems[0]!.id : undefined);
-  expect(screen.queryByRole('button', { name: '예매 취소' })).not.toBeInTheDocument();
+  expect(onCheckCancellation).toHaveBeenCalledWith(kind === 'ticket' ? { kind, ticketItemId: original.ticketItems[0]!.id } : { kind });
+  expect(onCancel).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: '예매 전체 취소' })).not.toBeInTheDocument();
 });
 
 

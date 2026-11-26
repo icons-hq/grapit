@@ -341,10 +341,11 @@ export const cancelReservationSchema = z.object({
     .string()
     .min(1, '취소 사유를 입력해주세요')
     .max(200, '취소 사유는 200자 이내로 입력해주세요'),
-});
+}).strict();
 
 export type CancelReservationInput = z.infer<typeof cancelReservationSchema>;
 
+/** Legacy input shape. The individual-seat cancellation HTTP endpoint returns 410. */
 export const cancelTicketItemSchema = cancelReservationSchema;
 
 export type CancelTicketItemInput = z.infer<typeof cancelTicketItemSchema>;
@@ -360,7 +361,7 @@ export const adminRefundSchema = z.object({
   // the refund with 409 when its current quote no longer matches them.
   expectedRefundableAmount: z.number().int().nonnegative().optional(),
   expectedProviderRefundAmountMinor: z.number().int().nonnegative().optional(),
-});
+}).strict();
 
 export type AdminRefundInput = z.infer<typeof adminRefundSchema>;
 

@@ -15,7 +15,7 @@ import { AdminBookingService } from '../src/modules/admin/admin-booking.service.
 import { PaymentCancellationFinalizerService, JOB_ENQUEUE_FAILED } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 import { HeldCancelledSeatRecoveryWorker } from '../src/modules/cancellation/held-cancelled-seat-recovery.worker.js';
 import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
-import { ReservationService } from '../src/modules/reservation/reservation.service.js';
+import { HistoricalSeatCancellationFixture } from './helpers/historical-seat-cancellation.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
@@ -78,6 +78,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
   afterAll(async () => { await closePool?.(); await container?.stop(); });
 
   async function purchase(options: {
+    ticketCount?: number;
     price?: number;
     fixedCancellationFee?: boolean;
     showtimeAt?: Date;
@@ -101,7 +102,8 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4,
       cancelledSeatHoldMinMinutes: 1, cancelledSeatHoldMaxMinutes: 1 });
     const [showtime] = await db.insert(showtimes).values({ performanceId: performance!.id, dateTime: showtimeAt }).returning();
-    const amount = (price + 2000) * 2;
+    const ticketCount = options.ticketCount ?? 2;
+    const amount = (price + 2000) * ticketCount;
     const [reservation] = await db.insert(reservations).values({ userId: user!.id, showtimeId: showtime!.id,
       reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status: 'CONFIRMED', totalAmount: amount,
       fixedCancellationFee: options.fixedCancellationFee,
@@ -109,7 +111,8 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const [payment] = await db.insert(payments).values({ reservationId: reservation!.id, paymentKey: `pay_${id}`,
       tossOrderId: reservation!.tossOrderId!, method: 'CARD', amount, status: 'DONE', paidAt: options.paidAt ?? bookedAt }).returning();
     const items = [];
-    for (const [index, seatKey] of ['1F:A-1', '1F:A-2'].entries()) {
+    for (let index = 0; index < ticketCount; index++) {
+      const seatKey = `1F:A-${index + 1}`;
       await db.insert(reservationSeats).values({ reservationId: reservation!.id, seatId: seatKey, tierName: 'VIP',
         price, row: 'A', number: String(index + 1) });
       const [item] = await db.insert(ticketItems).values({ reservationId: reservation!.id, paymentId: payment!.id,
@@ -143,6 +146,50 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     return row!;
   }
 
+  it('recovers a recorded zero-refund cancellation without starting one for another free ticket', async () => {
+    const f = await purchase({ price: 0 });
+    const pg = provider(f.snapshot);
+    const booking = new HistoricalSeatCancellationFixture(db, pg as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+      {} as never, {} as never, qr, undefined, undefined, finalizer());
+    const [first, next] = f.items;
+    await db.update(ticketItems).set({ status: 'cancellation_pending', cancelledAt: new Date(),
+      cancelReason: 'previous zero refund', refundableAmount: 0, cancellationFee: 0 }).where(eq(ticketItems.id, first!.id));
+    expect((await booking.getReservationDetail(f.reservation.id, f.userId)).cancellationRecovery).toEqual({ kind: 'ticket', ticketItemId: first!.id });
+    await expect(booking.recoverTicketItemCancellation(f.reservation.id, next!.id, f.userId)).rejects.toThrow('예매 전체');
+    const result = await booking.recoverTicketItemCancellation(f.reservation.id, first!.id, f.userId);
+    expect(result.ticketItems.find(item => item.id === first!.id)?.status).toBe('CANCELLED');
+    expect(result.ticketItems.find(item => item.id === next!.id)?.status).toBe('ACTIVE');
+    const credentials = await db.select().from(tickets).where(eq(tickets.ticketItemId, first!.id));
+    expect(credentials.every(row => row.status === 'revoked')).toBe(true);
+    expect(pg.cancelPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('cancels every remaining seat on a four-ticket booking (historical partial refund: %s)', async priorRefund => {
+    const f = await purchase({ ticketCount: 4, bookedAt: new Date() });
+    const toss = provider(f.snapshot);
+    const settlement = finalizer();
+    const booking = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, {} as never,
+      {} as never, {} as never, qr, undefined, undefined, settlement);
+    if (priorRefund) await booking.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, 'Historical seat refund');
+    const active = priorRefund ? f.items.slice(1) : f.items;
+    const before = structuredClone(f.snapshot);
+    for (const item of active) {
+      await expect(booking.recoverTicketItemCancellation(f.reservation.id, item.id, f.userId)).rejects.toThrow('예매 전체');
+    }
+    expect(f.snapshot).toEqual(before);
+    const refunds = new RefundService(db, toss as never, settlement);
+    const preview = await refunds.getRefundPreview(f.reservation.id, f.userId);
+    expect(preview.cancellationQuote!.items.map(i => i.ticketItemId).sort()).toEqual(active.map(i => i.id).sort());
+    const result = await refunds.requestRefund(f.reservation.id, f.userId, '예매 전체 취소', { expectedRefundableAmount: before.balanceAmount });
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(f.snapshot.balanceAmount).toBe(0);
+    expect(f.snapshot.cancels).toHaveLength(priorRefund ? 2 : 1);
+    const detail = await booking.getReservationDetail(f.reservation.id, f.userId);
+    expect(detail.status).toBe('CANCELLED');
+    expect(detail.ticketItems).toHaveLength(4);
+    expect(detail.ticketItems.every(item => item.status === 'CANCELLED' && !item.qrCredential)).toBe(true);
+  });
+
   it.each(['reservation', 'seat'] as const)('binds the actual PG transaction after a shortened %s cancellation reason', async scope => {
     const f = await purchase({});
     await db.update(payments).set({ method: 'VIRTUAL_ACCOUNT', providerMetadata: { sealedRefundAccount: 'fixture' } })
@@ -168,7 +215,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
         } });
       expect(replay.alreadyFinalized).toBe(true);
     } else {
-      const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+      const buyer = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
         {} as never, {} as never, qr, undefined, undefined, finalizer());
       await buyer.cancelTicketItem(f.reservation.id, f.items[0]!.id, f.userId, reason);
       const [item] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.items[0]!.id));
@@ -452,7 +499,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const single = await purchase({ price: 0 });
     const singleToss = provider(single.snapshot);
     const gateway = { broadcastSeatUpdate: vi.fn() };
-    const buyer = new ReservationService(db, singleToss as never, {} as never, gateway as never, {} as never, {} as never,
+    const buyer = new HistoricalSeatCancellationFixture(db, singleToss as never, {} as never, gateway as never, {} as never, {} as never,
       qr, undefined, undefined, finalizer());
     const preview = await buyer.getTicketItemCancellationPreview(single.reservation.id, single.items[0]!.id, single.userId);
     expect(preview).toMatchObject({ refundableAmount: 0, canRequestRefund: true, providerRefund: { amountMinor: 0 } });
@@ -473,7 +520,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     const f = await purchase({ price: 30000, bookedAt, fixedCancellationFee });
     const toss = provider(f.snapshot);
     const refund = new RefundService(db, toss as never, finalizer());
-    const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+    const buyer = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
       {} as never, {} as never, qr, undefined, undefined, finalizer());
     const preview = await refund.getRefundPreview(f.reservation.id, f.userId);
     expect(preview.cancellationQuote).toMatchObject({
@@ -509,7 +556,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
   it('retains only the ticket amount when a new fixed fee would exceed it', async () => {
     const f = await purchase({ price: 3000, bookedAt: new Date(Date.now() - 8 * 86400000), fixedCancellationFee: true });
     const toss = provider(f.snapshot);
-    const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+    const buyer = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
       {} as never, {} as never, qr, undefined, undefined, finalizer());
     const preview = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);
     expect(preview).toMatchObject({ refundableAmount: 0, cancellationQuote: { cancellationFeeTotal: 3000 } });
@@ -586,7 +633,7 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
         showtimeAt: new Date('2026-08-01T10:00:00.000Z'),
       });
       const toss = provider(f.snapshot);
-      const buyer = new ReservationService(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+      const buyer = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
         {} as never, {} as never, qr, undefined, undefined, finalizer());
 
       const preview = await buyer.getTicketItemCancellationPreview(f.reservation.id, f.items[0]!.id, f.userId);

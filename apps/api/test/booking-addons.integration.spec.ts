@@ -16,6 +16,7 @@ import { ReservationFinalizationService } from '../src/modules/reservation/reser
 import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
+import { HistoricalSeatCancellationFixture } from './helpers/historical-seat-cancellation.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
 import { restoreCancellationPendingBenefitEntitlements } from '../src/database/benefit-entitlement-restoration.js';
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
@@ -276,11 +277,17 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       }) };
     const boss = { isAvailable: true, send: vi.fn().mockResolvedValue(null) };
     const finalizer = new PaymentCancellationFinalizerService(db, boss as never);
+    const refunds = new RefundService(db, provider as never, finalizer);
+    await expect(refunds.getRefundPreview(child.reservationId, actor.id)).rejects.toThrow('원래 티켓 예매');
+    await expect(refunds.requestRefund(child.reservationId, actor.id, 'add-on only')).rejects.toThrow('원래 티켓 예매');
+    await expect(refunds.requestAdminRefund(child.reservationId, actor.id, 'add-on only', { fullRefundOverride: true }))
+      .rejects.toThrow('원래 티켓 예매');
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
     if (sample.scope === 'seat') {
-      const service = new ReservationService(db, provider as never, f.booking as never, f.gateway as never,
+      const service = new HistoricalSeatCancellationFixture(db, provider as never, f.booking as never, f.gateway as never,
         {} as never, {} as never, undefined, undefined, undefined, finalizer);
       await service.cancelTicketItem(original.id, ticket.id, actor.id, 'cancel ticket');
-    } else await new RefundService(db, provider as never, finalizer).requestRefund(original.id, actor.id, 'cancel ticket');
+    } else await refunds.requestRefund(original.id, actor.id, 'cancel ticket');
     const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, child.reservationId));
     expect(refund).toMatchObject({ status: 'requested', providerMetadata: { cancellationQuote: { refundableAmount: sample.childRefund } } });
     expect(boss.send).toHaveBeenCalledWith('refund-cancel-retry', { refundId: refund!.id, attempt: 1 }, { singletonKey: refund!.id });
@@ -495,7 +502,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const provider = { cancelPayment, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 532000, balanceAmount: 532000, isPartialCancelable: true }) };
     const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
     if (scope === 'seat') {
-      const service = new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never, undefined, undefined, undefined, finalizer);
+      const service = new HistoricalSeatCancellationFixture(db, provider as never, {} as never, {} as never, {} as never, {} as never, undefined, undefined, undefined, finalizer);
       const preview = await service.getTicketItemCancellationPreview(order.id, ticket.id, actor.id);
       expect(preview.cancellationQuote).toMatchObject({ ticketSubtotal: 380000, addonSubtotal: 150000, refundableAmount: 532000 });
       await service.cancelTicketItem(order.id, ticket.id, actor.id, 'Cancel ticket and option');

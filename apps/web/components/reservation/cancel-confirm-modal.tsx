@@ -65,8 +65,7 @@ interface CancelConfirmModalProps {
   } | null;
   isPreviewLoading?: boolean;
   isPreviewError?: boolean;
-  selectedSeats?: string[];
-  remainingSeats?: string[];
+  seats?: string[];
   providerRefund?: RefundPreviewResponse['providerRefund'];
   blockedReason?: string | null;
   canConfirm?: boolean;
@@ -86,7 +85,7 @@ export function CancelConfirmModal({
   releaseWindowMinutes,
   isPreviewLoading = false,
   isPreviewError = false,
-  selectedSeats, remainingSeats, providerRefund, blockedReason, canConfirm = true, onRetryPreview,
+  seats, providerRefund, blockedReason, canConfirm = true, onRetryPreview,
   onConfirm,
   isLoading,
 }: CancelConfirmModalProps) {
@@ -152,11 +151,10 @@ export function CancelConfirmModal({
   const quoteUnavailable = !isPreviewLoading && !isPreviewError && !cancellationQuote;
   const confirmDisabled =
     !reason || submitting || isLoading || isPreviewLoading || isPreviewError || !cancellationQuote || !canConfirm || Boolean(blockedReason);
-  const selectionSummary = selectedSeats ? (
-    <div className="space-y-2 rounded-xl border border-gray-200 p-4 text-sm">
-      <p className="font-semibold">{cancellationCopy.selected}: {selectedSeats.join(', ')}</p>
-      <p className="text-gray-600">{cancellationCopy.remaining}: {remainingSeats?.length ? remainingSeats.join(', ') : cancellationCopy.none}</p>
-    </div>
+  const seatSummary = seats?.length ? (
+    <p className="rounded-xl border border-gray-200 p-4 text-sm font-semibold">
+      {cancellationCopy.selected}: {seats.join(', ')}
+    </p>
   ) : null;
   const providerRefundSummary = providerRefund ? (
     <div className="flex items-center justify-between gap-4 border-t border-gray-200 pt-3">
@@ -174,13 +172,13 @@ export function CancelConfirmModal({
               {copy.title}
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-600">
-              {selectedSeats ? cancellationCopy.selectionNotice : copy.description}
+              {copy.description}
             </DialogDescription>
             {separateRefundNotice && <p className="text-sm text-muted-foreground">{separateRefundNotice}</p>}
           </DialogHeader>
 
           <div className="space-y-4">
-            {selectionSummary}
+            {seatSummary}
             {(blockedReason || submitError) && <p role="alert" className="text-sm text-red-700">{blockedReason || cancellationCopy.unknown}</p>}
             <div>
               <label
@@ -325,7 +323,7 @@ export function CancelConfirmModal({
         >
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-semibold">
-              {remainingSeats?.length ? cancellationCopy.confirmTitle : copy.confirmTitle}
+              {copy.confirmTitle}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-gray-600">
               {copy.confirmDescription}
@@ -333,7 +331,7 @@ export function CancelConfirmModal({
           </AlertDialogHeader>
 
           <div className="space-y-3 rounded-xl bg-gray-50 p-4">
-            {selectionSummary}
+            {seatSummary}
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm text-gray-600">{copy.reasonLabel}</span>
               <span className="text-sm font-semibold text-gray-900">{reason}</span>
@@ -373,7 +371,7 @@ export function CancelConfirmModal({
                   {copy.processing}
                 </>
               ) : (
-                remainingSeats?.length ? cancellationCopy.confirmSelected : copy.confirmCta
+                copy.confirmCta
               )}
             </Button>
           </AlertDialogFooter>
