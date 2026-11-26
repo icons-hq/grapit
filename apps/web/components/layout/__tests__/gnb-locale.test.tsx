@@ -7,8 +7,9 @@ const mockPathname = vi.fn<() => string>().mockReturnValue('/');
 const mockPush = vi.fn();
 const mockNavigateToLocalizedPath = vi.hoisted(() => vi.fn());
 const mockAuthState = vi.hoisted(() => ({
-  user: null as { name: string } | null,
+  user: null as { name: string; role: 'user' | 'admin' } | null,
   accessToken: null as string | null,
+  isInitialized: true,
   activeLocale: 'ko',
 }));
 
@@ -27,7 +28,7 @@ vi.mock('next-intl', () => ({
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: () => ({
     user: mockAuthState.user,
-    isInitialized: true,
+    isInitialized: mockAuthState.isInitialized,
     accessToken: mockAuthState.accessToken,
     clearAuth: vi.fn(),
   }),
@@ -51,6 +52,7 @@ describe('locale switcher shell wiring', () => {
     mockNavigateToLocalizedPath.mockClear();
     mockAuthState.user = null;
     mockAuthState.accessToken = null;
+    mockAuthState.isInitialized = true;
     mockAuthState.activeLocale = 'ko';
     document.cookie = 'preferred-locale=; Max-Age=0; path=/';
   });
@@ -64,6 +66,35 @@ describe('locale switcher shell wiring', () => {
     expect(screen.getByText('한국어').getAttribute('aria-current')).toBe(
       'true',
     );
+  });
+
+  it.each([
+    ['/', 'ko', '관리자 페이지'],
+    ['/en/ticket', 'en', 'Admin dashboard'],
+  ])('links a signed-in admin directly to the dashboard from %s', (path, locale, label) => {
+    mockPathname.mockReturnValue(path);
+    mockAuthState.activeLocale = locale;
+    mockAuthState.user = { name: 'Admin', role: 'admin' };
+    mockAuthState.accessToken = 'session';
+    render(<GNB />);
+
+    expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', '/admin');
+  });
+
+  it.each([
+    { scenario: 'guest', role: null, token: null, initialized: true, path: '/' },
+    { scenario: 'buyer', role: 'user', token: 'session', initialized: true, path: '/' },
+    { scenario: 'pending session', role: 'admin', token: 'session', initialized: false, path: '/' },
+    { scenario: 'missing token', role: 'admin', token: null, initialized: true, path: '/' },
+    { scenario: 'another page', role: 'admin', token: 'session', initialized: true, path: '/mypage' },
+  ] as const)('hides the dashboard shortcut for $scenario', ({ role, token, initialized, path }) => {
+    mockPathname.mockReturnValue(path);
+    mockAuthState.user = role ? { name: 'Account', role } : null;
+    mockAuthState.accessToken = token;
+    mockAuthState.isInitialized = initialized;
+    render(<GNB />);
+
+    expect(screen.queryByRole('link', { name: '관리자 페이지' })).not.toBeInTheDocument();
   });
 
   it('renders desktop navigation labels from the active locale', () => {
@@ -162,7 +193,7 @@ describe('locale switcher shell wiring', () => {
   it('keeps authenticated mobile My Page navigation under the active locale', () => {
     mockPathname.mockReturnValue('/en');
     mockAuthState.activeLocale = 'en';
-    mockAuthState.user = { name: 'Fan User' };
+    mockAuthState.user = { name: 'Fan User', role: 'user' };
     mockAuthState.accessToken = 'access-token';
 
     render(
