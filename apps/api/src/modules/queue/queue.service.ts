@@ -20,6 +20,8 @@ import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { users } from '../../database/schema/users.js';
 import { refreshTokens } from '../../database/schema/refresh-tokens.js';
 import { reservations } from '../../database/schema/reservations.js';
+import { payments } from '../../database/schema/payments.js';
+import { AWAITING_DEPOSIT, DEPOSIT_REVERSED } from '../payment/virtual-account.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
@@ -59,6 +61,15 @@ const QUEUE_WAIT_SESSION_RENEW_INTERVAL_SECONDS = 60;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
 
+// Issuance commits the payment and its durable seat holds together. A bank
+// reversal can put that same issued account back into deposit collection.
+const issuedDepositForOrder = and(
+  eq(payments.reservationId, reservations.id),
+  eq(payments.method, 'VIRTUAL_ACCOUNT'),
+  eq(payments.status, 'IN_PROGRESS'),
+  inArray(payments.asyncStatus, [AWAITING_DEPOSIT, DEPOSIT_REVERSED]),
+);
+
 /** Existing installations keep their cap unless an explicit capacity profile sets it. */
 export function resolveQueueAdmissionLimit(value: unknown): number {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -86,7 +97,7 @@ const QUEUE_ENTER_MAX_PASSES = 2;
 // min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active. A slot is
 // returned when that session's authority window ends (expireStaleSessions), at
 // most the active window plus the payment-recovery grace (resolveAuthorityExpiry).
-// A successful payment confirm returns the slot right away
+// A successful payment confirm or virtual-account issuance returns the slot right away
 // (releaseAdmissionForOrder), so a slot has no guaranteed minimum hold and
 // the estimate never promises a minimum wait. Every bound holds only at the
 // remaining seats of the snapshot: seats sold or locked later shrink the cycle
@@ -950,11 +961,13 @@ export class QueueService {
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .leftJoin(payments, issuedDepositForOrder)
       .where(
         and(
           eq(reservations.queueSessionId, record.queueSessionId),
           eq(reservations.userId, record.userId),
           eq(reservations.status, 'PENDING_PAYMENT'),
+          isNull(payments.id),
           // greatest(payment_deadline_at, admission_active_until_at) >= now
           or(
             gte(reservations.paymentDeadlineAt, nowDate),
@@ -1162,7 +1175,7 @@ export class QueueService {
   }
 
   /**
-   * Returns the queue slot of the confirmed order: the queue session the order
+   * Returns the queue slot of a completed checkout: the queue session the order
    * was prepared under (reservations.queue_session_id), never the session of
    * the browser that sent the confirm, which differs when confirm was allowed
    * through the Redis fallback. Never throws, like releaseAdmissionAfterPurchase.
@@ -1173,24 +1186,27 @@ export class QueueService {
         .select({
           queueSessionId: reservations.queueSessionId,
           status: reservations.status,
+          issuedPaymentId: payments.id,
         })
         .from(reservations)
+        .leftJoin(payments, issuedDepositForOrder)
         .where(
           and(
             eq(reservations.tossOrderId, orderId),
             eq(reservations.userId, userId),
-            eq(reservations.status, 'CONFIRMED'),
+            isNull(reservations.addonTicketItemId),
           ),
         );
 
-      if (!reservation || reservation.status !== 'CONFIRMED') {
+      if (!reservation || (reservation.status !== 'CONFIRMED'
+        && !(reservation.status === 'PENDING_PAYMENT' && reservation.issuedPaymentId))) {
         return false;
       }
 
       return await this.releaseAdmissionAfterPurchase(reservation.queueSessionId);
     } catch (error) {
       this.logger.warn(
-        `Queue admission release for a confirmed order failed. orderId=${orderId}`,
+        `Queue admission release for a completed checkout failed. orderId=${orderId}`,
         error instanceof Error ? error.stack : String(error),
       );
       return false;

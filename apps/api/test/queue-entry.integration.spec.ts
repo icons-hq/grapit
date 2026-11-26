@@ -57,6 +57,11 @@ describe('QueueService entry gate (integration)', () => {
     refreshTokenFamilyId: 'family-1',
     deviceSlotId: 'family-1',
   };
+  const gateway = {
+    emitAdmitted: vi.fn(),
+    emitExpired: vi.fn(),
+    emitPosition: vi.fn(),
+  } as unknown as QueueGateway;
 
   beforeAll(async () => {
     const postgres = await startPostgresContainer({ image: 'postgres:16', database: 'grabit_test' });
@@ -83,11 +88,6 @@ describe('QueueService entry gate (integration)', () => {
       maxRetriesPerRequest: 3,
     });
 
-    const gateway = {
-      emitAdmitted: vi.fn(),
-      emitExpired: vi.fn(),
-      emitPosition: vi.fn(),
-    } as unknown as QueueGateway;
     service = new QueueService(redis as never, db as never, gateway);
   }, 180_000);
 
@@ -99,6 +99,7 @@ describe('QueueService entry gate (integration)', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.payments);
     await db.delete(reservations);
     await db.delete(users);
     await db.insert(users).values({ id: identity.userId, email: 'buyer@example.test', name: 'Buyer',
@@ -353,6 +354,52 @@ describe('QueueService entry gate (integration)', () => {
       remainingSeats: 0,
       etaUnavailable: true,
     });
+  });
+
+  it('admits the next buyer after virtual account issuance while preserving the deposit seat and allowing a fresh queue entry', async () => {
+    const queue = new QueueService(redis as never, db, gateway, new ConfigService({ QUEUE_MAX_ACTIVE_ADMISSIONS: '1' }));
+    const performanceId = await seedPerformance({ showtimeOffsetsMs: [3_600_000] });
+    await seedSeatMap(performanceId, 2);
+    const [showtime] = await db.select().from(showtimes).where(eq(showtimes.performanceId, performanceId));
+    const [other] = await db.insert(users).values({ email: 'next@example.test', name: 'Next',
+      phone: '+821000000002', gender: 'unspecified', birthDate: '1990-01-01',
+      isPhoneVerified: true, isEmailVerified: true }).returning({ id: users.id });
+    const nextBuyer = { ...identity, userId: other!.id };
+    const first = await queue.enterPerformanceQueue({ performanceId, identity });
+    const next = await queue.enterPerformanceQueue({ performanceId, identity: nextBuyer });
+    expect([first.state, next.state]).toEqual(['ADMITTED', 'WAITING']);
+
+    const orderId = `GRP-${randomUUID()}`;
+    const due = new Date(Date.now() + 1_800_000);
+    const [order] = await db.insert(reservations).values({
+      userId: identity.userId, showtimeId: showtime!.id, reservationNumber: randomUUID().slice(0, 28),
+      tossOrderId: orderId, status: 'PENDING_PAYMENT', totalAmount: 52000, cancelDeadline: due,
+      queueSessionId: first.queueSessionId, refreshFamilyId: identity.refreshTokenFamilyId,
+      deviceSlotKey: identity.deviceSlotId, admittedAt: new Date(first.admittedAt!),
+      admissionActiveUntilAt: new Date(first.activeUntilAt!), paymentDeadlineAt: due,
+      checkoutPaymentMethod: { method: 'VIRTUAL_ACCOUNT', provider: 'CARD', currency: 'KRW' },
+    }).returning({ id: reservations.id });
+    expect(await queue.releaseAdmissionForOrder(orderId, identity.userId)).toBe(false);
+    await db.transaction(async tx => {
+      await tx.insert(schema.payments).values({ reservationId: order!.id, tossOrderId: orderId, paymentKey: randomUUID(),
+        amount: 52000, method: 'VIRTUAL_ACCOUNT', status: 'IN_PROGRESS', asyncStatus: 'awaiting_deposit' });
+      await tx.insert(seatInventories).values({ showtimeId: showtime!.id, seatId: 'A-1', seatKey: 'A-1',
+        status: 'locked', lockedBy: order!.id, lockedUntil: due });
+    });
+    expect(await queue.releaseAdmissionForOrder(orderId, nextBuyer.userId)).toBe(false);
+    expect(await queue.releaseAdmissionForOrder(orderId, identity.userId)).toBe(true);
+    await vi.waitFor(async () => {
+      const status = await queue.getQueueSessionStatus({ queueSessionId: next.queueSessionId, identity: nextBuyer, admissionToken: next.admissionToken });
+      expect(status).toMatchObject({ state: 'ADMITTED', remainingSeats: 1 });
+    }, { timeout: 5000, interval: 100 });
+
+    const reentry = await queue.enterPerformanceQueue({ performanceId, identity, presentedAdmissionToken: first.admissionToken });
+    expect(reentry.queueSessionId).not.toBe(first.queueSessionId);
+    expect(reentry.state).toBe('WAITING');
+    expect(await queue.releaseAdmissionForOrder(orderId, identity.userId)).toBe(false);
+    expect(await redis.smembers(`{queue:${performanceId}}:active`)).toEqual([next.queueSessionId]);
+    const [seat] = await db.select().from(seatInventories).where(eq(seatInventories.showtimeId, showtime!.id));
+    expect(seat).toMatchObject({ status: 'locked', lockedBy: order!.id, lockedUntil: due });
   });
 
   it('keeps only payment recovery after the active window while a bound pending order is payable, then re-queues (D2)', async () => {

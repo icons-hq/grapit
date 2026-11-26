@@ -17,8 +17,10 @@ describe('ReservationController cancellation routes', () => {
     expect(requestRefund).toHaveBeenCalledWith('booking', 'owner', body.reason, body);
   });
 
-  it('returns the queue slot right after a confirmed payment', async () => {
-    const detail = { id: 'reservation-1', status: 'CONFIRMED' };
+  it.each([
+    { id: 'reservation-1', status: 'CONFIRMED' },
+    { id: 'reservation-1', status: 'PENDING_PAYMENT', paymentInfo: { virtualAccount: { bankCode: '20' } } },
+  ])('returns the order’s queue slot after checkout ($status)', async (detail) => {
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
     const queue = { releaseAdmissionForOrder: vi.fn().mockResolvedValue(true) };
     const controller = new ReservationController(service as never, {} as never, queue as never);
@@ -33,7 +35,7 @@ describe('ReservationController cancellation routes', () => {
       .toBeLessThan(queue.releaseAdmissionForOrder.mock.invocationCallOrder[0]!);
   });
 
-  it('keeps the queue slot when the confirm result is not a confirmed reservation', async () => {
+  it('keeps the queue slot when the buyer still needs to finish checkout', async () => {
     const detail = { id: 'reservation-1', status: 'PENDING_PAYMENT' };
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
     const queue = { releaseAdmissionForOrder: vi.fn().mockResolvedValue(true) };
