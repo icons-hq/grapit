@@ -7,6 +7,7 @@ import { startPostgresContainer } from './helpers/postgres-container.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
 import { ReservationService } from '../src/modules/reservation/reservation.service.js';
+import { HistoricalSeatCancellationFixture } from './helpers/historical-seat-cancellation.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
 import { BenefitRedemptionService } from '../src/modules/field-operations/benefit-redemption.service.js';
 import { FieldMonitorService } from '../src/modules/field-operations/field-monitor.service.js';
@@ -164,7 +165,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
   }
 
   function buyerCancellations(provider: unknown) {
-    return new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never,
+    return new HistoricalSeatCancellationFixture(db, provider as never, {} as never, {} as never, {} as never, {} as never,
       qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
   }
 
@@ -248,14 +249,17 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       return structuredClone(providerState);
     });
     const service = buyerCancellations({ cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(providerState)) });
+    await expect(service.recoverTicketItemCancellation(f.first.reservationId, f.first.id, f.userId))
+      .rejects.toThrow('예매 전체');
+    expect(cancel).not.toHaveBeenCalled();
     const pending = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Original');
     expect(pending.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
     expect(pending.cancellationRecovery).toEqual({ kind: 'ticket', ticketItemId: f.first.id });
-    await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Retry');
+    await service.recoverTicketItemCancellation(f.first.reservationId, f.first.id, f.userId);
     expect(cancel).toHaveBeenCalledTimes(1);
     providerState.cancels[0]!.cancelStatus = 'DONE';
     providerState.status = 'PARTIAL_CANCELED'; providerState.balanceAmount = foreign ? 35.36 : 52000;
-    const complete = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Retry again');
+    const complete = await service.recoverTicketItemCancellation(f.first.reservationId, f.first.id, f.userId);
     expect(complete.ticketItems.find((item) => item.id === f.first.id)?.cancellation?.refundStatus).toBe('COMPLETED');
     expect(complete.ticketItems.find((item) => item.id === f.second.id)?.status).toBe('ACTIVE');
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -332,7 +336,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
         cancelStatus: 'DONE', transactionKey: randomUUID() });
       return structuredClone(provider);
     });
-    const service = new ReservationService(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
+    const service = new HistoricalSeatCancellationFixture(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
       cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
       qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
     // A missing inventory fixture deliberately makes the DB finalizer roll back after the PG succeeds.
@@ -353,7 +357,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
   it('does not send a cancellation when the provider balance cannot be verified', async () => {
     const f = await cancellationPurchase();
     const cancel = vi.fn().mockRejectedValue(new Error('Should not be sent'));
-    const service = new ReservationService(db, { queryPayment: vi.fn().mockRejectedValue(new Error('Provider offline')),
+    const service = new HistoricalSeatCancellationFixture(db, { queryPayment: vi.fn().mockRejectedValue(new Error('Provider offline')),
       cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
       qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
     await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation')).rejects.toThrow();
@@ -380,7 +384,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const f = await cancellationPurchase();
     await db.update(payments).set({ currency: 'USD', providerChargeCurrency: 'USD', providerChargeAmountMinor: 7071,
       providerMetadata: { secretKeyScope: 'overseas-card' } }).where(eq(payments.id, f.first.paymentId));
-    const service = new ReservationService(db, { queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+    const service = new HistoricalSeatCancellationFixture(db, { queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
       totalAmount: 70.71, balanceAmount: 70.71, isPartialCancelable: true }) } as never,
       {} as never, {} as never, {} as never, {} as never, qr);
     const preview = await service.getTicketItemCancellationPreview(f.first.reservationId, f.first.id, f.userId);
@@ -397,7 +401,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
       totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) };
     const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
-    const service = new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never,
+    const service = new HistoricalSeatCancellationFixture(db, provider as never, {} as never, {} as never, {} as never, {} as never,
       qr, undefined, undefined, finalizer);
     await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation',
       { expectedRefundableAmount: 40000, expectedProviderRefundAmountMinor: 40000 })).rejects.toThrow('환불 금액이 변경');
@@ -659,7 +663,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       return { status: 'PARTIAL_CANCELED', totalAmount: 104000, balanceAmount: 52000,
         cancels: [{ cancelReason: reason, cancelAmount: 52000, cancelStatus: 'DONE' }] };
     });
-    const service = new ReservationService(db, { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+    const service = new HistoricalSeatCancellationFixture(db, { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
       totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) } as never,
       {} as never, {} as never, {} as never, {} as never, qr, undefined, undefined,
       new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
@@ -1362,7 +1366,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
         cancels: [{ cancelAmount: 46000, cancelReason: reason, cancelStatus: 'DONE' }] };
     });
     const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
-    const service = new ReservationService(db, {
+    const service = new HistoricalSeatCancellationFixture(db, {
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 52000,
         balanceAmount: 52000, isPartialCancelable: true, cancels: [] }), cancelPayment: cancel,
     } as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
@@ -1420,7 +1424,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
         queuedKeys.add(options.singletonKey); return options.id;
       }),
     } as never);
-    const service = new ReservationService(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
+    const service = new HistoricalSeatCancellationFixture(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
       cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
       qr, undefined, undefined, finalizer);
     for (const item of items) await service.cancelTicketItem(item.reservationId, item.id, f.userId, 'Cancel one seat');

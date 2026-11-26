@@ -16,7 +16,7 @@ Grabit applies a NOL Ticket-style cancellation policy per Ticket Item. Each Tick
 **Consequences**
 
 - Cancellation and refund calculations must operate per Ticket Item.
-- Buyer-facing cancellation remains Full Reservation Cancellation; Ticket Item Cancellation is not exposed as a buyer self-service flow.
+- Buyers and operators may initiate only Full Reservation Cancellation. It includes all remaining valid Ticket Items and their add-ons. Checks of a previously initiated Ticket Item Cancellation use its stored command.
 - If a confirmed Reservation reaches Full Reservation Cancellation without Ticket Items, Grabit should automatically create the missing Ticket Items from the existing reservation seat and payment records before calculating the refund.
 - Historical cancelled or failed Reservations are not backfilled by the buyer cancellation flow.
 - Buyer cancellation confirmation must show a Cancellation Quote with the original payment amount, cancellation fees, Ticket Service Fee refundability, and final refundable amount.

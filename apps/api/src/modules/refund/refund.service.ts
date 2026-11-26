@@ -442,6 +442,7 @@ export class RefundService {
       await this.loadReservationContext(reservationId, userId),
     );
     const existingRefund = await this.findExistingRefund(reservationId);
+    this.assertFullReservationRefund(context, existingRefund);
 
     const preview = this.buildPreview(context, existingRefund);
     if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
@@ -493,6 +494,7 @@ export class RefundService {
       await this.loadReservationContextByReservationId(reservationId),
     );
     const existingRefund = await this.findExistingRefund(reservationId);
+    this.assertFullReservationRefund(context, existingRefund);
 
     if (
       existingRefund
@@ -669,6 +671,7 @@ export class RefundService {
     actor: RefundRequestActor,
     options: AdminRefundRequestOptions = {},
   ): Promise<RefundRequestResponse> {
+    this.assertFullReservationRefund(context, existingRefund);
     if (existingRefund && !hasRestoredRefundRights(existingRefund)) {
       if (actor.kind !== 'admin' || existingRefund.status === 'completed') {
         return this.respondToExistingRefund(context, existingRefund);
@@ -1650,6 +1653,13 @@ export class RefundService {
       .select()
       .from(ticketItems)
       .where(eq(ticketItems.reservationId, reservationId));
+  }
+
+  private assertFullReservationRefund(context: ReservationRefundContext, existing: RefundRecord | null): void {
+    // A child refund already recorded by the parent cancellation may still need reconciliation.
+    if (context.reservation.addonTicketItemId && (!existing || hasRestoredRefundRights(existing))) {
+      throw new BadRequestException('추가 구매한 애드온은 원래 티켓 예매를 전체 취소할 때 함께 취소됩니다.');
+    }
   }
 
   protected async loadReservationContext(

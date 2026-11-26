@@ -9,6 +9,7 @@ import {
   adminBookingListItemSchema,
   adminRefundSchema,
   bookingStatsSchema,
+  cancelReservationSchema,
   cancelTicketItemSchema,
   confirmPaymentSchema,
   paymentInfoSchema,
@@ -294,6 +295,14 @@ describe('prepareReservationSchema booking consent contract', () => {
         amount: 150000.5,
       }),
     ).toThrow();
+  });
+
+  it('rejects seat, add-on and amount selectors before a buyer or admin can cancel the booking', () => {
+    for (const schema of [cancelReservationSchema, adminRefundSchema]) {
+      for (const selector of [{ ticketItemId: 'seat-1' }, { ticketItemIds: ['seat-1'] }, { addonId: 'hi-touch' }, { cancelAmount: 1000 }]) {
+        expect(schema.safeParse({ reason: '일정 변경', ...selector }).success).toBe(false);
+      }
+    }
   });
 
   it('validates buyer ticket-item cancellation reason like reservation cancellation', () => {

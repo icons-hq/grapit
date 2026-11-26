@@ -9,6 +9,8 @@ Use this only for reservations that entered ticket-item partial cancellation bef
 - Toss cancellation completed but Grabit state did not finalize
 - Grabit ticket item marked pending but Toss cancellation failed or was never accepted
 
+The former per-seat cancellation and preview endpoints return HTTP 410. The wallet can check a previously accepted seat cancellation via `POST /api/v1/reservations/:id/ticket-items/:ticketItemId/cancellation-status`. This operation reconciles the stored command under the original idempotency key. New full-booking cancellations also cover any remaining valid seats on a historically partially cancelled booking.
+
 ## Read-Only Triage
 
 1. Search by reservation number in admin.
