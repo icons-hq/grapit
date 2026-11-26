@@ -86,6 +86,7 @@ import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import { resolveTicketEmailDelivery } from '../ticket/ticket-email-delivery.js';
+import { QueueService } from '../queue/queue.service.js';
 import { ReservationFinalizationService } from './reservation-finalization.service.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
@@ -418,6 +419,7 @@ export class ReservationService {
     @Optional() reservationFinalizationService?: ReservationFinalizationService,
     @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
     @Optional() private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
+    @Optional() private readonly queueService?: QueueService,
   ) {
     this.reservationFinalizationService =
       reservationFinalizationService
@@ -1481,6 +1483,9 @@ export class ReservationService {
       ? await this.reservationFinalizationService.confirmAndCreateReservation(dto, userId, { qrIssuance: 'reservation-read' })
       : await this.reservationFinalizationService.confirmAndCreateReservation(dto, userId);
 
+    // Issuance and inventory are committed. Return this order’s queue slot
+    // independently of the receipt read, and finish both before replying.
+    const release = this.queueService?.releaseAdmissionForOrder(dto.orderId, userId).catch(() => false);
     try {
       return await this.getReservationDetail(result.reservationId, userId, locale);
     } catch (detailError) {
@@ -1499,6 +1504,8 @@ export class ReservationService {
         result.awaitingDeposit ? '가상계좌가 발급되었습니다. 예매 내역에서 입금 정보를 확인해주세요.'
           : '결제는 완료되었습니다. 예매 내역에서 예매 정보를 확인해주세요.',
       );
+    } finally {
+      await release;
     }
   }
 

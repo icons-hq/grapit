@@ -142,7 +142,7 @@ export class ReservationController {
     @Request() req: { user: AuthenticatedReservationUser },
     @Query('locale') locale?: string,
   ) {
-    const reservation = await this.reservationService.confirmAndCreateReservation(
+    return this.reservationService.confirmAndCreateReservation(
       body as ConfirmPaymentRequest,
       {
         id: req.user.id,
@@ -154,22 +154,6 @@ export class ReservationController {
       },
       locale,
     );
-
-    // Return the queue slot as soon as the purchase is confirmed instead of
-    // holding it until the active/recovery window ends. The slot is the one of
-    // the queue session the order was prepared under, not the session of this
-    // browser: a confirm allowed through the Redis fallback carries an
-    // unrelated session that must keep its admission. Best effort: the release
-    // never throws, so it cannot turn a confirmed purchase into an error.
-    const checkoutFinished = reservation.status === 'CONFIRMED'
-      || (reservation.status === 'PENDING_PAYMENT' && !!reservation.paymentInfo?.virtualAccount);
-    if (checkoutFinished && !reservation.addonTicketItemId) {
-      await this.queueService
-        ?.releaseAdmissionForOrder(body.orderId, req.user.id)
-        .catch(() => false);
-    }
-
-    return reservation;
   }
 
   @Get('users/me/reservations')

@@ -184,8 +184,10 @@ describe('ReservationService', () => {
   let mockFeatureFlags: ReturnType<typeof createMockFeatureFlags>;
   let mockConsentService: ReturnType<typeof createMockConsentService>;
   let mockPaymentCancellationFinalizer: ReturnType<typeof createMockPaymentCancellationFinalizer>;
+  const queue = { releaseAdmissionForOrder: vi.fn() };
 
   beforeEach(() => {
+    queue.releaseAdmissionForOrder.mockReset().mockResolvedValue(true);
     mockDb = createMockDb();
     mockTossClient = createMockTossClient();
     mockBookingService = createMockBookingService();
@@ -205,7 +207,38 @@ describe('ReservationService', () => {
       undefined,
       undefined,
       mockPaymentCancellationFinalizer as unknown as PaymentCancellationFinalizerService,
+      queue as never,
     );
+  });
+
+  describe('queue release after checkout', () => {
+    const order = { orderId: 'ORDER-1', paymentKey: 'PAYMENT-1', amount: 52000 };
+
+    it('returns the issued virtual account slot even when the receipt cannot be read', async () => {
+      vi.spyOn(service['reservationFinalizationService'], 'confirmAndCreateReservation')
+        .mockResolvedValue({ reservationId: 'reservation-1', awaitingDeposit: true });
+      const read = vi.spyOn(service, 'getReservationDetail').mockRejectedValue(new Error('receipt unavailable'));
+      await expect(service.confirmAndCreateReservation(order, 'owner')).rejects.toThrow('가상계좌가 발급되었습니다');
+      expect(queue.releaseAdmissionForOrder).toHaveBeenCalledWith(order.orderId, 'owner');
+      expect(queue.releaseAdmissionForOrder.mock.invocationCallOrder[0]).toBeLessThan(read.mock.invocationCallOrder[0]!);
+    });
+
+    it('returns the receipt if the queue store is unavailable', async () => {
+      vi.spyOn(service['reservationFinalizationService'], 'confirmAndCreateReservation')
+        .mockResolvedValue({ reservationId: 'reservation-1' });
+      const receipt = { id: 'reservation-1', status: 'CONFIRMED' } as const;
+      vi.spyOn(service, 'getReservationDetail').mockResolvedValue(receipt as never);
+      queue.releaseAdmissionForOrder.mockRejectedValue(new Error('queue unavailable'));
+      await expect(service.confirmAndCreateReservation(order, 'owner')).resolves.toEqual(receipt);
+      expect(queue.releaseAdmissionForOrder).toHaveBeenCalledWith(order.orderId, 'owner');
+    });
+
+    it('keeps an unfinished checkout when finalization fails', async () => {
+      vi.spyOn(service['reservationFinalizationService'], 'confirmAndCreateReservation')
+        .mockRejectedValue(new Error('confirmation pending'));
+      await expect(service.confirmAndCreateReservation(order, 'owner')).rejects.toThrow('confirmation pending');
+      expect(queue.releaseAdmissionForOrder).not.toHaveBeenCalled();
+    });
   });
 
   function createServiceWithQrTicketService(qrTicketService: {
