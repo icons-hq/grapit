@@ -10,6 +10,7 @@ import { getServerClockOffsetMs, getServerNowMs } from '@/lib/server-clock';
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
 const WAITING_POLL_JITTER_MS = 5_000;
+const QUEUE_STATUS_TIMEOUT_MS = 10_000;
 // Waiting browsers use short, authoritative reads. Long-lived queue requests
 // competed with purchase traffic in the cloud capacity rehearsal. Seat-map
 // updates keep their separate real-time connection after admission.
@@ -98,9 +99,7 @@ type QueueSnapshot = {
   recoveryOrderId?: string | null;
 };
 
-type QueueEnterResponse = QueueSnapshot & {
-  queueActiveWindowSeconds?: number;
-};
+type QueueEnterResponse = QueueSnapshot | { queueSessionId: string; state?: undefined };
 
 type UseQueueOptions = {
   performanceId: string;
@@ -552,14 +551,33 @@ export function useQueue({
   );
 
   const loadQueueSession = useCallback(
-    async (queueSessionId: string) => {
-      const response = await apiClient.get<QueueSnapshot>(
-        `/api/v1/queue/sessions/${queueSessionId}`,
-        { showErrorToast: false },
-      );
-      applySnapshot(response, {
-        enterImmediately: isImmediateAdmission(response),
+    async (queueSessionId: string, controller = new AbortController()) => {
+      const generation = entryGenerationRef.current;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // A shared sign-in refresh may still be running after the status fetch is aborted.
+      // Bound this reader's wait without cancelling the refresh for other callers.
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new DOMException('Queue status timed out', 'TimeoutError'));
+        }, QUEUE_STATUS_TIMEOUT_MS);
       });
+      try {
+        const response = await Promise.race([
+          apiClient.get<QueueSnapshot>(`/api/v1/queue/sessions/${queueSessionId}`, {
+            showErrorToast: false,
+            signal: controller.signal,
+          }),
+          deadline,
+        ]);
+        if (!controller.signal.aborted && generation === entryGenerationRef.current) {
+          applySnapshot(response, { enterImmediately: isImmediateAdmission(response) });
+        }
+      } catch (error) {
+        if (generation === entryGenerationRef.current) throw error;
+      } finally {
+        clearTimeout(timer);
+      }
     },
     [applySnapshot],
   );
@@ -668,6 +686,7 @@ export function useQueue({
           { showErrorToast: false },
         );
 
+        if (generation !== entryGenerationRef.current) return;
         transientEntryRetryCountRef.current = 0;
         overdueOpenRetryCountRef.current = 0;
         setBookingOpensAt(null);
@@ -680,7 +699,15 @@ export function useQueue({
         trackAnalytics('queue_enter', { performanceId });
 
         if (!response.state) {
-          await loadQueueSession(response.queueSessionId);
+          try {
+            await loadQueueSession(response.queueSessionId);
+          } catch (error) {
+            if (generation !== entryGenerationRef.current) return;
+            if (!isTransientEntryError(error)) throw error;
+            // Older APIs return only the ID. Subsequent reads must keep that place.
+            setSnapshot({ ...EMPTY_SNAPSHOT, queueSessionId: response.queueSessionId });
+            setStatus('waiting');
+          }
           return;
         }
 
@@ -688,6 +715,7 @@ export function useQueue({
           enterImmediately: isImmediateAdmission(response),
         });
       } catch (error) {
+        if (generation !== entryGenerationRef.current) return;
         updateReady(false);
         if (isBookingNotOpenError(error)) {
           transientEntryRetryCountRef.current = 0;
@@ -725,8 +753,10 @@ export function useQueue({
         setClosedReason(nextStatus === 'closed' ? resolveClosedReason(error) : null);
         setStatus(nextStatus);
       } finally {
-        clearLoadingSurfaceTimer();
-        setLoadingSlow(false);
+        if (generation === entryGenerationRef.current) {
+          clearLoadingSurfaceTimer();
+          setLoadingSlow(false);
+        }
       }
     },
     [
@@ -781,85 +811,48 @@ export function useQueue({
   ]);
 
   const recoveryOnly = isRecoveryOnly(snapshot);
-
-  useEffect(() => {
-    if (!enabled || status !== 'waiting' || !snapshot.queueSessionId) {
-      return;
-    }
-
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const queueSessionId = snapshot.queueSessionId;
-
-    const schedulePoll = () => {
-      const jitter = Math.floor(Math.random() * WAITING_POLL_JITTER_MS);
-      timer = setTimeout(() => {
-        if (stopped) {
-          return;
-        }
-
-        void loadQueueSession(queueSessionId)
-          .catch(handleSessionError)
-          .finally(() => {
-            if (!stopped) {
-              schedulePoll();
-            }
-          });
-      }, WAITING_POLL_INTERVAL_MS + jitter);
-    };
-
-    schedulePoll();
-
-    return () => {
-      stopped = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-    };
-  }, [enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId, status]);
-
   const admissionCheckAt = status === 'admitted'
     ? resolveAdmissionCheckAt(snapshot)
     : null;
 
   useEffect(() => {
-    if (!enabled || admissionCheckAt === null || !snapshot.queueSessionId) {
+    const queueSessionId = snapshot.queueSessionId;
+    if (!enabled || !queueSessionId || (status !== 'waiting' && admissionCheckAt === null)) {
       return;
     }
 
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const queueSessionId = snapshot.queueSessionId;
-
+    let timer: ReturnType<typeof setTimeout>;
+    let activeRequest: AbortController | undefined;
+    const nextDelay = () => status === 'waiting'
+      ? WAITING_POLL_INTERVAL_MS + Math.floor(Math.random() * WAITING_POLL_JITTER_MS)
+      : QUEUE_ADMISSION_RECHECK_MS;
     const scheduleCheck = (delayMs: number) => {
-      timer = setTimeout(() => {
-        if (stopped) {
-          return;
+      timer = setTimeout(async () => {
+        activeRequest = new AbortController();
+        try {
+          await loadQueueSession(queueSessionId, activeRequest);
+        } catch (error) {
+          if (!stopped) handleSessionError(error);
+        } finally {
+          activeRequest = undefined;
+          if (!stopped) scheduleCheck(nextDelay());
         }
-
-        void loadQueueSession(queueSessionId)
-          .catch(handleSessionError)
-          .finally(() => {
-            if (!stopped) {
-              scheduleCheck(QUEUE_ADMISSION_RECHECK_MS);
-            }
-          });
       }, delayMs);
     };
 
     // activeUntilAt is a server instant: compare it with the server-corrected
     // clock, or a device clock running behind delays the expiry notice.
-    scheduleCheck(
-      Math.max(0, admissionCheckAt - getServerNowMs()) + QUEUE_ADMISSION_CHECK_GRACE_MS,
-    );
+    scheduleCheck(admissionCheckAt === null
+      ? nextDelay()
+      : Math.max(0, admissionCheckAt - getServerNowMs()) + QUEUE_ADMISSION_CHECK_GRACE_MS);
 
     return () => {
       stopped = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
+      clearTimeout(timer);
+      activeRequest?.abort();
     };
-  }, [admissionCheckAt, enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId]);
+  }, [admissionCheckAt, enabled, handleSessionError, loadQueueSession, snapshot.queueSessionId, status]);
 
   useEffect(() => {
     return () => {
