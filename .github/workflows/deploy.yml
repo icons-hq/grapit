@@ -91,6 +91,9 @@ env:
   RUNTIME_NCP_SENS_SMS_SERVICE_ID: ${{ vars.NCP_SENS_SMS_SERVICE_ID }}
   RUNTIME_NCP_SENS_SMS_FROM: ${{ vars.NCP_SENS_SMS_FROM }}
   RUNTIME_NCP_SENS_SMS_COMPANY_NAME: ${{ vars.NCP_SENS_SMS_COMPANY_NAME }}
+  # Opt in through the squash-merge subject. The live image and runtime diff are checked before rollout.
+  WEB_ONLY: >-
+    ${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'fix(web-only): ') }}
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
@@ -110,6 +113,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 2
       - uses: pnpm/action-setup@v5
       - uses: actions/setup-node@v6
         with:
@@ -176,6 +180,24 @@ jobs:
             --service "${WEB_SERVICE}=${RUNNER_TEMP}/${WEB_SERVICE}.json" \
             --snapshot "api=${API_SERVICE}" \
             --snapshot "web=${WEB_SERVICE}"
+      - name: Verify live backend for a web-only release
+        if: env.WEB_ONLY == 'true'
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "${BASE_SHA}"
+          # The backend must match the last main commit. Never skip a pending API or worker release.
+          git diff --exit-code "${BASE_SHA}" HEAD -- . ':!apps/web' ':!apps/api/test' ':!docs' ':!.github/workflows/deploy.yml'
+          expected="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${API_SERVICE}:${BASE_SHA}"
+          jq -e --arg image "${expected}" '
+            .spec.template.spec.containers[0].image == $image and
+            .status.latestCreatedRevisionName == .status.latestReadyRevisionName and
+            (.status.latestReadyRevisionName as $ready |
+              any(.status.traffic[]; .revisionName == $ready and .percent == 100))
+          ' "${RUNNER_TEMP}/${API_SERVICE}.json" >/dev/null
+          worker="$(gcloud run jobs describe "${BACKGROUND_WORKER_JOB}" --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          test "${worker}" = "${expected}"
       - name: Start Cloud SQL Auth Proxy
         run: |
           gcloud components install cloud-sql-proxy --quiet 2>/dev/null || true
@@ -198,6 +220,7 @@ jobs:
         # the budget still counts a value an earlier deploy left on the API service.
         run: node scripts/managed-demo/deploy-guards.mjs db-preflight --api-service-json "${RUNNER_TEMP}/${API_SERVICE}.json"
       - name: Pre-apply event category enum migration
+        if: env.WEB_ONLY != 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -228,6 +251,7 @@ jobs:
           }
           NODE
       - name: Run migrations
+        if: env.WEB_ONLY != 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: pnpm --filter @grabit/api exec drizzle-kit migrate
@@ -278,11 +302,34 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
       - run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
       - uses: docker/setup-buildx-action@v4
+      - name: Prepare static files for open browser tabs
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/previous-web-static"
+          if [[ "${WEB_ONLY}" == 'true' ]]; then
+            revision="$(gcloud run services describe "${WEB_SERVICE}" --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" --format=json | jq -er '[.status.traffic[] | select(.percent == 100)][0].revisionName')"
+            # Buyers can still have a tab from the release immediately before the serving revision.
+            gcloud run revisions list --service="${WEB_SERVICE}" --project="${GCP_PROJECT_ID}" --region="${GCP_REGION}" --sort-by='~metadata.creationTimestamp' --format=json > "${RUNNER_TEMP}/web-revisions.json"
+            jq -er --arg live "${revision}" '
+              [.[] | select(any(.status.conditions[]; .type == "Ready" and .status == "True"))]
+              | . as $revs | first(.[] | select(.metadata.name == $live)) as $now
+              | [first($revs[] | select(.metadata.creationTimestamp < $now.metadata.creationTimestamp and .status.imageDigest != $now.status.imageDigest))?, $now]
+              | .[].status.imageDigest
+            ' "${RUNNER_TEMP}/web-revisions.json" > "${RUNNER_TEMP}/web-images"
+            while read -r image; do
+              [[ "${image}" == "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${WEB_SERVICE}@sha256:"* ]]
+              container="$(docker create "${image}")"
+              docker cp "${container}:/app/apps/web/.next/static/." "${RUNNER_TEMP}/previous-web-static/"
+              docker rm "${container}" >/dev/null
+            done < "${RUNNER_TEMP}/web-images"
+          fi
       - name: Build and push Web image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/web/Dockerfile
+          build-contexts: |
+            previous-web-static=${{ runner.temp }}/previous-web-static
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=${{ vars.CLOUD_RUN_API_URL }}
@@ -359,6 +406,7 @@ jobs:
       # /api/v1/health/live (no dependency I/O), which fails only while a Valkey client is
       # stuck in the ioredis `end` state; a Valkey outage or failover never restarts instances.
       - uses: google-github-actions/deploy-cloudrun@v3
+        if: env.WEB_ONLY != 'true'
         with:
           service: ${{ env.API_SERVICE }}
           region: ${{ env.GCP_REGION }}
@@ -472,6 +520,7 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
       - name: Deploy bounded background worker job through Cloud Run v2
+        if: env.WEB_ONLY != 'true'
         run: |
           GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)"
           export GOOGLE_OAUTH_ACCESS_TOKEN
@@ -482,6 +531,7 @@ jobs:
           CLOUD_RUN_WEB_URL: ${{ vars.CLOUD_RUN_WEB_URL }}
           PAYPAL_KRW_USD_RATE: ${{ vars.PAYPAL_KRW_USD_RATE }}
       - name: Smoke bounded background worker job
+        if: env.WEB_ONLY != 'true'
         run: |
           gcloud run jobs execute "${BACKGROUND_WORKER_JOB}" \
             --project="${GCP_PROJECT_ID}" \
