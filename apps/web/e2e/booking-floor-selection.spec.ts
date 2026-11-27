@@ -593,6 +593,39 @@ test('verification preserves the current admission and resumes seat selection', 
   expect(locks).toHaveLength(1);
 });
 
+test('an unanswered queue poll recovers on mobile and opens booking without re-entry', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.install();
+  await stubFloorBrowserRoutes(page);
+  let entries = 0;
+  let reads = 0;
+  await page.route('**/api/v1/queue/performances/**/enter', route => {
+    entries++;
+    return route.fulfill({ json: {
+      ...admittedQueueSnapshot(), state: 'WAITING', position: 201, waitingCount: 201,
+      autoEnter: false, admittedAt: null, activeUntilAt: null, reentryGraceUntilAt: null,
+    } });
+  });
+  await page.route('**/api/v1/queue/sessions/queue-floor-browser', route => {
+    reads++;
+    if (reads === 1) return; // Keep the first HTTP request unanswered.
+    return route.fulfill({ json: admittedQueueSnapshot() });
+  });
+
+  await page.goto('/booking/' + FLOOR_BROWSER_PERFORMANCE_ID);
+  const position = page.getByTestId('queue-metric-position');
+  await expect(position).toContainText('201');
+  await page.clock.fastForward(20_001);
+  await expect.poll(() => reads).toBe(1);
+  await page.clock.runFor(10_001);
+  await expect(position).toContainText('201');
+  await page.clock.runFor(20_001);
+  await expect(page.getByRole('button', { name: SHOWTIME_DATE_LABEL })).toBeVisible();
+  await expect(position).toHaveCount(0);
+  expect(entries).toBe(1);
+  expect(reads).toBe(2);
+});
+
 test.describe('booking floor-browser seat selection', () => {
   test('desktop center click updates summary, timer, CTA, and preserves 1F selection across floor switches', async ({ page }) => {
     const lockRequests: Array<{ seatId?: string }> = [];

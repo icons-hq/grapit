@@ -814,6 +814,53 @@ describe('useQueue', () => {
   });
 
   describe('waiting poll failures (audit #4)', () => {
+    it.each([false, true])('recovers an unanswered status read using the same session (ID-only entry=%s)', async (idOnly) => {
+      const sessionId = 'queue-stalled';
+      const waiting = waitingSnapshot(sessionId, { position: 201 });
+      postMock.mockResolvedValueOnce(idOnly ? { queueSessionId: sessionId } : waiting);
+      let finishFirstRead!: (snapshot: typeof waiting) => void;
+      getMock
+        .mockImplementationOnce(() => new Promise(resolve => { finishFirstRead = resolve; }))
+        .mockResolvedValueOnce(admittedSnapshot(sessionId));
+
+      const { result } = renderQueue('performance-stalled');
+      await flushQueueEffects();
+      if (!idOnly) await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(getMock).toHaveBeenCalledTimes(1);
+      const firstSignal = getMock.mock.calls[0]![1].signal;
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(firstSignal?.aborted).toBe(true);
+      expect(result.current.status).toBe('waiting');
+      expect(getMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(getMock.mock.calls.map(([path]) => path)).toEqual([
+        '/api/v1/queue/sessions/queue-stalled', '/api/v1/queue/sessions/queue-stalled',
+      ]);
+      expect(postMock).toHaveBeenCalledTimes(1);
+      expect(result.current.isReady).toBe(true);
+      await act(async () => { finishFirstRead(waiting); });
+      expect(result.current.isReady).toBe(true);
+    });
+
+    it('cancels a pending poll when changing performances and ignores its late error', async () => {
+      postMock.mockResolvedValueOnce(waitingSnapshot('old')).mockResolvedValueOnce(admittedSnapshot('new'));
+      let rejectOld!: (error: Error) => void;
+      getMock.mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }));
+      const { result, rerender } = renderHook(({ id }) => useQueue({ performanceId: id }), {
+        initialProps: { id: 'old-performance' },
+      });
+      await flushQueueEffects();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      const signal = getMock.mock.calls[0]![1].signal;
+      rerender({ id: 'new-performance' });
+      await flushQueueEffects();
+      expect(signal.aborted).toBe(true);
+      await act(async () => { rejectOld(new ApiClientErrorMock('session gone', 404)); });
+      expect(result.current.queueSessionId).toBe('new');
+      expect(result.current.isReady).toBe(true);
+    });
+
     it('moves to the re-entry surface when the waiting session is gone (404)', async () => {
       const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
       postMock.mockResolvedValueOnce(waitingSnapshot('queue-session-gone'));
@@ -1301,6 +1348,7 @@ describe('useQueue', () => {
 
       expect(getMock).toHaveBeenCalledWith('/api/v1/queue/sessions/queue-session-used', {
         showErrorToast: false,
+        signal: expect.any(AbortSignal),
       });
       expect(result.current.status).toBe('expired');
       expect(result.current.isReady).toBe(false);

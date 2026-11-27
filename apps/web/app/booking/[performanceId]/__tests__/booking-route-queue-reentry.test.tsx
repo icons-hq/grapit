@@ -495,6 +495,7 @@ describe('BookingRoute queue re-entry (audit #4, #32, D2)', () => {
     // Re-read at once, not at the original window end 8 minutes later.
     expect(getMock).toHaveBeenCalledWith('/api/v1/queue/sessions/queue-session-old', {
       showErrorToast: false,
+      signal: expect.any(AbortSignal),
     });
     expect(screen.getByText('queue expired')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'retry' })).toBeInTheDocument();

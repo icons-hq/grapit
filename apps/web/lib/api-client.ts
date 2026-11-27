@@ -17,6 +17,7 @@ interface ApiError {
 
 interface ApiClientOptions {
   showErrorToast?: boolean;
+  signal?: AbortSignal;
 }
 
 type ApiPath = `/${string}`;
@@ -216,6 +217,7 @@ async function sendWithSession(
     method,
     headers,
     credentials: 'include',
+    signal: options.signal,
   };
 
   if (init.body !== undefined) {

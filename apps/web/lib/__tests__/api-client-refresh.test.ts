@@ -45,6 +45,20 @@ afterEach(() => {
 });
 
 describe('session refresh on 401', () => {
+  it('forwards cancellation to both status fetches while the shared refresh owns its own signal', async () => {
+    const path = '/api/v1/queue/sessions/current';
+    const fetchMock = respondByPath({
+      [path]: [() => json({}, 401), () => json({ state: 'ADMITTED' })],
+      '/api/v1/auth/refresh': [() => json({ accessToken: 'renewed' })],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { signal } = new AbortController();
+    await expect(apiClient.get(path, { signal })).resolves.toEqual({ state: 'ADMITTED' });
+    const statusReads = fetchMock.mock.calls.filter(([url]) => String(url).endsWith(path));
+    expect(statusReads.map(([, init]) => init?.signal)).toEqual([signal, signal]);
+    expect(fetchMock.mock.calls[1]?.[1]?.signal).not.toBe(signal);
+  });
+
   it.each([
     ['503 responses', () => json({ message: 'unavailable' }, 503)],
     ['429 responses', () => json({ message: 'slow down' }, 429)],
