@@ -32,7 +32,7 @@ export function BookingAddonOptions({ snapshot, seats, pending, pendingSelection
       const maxPerTicket = addon.maxPerTicket ?? 1;
       return <div key={addon.id} className="mt-3 rounded-lg border border-border p-3">
         <div className="flex flex-wrap items-start justify-between gap-2"><strong className="text-sm">{copy.name}</strong><span className="text-sm font-semibold tabular-nums">+ KRW {addon.price.toLocaleString(locale)}</span></div>
-        <p className="mt-1 text-xs text-muted-foreground">{addon.eligibleTierNames.join(' / ')} · {formatCopy(labels.availability, { available: addon.available, capacity: addon.capacity })}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{addon.eligibleTierNames.join(' / ')}{addon.active && addon.available === 0 && <> · {labels.unavailable}</>}</p>
         <p className="mt-1 text-xs font-medium text-foreground">{formatCopy(labels.perTicket, { count: maxPerTicket })}
           {eligible.length > 0 && <> · {formatCopy(labels.forSeats, { count: eligible.length * maxPerTicket })}</>}</p>
         {!addon.active && <p className="mt-1 text-xs font-medium text-destructive">{labels.paused}</p>}

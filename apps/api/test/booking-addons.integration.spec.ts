@@ -184,6 +184,31 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     await expect(checkout.prepareReservation({ ...input, orderId: randomUUID() }, actor)).rejects.toThrow('이미 구매');
   });
 
+  it('preserves a two-unit payment in progress and sells only units 3 and 4 after raising the ticket limit', async () => {
+    const f = await fixture(10, 1, 2);
+    const actor = f.actors[0]!;
+    const ticket = await issue(await pending(f, 0, false), 0);
+    const { input, checkout } = holderCheckout(f, ticket);
+    const pair = (first: number) => ({
+      ...input, orderId: randomUUID(), amount: 300000,
+      addons: [first, first + 1].map(unitIndex => ({ addonId: f.addonId, seatKey: ticket.seatKey, unitIndex })),
+    });
+    const originalPair = pair(1);
+    const prepared = await checkout.prepareReservation(originalPair, actor);
+    await f.service.save(f.showtimeId, { identity: 'photo', displayCopy: copy, price: 150000, capacity: 10,
+      maxPerTicket: 4, eligibleTierNames: ['SVIP'], active: true, sortOrder: 0 }, actor);
+    expect((await checkout.prepareReservation(originalPair, actor)).reservationId).toBe(prepared.reservationId);
+    const confirm = (order: typeof originalPair) => checkout.confirmAndCreateReservation({
+      paymentKey: randomUUID(), orderId: order.orderId, amount: order.amount,
+    }, actor);
+    await confirm(originalPair);
+    expect((await f.service.ticketOptions(ticket.id, actor)).offers[0]?.remainingUnits).toEqual([3, 4]);
+    const topUp = pair(3);
+    await checkout.prepareReservation(topUp, actor);
+    await confirm(topUp);
+    expect((await f.service.ticketOptions(ticket.id, actor)).offers[0]?.remainingUnits).toEqual([]);
+  });
+
   it('checks the issued ticket again when an approval races with entry, and compensates only the add-on', async () => {
     const f = await fixture(1);
     const actor = f.actors[0]!;
@@ -527,28 +552,27 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       .resolves.toMatchObject({ addons: [{ capacity: 2 }] });
   });
 
-  it('holds photo 4 / hi-touch 8 for four tickets and issues twelve independent benefits exactly once', async () => {
+  it('holds photo 4 / hi-touch 16 for four tickets and issues twenty independent benefits exactly once', async () => {
     const f = await fixture(58, 4); const actor = f.actors[0]!;
     const seats = [1, 2, 3, 4].map((number) => seat(number));
     f.locks.set(actor.id, seats.map((item) => item.seatKey));
     const configured = await f.service.save(f.showtimeId, { identity: 'hi-touch', displayCopy: copy,
-      price: 80000, capacity: 430, maxPerTicket: 2, eligibleTierNames: ['SVIP'], active: true, sortOrder: 1 }, actor);
+      price: 80000, capacity: 430, maxPerTicket: 4, eligibleTierNames: ['SVIP'], active: true, sortOrder: 1 }, actor);
     const hiTouchId = configured.addons.find((addon) => addon.identity === 'hi-touch')!.id;
     const selections = seats.flatMap((item) => [
       { addonId: f.addonId, seatKey: item.seatKey, unitIndex: 1 },
-      { addonId: hiTouchId, seatKey: item.seatKey, unitIndex: 1 },
-      { addonId: hiTouchId, seatKey: item.seatKey, unitIndex: 2 },
+      ...[1, 2, 3, 4].map(unitIndex => ({ addonId: hiTouchId, seatKey: item.seatKey, unitIndex })),
     ]);
     await Promise.all(selections.map((selection) => f.service.setHold(f.showtimeId, selection.addonId,
       selection.seatKey, true, actor, selection.unitIndex)));
     const held = await f.service.snapshot(f.showtimeId, actor);
-    expect(held.selections).toHaveLength(12);
+    expect(held.selections).toHaveLength(20);
     expect(held.addons.find((addon) => addon.id === f.addonId)).toMatchObject({ maxPerTicket: 1, held: 4, available: 54 });
-    expect(held.addons.find((addon) => addon.id === hiTouchId)).toMatchObject({ maxPerTicket: 2, held: 8, available: 422 });
+    expect(held.addons.find((addon) => addon.id === hiTouchId)).toMatchObject({ maxPerTicket: 4, held: 16, available: 414 });
     await expect(f.service.setHold(f.showtimeId, f.addonId, seat(1).seatKey, true, actor, 2)).rejects.toThrow('초과');
-    await expect(f.service.setHold(f.showtimeId, hiTouchId, seat(1).seatKey, true, actor, 3)).rejects.toThrow('초과');
+    await expect(f.service.setHold(f.showtimeId, hiTouchId, seat(1).seatKey, true, actor, 5)).rejects.toThrow('초과');
 
-    const addonAmount = 4 * 150000 + 8 * 80000;
+    const addonAmount = 4 * 150000 + 16 * 80000;
     const totalAmount = 4 * 382000 + addonAmount;
     const [order] = await db.insert(schema.reservations).values({ userId: actor.id, showtimeId: f.showtimeId,
       reservationNumber: randomUUID().slice(0, 28), tossOrderId: randomUUID(), totalAmount, addonAmount,
@@ -557,7 +581,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       seatId: item.seatKey, tierName: item.tierName, price: item.price, row: item.row, number: item.number })));
     await db.transaction((tx) => selectAddonHoldsForOrder(tx, { userId: actor.id, showtimeId: f.showtimeId,
       seats, selections, reservationId: order!.id, expectedTotal: addonAmount }));
-    expect(await reservationAddonTotal(db, order!.id, selections)).toBe(1240000);
+    expect(await reservationAddonTotal(db, order!.id, selections)).toBe(1880000);
     await expect(reservationAddonTotal(db, order!.id, selections.slice(0, -1))).rejects.toThrow('선택');
     await db.transaction(async (tx) => {
       await tx.update(schema.reservations).set({ status: 'CONFIRMED' }).where(eq(schema.reservations.id, order!.id));
@@ -570,13 +594,13 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     });
     const benefits = await db.select().from(schema.ticketBenefitEntitlements)
       .where(eq(schema.ticketBenefitEntitlements.showtimeId, f.showtimeId));
-    expect(benefits).toHaveLength(12);
-    expect(new Set(benefits.map((benefit) => benefit.bookingAddonHoldId)).size).toBe(12);
+    expect(benefits).toHaveLength(20);
+    expect(new Set(benefits.map((benefit) => benefit.bookingAddonHoldId)).size).toBe(20);
     const tickets = await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.reservationId, order!.id));
     expect(tickets).toHaveLength(4);
     for (const ticket of tickets) {
-      expect(ticket.addonAmount).toBe(310000);
-      expect(benefits.filter((benefit) => benefit.ticketItemId === ticket.id)).toHaveLength(3);
+      expect(ticket.addonAmount).toBe(470000);
+      expect(benefits.filter((benefit) => benefit.ticketItemId === ticket.id)).toHaveLength(5);
     }
     // Real cancellation finalizer preserves stock until provider cancellation succeeds.
     await db.insert(schema.seatInventories).values(tickets.map((ticket) => ({ showtimeId: f.showtimeId,
@@ -585,7 +609,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       cancels: [{ cancelReason: reason, cancelAmount: totalAmount, cancelStatus: 'DONE', transactionKey: randomUUID() }] })),
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount, balanceAmount: totalAmount, isPartialCancelable: true }) };
     const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
-    await new RefundService(db, provider as never, finalizer).requestRefund(order!.id, actor.id, 'Cancel all twelve options');
+    await new RefundService(db, provider as never, finalizer).requestRefund(order!.id, actor.id, 'Cancel all twenty options');
     const released = await f.service.snapshot(f.showtimeId, actor);
     expect(released.addons.find((addon) => addon.id === f.addonId)).toMatchObject({ available: 58, sold: 0 });
     expect(released.addons.find((addon) => addon.id === hiTouchId)).toMatchObject({ available: 430, sold: 0 });

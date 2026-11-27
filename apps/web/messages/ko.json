@@ -1101,7 +1101,7 @@
     "subtotal": "유료 애드온",
     "intro": "좌석을 선택한 뒤 원하는 옵션을 추가하세요. 선점이 완료된 수량만 결제금액에 합산됩니다.",
     "selectSeat": "먼저 좌석을 선택해주세요.",
-    "availability": "잔여 {available} / {capacity}개",
+    "unavailable": "현재 구매 불가",
     "perTicket": "티켓 1매당 최대 {count}개",
     "forSeats": "선택 좌석 기준 최대 {count}개",
     "paused": "판매가 중단된 옵션입니다. 선택을 해제한 뒤 계속해주세요.",

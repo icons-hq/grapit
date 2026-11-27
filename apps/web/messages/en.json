@@ -1101,7 +1101,7 @@
     "subtotal": "Paid add-ons",
     "intro": "Choose a seat, then add optional benefits. Only confirmed holds are added to your payment.",
     "selectSeat": "Select a seat first.",
-    "availability": "{available} of {capacity} available",
+    "unavailable": "Currently unavailable",
     "perTicket": "Up to {count} per ticket",
     "forSeats": "Up to {count} for your seats",
     "paused": "Sales paused. Remove this option to continue.",

@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { BookingAddonChoice, ReservationDetail, SupportedLocale, TicketAddonOptions } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { Button } from '@/components/ui/button';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { apiClient } from '@/lib/api-client';
 import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
@@ -61,7 +62,7 @@ function TicketAddonSelection({ reservation, ticketId, locale, canBuy }: Props) 
             const limit = Math.min(offer.available, offer.remainingUnits.length);
             const name = (offer.displayCopy[locale] ?? offer.displayCopy.en).name;
             return <label key={offer.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
-              <span><strong>{name}</strong><span className="block text-muted-foreground">{money(offer.price)} · {copy.stock} {offer.available}</span></span>
+              <span><strong>{name}</strong><span className="block text-muted-foreground">{money(offer.price)}{limit === 0 && <> · {getVisibleCopy(locale).bookingAddons.unavailable}</>}</span></span>
               <select aria-label={`${name} · ${copy.qty}`} disabled={limit === 0} className="rounded border bg-background p-2"
                 value={Math.min(limit, quantities[offer.id] ?? 0)} onChange={e => setQuantities({ ...quantities, [offer.id]: Number(e.target.value) })}>
                 {Array.from({ length: limit + 1 }, (_, n) => <option key={n} value={n}>{n}</option>)}

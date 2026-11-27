@@ -1382,6 +1382,7 @@ it('takes only the remaining add-on slot for the selected issued ticket into che
     render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
     fireEvent.click(screen.getByRole('button', { name: '애드온 추가 구매' }));
     const quantity = await screen.findByRole('combobox', { name: '포토 · 구매 수량' });
+    expect(screen.queryByText(/남은 수량|잔여/)).not.toBeInTheDocument();
     expect(within(quantity).getAllByRole('option')).toHaveLength(2);
     fireEvent.change(quantity, { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: /결제하기.*80,000/ }));
