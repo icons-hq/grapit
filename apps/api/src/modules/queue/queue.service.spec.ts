@@ -1361,7 +1361,7 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   describe('slot return after purchase (#4)', () => {
     it.each(['same', 'another'])('keeps the next buyer waiting after the last seat sells on %s API instance', async (instance) => {
       dbState.totalSeats = 1;
-      const config = { get: () => '200' };
+      const config = { get: (key: string) => key === 'QUEUE_MAX_ACTIVE_ADMISSIONS' ? '200' : undefined };
       service = new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never);
       const otherInstance = new QueueService(
         redis as never,
@@ -1600,6 +1600,53 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
   });
 
   describe('remaining seats from live locks only (#6)', () => {
+    it('admits the existing line in order up to the event limit while preserving tokens and the real seat count', async () => {
+      const first = await enter(browserA);
+      const second = await enter(browserB);
+      expect(first.state).toBe(WAITING);
+      expect(second.position).toBe(2);
+
+      const config = { get: (key: string) => key === 'QUEUE_FIXED_ADMISSION' ? `${performanceId}:2` : '1' };
+      service = new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never);
+      await expect(status(first.queueSessionId, browserA, first.admissionToken)).resolves.toMatchObject({ state: WAITING });
+      dbState.totalSeats = 1;
+      setNow(3_000);
+      await expect(status(first.queueSessionId, browserA, first.admissionToken)).resolves.toMatchObject({
+        state: ADMITTED, queueSessionId: first.queueSessionId, remainingSeats: 1,
+      });
+      await expect(status(second.queueSessionId, browserB, second.admissionToken)).resolves.toMatchObject({
+        state: ADMITTED, queueSessionId: second.queueSessionId, remainingSeats: 1,
+      });
+      const third = { userId: 'user-c', refreshTokenFamilyId: 'family-c', deviceSlotId: 'family-c' };
+      await expect(enter(third)).resolves.toMatchObject({ state: WAITING, position: 1, remainingSeats: 1 });
+      expect(await redis.scard(activeKey)).toBe(2);
+      expect(estimateQueueWait({ position: 482, remainingSeats: 136, fixedAdmissionLimit: 1000 }).etaSeconds)
+        .toBe(QUEUE_ETA_CYCLE_MAX_SECONDS);
+    });
+
+    it('keeps inventory-based admission for a different performance', async () => {
+      const config = { get: (key: string) => key === 'QUEUE_FIXED_ADMISSION' ? `${showtimeId}:1000` : '500' };
+      service = new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never);
+      dbState.totalSeats = 1;
+      await expect(enter(browserA)).resolves.toMatchObject({ state: ADMITTED });
+      await expect(enter(browserB)).resolves.toMatchObject({ state: WAITING, position: 1 });
+    });
+
+    it('uses the fixed event limit for direct entry between reconciles', async () => {
+      const config = { get: (key: string) => key === 'QUEUE_FIXED_ADMISSION' ? `${performanceId}:2` : '1' };
+      service = new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never);
+      dbState.totalSeats = 1;
+      await expect(enter(browserA)).resolves.toMatchObject({ state: ADMITTED });
+      setNow(200);
+      await expect(enter(browserB)).resolves.toMatchObject({ state: ADMITTED, remainingSeats: 1 });
+    });
+
+    it.each(['invalid:1000', `${performanceId}:1001`, `${performanceId}:0`])('rejects an invalid fixed event policy %s', (value) => {
+      const config = { get: (key: string) => key === 'QUEUE_FIXED_ADMISSION' ? value : undefined };
+      expect(() => new QueueService(redis as never, createQueueDb(dbState) as never, gateway as never, config as never))
+        .toThrow('QUEUE_FIXED_ADMISSION');
+    });
+
     it('drops expired seat-lock members instead of counting them as occupied', async () => {
       dbState.totalSeats = 2;
       await redis.set(`{${showtimeId}}:seat:A-1`, 'buyer-1', 'PX', minutes(7));

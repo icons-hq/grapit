@@ -81,6 +81,21 @@ export function resolveQueueAdmissionLimit(value: unknown): number {
   }
   return limit;
 }
+
+function parseEventAdmissionLimit(value?: string): { performanceId: string; limit: number } | undefined {
+  if (!value?.trim()) return undefined;
+  const match = /^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):([1-9]\d*)$/i.exec(value.trim());
+  if (!match || Number(match[2]) > QUEUE_MAX_ACTIVE_ADMISSIONS) {
+    throw new Error('QUEUE_FIXED_ADMISSION must be a performance UUID followed by a colon and a limit from 1 to 1000');
+  }
+  return { performanceId: match[1]!.toLowerCase(), limit: Number(match[2]) };
+}
+
+function admissionCapacity(remainingSeats: number, globalLimit: number, fixedLimit?: number): number {
+  if (remainingSeats <= 0) return 0;
+  return fixedLimit ?? Math.min(remainingSeats, globalLimit);
+}
+
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
 // Queue requests run at most one reconcile per performance per interval.
 const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
@@ -94,7 +109,7 @@ const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
 const QUEUE_INDEX_BATCH_SIZE = 128;
 const QUEUE_ENTER_MAX_PASSES = 2;
 // Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
-// min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active. A slot is
+// the effective capacity for the performance active. A slot is
 // returned when that session's authority window ends (expireStaleSessions), at
 // most the active window plus the payment-recovery grace (resolveAuthorityExpiry).
 // A successful payment confirm or virtual-account issuance returns the slot right away
@@ -175,6 +190,7 @@ export function estimateQueueWait(params: {
   position: number;
   remainingSeats: number;
   activeAdmissionLimit?: number;
+  fixedAdmissionLimit?: number;
 }): QueueWaitEstimate {
   const position = Math.floor(params.position);
   const remainingSeats = Math.floor(params.remainingSeats);
@@ -188,7 +204,7 @@ export function estimateQueueWait(params: {
     return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
   }
 
-  const cycleCapacity = Math.min(remainingSeats, resolveQueueAdmissionLimit(params.activeAdmissionLimit));
+  const cycleCapacity = admissionCapacity(remainingSeats, resolveQueueAdmissionLimit(params.activeAdmissionLimit), params.fixedAdmissionLimit);
   const cycles = Math.ceil(position / cycleCapacity);
   const maxSeconds = cycles * QUEUE_ETA_CYCLE_MAX_SECONDS;
   if (maxSeconds > QUEUE_ETA_MAX_SECONDS) {
@@ -353,6 +369,7 @@ type OrderAdmissionBinding = {
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
   private readonly maxActiveAdmissions: number;
+  private readonly fixedAdmission?: { performanceId: string; limit: number };
   private readonly reconcileInFlight = new Set<string>();
   // One fresh remaining-seat computation per performance per instance at a
   // time; concurrent cache misses share it.
@@ -374,6 +391,7 @@ export class QueueService {
     @Optional() config?: ConfigService,
   ) {
     this.maxActiveAdmissions = resolveQueueAdmissionLimit(config?.get('QUEUE_MAX_ACTIVE_ADMISSIONS'));
+    this.fixedAdmission = parseEventAdmissionLimit(config?.get<string>('QUEUE_FIXED_ADMISSION'));
     this.performanceGates = new FreshReadBatcher(async (ids) => {
       const now = new Date();
       const rows = await this.db.select({
@@ -838,7 +856,7 @@ export class QueueService {
     }
 
     const seats = await this.readRemainingSeatsState(performanceId);
-    const capacity = Math.min(seats.remainingSeats, this.maxActiveAdmissions);
+    const capacity = admissionCapacity(seats.remainingSeats, this.maxActiveAdmissions, this.fixedLimitFor(performanceId));
     if (capacity <= 0) {
       return;
     }
@@ -1340,6 +1358,10 @@ export class QueueService {
     };
   }
 
+  private fixedLimitFor(performanceId: string): number | undefined {
+    return this.fixedAdmission?.performanceId === performanceId ? this.fixedAdmission.limit : undefined;
+  }
+
   private async reconcilePerformanceQueue(performanceId: string): Promise<void> {
     await this.indexLegacyQueue(performanceId);
     await this.expireStaleSessions(performanceId);
@@ -1350,7 +1372,7 @@ export class QueueService {
       return;
     }
 
-    const capacity = Math.min(remainingSeats, this.maxActiveAdmissions);
+    const capacity = admissionCapacity(remainingSeats, this.maxActiveAdmissions, this.fixedLimitFor(performanceId));
     const activeCount = await this.redis.scard(this.activeAdmissionsKey(performanceId));
     const slotsToFill = Math.max(0, capacity - activeCount);
 
@@ -1645,7 +1667,10 @@ export class QueueService {
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
     const estimate =
       state === WAITING
-        ? estimateQueueWait({ position, remainingSeats, activeAdmissionLimit: this.maxActiveAdmissions })
+        ? estimateQueueWait({
+            position, remainingSeats, activeAdmissionLimit: this.maxActiveAdmissions,
+            fixedAdmissionLimit: this.fixedLimitFor(record.performanceId),
+          })
         : NO_WAIT_ESTIMATE;
 
     return {

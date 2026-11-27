@@ -327,7 +327,7 @@ describe('QueueWaiting', () => {
       ).toBe('Up to about 14 min');
     });
 
-    it('words the upper bound as a maximum that can grow as seats sell, in every locale (audit #91)', () => {
+    it('explains the maximum wait using admission capacity in every locale', () => {
       const params = { etaSeconds: 800, etaMinSeconds: 0, position: 3, remainingSeats: 300 };
       expect(formatQueueEta(params, thMessages.booking.queue.metrics)).toBe('สูงสุดประมาณ 14 นาที');
       expect(formatQueueEta(params, zhCNMessages.booking.queue.metrics)).toBe('最多约14分钟');
@@ -335,9 +335,9 @@ describe('QueueWaiting', () => {
         // No locale calls the estimate a range or a promise any more.
         expect(messages.booking.queue.metrics.etaWithin).not.toMatch(/이내|Within|ภายใน|内/);
       }
-      expect(koQueue.etaInfo).toContain('남은 좌석 수를 기준으로 계산한 최대 시간');
-      expect(koQueue.etaInfo).toContain('늘어날 수 있습니다');
-      expect(enMessages.booking.queue.etaInfo).toContain('can grow as seats sell');
+      expect(koQueue.etaInfo).toContain('한 번에 입장할 수 있는 인원으로 계산한 최대 시간');
+      expect(koQueue.etaInfo).toContain('달라질 수 있습니다');
+      expect(enMessages.booking.queue.etaInfo).toContain('how many buyers can enter at a time');
 
       render(
         <QueueWaiting

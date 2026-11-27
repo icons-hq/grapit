@@ -30,6 +30,7 @@ env:
   # The 600-seat capacity profile bounds expensive seat/checkout work while
   # additional visitors stay in the queue. Pool limits are configured separately.
   QUEUE_MAX_ACTIVE_ADMISSIONS: ${{ vars.QUEUE_MAX_ACTIVE_ADMISSIONS || '200' }}
+  QUEUE_FIXED_ADMISSION: ${{ vars.QUEUE_FIXED_ADMISSION }}
   API_MIN_INSTANCES: ${{ vars.API_MIN_INSTANCES || '0' }}
   API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '2' }}
   WEB_MIN_INSTANCES: ${{ vars.WEB_MIN_INSTANCES || '0' }}
@@ -395,6 +396,7 @@ jobs:
             PREWARM_SCALING_SCOPE=${{ env.PREWARM_SCALING_SCOPE }}
             DB_POOL_MAX=${{ env.DB_POOL_MAX }}
             QUEUE_MAX_ACTIVE_ADMISSIONS=${{ env.QUEUE_MAX_ACTIVE_ADMISSIONS }}
+            QUEUE_FIXED_ADMISSION=${{ env.QUEUE_FIXED_ADMISSION }}
             NODE_OPTIONS=--max-old-space-size=${{ env.API_NODE_HEAP_MAX_MB }}
             DB_POOL_IDLE_TIMEOUT_MS=30000
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
