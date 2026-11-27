@@ -687,3 +687,8 @@ First rollout of the review (audit #9). Existing orphan `PENDING_PAYMENT` rows b
 
 3. Confirm that every configured Toss secret key may call `GET /v1/transactions`. Without that permission every lookup fails and orders are only deferred (30 minutes), never failed.
 4. Get operator approval for the count, then remove the variable (or set `true`) and redeploy. Watch the `Failed abandoned payment handoffs` log and any `CRITICAL: provider transaction exists` line; at most 20 orders are reviewed per sweep.
+
+
+### 예매 중 웹 화면만 긴급 배포
+
+웹 수정 PR의 squash 제목을 `fix(web-only): …`로 지정하면 Deploy가 운영 API와 워커 이미지를 직전 main 커밋과 대조한다. 서버 실행 코드나 공용 패키지가 바뀌었거나 이미지가 일치하지 않으면 배포를 중단한다. 검증을 통과하면 DB 사전 검사와 예매 게이트 확인을 수행하고 웹만 전환한다. 진행 중인 구매 화면이 이전 번들을 요청할 수 있도록 기존 웹 정적 파일도 새 이미지에 포함한다.

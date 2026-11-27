@@ -1101,7 +1101,7 @@
     "subtotal": "付费加购项目",
     "intro": "请先选座，再添加所需权益。仅成功锁定的数量会计入应付金额。",
     "selectSeat": "请先选择座位。",
-    "availability": "剩余 {available} 份，共 {capacity} 份",
+    "unavailable": "暂不可购买",
     "perTicket": "每张票最多可选 {count} 份",
     "forSeats": "所选座位合计最多可选 {count} 份",
     "paused": "此项目已暂停售卖，请取消选择后继续。",

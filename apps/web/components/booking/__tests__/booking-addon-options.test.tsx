@@ -29,6 +29,8 @@ describe('limited paid options and checkout amounts', () => {
   it('blocks a sold-out option but permits its holder to release it', () => {
     const onChange = vi.fn();
     const { rerender } = render(<BookingAddonOptions snapshot={snapshot} seats={[seat]} pending={false} onChange={onChange} />);
+    expect(screen.getByText(/현재 구매 불가/)).toBeInTheDocument();
+    expect(screen.queryByText(/잔여|0 \/ 58/)).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox')).toBeDisabled();
     const held = { ...snapshot, selections: [{ addonId: 'photo', seatKey: seat.seatKey, price: 150000, displayCopy, expiresAt: new Date().toISOString() }] };
     rerender(<BookingAddonOptions snapshot={held} seats={[seat]} pending={false} onChange={onChange} />);
@@ -67,28 +69,29 @@ describe('limited paid options and checkout amounts', () => {
 
 
 describe('per-ticket addon quantities', () => {
-  it('offers four photos and eight high-touch units for four eligible tickets', () => {
+  it('offers four photos and sixteen high-touch units for four eligible tickets', () => {
     const seats = [1, 2, 3, 4].map((number) => ({ ...seat, seatId: `A-${number}`, seatKey: `1F:A-${number}`, number: String(number) }));
     const photo = { ...snapshot.addons[0]!, maxPerTicket: 1, available: 58 };
-    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 2, price: 80000, displayCopy: { ...displayCopy, ko: { name: '하이터치 추가 구매', description: '' } } };
+    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 4, price: 80000, displayCopy: { ...displayCopy, ko: { name: '하이터치 추가 구매', description: '' } } };
     const onChange = vi.fn();
     render(<BookingAddonOptions snapshot={{ ...snapshot, addons: [photo, highTouch] }} seats={seats} pending={false} onChange={onChange} />);
     expect(screen.getAllByRole('checkbox', { name: /PHOTO/ })).toHaveLength(4);
-    expect(screen.getAllByRole('checkbox', { name: /하이터치/ })).toHaveLength(8);
+    expect(screen.getAllByRole('checkbox', { name: /하이터치/ })).toHaveLength(16);
+    expect(screen.queryByText(/잔여|58 \/ 58/)).not.toBeInTheDocument();
     expect(screen.getByText('티켓 1매당 최대 1개 · 선택 좌석 기준 최대 4개')).toBeInTheDocument();
-    expect(screen.getByText('티켓 1매당 최대 2개 · 선택 좌석 기준 최대 8개')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: '하이터치 추가 구매 · 1층 A-4 · 2/2' }));
-    expect(onChange).toHaveBeenCalledWith({ addonId: 'high-touch', seatKey: '1F:A-4', unitIndex: 2, selected: true });
+    expect(screen.getByText('티켓 1매당 최대 4개 · 선택 좌석 기준 최대 16개')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: '하이터치 추가 구매 · 1층 A-4 · 4/4' }));
+    expect(onChange).toHaveBeenCalledWith({ addonId: 'high-touch', seatKey: '1F:A-4', unitIndex: 4, selected: true });
   });
 
   it('counts only eligible seats for photo but all tiers for high-touch', () => {
     const seats = [seat, { ...seat, seatKey: '1F:B-1', row: 'B', tierName: 'VIP' }];
     const photo = { ...snapshot.addons[0]!, maxPerTicket: 1, available: 58 };
-    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 2, eligibleTierNames: ['SVIP', 'VIP'] };
+    const highTouch = { ...photo, id: 'high-touch', maxPerTicket: 4, eligibleTierNames: ['SVIP', 'VIP'] };
     render(<BookingAddonOptions snapshot={{ ...snapshot, addons: [photo, highTouch] }} seats={seats} pending={false} onChange={vi.fn()} />);
-    expect(screen.getAllByRole('checkbox')).toHaveLength(5);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(9);
     expect(screen.getByText('티켓 1매당 최대 1개 · 선택 좌석 기준 최대 1개')).toBeInTheDocument();
-    expect(screen.getByText('티켓 1매당 최대 2개 · 선택 좌석 기준 최대 4개')).toBeInTheDocument();
+    expect(screen.getByText('티켓 1매당 최대 4개 · 선택 좌석 기준 최대 8개')).toBeInTheDocument();
   });
 
   it('shows an independent pending state and allows another unit to be selected', () => {
