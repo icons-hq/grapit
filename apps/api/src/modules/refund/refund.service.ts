@@ -327,7 +327,7 @@ function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'
 export type RefundCancelRetryScheduleOptions = {
   startAfter?: Date;
   /**
-   * The provider accepted this exact cancel and is still processing it (asynchronous cancel). Polling it is
+   * The provider is acquiring the card payment or processing an accepted asynchronous cancel. Polling is
    * the normal path, so repeated polls never raise the customer-service CTA or the manual-review flag; the
    * timeline's own 3-day delay rule still surfaces a slow provider to the buyer.
    */
@@ -404,6 +404,28 @@ export async function sendRefundCancelRetryJob(
   }
 }
 
+
+/** Persist the frozen policy refund while Toss cannot yet accept its amount. No cancel POST was sent. */
+export async function deferPolicyRefund(
+  db: DrizzleDB, pgBoss: PgBossContract | undefined, logger: Logger, refund: RefundRecord,
+  retryCount: number, payment: TossPaymentResponse, idempotencyKey: string,
+) {
+  const jobId = await sendRefundCancelRetryJob(pgBoss, logger, refund.id, retryCount);
+  const now = new Date();
+  const acquiringCard = payment.card?.acquireStatus === 'READY' || payment.card?.acquireStatus === 'REQUESTED';
+  const schedule = buildRefundCancelRetrySchedule(jobId, retryCount, now, { awaitingProvider: acquiringCard });
+  const [updated] = await db.update(refunds).set({
+    retryCount, updatedAt: now,
+    resultCode: 'AWAITING_POLICY_REFUND',
+    resultMessage: '결제사가 약관상 환불액을 취소할 수 있는지 자동으로 재확인하고 있습니다.',
+    customerServiceCtaVisible: schedule.customerServiceCtaVisible,
+    providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
+      ...schedule.metadata, policyRefundDeferred: true,
+    })}::jsonb`,
+  }).where(and(eq(refunds.id, refund.id), eq(refunds.status, refund.status), eq(refunds.retryCount, refund.retryCount),
+    sql`${refunds.providerMetadata}->'cancelRequest'->'options'->>'idempotencyKey' = ${idempotencyKey}`)).returning();
+  return { updated, jobId };
+}
 
 /** Booking day for the Cancellation Fee Schedule: provider approval time, legacy fallback to creation. */
 export function resolveBookingConfirmedAt(
@@ -693,7 +715,7 @@ export class RefundService {
       reason,
     })) {
       throw new BadRequestException(
-        '이 결제수단은 수수료가 있는 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.',
+        '결제 정보로 환불 금액을 확인할 수 없습니다. 고객센터로 문의해주세요.',
       );
     }
 
@@ -790,6 +812,12 @@ export class RefundService {
           }
           throw new TossPaymentError(REFUND_BALANCE_RECONCILIATION_CODE, '결제사 환불 잔액을 대조해야 합니다');
         } else if (command.options.cancelAmount !== undefined && current.isPartialCancelable !== true) {
+          if (expectedIdempotencyKey) {
+            const { updated, jobId } = await deferPolicyRefund(this.db, this.pgBoss, this.logger, refund,
+              refund.retryCount, current, expectedIdempotencyKey);
+            return this.buildRequestResponse(context, updated ?? await this.loadRefundById(refund.id),
+              { idempotent: !updated, retryEnqueued: Boolean(updated && jobId) });
+          }
           definitePreflightRejection = current.isPartialCancelable === false
             && !hasProviderCancelForCommand(current, command);
           throw new TossPaymentError(REFUND_NOT_PARTIAL_CANCELABLE_CODE, '결제사에서 부분취소를 허용하지 않습니다');
@@ -1065,6 +1093,9 @@ export class RefundService {
         return this.runProviderCancelAttempt(context, reopened, quote, reason, actor);
       }
 
+      if (getRefundProviderMetadata(refund.providerMetadata).policyRefundDeferred === true) {
+        throw new ConflictException('결제사 자동 재처리 기한이 지났습니다. 최초 접수한 환불액으로 결제사와 대조해주세요.');
+      }
       return this.restoreRightsForReviewedRetry(context, refund, {
         code: REFUND_RETRY_WINDOW_EXPIRED_CODE,
         message: '이전 취소 명령의 결제사 재전송 기한이 지나 티켓 권리를 복원했습니다',
@@ -1168,9 +1199,7 @@ export class RefundService {
    * Refuses before any right is revoked when the provider balance already disagrees with the local ledger
    * (for example a seat cancelled only in Grabit). A failed provider query blocks a new admin refund with
    * 503 (fail closed: the operator re-checks the preview once the PG answers). For a buyer it does not
-   * block: the frozen preflight after revocation re-checks and keeps the refund retryable. Partial-cancel
-   * support keeps its existing post-revocation handling (rights are restored when the provider refuses
-   * partial cancels).
+   * block: the frozen preflight after revocation re-checks and keeps the refund retryable.
    */
   protected async assertProviderBalanceBeforeRevocation(
     context: ReservationRefundContext,
@@ -1244,17 +1273,10 @@ export class RefundService {
     }
 
     const scale = providerRefund.currency === 'USD' ? 100 : 1;
-    const partialUnsupported = !options.balanceOnly
-      && command.options.cancelAmount !== undefined
-      && provider.isPartialCancelable !== true;
     const balanceMismatch = Math.round((provider.balanceAmount ?? -1) * scale) !== providerRefund.balanceBeforeMinor
       || Math.round(provider.totalAmount * scale) !== providerRefund.originalAmountMinor;
     let blockedReason: string | null = null;
-    if (partialUnsupported) {
-      blockedReason = options.audience === 'admin'
-        ? '이 결제수단은 자동 부분취소를 지원하지 않습니다. 전액 환불 override 또는 결제사 수동 처리가 필요합니다.'
-        : '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
-    } else if (balanceMismatch && !(options.balanceOnly && typeof provider.balanceAmount !== 'number')) {
+    if (balanceMismatch && !(options.balanceOnly && typeof provider.balanceAmount !== 'number')) {
       blockedReason = options.audience === 'admin'
         ? '결제사 환불 잔액이 예매 기록과 다릅니다. 결제사 취소 내역을 대조한 뒤 처리해주세요.'
         : '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';

@@ -50,7 +50,8 @@ payment and refund record.
 - If Toss has a successful partial cancellation and Grabit is pending, finalize only the matching ticket item. If active Ticket Items remain, preserve parent `reservation=CONFIRMED` and `payment=DONE`; `PARTIAL_CANCELED` at the provider does not by itself justify changing the local parent payment.
 - A Full Reservation Cancellation retaining cancellation/service fees is different: the Reservation and all Ticket Items are cancelled, while local payment may be `PARTIAL_CANCELED` with the retained provider balance. Validate against the stored Cancellation Quote.
 - If Toss has full payment cancellation, finalize full reservation cancellation.
-- If Toss rejected the cancellation amount, do not retry partial cancellation. Ask the customer to use full reservation cancellation or process manually with finance approval.
+- For `AWAITING_POLICY_REFUND`, check the full-booking quote, original charge currency, Toss balance, `isPartialCancelable`, card acquisition status, and next scheduled attempt. The customer has already requested cancellation. The worker keeps checking eligibility and sends the original amount under the same key once eligible. Prolonged or unsupported refunds require operations to reconcile the frozen quote with the provider. Do not substitute a gross refund or ask the buyer to re-file at a later fee tier.
+- If Toss explicitly rejected a cancel POST, check the recorded rejection, provider balance and rights restoration before taking further action.
 
 ## Safety
 

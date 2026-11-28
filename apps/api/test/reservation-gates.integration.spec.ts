@@ -1,3 +1,4 @@
+import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -403,13 +404,13 @@ describe('Reservation gates — PostgreSQL', () => {
       const otherBuyer = await user(`+8210${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`, true);
       const other = await confirmedPurchase(otherBuyer.id, f.showtimeId, ['1F:D-1']);
       const provider = {
-        cancelPayment: vi.fn(),
+        cancelPayment: vi.fn().mockRejectedValue(new TossPaymentError('NOT_ALLOWED_PARTIAL_REFUND', 'Rejected')),
         queryPayment: vi.fn().mockImplementation(async () => {
           if (!changed) {
             changed = true;
             await replaceBenefitsWhilePending(f.showtimeId, other.items[0]!.id);
           }
-          return { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: false };
+          return { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true };
         }),
       };
       const refunds = new RefundService(db, provider as never,
@@ -433,7 +434,7 @@ describe('Reservation gates — PostgreSQL', () => {
           expect.objectContaining({ identity: 'sticker', state: 'active' }),
         ]));
       }
-      expect(provider.cancelPayment).not.toHaveBeenCalled();
+      expect(provider.cancelPayment).toHaveBeenCalledTimes(1);
     });
   });
 });

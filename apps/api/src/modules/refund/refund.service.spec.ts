@@ -829,11 +829,6 @@ describe('RefundService', () => {
       reason: '결제사 환불 잔액이 예매 기록과 다릅니다',
     },
     {
-      name: 'the payment method cannot be partially cancelled',
-      queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: false }),
-      reason: '자동 부분취소를 지원하지 않습니다',
-    },
-    {
       name: 'no PG cancel command can be built for a foreign payment',
       queryPayment: () => vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true }),
       reason: '자동 환불 금액을 만들 수 없습니다',

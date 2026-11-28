@@ -430,18 +430,93 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { daysToShow: 20, refundKrw: 380000, refundUsd: 258.40 },
+    { daysToShow: 2, refundKrw: 266000, refundUsd: 180.88 },
+  ])('accepts a one-ticket policy refund at D-$daysToShow and sends its frozen USD amount once eligible', async ({
+    daysToShow, refundKrw, refundUsd,
+  }) => {
+    const f = await fixture();
+    const [item] = await ticket(f);
+    const reservationId = item!.reservationId;
+    const day = 86400000;
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: item!.seatId,
+      seatKey: item!.seatKey, floorKey: item!.floorKey, status: 'sold' });
+    await db.update(reservationSeats).set({ price: 380000 }).where(eq(reservationSeats.reservationId, reservationId));
+    await db.update(ticketItems).set({ price: 380000, serviceFee: 2000 }).where(eq(ticketItems.id, item!.id));
+    await db.update(reservations).set({ status: 'CONFIRMED', totalAmount: 382000,
+      createdAt: new Date(Date.now() - day) }).where(eq(reservations.id, reservationId));
+    await db.update(showtimes).set({ dateTime: new Date(Date.now() + daysToShow * day) }).where(eq(showtimes.id, f.showtimeId));
+    const [payment] = await db.update(payments).set({ amount: 382000, currency: 'USD',
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 25976, providerMetadata: { secretKeyScope: 'overseas-card' },
+    }).where(eq(payments.id, item!.paymentId)).returning();
+    await qr.ensureIssuedTicketsForReservation({ reservationId, paymentId: payment!.id });
+    const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, status: 'DONE', currency: 'USD',
+      totalAmount: 259.76, balanceAmount: 259.76, isPartialCancelable: false, card: { acquireStatus: 'REQUESTED' } };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => ({
+      ...snapshot, status: 'PARTIAL_CANCELED', balanceAmount: Number((259.76 - options.cancelAmount).toFixed(2)),
+      cancels: [{ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'DONE',
+        canceledAt: new Date().toISOString(), transactionKey: randomUUID() }],
+    }));
+    const provider = { queryPayment: vi.fn(async () => structuredClone(snapshot)), cancelPayment: cancel };
+    const send = vi.fn(async (_queue: string, _payload: RefundCancelRetryJobPayload) => randomUUID());
+    const boss = { isAvailable: true, send };
+    const finalizer = new PaymentCancellationFinalizerService(db, boss as never);
+    const service = new RefundService(db, provider as never, finalizer, boss as never);
+    expect(await service.getRefundPreview(reservationId, f.userId)).toMatchObject({ canRequestRefund: true,
+      refundableAmount: refundKrw, providerRefund: { amountDecimal: refundUsd.toFixed(2) } });
+    expect(await service.getAdminRefundPreview(reservationId)).toMatchObject({ canRequestRefund: true, refundableAmount: refundKrw });
+    const result = await service.requestRefund(reservationId, f.userId, 'Cancel booking', { expectedRefundableAmount: refundKrw });
+    expect(result).toMatchObject({ retryEnqueued: true, refundTimeline: { currentState: 'REQUESTED', sentToPgAt: null } });
+    expect((await service.requestRefund(reservationId, f.userId, 'Duplicate')).idempotent).toBe(true);
+    expect(await db.select({ status: tickets.status }).from(tickets).where(eq(tickets.reservationId, reservationId)))
+      .toEqual([{ status: 'revoked' }]);
+    const worker = new RefundCancelRetryWorker(db, provider as never, finalizer, boss as never);
+    const job = send.mock.calls[0]![1];
+    expect(await worker.handleJob(job)).toMatchObject({ status: 'rescheduled' });
+    expect(await worker.handleJob(job)).toMatchObject({ status: 'stale_job' });
+    for (const attempt of [2, 3]) {
+      expect(await worker.handleJob({ ...job, attempt })).toMatchObject({ status: 'rescheduled' });
+    }
+    const [waiting] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, job.refundId));
+    expect(waiting).toMatchObject({ status: 'requested', retryCount: 3, sentToPgAt: null,
+      customerServiceCtaVisible: false, providerMetadata: { manualReviewRequired: false } });
+    snapshot.card.acquireStatus = 'COMPLETED';
+    expect(await worker.handleJob({ ...job, attempt: 4 })).toMatchObject({ status: 'rescheduled' });
+    const [restricted] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, job.refundId));
+    expect(restricted).toMatchObject({ status: 'requested', sentToPgAt: null, providerMetadata: { manualReviewRequired: true } });
+    expect(cancel).not.toHaveBeenCalled();
+
+    // Processing after the cancellation deadline must honor the amount the buyer accepted.
+    await db.update(reservations).set({ cancelDeadline: new Date(Date.now() - day) }).where(eq(reservations.id, reservationId));
+    snapshot.isPartialCancelable = true;
+    const nextJob = send.mock.calls.at(-1)![1];
+    const outcome = await worker.handleJob(nextJob);
+    const [ledger] = await db.select({ status: schema.refunds.status, message: schema.refunds.resultMessage })
+      .from(schema.refunds).where(eq(schema.refunds.id, job.refundId));
+    expect(outcome, ledger?.message ?? undefined).toMatchObject({ status: 'completed' });
+    expect(ledger?.status).toBe('completed');
+    expect(await worker.handleJob(nextJob)).toMatchObject({ status: 'already_terminal' });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith(payment!.paymentKey, expect.any(String), expect.objectContaining({
+      cancelAmount: refundUsd, currency: 'USD', idempotencyKey: `refund-cancel:${job.refundId}`, secretKeyScope: 'overseas-card',
+    }));
+    expect((await db.select().from(ticketItems).where(eq(ticketItems.id, item!.id)))[0]).toMatchObject({ status: 'cancelled' });
+    expect((await db.select().from(reservations).where(eq(reservations.id, reservationId)))[0]?.status).toBe('CANCELLED');
+  });
+
   it('restores all rights after a definite full-refund rejection and permits a fresh reviewed attempt', async () => {
     const f = await cancellationPurchase();
     await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
     await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));
     await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
       seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
-    let partialAllowed = false;
     const cancel = vi.fn().mockImplementation(async (paymentKey, reason, options) => ({ paymentKey, currency: 'KRW', status: 'PARTIAL_CANCELED', totalAmount: 104000,
       balanceAmount: 4000, cancels: [{ cancelReason: reason, cancelAmount: options.cancelAmount,
         cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] }));
+    cancel.mockRejectedValueOnce(new TossPaymentError('NOT_ALLOWED_PARTIAL_REFUND', 'Rejected'));
     const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => ({ status: 'DONE',
-      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: partialAllowed })) };
+      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true })) };
     const service = new RefundService(db, provider as never, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
     const rejected = await service.requestRefund(f.first.reservationId, f.userId, 'Cancellation');
     expect(rejected.refundTimeline?.currentState).toBe('FAILED');
@@ -450,11 +525,10 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(restored.ticketItems.every((item) => item.status === 'ACTIVE' && item.cancellation === null)).toBe(true);
     expect(restored.ticketItems.flatMap((item) => item.benefitEntitlements).every((item) => item.state === 'active')).toBe(true);
     expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(2);
-    expect(cancel).not.toHaveBeenCalled();
-    partialAllowed = true;
+    expect(cancel).toHaveBeenCalledTimes(1);
     const retried = await service.requestRefund(f.first.reservationId, f.userId, 'Reviewed retry', { expectedRefundableAmount: 100000 });
     expect(retried.refundTimeline?.currentState).toBe('COMPLETED');
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(2);
   });
 
   it.each(['worker', 'webhook'] as const)('recovers a fee-retaining full refund through %s after PG completion precedes the DB failure timestamp', async (mode) => {

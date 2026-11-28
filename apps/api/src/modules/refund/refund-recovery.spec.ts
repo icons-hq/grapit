@@ -420,6 +420,22 @@ describe('RefundService admin recovery of stuck refunds (audit #53)', () => {
     expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(expect.objectContaining({ source: 'refund_retry' }));
   });
 
+  it('preserves the original deferred policy quote for manual reconciliation past the POST window', async () => {
+    const refund = stuckFailedRefund();
+    Object.assign(refund.providerMetadata, { policyRefundDeferred: true });
+    vi.setSystemTime(new Date(refund.requestedAt.getTime() + REFUND_CANCEL_POST_WINDOW_MS + 1000));
+    const provider = { queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW',
+      totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: false, cancels: [] }), cancelPayment: vi.fn() };
+    const { service } = createService(provider);
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(createContext({ itemStatus: 'cancellation_pending' }) as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(refund as never);
+    const restore = vi.spyOn(service as never, 'restoreRightsForReviewedRetry');
+    await expect(service.requestAdminRefund('reservation-1', 'admin-1', '재확인')).rejects.toThrow('최초 접수한 환불액');
+    expect(restore).not.toHaveBeenCalled();
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
+  });
+
   it('restores rights past the idempotency window and stops instead of sending a re-quoted amount the admin did not review', async () => {
     // 16 days after the request: the fee schedule moved on, so a new quote would differ from the stored one.
     vi.setSystemTime(new Date(new Date('2026-07-05T03:00:00.000Z').getTime() + REFUND_CANCEL_POST_WINDOW_MS + 1000));
