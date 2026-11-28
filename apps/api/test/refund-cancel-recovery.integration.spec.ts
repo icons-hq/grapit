@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
 import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
+import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { RefundService } from '../src/modules/refund/refund.service.js';
 import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
 import { PaymentCancellationFinalizerService, JOB_ENQUEUE_FAILED } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
@@ -222,6 +223,42 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
       expect(item).toMatchObject({ status: 'cancelled', cancelReason: reason, cancellationCommand: { transactionKey: f.snapshot.cancels[0]!.transactionKey } });
     }
     expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a failed overseas card refund from a verified GET and tolerates duplicate delivery', async () => {
+    const f = await purchase({ ticketCount: 1, price: 380000, bookedAt: new Date() });
+    await db.update(payments).set({ providerChargeCurrency: 'USD', providerChargeAmountMinor: 25976,
+      providerMetadata: { secretKeyScope: 'overseas-card' } }).where(eq(payments.id, f.payment.id));
+    Object.assign(f.snapshot, { currency: 'USD', totalAmount: 259.76, balanceAmount: 259.76 });
+    const toss = provider(f.snapshot, { fail: () => new Error('lost response') });
+    const settlement = finalizer();
+    await new RefundService(db, toss as never, settlement).requestRefund(f.reservation.id, f.userId, '取消预订');
+    const row = await refundOf(f.reservation.id);
+    const stored = row.providerMetadata as { cancelRequest: { reason: string } };
+    await db.update(refunds).set({ status: 'failed', failedAt: new Date(),
+      resultCode: 'BALANCE_RECONCILIATION_REQUIRED', customerServiceCtaVisible: true,
+      providerMetadata: { ...stored, manualReviewRequired: true, cancelRequest: { ...stored.cancelRequest,
+        reason: `取消预订 [${row.id}]` } } }).where(eq(refunds.id, row.id));
+    expect((await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.reservation.id)))[0]!.status).toBe('cancellation_pending');
+
+    const verified = { ...f.snapshot, status: 'CANCELED', balanceAmount: 0, cancels: [{ cancelAmount: 259.76,
+      cancelReason: `取消?? [${row.id}]`, cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] };
+    const service = new PaymentService(db, undefined, undefined, undefined, undefined, settlement);
+    const event = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED' as const, data: verified };
+    await Promise.all([service.finalizeConfirmedCancelWebhook(event, verified), service.finalizeConfirmedCancelWebhook(event, verified)]);
+    expect(await service.finalizeConfirmedCancelWebhook(event, verified)).toBe('already_finalized');
+    expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+    const completed = await refundOf(f.reservation.id);
+    expect(completed).toMatchObject({ status: 'completed', customerServiceCtaVisible: false, failedAt: null });
+    expect(completed.providerMetadata).not.toHaveProperty('manualReviewRequired');
+    const booking = new HistoricalSeatCancellationFixture(db, toss as never, {} as never, {} as never,
+      {} as never, {} as never, qr, undefined, undefined, settlement);
+    const detail = await booking.getReservationDetail(f.reservation.id, f.userId);
+    expect(detail).toMatchObject({ status: 'CANCELLED', refundTimeline: { currentState: 'COMPLETED' } });
+    expect(detail.ticketItems).toHaveLength(1);
+    expect(detail.ticketItems[0]).toMatchObject({ status: 'CANCELLED', cancellation: { refundStatus: 'COMPLETED', refundableAmount: 382000 } });
+    expect(detail.refundProviderAmount).toMatchObject({ currency: 'USD', amountMinor: 25976 });
+    expect(detail.ticketItems[0]?.qrCredential).toBeFalsy();
   });
 
   it('finalizes a provider-completed refund for ticket items whose QR credential was never issued (#79)', async () => {

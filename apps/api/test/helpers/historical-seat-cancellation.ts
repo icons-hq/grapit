@@ -7,7 +7,7 @@ import type { TicketItemCancellationCommand } from '../../src/database/schema/ti
 import { hasRestoredRefundRights } from '../../src/modules/cancellation/refund-timeline.js';
 import { calculateTicketItemCancellationQuote } from '../../src/modules/cancellation/ticket-cancellation-policy.js';
 import { buildTicketItemPaymentCancelRequest, withCompletedRefunds, type PaymentCancelRequest, type PaymentCancelTicketItemSnapshot } from '../../src/modules/payment/payment-cancel-policy.js';
-import { virtualAccountRefundReason } from '../../src/modules/payment/virtual-account-cancel-receipt.js';
+import { providerRefundReason } from '../../src/modules/payment/toss-cancel-receipt.js';
 import { ReservationService, type PreparedTicketItemCancellation, type TicketItemCancellationContext } from '../../src/modules/reservation/reservation.service.js';
 
 type TicketItemCancellationQuote = PreparedTicketItemCancellation['quote'];
@@ -233,7 +233,7 @@ export class HistoricalSeatCancellationFixture extends ReservationService {
       if (paymentCancelRequest && !context.cancellationCommand) {
         const commandId = randomUUID();
         paymentCancelRequest.reason = context.paymentMethod === 'VIRTUAL_ACCOUNT'
-          ? virtualAccountRefundReason(commandId) : `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
+          ? providerRefundReason(commandId) : `${Array.from(cancellationReason).slice(0, 150).join('')} [${commandId}]`;
         paymentCancelRequest.options.idempotencyKey = `ticket-item-cancel:${ticketItemId}:${commandId}`;
         if (paymentCancelRequest.options.cancelRequestId) paymentCancelRequest.options.cancelRequestId = `cancel_${commandId}`;
         const currency = context.providerChargeCurrency === 'USD' ? 'USD' : 'KRW';

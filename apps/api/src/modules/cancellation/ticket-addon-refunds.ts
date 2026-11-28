@@ -1,4 +1,4 @@
-import { virtualAccountRefundReason } from '../payment/virtual-account-cancel-receipt.js';
+import { providerRefundReason } from '../payment/toss-cancel-receipt.js';
 import { randomUUID } from 'node:crypto';
 import { asc, eq, inArray } from 'drizzle-orm';
 import type { CancellationQuote, TicketItemCancellationPolicyCode } from '@grabit/shared';
@@ -39,7 +39,7 @@ export async function prepareTicketAddonRefunds(tx: Tx, ticketIds: string[], fix
     const base = { id, reservationId: order.orderId, paymentId: order.payment.id, provider: 'toss_payments' };
     try {
       const command = quote.refundableAmount ? buildFullReservationPaymentCancelRequest({
-        payment: order.payment, cancellationQuote: quote, reason: order.payment.method === 'VIRTUAL_ACCOUNT' ? virtualAccountRefundReason(id) : cancelReason,
+        payment: order.payment, cancellationQuote: quote, reason: providerRefundReason(id),
         idempotencyKey: `refund-cancel:${id}`, cancelRequestIdSeed: id,
       }) : null;
       values = { ...base, status: 'requested', resultCode: 'REQUESTED',

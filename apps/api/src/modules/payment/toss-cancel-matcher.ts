@@ -1,5 +1,5 @@
 import type { TossPaymentCancelOptions, TossPaymentResponse } from './toss-payments.client.js';
-import { readStoredPaymentCancelReceipt } from './payment-cancel-policy.js';
+import { legacyCancelAttemptSuffix, readStoredPaymentCancelReceipt, type StoredCancelReceipt } from './payment-cancel-policy.js';
 
 export type TossPaymentCancelRecord = NonNullable<TossPaymentResponse['cancels']>[number];
 
@@ -7,6 +7,7 @@ export type TossCompletedCancelExpectation = {
   cancelAmount?: number;
   cancelRequestId?: string | null;
   cancelReason?: string;
+  attemptSuffix?: string;
   transactionKey?: string;
   requestedAt?: Date | string | null;
 };
@@ -25,34 +26,39 @@ export function hasMatchingCompletedProviderCancel(
   completedCancels: readonly TossPaymentCancelRecord[],
   expected: TossCompletedCancelExpectation,
 ): boolean {
-  const matches = completedCancels.filter(cancel => isMatchingCompletedProviderCancel(cancel, expected));
-  return expected.transactionKey || expected.cancelReason ? matches.length === 1 : matches.length > 0;
+  const matches = completedCancels.filter(cancel => matchesCancelRecord(cancel, expected));
+  return expected.transactionKey || expected.cancelReason || expected.cancelRequestId ? matches.length === 1 : matches.length > 0;
+}
+
+function matchesFrozenBalance(response: TossPaymentResponse, { ledger }: StoredCancelReceipt): boolean {
+  return !ledger || (response.paymentKey === ledger.paymentKey && response.currency === ledger.currency
+    && response.totalAmount === ledger.total && response.balanceAmount === ledger.remaining);
 }
 
 export function isTossPaymentCancelCompleted(
   response: TossPaymentResponse,
   cancelRequestId?: string | null,
-  options: {
+  options: StoredCancelReceipt & {
     allowPartialStatus?: boolean;
-    expectedCancelAmount?: number;
-    expectedCancelReason?: string;
-    expectedTransactionKey?: string;
     allowUnidentifiedPartialCancel?: boolean;
     requestedAt?: Date | string | null;
   } = {},
 ): boolean {
+  if (!matchesFrozenBalance(response, options)) return false;
   const completedPaymentStatuses = options.allowPartialStatus
     ? new Set(['CANCELED', 'PARTIAL_CANCELED'])
     : new Set(['CANCELED']);
   const normalizedCancelRequestId = normalizeCancelRequestId(cancelRequestId);
 
   if (options.expectedCancelReason !== undefined || options.expectedTransactionKey) {
-    const exhaustedDeposit = response.status === 'PARTIAL_CANCELED' && response.balanceAmount === 0
-      && (response.method === '가상계좌' || response.method === 'VIRTUAL_ACCOUNT')
-      && getCompletedProviderCancels(response).reduce((sum, row) => sum + row.cancelAmount, 0) === response.totalAmount;
-    return (completedPaymentStatuses.has(response.status) || exhaustedDeposit)
+    const scale = response.currency === 'USD' ? 100 : 1;
+    const exhausted = response.status === 'PARTIAL_CANCELED' && response.balanceAmount === 0
+      && getCompletedProviderCancels(response).reduce((sum, row) => sum + Math.round(row.cancelAmount * scale), 0)
+        === Math.round(response.totalAmount * scale);
+    return (completedPaymentStatuses.has(response.status) || exhausted)
       && hasMatchingCompletedProviderCancel(getCompletedProviderCancels(response), {
         transactionKey: options.expectedTransactionKey, cancelReason: options.expectedCancelReason, cancelAmount: options.expectedCancelAmount,
+        attemptSuffix: options.expectedAttemptSuffix,
         cancelRequestId: normalizedCancelRequestId, requestedAt: options.requestedAt,
       });
   }
@@ -80,46 +86,58 @@ export function isTossPaymentCancelCompleted(
   return completedPaymentStatuses.has(response.status);
 }
 
-export function buildCompletedCancelExpectation(
+export function matchesCompletedRefundWebhook(
+  response: TossPaymentResponse,
   options: TossPaymentCancelOptions,
   requestedAt?: Date | string | null,
   frozenMetadata?: unknown,
-): TossCompletedCancelExpectation {
+): boolean {
   const receipt = readStoredPaymentCancelReceipt(frozenMetadata);
-  return {
+  return matchesFrozenBalance(response, receipt) && hasMatchingCompletedProviderCancel(getCompletedProviderCancels(response), {
     cancelAmount: receipt.expectedCancelAmount ?? options.cancelAmount,
     transactionKey: receipt.expectedTransactionKey, cancelReason: receipt.expectedCancelReason,
+    attemptSuffix: receipt.expectedAttemptSuffix,
     cancelRequestId: options.cancelRequestId,
     requestedAt,
-  };
+  });
 }
 
 export function matchingTicketCancelRows(
   cancels: readonly TossPaymentCancelRecord[],
-  command: { reason: string; transactionKey?: string; currency: string; amountMinor: number; options: { cancelRequestId?: string } },
+  command: { reason: string; transactionKey?: string; currency: string; amountMinor: number; options: TossPaymentCancelOptions },
 ) {
-  return cancels.filter(cancel => cancel.cancelStatus === 'DONE' && isMatchingCompletedProviderCancel(cancel, {
+  return cancels.filter(cancel => cancel.cancelStatus === 'DONE' && matchesCancelRecord(cancel, {
     cancelAmount: command.amountMinor / (command.currency === 'USD' ? 100 : 1),
     cancelReason: command.reason, transactionKey: command.transactionKey, cancelRequestId: command.options.cancelRequestId,
+    attemptSuffix: legacyCancelAttemptSuffix(command),
   }));
 }
 
-function isMatchingCompletedProviderCancel(
+export function matchesPendingOrAbortedCancel(
+  response: Pick<TossPaymentResponse, 'cancels'>, status: 'IN_PROGRESS' | 'ABORTED',
+  cancelRequestId: string | undefined, receipt: StoredCancelReceipt,
+): boolean {
+  if (!cancelRequestId && !receipt.expectedCancelReason && !receipt.expectedTransactionKey) return false;
+  return response.cancels?.filter(cancel => cancel.cancelStatus === status && matchesCancelRecord(cancel, {
+    cancelRequestId, cancelAmount: receipt.expectedCancelAmount, cancelReason: receipt.expectedCancelReason,
+    attemptSuffix: receipt.expectedAttemptSuffix, transactionKey: receipt.expectedTransactionKey,
+  })).length === 1;
+}
+
+function matchesCancelRecord(
   cancel: TossPaymentCancelRecord,
   expected: TossCompletedCancelExpectation,
 ): boolean {
   const expectedCancelRequestId = normalizeCancelRequestId(expected.cancelRequestId);
-  if (expected.transactionKey) {
-    if (cancel.transactionKey !== expected.transactionKey) return false;
-  } else if (expected.cancelReason !== undefined && cancel.cancelReason !== expected.cancelReason) {
-    return false;
-  }
-  if (expectedCancelRequestId) {
-    if (cancel.cancelRequestId !== expectedCancelRequestId) {
-      return false;
+  if (expected.transactionKey && cancel.transactionKey !== expected.transactionKey) return false;
+  if (expectedCancelRequestId && cancel.cancelRequestId !== expectedCancelRequestId) return false;
+  if (!expected.transactionKey && !expectedCancelRequestId) {
+    if (expected.cancelReason === undefined) {
+      if (!isCancelAtOrAfterRequest(cancel, expected.requestedAt)) return false;
+    } else if (cancel.cancelReason !== expected.cancelReason) {
+      if (!expected.attemptSuffix || !cancel.transactionKey || !expected.cancelAmount
+        || !cancel.cancelReason?.endsWith(expected.attemptSuffix)) return false;
     }
-  } else if (!expected.transactionKey && expected.cancelReason === undefined && !isCancelAtOrAfterRequest(cancel, expected.requestedAt)) {
-    return false;
   }
 
   if (

@@ -76,9 +76,8 @@ import {
 } from './payment-cancel-policy.js';
 import {
   matchingTicketCancelRows,
-  buildCompletedCancelExpectation,
+  matchesCompletedRefundWebhook,
   getCompletedProviderCancels,
-  hasMatchingCompletedProviderCancel,
   type TossPaymentCancelRecord,
 } from './toss-cancel-matcher.js';
 import {
@@ -2305,13 +2304,9 @@ export class PaymentService {
         cancelRequestIdSeed: matchingRefund.id,
       });
       if (
-        !hasMatchingCompletedProviderCancel(
-          completedCancels,
-          buildCompletedCancelExpectation(
-            expectedCancelRequest.options,
-            getRefundCancelRequestAnchor(matchingRefund),
-            matchingRefund.providerMetadata,
-          ),
+        !matchesCompletedRefundWebhook(
+          providerResponse, expectedCancelRequest.options,
+          getRefundCancelRequestAnchor(matchingRefund), matchingRefund.providerMetadata,
         )
       ) {
         return 'no_local_match';
@@ -2589,13 +2584,9 @@ export class PaymentService {
           cancelRequestIdSeed: matchingRefund.id,
         });
         if (
-          !hasMatchingCompletedProviderCancel(
-            completedCancels,
-            buildCompletedCancelExpectation(
-              expectedCancelRequest.options,
-              getRefundCancelRequestAnchor(matchingRefund),
-              matchingRefund.providerMetadata,
-            ),
+          !matchesCompletedRefundWebhook(
+            providerResponse, expectedCancelRequest.options,
+            getRefundCancelRequestAnchor(matchingRefund), matchingRefund.providerMetadata,
           )
         ) {
           return 'no_local_match';

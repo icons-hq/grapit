@@ -290,7 +290,7 @@ describe('RefundService cancellation window for admin overrides (audit #23)', ()
   it('lets an admin full refund override cancel on the show day', async () => {
     const provider = {
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true, cancels: [] }),
-      cancelPayment: vi.fn().mockResolvedValue({ status: 'CANCELED', totalAmount: 204000, balanceAmount: 0,
+      cancelPayment: vi.fn().mockResolvedValue({ paymentKey: 'pay-key-1', status: 'CANCELED', currency: 'KRW', totalAmount: 204000, balanceAmount: 0,
         cancels: [{ cancelAmount: 204000, cancelReason: '공연 취소 [refund-1]', cancelStatus: 'DONE', canceledAt: '2026-07-18T03:00:01.000Z' }] }),
     };
     const { service, finalizer } = createService(provider);
@@ -376,7 +376,7 @@ describe('RefundService admin recovery of stuck refunds (audit #53)', () => {
     const untouched = { status: 'DONE', currency: 'KRW', totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true, cancels: [] };
     const provider = {
       queryPayment: vi.fn().mockResolvedValue(untouched),
-      cancelPayment: vi.fn().mockResolvedValue({ status: 'PARTIAL_CANCELED', totalAmount: 204000, balanceAmount: 4000,
+      cancelPayment: vi.fn().mockResolvedValue({ paymentKey: 'pay-key-1', status: 'PARTIAL_CANCELED', currency: 'KRW', totalAmount: 204000, balanceAmount: 4000,
         cancels: [{ cancelAmount: 200000, cancelReason: FROZEN_COMMAND.reason, cancelStatus: 'DONE', canceledAt: '2026-07-05T05:00:01.000Z' }] }),
     };
     const { service, finalizer } = createService(provider);
@@ -397,7 +397,7 @@ describe('RefundService admin recovery of stuck refunds (audit #53)', () => {
 
   it('finalizes without another POST when the provider already completed the frozen command', async () => {
     const provider = {
-      queryPayment: vi.fn().mockResolvedValue({ status: 'PARTIAL_CANCELED', currency: 'KRW', totalAmount: 204000, balanceAmount: 4000,
+      queryPayment: vi.fn().mockResolvedValue({ paymentKey: 'pay-key-1', status: 'PARTIAL_CANCELED', currency: 'KRW', totalAmount: 204000, balanceAmount: 4000,
         cancels: [{ cancelAmount: 200000, cancelReason: FROZEN_COMMAND.reason, cancelStatus: 'DONE', canceledAt: '2026-07-05T03:04:00.000Z' }] }),
       cancelPayment: vi.fn(),
     };
