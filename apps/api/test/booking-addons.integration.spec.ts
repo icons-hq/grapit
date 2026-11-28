@@ -296,7 +296,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       cancelPayment: vi.fn(async (key: string, reason: string, options: { cancelAmount?: number }) => {
         const amount = options.cancelAmount ?? amounts(key);
         expect(amount).toBe(expectedRefund(key));
-        return { status: amount === amounts(key) ? 'CANCELED' : 'PARTIAL_CANCELED', currency: 'KRW',
+        return { paymentKey: key, status: amount === amounts(key) ? 'CANCELED' : 'PARTIAL_CANCELED', currency: 'KRW',
           totalAmount: amounts(key), balanceAmount: amounts(key) - amount,
           cancels: [{ cancelReason: reason, cancelAmount: amount, cancelStatus: 'DONE', transactionKey: randomUUID() }] };
       }) };
@@ -519,9 +519,9 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const order = await pending(f, 0); const ticket = await issue(order, 0);
     await db.insert(schema.seatInventories).values({ showtimeId: f.showtimeId, seatId: ticket.seatId,
       seatKey: ticket.seatKey, floorKey: ticket.floorKey, status: 'sold' });
-    const cancelPayment = vi.fn().mockImplementation(async (_key, reason) => {
+    const cancelPayment = vi.fn().mockImplementation(async (paymentKey, reason) => {
       expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(0);
-      return { status: 'CANCELED', totalAmount: 532000, balanceAmount: 0,
+      return { paymentKey, currency: 'KRW', status: 'CANCELED', totalAmount: 532000, balanceAmount: 0,
         cancels: [{ cancelReason: reason, cancelAmount: 532000, cancelStatus: 'DONE', transactionKey: randomUUID() }] };
     });
     const provider = { cancelPayment, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 532000, balanceAmount: 532000, isPartialCancelable: true }) };
@@ -605,7 +605,7 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     // Real cancellation finalizer preserves stock until provider cancellation succeeds.
     await db.insert(schema.seatInventories).values(tickets.map((ticket) => ({ showtimeId: f.showtimeId,
       seatId: ticket.seatId, seatKey: ticket.seatKey, floorKey: ticket.floorKey, status: 'sold' as const })));
-    const provider = { cancelPayment: vi.fn().mockImplementation(async (_key, reason) => ({ status: 'CANCELED', totalAmount, balanceAmount: 0,
+    const provider = { cancelPayment: vi.fn().mockImplementation(async (paymentKey, reason) => ({ paymentKey, currency: 'KRW', status: 'CANCELED', totalAmount, balanceAmount: 0,
       cancels: [{ cancelReason: reason, cancelAmount: totalAmount, cancelStatus: 'DONE', transactionKey: randomUUID() }] })),
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount, balanceAmount: totalAmount, isPartialCancelable: true }) };
     const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
