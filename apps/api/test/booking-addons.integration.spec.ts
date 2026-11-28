@@ -312,7 +312,17 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
       const service = new HistoricalSeatCancellationFixture(db, provider as never, f.booking as never, f.gateway as never,
         {} as never, {} as never, undefined, undefined, undefined, finalizer);
       await service.cancelTicketItem(original.id, ticket.id, actor.id, 'cancel ticket');
-    } else await refunds.requestRefund(original.id, actor.id, 'cancel ticket');
+    } else {
+      const preview = await refunds.getRefundPreview(original.id, actor.id);
+      expect(preview.buyerSummary).toMatchObject({ refundableAmount: sample.originalRefund + sample.childRefund,
+        charges: [{ refundableAmount: sample.childRefund, products: [{ quantity: 1, displayCopy: copy }] }] });
+      await refunds.requestRefund(original.id, actor.id, 'cancel ticket', {
+        expectedBuyerQuoteVersion: preview.buyerSummary!.version, expectedRefundableAmount: sample.originalRefund,
+      });
+      const detail = await checkout.getReservationDetail(original.id, actor.id);
+      expect(detail).toMatchObject({ ticketRefundAmount: sample.originalRefund,
+        addonRefundReceipts: [{ status: 'requested', refundableAmount: sample.childRefund }] });
+    }
     const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, child.reservationId));
     expect(refund).toMatchObject({ status: 'requested', providerMetadata: { cancellationQuote: { refundableAmount: sample.childRefund } } });
     expect(boss.send).toHaveBeenCalledWith('refund-cancel-retry', { refundId: refund!.id, attempt: 1 }, { singletonKey: refund!.id });
@@ -326,7 +336,42 @@ describe('Paid addon inventory — real PostgreSQL contention and payment bounda
     const [parentPayment] = await db.select().from(schema.payments).where(eq(schema.payments.id, ticket.paymentId));
     expect(provider.cancelPayment.mock.calls.map(([key]) => key)).toEqual(sample.originalRefund === 0 ? [childKey] : [parentPayment!.paymentKey, childKey]);
     expect((await f.service.ticketOptions(ticket.id, actor)).orders[0]).toMatchObject({ status: 'CANCELLED', refundStatus: 'completed', refundableAmount: sample.childRefund });
+    if (sample.scope === 'reservation') {
+      expect((await checkout.getReservationDetail(original.id, actor.id)).addonRefundReceipts)
+        .toMatchObject([{ status: 'completed', products: [{ quantity: 1 }] }]);
+    }
     expect((await f.service.snapshot(f.showtimeId, actor)).addons[0]?.available).toBe(1);
+  });
+
+  it('rejects an obsolete total when another top-up is paid after preview, before revoking the ticket', async () => {
+    const f = await fixture(4, 1, 4);
+    const actor = f.actors[0]!;
+    const original = await pending(f, 0, false);
+    const ticket = await issue(original, 0);
+    const { input, checkout } = holderCheckout(f, ticket);
+    const provider = { queryPayment: vi.fn().mockResolvedValue({ totalAmount: original.totalAmount,
+      balanceAmount: original.totalAmount, isPartialCancelable: true }), cancelPayment: vi.fn() };
+    const service = new RefundService(db, provider as never, new PaymentCancellationFinalizerService(db));
+    const preview = async () => (await service.getRefundPreview(original.id, actor.id)).buyerSummary!;
+    await checkout.prepareReservation(input, actor);
+    const first = await preview();
+    expect(first.charges).toEqual([]);
+    await checkout.confirmAndCreateReservation({ paymentKey: randomUUID(), orderId: input.orderId, amount: input.amount }, actor);
+    const second = await preview();
+    const pair = { ...input, orderId: randomUUID(), amount: 300000,
+      addons: [2, 3].map(unitIndex => ({ addonId: f.addonId, seatKey: ticket.seatKey, unitIndex })) };
+    await checkout.prepareReservation(pair, actor);
+    expect(await preview()).toEqual(second);
+    await checkout.confirmAndCreateReservation({ paymentKey: randomUUID(), orderId: pair.orderId, amount: pair.amount }, actor);
+    const latest = await preview();
+    expect(latest.charges).toMatchObject([{ paidAmount: 150000, products: [{ quantity: 1 }] },
+      { paidAmount: 300000, products: [{ quantity: 2 }] }]);
+    expect(latest.refundableAmount).toBe(first.refundableAmount + 450000);
+    await expect(service.requestRefund(original.id, actor.id, 'cancel', { expectedBuyerQuoteVersion: second.version }))
+      .rejects.toThrow('환불 금액이 변경');
+    expect(provider.cancelPayment).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, original.id))).toHaveLength(0);
+    expect(await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.id, ticket.id))).toMatchObject([{ status: 'active' }]);
   });
 
   it('awards the last unit to exactly one of 20 simultaneous buyers', async () => {

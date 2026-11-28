@@ -1,5 +1,7 @@
 'use client';
 
+import { ApiClientError } from '@/lib/api-client';
+import { getBuyerRefundCopy } from '@/lib/booking/ticket-addon-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
@@ -49,7 +51,8 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
       toast.success(cancellationCopy.requested);
       await refetch();
     } catch (error) {
-      toast.error(cancellationCopy.unknown);
+      toast.error(error instanceof ApiClientError && error.statusCode === 409
+        ? getBuyerRefundCopy(locale).changed : cancellationCopy.unknown);
       await refetch();
       throw error;
     }

@@ -11,6 +11,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { quoteBuyerRefund } from '../cancellation/ticket-addon-refunds.js';
 import { calculateTicketItemCancellationQuote } from '../cancellation/ticket-cancellation-policy.js';
 import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
 import { toRefundTimeline, hasRestoredRefundRights } from '../cancellation/refund-timeline.js';
@@ -18,6 +19,7 @@ export { toRefundTimeline } from '../cancellation/refund-timeline.js';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import type {
+  BuyerRefundSummary,
   CancellationQuote,
   RefundTimeline,
   CancellationExpectation,
@@ -93,6 +95,7 @@ export type AdminRefundRequestOptions = Partial<CancellationExpectation> & {
 };
 
 export interface RefundPreviewResponse {
+  buyerSummary?: BuyerRefundSummary;
   reservationId: string;
   reservationNumber: string;
   paymentKey: string;
@@ -433,12 +436,18 @@ export class RefundService {
 
     const preview = this.buildPreview(context, existingRefund);
     if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
-    const providerCheck = await this.checkProviderRefundBalance(context, preview.cancellationQuote, { audience: 'user' });
+    const [providerCheck, buyerSummary] = await Promise.all([
+      this.checkProviderRefundBalance(context, preview.cancellationQuote, { audience: 'user' }),
+      quoteBuyerRefund(this.db, preview.cancellationQuote, context.reservation.fixedCancellationFee),
+    ]);
+    const blockedReason = providerCheck.blockedReason ?? (buyerSummary.charges.some(charge => !charge.providerRefund)
+      ? '추가 결제의 환불 금액을 확인해야 합니다. 고객센터로 문의해주세요.' : null);
     return {
       ...preview,
       providerRefund: providerCheck.providerRefund,
-      blockedReason: providerCheck.blockedReason,
-      canRequestRefund: !providerCheck.blockedReason,
+      buyerSummary,
+      blockedReason,
+      canRequestRefund: !blockedReason,
     };
   }
 
@@ -1841,6 +1850,12 @@ export class RefundService {
     if ((options.expectedRefundableAmount !== undefined && options.expectedRefundableAmount !== currentQuote.refundableAmount)
       || (options.expectedProviderRefundAmountMinor !== undefined && options.expectedProviderRefundAmountMinor !== providerRefund.amountMinor)) {
       throw new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.');
+    }
+    if (options.expectedBuyerQuoteVersion !== undefined) {
+      const summary = await quoteBuyerRefund(tx, currentQuote, currentReservation.fixedCancellationFee);
+      if (summary.version !== options.expectedBuyerQuoteVersion || summary.charges.some(charge => !charge.providerRefund)) {
+        throw new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.');
+      }
     }
     const priorMetadata = getRefundProviderMetadata(existing?.providerMetadata);
     const values: typeof refunds.$inferInsert = {

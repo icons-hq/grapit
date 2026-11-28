@@ -25,11 +25,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
-import type { CancellationQuote, RefundPreviewResponse } from '@grabit/shared';
+import { getBuyerRefundCopy, getTicketAddonCopy, refundProductLabel } from '@/lib/booking/ticket-addon-copy';
+import type { BuyerRefundSummary, CancellationQuote, RefundPreviewResponse } from '@grabit/shared';
 import { getCancellationCopy, getCancellationPolicyLabel } from '@/lib/i18n/cancellation-copy';
 
 function formatDateTime(dateString: string | null | undefined, locale: string): string | null {
@@ -52,6 +54,7 @@ function formatDateTime(dateString: string | null | undefined, locale: string): 
 }
 
 interface CancelConfirmModalProps {
+  buyerSummary?: BuyerRefundSummary;
   separateRefundNotice?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -75,6 +78,7 @@ interface CancelConfirmModalProps {
 }
 
 export function CancelConfirmModal({
+  buyerSummary,
   separateRefundNotice,
   open,
   onOpenChange,
@@ -93,23 +97,27 @@ export function CancelConfirmModal({
   const copy = getVisibleCopy(locale).reservation.cancel;
   const cancellationCopy = getCancellationCopy(locale);
   const [reason, setReason] = useState('');
-  const [confirmStepOpen, setConfirmStepOpen] = useState(false);
+  const [confirmedQuote, setConfirmedQuote] = useState<string | null>(null);
+  const quoteVersion = buyerSummary?.version ?? 'parent';
+  const confirmStepOpen = confirmedQuote === quoteVersion;
+  const summaryCopy = getBuyerRefundCopy(locale);
   const [submitting, setSubmitting] = useState(false);
   const requestPending = useRef(false);
-  const [submitError, setSubmitError] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   async function handleConfirm() {
     if (!reason || !cancellationQuote || requestPending.current) return;
     requestPending.current = true;
     setSubmitting(true);
-    setSubmitError(false);
+    setSubmitError(null);
     try {
       await onConfirm(reason);
       resetInternalState();
       onOpenChange(false);
-    } catch {
-      setConfirmStepOpen(false);
-      setSubmitError(true);
+    } catch (error) {
+      setConfirmedQuote(null);
+      setSubmitError(error instanceof ApiClientError && error.statusCode === 409
+        ? summaryCopy.changed : cancellationCopy.unknown);
       onRetryPreview?.();
     } finally {
       requestPending.current = false;
@@ -119,8 +127,8 @@ export function CancelConfirmModal({
 
   function resetInternalState() {
     setReason('');
-    setConfirmStepOpen(false);
-    setSubmitError(false);
+    setConfirmedQuote(null);
+    setSubmitError(null);
   }
 
   function handlePreviewOpenChange(value: boolean) {
@@ -133,7 +141,7 @@ export function CancelConfirmModal({
 
   function handleMoveToConfirm() {
     if (!reason || !cancellationQuote || isPreviewLoading || isPreviewError) return;
-    setConfirmStepOpen(true);
+    setConfirmedQuote(quoteVersion);
   }
 
   const formattedExpectedDepositAt = formatDateTime(expectedDepositAt, locale);
@@ -141,7 +149,7 @@ export function CancelConfirmModal({
     style: 'currency',
     currency: 'KRW',
     maximumFractionDigits: 0,
-  }).format(refundAmount);
+  }).format(buyerSummary?.refundableAmount ?? refundAmount);
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat(locale, {
       style: 'currency',
@@ -156,7 +164,18 @@ export function CancelConfirmModal({
       {cancellationCopy.selected}: {seats.join(', ')}
     </p>
   ) : null;
-  const providerRefundSummary = providerRefund ? (
+  const hasExtraCharges = Boolean(buyerSummary?.charges.length);
+  const providerTotals = new Map<string, number>();
+  for (const amount of [providerRefund, ...(buyerSummary?.charges.map(charge => charge.providerRefund) ?? [])]) {
+    if (amount) providerTotals.set(amount.currency, (providerTotals.get(amount.currency) ?? 0) + amount.amountMinor);
+  }
+  const currencyTotal = [...providerTotals].map(([currency, minor]) =>
+    new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: 'code' })
+      .format(currency === 'USD' ? minor / 100 : minor)).join(' + ');
+  const confirmAmount = providerTotals.has('USD') ? currencyTotal : formattedRefundAmount;
+  const providerRefundSummary = hasExtraCharges ? (
+    <p className="text-sm">{getTicketAddonCopy(locale).refundNotice}</p>
+  ) : providerRefund ? (
     <div className="flex items-center justify-between gap-4 border-t border-gray-200 pt-3">
       <span className="text-sm text-gray-600">{cancellationCopy.providerRefund}</span>
       <strong>{providerRefund.currency} {providerRefund.amountDecimal}</strong>
@@ -174,12 +193,16 @@ export function CancelConfirmModal({
             <DialogDescription className="text-sm text-gray-600">
               {copy.description}
             </DialogDescription>
-            {separateRefundNotice && <p className="text-sm text-muted-foreground">{separateRefundNotice}</p>}
+            {!buyerSummary && separateRefundNotice && <p className="text-sm text-muted-foreground">{separateRefundNotice}</p>}
           </DialogHeader>
 
           <div className="space-y-4">
+            {buyerSummary && <div className="rounded-xl bg-[#F3EFFF] p-4">
+              <p className="text-sm font-medium">{summaryCopy.total}</p>
+              <p className="mt-1 text-2xl font-bold tabular-nums">{confirmAmount}</p>
+            </div>}
             {seatSummary}
-            {(blockedReason || submitError) && <p role="alert" className="text-sm text-red-700">{blockedReason || cancellationCopy.unknown}</p>}
+            {(blockedReason || submitError) && <p role="alert" className="text-sm text-red-700">{blockedReason || submitError}</p>}
             <div>
               <label
                 htmlFor="cancel-reason"
@@ -202,12 +225,12 @@ export function CancelConfirmModal({
             </div>
 
             <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <div className="flex items-center justify-between gap-4">
+              {!buyerSummary && <div className="flex items-center justify-between gap-4">
                 <span className="text-sm text-gray-600">{copy.refundAmount}</span>
                 <span className="text-base font-semibold text-gray-900">
                   {cancellationQuote ? formattedRefundAmount : '-'}
                 </span>
-              </div>
+              </div>}
               {isPreviewLoading && (
                 <div className="flex items-center gap-2 border-t border-gray-200 pt-3 text-sm text-gray-700">
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -227,12 +250,12 @@ export function CancelConfirmModal({
               )}
               {cancellationQuote && (
                 <div className="space-y-2 border-t border-gray-200 pt-3">
-                  <div className="flex items-center justify-between gap-4">
+                  {!hasExtraCharges && <div className="flex items-center justify-between gap-4">
                     <span className="text-sm text-gray-600">{copy.originalPaymentAmount}</span>
                     <span className="text-sm font-medium text-gray-900">
                       {formatCurrency(cancellationQuote.originalPaymentAmount)}
                     </span>
-                  </div>
+                  </div>}
                   <p className="text-sm text-gray-600">{cancellationCopy.policy}: {cancellationQuote.policyCodes.map((code) => getCancellationPolicyLabel(code, locale)).join(' · ')}</p>
                   <p className="text-sm text-gray-600">{cancellationCopy.retainedFee}: {formatCurrency(cancellationQuote.ticketServiceFeeTotal - cancellationQuote.serviceFeeRefundTotal)}</p>
                   <div className="flex items-center justify-between gap-4">
@@ -245,11 +268,15 @@ export function CancelConfirmModal({
                     <span className="text-gray-600">{getVisibleCopy(locale).bookingAddons.subtotal}</span>
                     <span>{formatCurrency(cancellationQuote.addonSubtotal!)}</span>
                   </div>}
+                  {buyerSummary?.charges.map(charge => <div key={charge.reservationNumber} className="flex items-start justify-between gap-4 text-sm">
+                    <span>{summaryCopy.addon} · {refundProductLabel(charge.products, locale)}</span>
+                    <span className="shrink-0">{formatCurrency(charge.paidAmount)}</span>
+                  </div>)}
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm text-gray-600">{copy.cancellationFee}</span>
                     <span className="text-sm font-semibold text-[#C62828]">
-                      {cancellationQuote.cancellationFeeTotal > 0 ? '-' : ''}
-                      {formatCurrency(cancellationQuote.cancellationFeeTotal)}
+                      {(buyerSummary?.cancellationFeeTotal ?? cancellationQuote.cancellationFeeTotal) > 0 ? '-' : ''}
+                      {formatCurrency(buyerSummary?.cancellationFeeTotal ?? cancellationQuote.cancellationFeeTotal)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-4">
@@ -264,7 +291,7 @@ export function CancelConfirmModal({
               <div className="flex items-center justify-between gap-4">
                 <span className="text-sm text-gray-600">{copy.refundMethod}</span>
                 <span className="text-sm text-gray-700">
-                  {copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
+                  {hasExtraCharges ? summaryCopy.method : copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
                 </span>
               </div>
               {formattedExpectedDepositAt && (
@@ -313,7 +340,7 @@ export function CancelConfirmModal({
 
       <AlertDialog
         open={open && confirmStepOpen}
-        onOpenChange={(value) => { if (!requestPending.current) setConfirmStepOpen(value); }}
+        onOpenChange={(value) => { if (!requestPending.current) setConfirmedQuote(value ? quoteVersion : null); }}
       >
         <AlertDialogContent
           className="max-h-[90dvh] overflow-y-auto"
@@ -337,17 +364,26 @@ export function CancelConfirmModal({
               <span className="text-sm font-semibold text-gray-900">{reason}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-600">{copy.refundAmount}</span>
+              <span className="text-sm text-gray-600">{buyerSummary ? summaryCopy.total : copy.refundAmount}</span>
               <span className="text-sm font-semibold text-gray-900">
-                {formattedRefundAmount}
+                {confirmAmount}
               </span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm text-gray-600">{copy.refundMethod}</span>
               <span className="text-sm text-gray-700">
-                {copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
+                {hasExtraCharges ? summaryCopy.method : copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
               </span>
             </div>
+            {hasExtraCharges && <div className="space-y-2 border-t pt-3 text-sm">
+              <p className="font-semibold">{summaryCopy.charges}</p>
+              <p>{summaryCopy.ticket} · {providerRefund?.currency === 'USD'
+                ? `USD ${providerRefund.amountDecimal}` : formatCurrency(cancellationQuote?.refundableAmount ?? refundAmount)}</p>
+              {buyerSummary!.charges.map(charge => <p key={charge.reservationNumber}>
+                {refundProductLabel(charge.products, locale)} · {charge.providerRefund?.currency === 'USD'
+                  ? `USD ${charge.providerRefund.amountDecimal}` : formatCurrency(charge.refundableAmount)}
+              </p>)}
+            </div>}
             {providerRefundSummary}
           </div>
 
@@ -355,7 +391,7 @@ export function CancelConfirmModal({
             <AlertDialogCancel
               variant="ghost"
               disabled={submitting || isLoading}
-              onClick={() => setConfirmStepOpen(false)}
+              onClick={() => setConfirmedQuote(null)}
             >
               {copy.previous}
             </AlertDialogCancel>
@@ -371,7 +407,7 @@ export function CancelConfirmModal({
                   {copy.processing}
                 </>
               ) : (
-                copy.confirmCta
+                buyerSummary ? summaryCopy.confirm.replace('{amount}', confirmAmount) : copy.confirmCta
               )}
             </Button>
           </AlertDialogFooter>

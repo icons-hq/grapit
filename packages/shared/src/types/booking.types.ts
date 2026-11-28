@@ -1,3 +1,4 @@
+import type { AddonRefundReceipt, BuyerRefundSummary } from '../schemas/booking.schema';
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
 import type { Genre, PerformanceAllowedPaymentMethod } from './performance.types';
 import type {
@@ -189,6 +190,7 @@ export interface CancellationQuote {
 }
 
 export interface RefundPreviewResponse {
+  buyerSummary?: BuyerRefundSummary;
   reservationId: string;
   reservationNumber: string;
   paymentKey: string;
@@ -223,6 +225,7 @@ export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
 }
 
 export interface CancellationExpectation {
+  expectedBuyerQuoteVersion?: string;
   expectedRefundableAmount: number;
   expectedProviderRefundAmountMinor?: number;
 }
@@ -305,6 +308,8 @@ export interface ReservationListItem {
 export interface ReservationDetail extends ReservationListItem {
   addonTicketItemId?: string;
   addonParentReservationId?: string;
+  ticketRefundAmount?: number | null;
+  addonRefundReceipts?: AddonRefundReceipt[];
   ticketAddonAccess?: { ticketItemId: string; hasOrders: boolean }[];
   addons?: import('../schemas/booking-addon.schema').BookingAddonChoice[];
   performanceId?: string;

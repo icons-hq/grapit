@@ -67,7 +67,13 @@ export function useReservationDetail(id: string) {
     // here without polling all reservation screens.
     staleTime: 5000,
     refetchOnWindowFocus: true,
-    refetchInterval: (query) => query.state.data?.status === 'PENDING_PAYMENT' ? 3000 : false,
+    refetchInterval: ({ state: { data } }) => {
+      if (data?.status === 'PENDING_PAYMENT') return 3000;
+      const parentPending = data?.refundTimeline && ['REQUESTED', 'SENT_TO_PG', 'PROCESSING_AT_PG'].includes(data.refundTimeline.currentState);
+      const addonPending = data?.addonRefundReceipts?.some(r => r.status && ['requested', 'sent_to_pg', 'processing_at_pg'].includes(r.status));
+      if (parentPending || addonPending) return 10000;
+      return false;
+    },
     refetchIntervalInBackground: false,
   });
 }

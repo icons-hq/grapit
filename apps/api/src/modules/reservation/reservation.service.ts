@@ -56,7 +56,7 @@ import {
   refunds,
 } from '../../database/schema/index.js';
 import { calculateTicketItemCancellationQuote } from '../cancellation/ticket-cancellation-policy.js';
-import { prepareTicketAddonRefunds } from '../cancellation/ticket-addon-refunds.js';
+import { addonRefundProducts, prepareTicketAddonRefunds } from '../cancellation/ticket-addon-refunds.js';
 import type { TicketItemCancellationCommand } from '../../database/schema/ticket-items.js';
 import { toRefundTimeline, ticketItemRefundTimeline, hasStoredZeroRefund, hasRestoredRefundRights, reservationProviderRefund, reservationCancellationRecovery } from '../cancellation/refund-timeline.js';
 import {
@@ -1664,6 +1664,16 @@ export class ReservationService {
             select ${ticketItems.id} from ${ticketItems} where ${ticketItems.reservationId} = ${reservations.id}
           )`,
         )!, sql`${ticketBenefitEntitlements.createdAt}, ${ticketBenefitEntitlements.id}`),
+        ticketRefundAmount: sql<number | null>`(${refunds.providerMetadata}->'cancellationQuote'->>'refundableAmount')::int`,
+        addonRefundReceipts: sql<NonNullable<ReservationDetail['addonRefundReceipts']>>`(
+          SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'reservationNumber', child.reservation_number, 'products', ${addonRefundProducts(sql`child.id`)},
+            'status', f.status, 'refundableAmount', (f.provider_metadata->'cancellationQuote'->>'refundableAmount')::int,
+            'providerRefund', f.provider_metadata->'providerRefund') ORDER BY child.created_at, child.id), '[]'::jsonb)
+          FROM ticket_items ti JOIN reservations child ON child.addon_ticket_item_id = ti.id
+          LEFT JOIN refunds f ON f.reservation_id = child.id
+          WHERE ti.reservation_id = ${reservations.id} AND (${refunds.id} IS NOT NULL OR ${reservations.status} = 'CANCELLED')
+            AND (f.id IS NOT NULL OR child.status = 'CONFIRMED'))`,
         ticketAddonAccess: sql<Array<{ ticketItemId: string; hasOrders: boolean }>>`(
           SELECT coalesce(jsonb_agg(jsonb_build_object('ticketItemId', t.id, 'hasOrders', owned.has_orders)), '[]'::jsonb)
           FROM ticket_items t CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM reservations child
@@ -1836,6 +1846,8 @@ export class ReservationService {
       }),
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       ticketItems: ticketItemDtos,
+      ticketRefundAmount: row.ticketRefundAmount ?? null,
+      addonRefundReceipts: row.addonRefundReceipts ?? [],
       ticketAddonAccess: row.ticketAddonAccess ?? [],
       addons: (row.reservation.addonAmount ?? 0) > 0 ? await reservationAddonChoices(this.db, reservationId) : [],
     };
