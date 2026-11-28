@@ -71,14 +71,42 @@ export function readStoredPaymentCancelRequest(metadata: unknown): PaymentCancel
   return value as unknown as PaymentCancelRequest;
 }
 
-export function readStoredPaymentCancelReceipt(metadata: unknown): { expectedTransactionKey?: string; expectedCancelReason?: string; expectedCancelAmount?: number } {
+/** Older commands ended the customer text with our attempt UUID. Some processors replace
+ * non-ASCII characters. Only trust the intact suffix generated from the frozen idempotency key. */
+export function legacyCancelAttemptSuffix(command: Pick<PaymentCancelRequest, 'reason' | 'options'>): string | undefined {
+  const id = command.options.idempotencyKey?.split(':').at(-1);
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) return;
+  const suffix = ` [${id}]`;
+  return command.reason.endsWith(suffix) ? suffix : undefined;
+}
+
+export interface StoredCancelReceipt {
+  expectedTransactionKey?: string;
+  expectedCancelReason?: string;
+  expectedAttemptSuffix?: string;
+  expectedCancelAmount?: number;
+  ledger?: { paymentKey: string; currency: string; total: number; remaining: number };
+}
+
+export function readStoredPaymentCancelReceipt(metadata: unknown): StoredCancelReceipt {
   const command = readStoredPaymentCancelRequest(metadata);
   if (!command || !isRecord(metadata)) return {};
   const amount = metadata.providerRefund;
-  return { ...(typeof metadata.providerTransactionKey === 'string' ? { expectedTransactionKey: metadata.providerTransactionKey } : {}),
+  const scale = isRecord(amount) && amount.currency === 'USD' ? 100 : 1;
+  const receipt: StoredCancelReceipt = {
+    expectedTransactionKey: typeof metadata.providerTransactionKey === 'string' ? metadata.providerTransactionKey : undefined,
     expectedCancelReason: command.reason,
+    expectedAttemptSuffix: legacyCancelAttemptSuffix(command),
     expectedCancelAmount: isRecord(amount) && typeof amount.amountMinor === 'number'
-      ? amount.amountMinor / (amount.currency === 'USD' ? 100 : 1) : command.options.cancelAmount };
+      ? amount.amountMinor / scale : command.options.cancelAmount,
+  };
+  if (isRecord(amount) && (amount.currency === 'USD' || amount.currency === 'KRW')
+    && typeof amount.originalAmountMinor === 'number' && typeof amount.balanceBeforeMinor === 'number'
+    && typeof amount.amountMinor === 'number') {
+    receipt.ledger = { paymentKey: command.paymentKey, currency: amount.currency,
+      total: amount.originalAmountMinor / scale, remaining: (amount.balanceBeforeMinor - amount.amountMinor) / scale };
+  }
+  return receipt;
 }
 
 /** A frozen amount is the evidence required before sending or restoring a cancellation. */
@@ -109,7 +137,9 @@ export function isProviderBalanceAboveSnapshot(response: TossPaymentResponse, sn
 /** Any provider cancel row (done or in progress) that belongs to this exact frozen command. */
 export function hasProviderCancelForCommand(response: TossPaymentResponse, command: PaymentCancelRequest): boolean {
   const cancelRequestId = command.options.cancelRequestId;
+  const suffix = legacyCancelAttemptSuffix(command);
   return response.cancels?.some((cancel) => cancel.cancelReason === command.reason
+    || (suffix !== undefined && cancel.cancelReason?.endsWith(suffix))
     || (Boolean(cancelRequestId) && cancel.cancelRequestId === cancelRequestId)) ?? false;
 }
 

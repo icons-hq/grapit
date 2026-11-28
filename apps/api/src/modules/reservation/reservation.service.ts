@@ -1,5 +1,5 @@
 import { matchingTicketCancelRows } from '../payment/toss-cancel-matcher.js';
-import { transactionFromVirtualAccountCancelPost } from '../payment/virtual-account-cancel-receipt.js';
+import { transactionFromCancelPost } from '../payment/toss-cancel-receipt.js';
 import { assertBookingVerificationComplete } from '../../common/booking-verification.js';
 import { getVirtualAccountDetails } from '../payment/virtual-account.js';
 import { resolveEnforcedAllowedPaymentMethods } from '../payment/payment-method-policy.js';
@@ -2304,7 +2304,7 @@ export class ReservationService {
         input.request.paymentKey,
         queryOptions,
       );
-      if (input.request.options.sealedRefundAccount && matchingTicketCancelRows(beforePayment.cancels ?? [], input.command).length === 1) {
+      if (matchingTicketCancelRows(beforePayment.cancels ?? [], input.command).length === 1) {
         return { status: 'cancelled', providerResponse: beforePayment };
       }
       if (
@@ -2368,7 +2368,7 @@ export class ReservationService {
         input.request.reason,
         input.request.options,
       );
-      const transactionKey = transactionFromVirtualAccountCancelPost(response, input.request, input.command, beforePayment);
+      const transactionKey = transactionFromCancelPost(response, input.request, input.command, beforePayment);
       if (transactionKey) {
         const saved = await this.db.update(ticketItems).set({
           cancellationCommand: sql`${ticketItems.cancellationCommand} || jsonb_build_object('transactionKey', ${transactionKey}::text)`,

@@ -1,6 +1,6 @@
 # Ticket Cancellation Reconciliation Runbook
 
-Use this only for reservations that entered ticket-item partial cancellation before customer partial cancellation was disabled.
+Use this for a full-reservation refund that differs from the provider record, or a historical seat cancellation that still needs reconciliation.
 
 ## Scope
 
@@ -18,6 +18,29 @@ The former per-seat cancellation and preview endpoints return HTTP 410. The wall
 3. Check Toss payment cancellation history by payment key in Toss dashboard.
 4. Compare the cancellation scope, completed cancellation sum, provider balance and remaining Ticket Items with Grabit state. Provider and local status names need not match.
 5. Do not issue a second cancellation until Toss cancellation history is understood.
+
+## Matching a Toss cancellation
+
+Check the original payment with the credential for its merchant. Compare the payment key, order ID,
+charge currency, original charge and remaining balance with the frozen command. A completed refund needs
+a unique completed cancellation for the expected amount. The transaction key identifies the individual
+cancellation. Asynchronous wallet cancellations also carry a merchant-generated request ID. A pending
+or aborted cancellation is never evidence of a completed refund.
+[Toss Payment and cancellation objects](https://docs.tosspayments.com/reference) ·
+[Toss webhook events](https://docs.tosspayments.com/reference/using-api/webhook-events)
+
+Grabit sends a short ASCII reference for each new refund and keeps the customer's reason in Grabit.
+When the cancel response is received, Grabit binds the returned transaction to the command after
+checking the before/after balance in provider currency. A later lookup can contain other transactions.
+For older commands where Toss changed the human-readable text, the complete bracketed UUID must
+match the attempt in the stored idempotency key. A matching amount or a fragment of a reason is
+insufficient to attribute that refund.
+
+To correct a previously failed refund, re-read the original payment and replay the verified result
+through the payment cancellation finalizer using its stored quote. Keep earlier webhook results as
+audit history. Read back the buyer's reservation detail, refund timeline, ticket items, QR validity,
+benefit states and the release job for each newly held seat. A separately charged add-on has its own
+payment and refund record.
 
 ## Resolution Rules
 

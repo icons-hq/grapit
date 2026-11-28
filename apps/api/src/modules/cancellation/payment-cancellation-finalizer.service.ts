@@ -246,10 +246,10 @@ export class PaymentCancellationFinalizerService {
     let supplementalPayment = false;
     await this.db.transaction(async (tx) => {
       const lockedReservation = await tx.execute(sql`SELECT id, status, addon_ticket_item_id, fixed_cancellation_fee FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
-      const virtualAccount = input.providerResponse?.method === '가상계좌' || input.providerResponse?.method === 'VIRTUAL_ACCOUNT';
+      const lockedStatus = lockedReservation?.rows?.[0]?.['status'];
       // The webhook can commit before our idempotent POST returns. The exact refund row is the
       // completion evidence; a cancelled reservation alone can still have a refund to reconcile.
-      if (virtualAccount && input.refundId && input.source !== 'cancel_webhook') {
+      if (lockedStatus === 'CANCELLED' && input.refundId && input.source !== 'cancel_webhook') {
         const [completedRefund] = await tx.select({ id: refunds.id }).from(refunds).where(and(
           eq(refunds.id, input.refundId), eq(refunds.paymentId, input.context.payment.id), eq(refunds.status, 'completed'),
         )).limit(1);
@@ -258,11 +258,9 @@ export class PaymentCancellationFinalizerService {
           return;
         }
       }
-      if (input.source === 'cancel_webhook' || (virtualAccount && input.source === 'ticket_item')) {
+      if (input.source === 'cancel_webhook' || input.source === 'ticket_item') {
         // A webhook that read its snapshot before a concurrent finalizer
         // committed must not re-apply the cancellation (history, fees, seats).
-        const lockedStatus = (lockedReservation as { rows?: Array<Record<string, unknown>> } | undefined)
-          ?.rows?.[0]?.['status'];
         const lockedTicketItem = input.ticketItemCancellation
           ? await tx.execute(sql`SELECT status FROM ticket_items WHERE id = ${input.ticketItemCancellation.ticketItemId}`)
           : undefined;
@@ -303,6 +301,7 @@ export class PaymentCancellationFinalizerService {
             status: 'completed',
             sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${now.toISOString()}::timestamptz)`,
             completedAt: now,
+            failedAt: null,
             updatedAt: now,
             resultCode: input.localOnly
               ? LOCAL_ONLY_RESULT_CODE
@@ -313,7 +312,8 @@ export class PaymentCancellationFinalizerService {
             failureReason: null,
             expectedDepositAt: null,
             customerServiceCtaVisible: false,
-            providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
+            providerMetadata: sql`(coalesce(${refunds.providerMetadata}, '{}'::jsonb)
+              - 'manualReviewRequired' - 'manualReviewReason' - 'refundCancelRetry' - 'refundCancelRetryClaim') || ${JSON.stringify({
               cancelReason: input.reason,
               paymentStatus: input.localOnly ? null : input.providerResponse?.status ?? 'CANCELED',
               source: input.source,

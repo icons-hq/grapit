@@ -414,7 +414,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const f = await cancellationPurchase();
     await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
       seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
-    const cancel = vi.fn().mockImplementation(async (_key, reason) => ({ status: 'CANCELED', totalAmount: 104000,
+    const cancel = vi.fn().mockImplementation(async (paymentKey, reason) => ({ paymentKey, currency: 'KRW', status: 'CANCELED', totalAmount: 104000,
       balanceAmount: 0, cancels: [{ cancelReason: reason, cancelAmount: 104000, cancelStatus: 'DONE', transactionKey: randomUUID() }] }));
     const service = new RefundService(db, { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
       totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) } as never,
@@ -437,7 +437,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
       seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
     let partialAllowed = false;
-    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => ({ status: 'PARTIAL_CANCELED', totalAmount: 104000,
+    const cancel = vi.fn().mockImplementation(async (paymentKey, reason, options) => ({ paymentKey, currency: 'KRW', status: 'PARTIAL_CANCELED', totalAmount: 104000,
       balanceAmount: 4000, cancels: [{ cancelReason: reason, cancelAmount: options.cancelAmount,
         cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] }));
     const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => ({ status: 'DONE',
@@ -464,7 +464,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const original = await buyerCancellations({}).getReservationDetail(f.first.reservationId, f.userId);
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
     try {
-      const snapshot = { paymentKey: original.paymentKey!, orderId: original.tossOrderId!, status: 'DONE',
+      const snapshot = { paymentKey: original.paymentKey!, orderId: original.tossOrderId!, currency: 'KRW', status: 'DONE',
         totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
         cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; canceledAt: string; transactionKey: string }> };
       const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
@@ -501,7 +501,8 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
       seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
     await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
-    const snapshot = { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
+    const [original] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const snapshot = { paymentKey: original!.paymentKey, orderId: original!.tossOrderId, currency: 'KRW', status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
       cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string }> };
     const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
       snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'IN_PROGRESS' });
@@ -584,7 +585,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const provider = {
       queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }),
       cancelPayment: vi.fn().mockImplementation(async (_key, reason, options) => {
-        const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, totalAmount: 104000,
+        const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, currency: 'KRW', totalAmount: 104000,
           balanceAmount: 4000, status: 'PARTIAL_CANCELED', cancels: [{ cancelAmount: options.cancelAmount,
             cancelReason: reason, cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] };
         expect(await paymentService.finalizePaymentStatusPartialCancelWebhook({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED',

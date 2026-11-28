@@ -1,4 +1,4 @@
-import { bindVirtualAccountRefundPost, virtualAccountRefundReason } from '../payment/virtual-account-cancel-receipt.js';
+import { bindRefundCancelPost, providerRefundReason } from '../payment/toss-cancel-receipt.js';
 import {
   BadRequestException,
   ConflictException,
@@ -55,7 +55,7 @@ import {
   hasUnchangedCancellationBalance,
   isProviderBalanceAboveSnapshot,
 } from '../payment/payment-cancel-policy.js';
-import { isTossPaymentCancelCompleted } from '../payment/toss-cancel-matcher.js';
+import { isTossPaymentCancelCompleted, matchesPendingOrAbortedCancel } from '../payment/toss-cancel-matcher.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -401,19 +401,6 @@ export async function sendRefundCancelRetryJob(
   }
 }
 
-
-/** The provider accepted exactly this frozen command and reports it as an asynchronous cancel in progress. */
-export function hasMatchingInProgressProviderCancel(
-  response: Pick<TossPaymentResponse, 'cancels'>,
-  command: { reason: string; options: { cancelRequestId?: string } },
-  receipt: { expectedCancelReason?: string; expectedCancelAmount?: number } = {},
-): boolean {
-  const expectedReason = receipt.expectedCancelReason ?? command.reason;
-  return response.cancels?.some((cancel) => cancel.cancelStatus === 'IN_PROGRESS'
-    && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId)
-    && cancel.cancelReason === expectedReason
-    && (receipt.expectedCancelAmount === undefined || cancel.cancelAmount === receipt.expectedCancelAmount)) ?? false;
-}
 
 /** Booking day for the Cancellation Fee Schedule: provider approval time, legacy fallback to creation. */
 export function resolveBookingConfirmedAt(
@@ -807,7 +794,7 @@ export class RefundService {
           command.options,
         );
         providerAccepted = true;
-        const key = await bindVirtualAccountRefundPost(this.db, refund.id, cancelResult, command, amountSnapshot, current);
+        const key = await bindRefundCancelPost(this.db, refund.id, cancelResult, command, amountSnapshot, current);
         if (key) completionOptions.expectedTransactionKey = key;
       }
       providerAccepted = true;
@@ -834,11 +821,8 @@ export class RefundService {
         processingRefund,
         jobId,
         {
-          awaitingProvider: hasMatchingInProgressProviderCancel(
-            cancelResult,
-            command,
-            readStoredPaymentCancelReceipt(refund.providerMetadata),
-          ),
+          awaitingProvider: matchesPendingOrAbortedCancel(cancelResult, 'IN_PROGRESS', command.options.cancelRequestId,
+            { ...completionOptions, expectedCancelReason: command.reason }),
         },
       );
 
@@ -1049,16 +1033,14 @@ export class RefundService {
       return this.finalizeProviderCancelledRefund(context, refund, quote, reason, current, actor, 'refund_retry');
     }
 
-    if (hasMatchingInProgressProviderCancel(current, command, receipt)) {
+    if (matchesPendingOrAbortedCancel(current, 'IN_PROGRESS', command.options.cancelRequestId, receipt)) {
       const reopened = await this.reopenFailedRefund(refund, actor, 'processing_at_pg');
       const jobId = await this.scheduleRefundCancelRetry(reopened.id, reopened.retryCount);
       const scheduled = await this.recordRefundCancelRetrySchedule(reopened, jobId, { awaitingProvider: true });
       return this.buildRequestResponse(context, scheduled, { idempotent: false, retryEnqueued: Boolean(jobId) });
     }
 
-    const aborted = current.cancels?.some((cancel) => cancel.cancelStatus === 'ABORTED'
-      && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId)
-      && cancel.cancelReason === (receipt.expectedCancelReason ?? command.reason)) ?? false;
+    const aborted = matchesPendingOrAbortedCancel(current, 'ABORTED', command.options.cancelRequestId, receipt);
     if (aborted && hasUnchangedCancellationBalance(current, amountSnapshot)) {
       // The provider aborted this exact command; replaying its idempotency key cannot create a new cancel.
       return this.restoreRightsForReviewedRetry(context, refund, {
@@ -1850,7 +1832,7 @@ export class RefundService {
     // Nothing refundable means no provider command: a zero amount cannot be sent and the retained balance stays captured.
     const cancelRequest = currentQuote.refundableAmount === 0 ? null : buildFullReservationPaymentCancelRequest({
       payment: ledgerPayment, cancellationQuote: currentQuote,
-      reason: ledgerPayment.method === 'VIRTUAL_ACCOUNT' ? virtualAccountRefundReason(attemptId) : `${Array.from(reason).slice(0, 150).join('')} [${attemptId}]`,
+      reason: providerRefundReason(attemptId),
       idempotencyKey: existing ? `refund-cancel:${refundId}:${attemptId}` : this.buildRefundCancelIdempotencyKey(refundId), cancelRequestIdSeed: attemptId,
     });
     const providerRefund = cancelRequest

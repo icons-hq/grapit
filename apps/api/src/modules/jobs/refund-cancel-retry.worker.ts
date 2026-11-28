@@ -1,4 +1,5 @@
-import { bindVirtualAccountRefundPost } from '../payment/virtual-account-cancel-receipt.js';
+import { matchesPendingOrAbortedCancel } from '../payment/toss-cancel-matcher.js';
+import { bindRefundCancelPost } from '../payment/toss-cancel-receipt.js';
 import {
   Inject,
   Injectable,
@@ -397,7 +398,7 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
         return { status: 'completed' };
       }
 
-      if (this.hasMatchingInProgressCancel(queried, command.options.cancelRequestId, readStoredPaymentCancelReceipt(context.refund.providerMetadata))) {
+      if (matchesPendingOrAbortedCancel(queried, 'IN_PROGRESS', command.options.cancelRequestId, completionOptions)) {
         return await this.keepWaitingForMatchingAsyncCancel(
           context,
           queried,
@@ -410,7 +411,7 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
 
       // The provider aborted this command (asynchronous foreign cancel). Replaying the same idempotency key
       // returns the same answer, so prove the balance is untouched and restore rights instead of looping.
-      if (this.hasMatchingAbortedCancel(queried, command.options.cancelRequestId, readStoredPaymentCancelReceipt(context.refund.providerMetadata))) {
+      if (matchesPendingOrAbortedCancel(queried, 'ABORTED', command.options.cancelRequestId, completionOptions)) {
         if (amountSnapshot && hasUnchangedCancellationBalance(queried, amountSnapshot)) {
           await this.restoreRejectedRights(context.refund, {
             code: 'PROVIDER_CANCEL_ABORTED',
@@ -459,14 +460,14 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       );
 
       providerAccepted = true;
-      const key = await bindVirtualAccountRefundPost(this.db, context.refund.id, response, command, amountSnapshot, queried);
+      const key = await bindRefundCancelPost(this.db, context.refund.id, response, command, amountSnapshot, queried);
       if (key) completionOptions.expectedTransactionKey = key;
       if (isTossCancelCompleted(response, command.options.cancelRequestId, completionOptions)) {
         await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };
       }
 
-      if (this.hasMatchingInProgressCancel(response, command.options.cancelRequestId, readStoredPaymentCancelReceipt(context.refund.providerMetadata))) {
+      if (matchesPendingOrAbortedCancel(response, 'IN_PROGRESS', command.options.cancelRequestId, completionOptions)) {
         return await this.keepWaitingForMatchingAsyncCancel(
           context,
           response,
@@ -619,22 +620,6 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
     await restoreRejectedRefundRights(this.db, refund, failure);
   }
 
-  protected hasMatchingAbortedCancel(
-    response: TossPaymentResponse,
-    cancelRequestId: string | undefined,
-    receipt: ReturnType<typeof readStoredPaymentCancelReceipt> = {},
-  ): boolean {
-    if (!cancelRequestId && !receipt.expectedCancelReason) {
-      return false;
-    }
-
-    return response.cancels?.some((cancel) =>
-      cancel.cancelStatus === 'ABORTED'
-      && (!cancelRequestId || cancel.cancelRequestId === cancelRequestId)
-      && (!receipt.expectedCancelReason || cancel.cancelReason === receipt.expectedCancelReason)
-    ) ?? false;
-  }
-
   protected resolveCancelReason(refund: RefundRecord): string {
     const metadata =
       refund.providerMetadata &&
@@ -649,23 +634,6 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
 
   protected buildRefundCancelIdempotencyKey(refundId: string): string {
     return `refund-cancel:${refundId}`;
-  }
-
-  protected hasMatchingInProgressCancel(
-    response: TossPaymentResponse,
-    cancelRequestId: string | undefined,
-    receipt: ReturnType<typeof readStoredPaymentCancelReceipt> = {},
-  ): boolean {
-    if (!cancelRequestId && !receipt.expectedCancelReason) {
-      return false;
-    }
-
-    return response.cancels?.some((cancel) =>
-      cancel.cancelStatus === 'IN_PROGRESS'
-      && (!cancelRequestId || cancel.cancelRequestId === cancelRequestId)
-      && (!receipt.expectedCancelReason || cancel.cancelReason === receipt.expectedCancelReason)
-      && (receipt.expectedCancelAmount === undefined || cancel.cancelAmount === receipt.expectedCancelAmount)
-    ) ?? false;
   }
 
   /** An accepted asynchronous cancel is never declared failed; it is polled with the long backoff. */
