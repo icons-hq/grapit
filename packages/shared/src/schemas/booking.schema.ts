@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { PERFORMANCE_ALLOWED_PAYMENT_METHODS } from '../types/performance.types';
 import { bookingAddonSelectionsSchema } from './booking-addon.schema';
 
-import { benefitEntitlementSchema } from './benefit.schema';
+import { benefitEntitlementSchema, ticketBenefitDisplayCopySchema } from './benefit.schema';
 import { consentCaptureItemSchema } from './consent.schema';
 import {
   ticketItemCancellationPolicyCodeSchema,
@@ -171,7 +171,35 @@ export const cancellationQuoteSchema = z.object({
   items: z.array(ticketItemCancellationPreviewSchema).min(1),
 });
 
+const addonRefundProductsSchema = z.array(z.object({
+  displayCopy: ticketBenefitDisplayCopySchema,
+  quantity: z.number().int().positive(),
+}));
+const refundCurrencyAmountSchema = z.object({
+  currency: z.enum(['KRW', 'USD']), amountMinor: z.number().int().nonnegative(), amountDecimal: z.string(),
+});
+const buyerRefundSummarySchema = z.object({
+  version: z.string().length(64),
+  refundableAmount: z.number().int().nonnegative(),
+  cancellationFeeTotal: z.number().int().nonnegative(),
+  charges: z.array(z.object({
+    reservationNumber: z.string(), products: addonRefundProductsSchema,
+    paidAmount: z.number().int().nonnegative(), refundableAmount: z.number().int().nonnegative(),
+    providerRefund: refundCurrencyAmountSchema.nullable(),
+  })),
+});
+export type BuyerRefundSummary = z.infer<typeof buyerRefundSummarySchema>;
+
+const addonRefundReceiptSchema = z.object({
+  reservationNumber: z.string(), products: addonRefundProductsSchema,
+  status: z.enum(['requested', 'sent_to_pg', 'processing_at_pg', 'completed', 'failed']).nullable(),
+  refundableAmount: z.number().int().nonnegative().nullable(),
+  providerRefund: refundCurrencyAmountSchema.nullable(),
+});
+export type AddonRefundReceipt = z.infer<typeof addonRefundReceiptSchema>;
+
 export const refundPreviewResponseSchema = z.object({
+  buyerSummary: buyerRefundSummarySchema.optional(),
   reservationId: z.string().uuid('유효한 reservation ID가 필요합니다'),
   reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
@@ -335,6 +363,7 @@ export const confirmPaymentSchema = z.union([
 export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
 
 export const cancelReservationSchema = z.object({
+  expectedBuyerQuoteVersion: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   expectedRefundableAmount: z.number().int().nonnegative().optional(),
   expectedProviderRefundAmountMinor: z.number().int().nonnegative().optional(),
   reason: z
@@ -558,6 +587,8 @@ export const reservationListItemSchema = z.object({
 export const reservationDetailSchema = reservationListItemSchema.extend({
   addonTicketItemId: z.string().uuid().optional(),
   addonParentReservationId: z.string().uuid().optional(),
+  ticketRefundAmount: z.number().int().nonnegative().nullable().optional(),
+  addonRefundReceipts: z.array(addonRefundReceiptSchema).optional(),
   ticketAddonAccess: z.array(z.object({ ticketItemId: z.string().uuid(), hasOrders: z.boolean() })).optional(),
   addons: z.array(z.object({ addonId: z.string().uuid(), seatKey: z.string(), unitIndex: z.number().int().min(1).max(10).optional(), price: z.number().int().positive(),
     displayCopy: z.record(z.object({ name: z.string(), description: z.string() })), expiresAt: z.string().datetime() })).optional(),

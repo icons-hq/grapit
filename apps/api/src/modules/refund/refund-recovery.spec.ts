@@ -34,6 +34,13 @@ const FROZEN_COMMAND = {
   options: { idempotencyKey: 'refund-cancel:refund-1', secretKeyScope: 'default', cancelAmount: 200000 },
 };
 
+// These service unit tests isolate the parent payment. Linked orders use PostgreSQL integration coverage.
+vi.mock(import('../cancellation/ticket-addon-refunds.js'), async original => ({
+  ...await original(),
+  quoteBuyerRefund: async (_db, quote) => ({ version: '0'.repeat(64), charges: [],
+    refundableAmount: quote.refundableAmount, cancellationFeeTotal: quote.cancellationFeeTotal }),
+}));
+
 function createRefund(overrides: Record<string, unknown> = {}) {
   return {
     id: 'refund-1',

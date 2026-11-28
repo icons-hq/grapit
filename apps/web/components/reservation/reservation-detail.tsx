@@ -27,7 +27,7 @@ import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import { TicketAddonPurchase } from './ticket-addon-purchase';
-import { getTicketAddonCopy } from '@/lib/booking/ticket-addon-copy';
+import { getBuyerRefundCopy, getTicketAddonCopy, refundProductLabel } from '@/lib/booking/ticket-addon-copy';
 import { TicketBenefitCoupons } from '@/components/reservation/ticket-benefit-coupons';
 import { AreunGlPerformancePromo } from '@/components/promo/areun-gl-promo';
 import { useRefundPreview } from '@/hooks/use-reservations';
@@ -422,6 +422,8 @@ function getProgressGuidance(
   const progress = copy.progress;
 
   if (reservation.status === 'CANCELLED') {
+    // The consolidated receipt lists each pending or failed payment and its current status.
+    if (reservation.addonRefundReceipts?.length) return null;
     if (!reservation.refundTimeline && !reservation.paidAt && !reservation.paymentInfo?.paidAt) return null;
     if (hasCancellationInProgress(reservation)) {
       return {
@@ -616,7 +618,7 @@ export function ReservationDetailView({
       .reduce((sum, item) => sum + (item.cancellation?.refundableAmount ?? 0), 0);
   } else if (reservation.status === 'CONFIRMED') {
     displayedRefundAmount =
-      refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? null;
+      refundPreviewQuery.data?.buyerSummary?.refundableAmount ?? refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? null;
   } else if (hasSeatLevelTicketItems && ticketItemRefundTotal > 0) {
     displayedRefundAmount = ticketItemRefundTotal;
   } else {
@@ -659,9 +661,20 @@ export function ReservationDetailView({
   const canResumePayment =
     progressGuidance?.kind === 'payment-pending' &&
     Boolean(onResumePayment);
+  const receipts = reservation.status === 'CANCELLED' || reservation.refundTimeline ? reservation.addonRefundReceipts ?? [] : [];
   const showRefundPreview =
     reservation.status === 'CONFIRMED' ||
-    Boolean(reservation.refundTimeline);
+    Boolean(reservation.refundTimeline) || receipts.length > 0;
+  const refundCopy = getBuyerRefundCopy(benefitLocale);
+  const addonCopy = getTicketAddonCopy(benefitLocale);
+  const ticketRefundCompleted = reservation.refundTimeline?.currentState === 'COMPLETED' ||
+    (!reservation.refundTimeline && reservation.status === 'CANCELLED' && ['CANCELED', 'PARTIAL_CANCELED'].includes(reservation.paymentInfo?.status ?? ''));
+  const allRefundsCompleted = ticketRefundCompleted &&
+    receipts.every(receipt => receipt.status === 'completed');
+  const receiptTotal = receipts.length && reservation.ticketRefundAmount != null && receipts.every(r => r.refundableAmount !== null)
+    ? receipts.reduce((sum, r) => sum + r.refundableAmount!, reservation.ticketRefundAmount) : null;
+  const receiptBadge = reservation.refundTimeline?.currentState === 'FAILED' || receipts.some(r => r.status === 'failed')
+    ? addonCopy.failed : allRefundsCompleted ? addonCopy.refunded : addonCopy.refunding;
   const showRefundTimeline = Boolean(reservation.refundTimeline);
   const hasExpectedDepositAt =
     Boolean(reservation.refundTimeline?.expectedDepositAt) && showRefundTimeline;
@@ -1007,22 +1020,39 @@ export function ReservationDetailView({
                     : 'bg-[#F3EFFF] text-[#6C3CE0] border-transparent'
                 }
               >
-                {reservation.status === 'CANCELLED' ? copy.status.cancelled : copy.cancel.finalCheck}
+                {receipts.length ? receiptBadge : reservation.status === 'CANCELLED' ? copy.status.cancelled : copy.cancel.finalCheck}
               </Badge>
             </div>
 
             <div className="rounded-xl border border-white/80 bg-white/90 p-4">
-              <InfoRow
+              {receipts.length > 0 ? <div className="space-y-3">
+                <h3 className="font-semibold">{allRefundsCompleted ? refundCopy.confirmedTotal : refundCopy.charges}</h3>
+                {receiptTotal !== null && <InfoRow label={allRefundsCompleted ? addonCopy.refunded : refundCopy.total}
+                  value={formatPrice(receiptTotal, locale)} />}
+                <InfoRow label={refundCopy.ticket} value={[
+                  reservation.ticketRefundAmount == null ? null : formatPrice(reservation.ticketRefundAmount, locale),
+                  reservation.refundProviderAmount?.currency === 'USD' ? `USD ${reservation.refundProviderAmount.amountDecimal}` : null,
+                  ticketRefundCompleted ? addonCopy.refunded :
+                    reservation.refundTimeline?.currentState === 'FAILED' ? addonCopy.failed : addonCopy.refunding,
+                ].filter(Boolean).join(' · ')} />
+                {receipts.map(receipt => <div key={receipt.reservationNumber} className="border-t pt-2 text-sm">
+                  <p className="font-medium">{refundProductLabel(receipt.products, benefitLocale)}</p>
+                  <p className="text-gray-600">{receipt.reservationNumber} · {receipt.status === 'completed' ? addonCopy.refunded :
+                    receipt.status === 'failed' ? addonCopy.failed : addonCopy.refunding}
+                    {receipt.refundableAmount !== null && ` · ${formatPrice(receipt.refundableAmount, locale)}`}
+                    {receipt.providerRefund?.currency === 'USD' && ` · USD ${receipt.providerRefund.amountDecimal}`}</p>
+                </div>)}
+              </div> : <InfoRow
                 label={copy.cancel.refundAmount}
                 value={displayedRefundValue}
                 valueClassName={displayedRefundValueClassName}
-              />
-              {reservation.refundProviderAmount && <InfoRow label={cancellationCopy.completedTotal}
+              />}
+              {!receipts.length && reservation.refundProviderAmount && <InfoRow label={cancellationCopy.completedTotal}
                 value={`${reservation.refundProviderAmount.currency} ${reservation.refundProviderAmount.amountDecimal}`} />}
               <Separator />
               <InfoRow
                 label={copy.cancel.refundMethod}
-                value={copy.cancel.refundMethodValue.replace('{paymentMethod}', refundPaymentMethodLabel)}
+                value={receipts.length ? refundCopy.method : copy.cancel.refundMethodValue.replace('{paymentMethod}', refundPaymentMethodLabel)}
               />
               {hasExpectedDepositAt && reservation.refundTimeline?.expectedDepositAt && (
                 <>
@@ -1045,12 +1075,13 @@ export function ReservationDetailView({
         </Card>
       )}
 
-      {showRefundTimeline && reservation.refundTimeline && (
+      {showRefundTimeline && reservation.refundTimeline && <section>
+        {receipts.length > 0 && <h3 className="mt-4 font-semibold">{refundCopy.ticket}</h3>}
         <RefundTimeline
           timeline={reservation.refundTimeline}
           cancelledSeatHold={reservation.cancelledSeatHold}
         />
-      )}
+      </section>}
 
       {/* Cancellation deadlines apply only after a completed payment. */}
       {hasCompletedPayment && <Card className="mt-4 py-4">
@@ -1130,6 +1161,7 @@ export function ReservationDetailView({
 
       {/* Cancel modal */}
       <CancelConfirmModal
+        buyerSummary={refundPreviewQuery.data?.buyerSummary}
         separateRefundNotice={reservation.ticketAddonAccess?.some(item => item.hasOrders)
           ? getTicketAddonCopy(benefitLocale).separateRefund : undefined}
         open={cancelModalOpen}
@@ -1139,7 +1171,7 @@ export function ReservationDetailView({
         paymentMethod={paymentMethodLabel}
         expectedDepositAt={reservation.refundTimeline?.expectedDepositAt ?? null}
         releaseWindowMinutes={refundPreviewQuery.data?.cancelledSeatHoldWindowMinutes ?? null}
-        isPreviewLoading={refundPreviewQuery.isLoading}
+        isPreviewLoading={refundPreviewQuery.isLoading || refundPreviewQuery.isFetching}
         isPreviewError={refundPreviewQuery.isError}
         seats={qrCards.filter((card) => card.status === 'ACTIVE').map((card) => card.seatLabel)}
         providerRefund={refundPreviewQuery.data?.providerRefund}
@@ -1147,6 +1179,7 @@ export function ReservationDetailView({
         canConfirm={refundPreviewQuery.data?.canRequestRefund === true}
         onRetryPreview={() => { void refundPreviewQuery.refetch(); }}
         onConfirm={(reason) => onCancel(reason, {
+          expectedBuyerQuoteVersion: refundPreviewQuery.data?.buyerSummary?.version,
           expectedRefundableAmount: refundPreviewQuery.data!.refundableAmount,
           expectedProviderRefundAmountMinor: refundPreviewQuery.data?.providerRefund?.amountMinor,
         })}
