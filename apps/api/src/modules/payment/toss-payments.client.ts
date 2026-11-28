@@ -66,7 +66,7 @@ export interface TossPaymentResponse {
   lastTransactionKey?: string | null;
   status: string;
   approvedAt?: string | null;
-  card?: { settlementStatus?: string | null } | null;
+  card?: { settlementStatus?: string | null; acquireStatus?: string | null } | null;
   transfer?: { settlementStatus?: string | null } | null;
   virtualAccount?: {
     settlementStatus?: string | null;

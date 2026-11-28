@@ -22,6 +22,7 @@ import {
 } from '../../database/schema/index.js';
 import {
   buildRefundCancelRetrySchedule,
+  deferPolicyRefund,
   getRefundErrorCode,
   getRefundErrorMessage,
   isDefiniteRefundCancelRejection,
@@ -350,9 +351,10 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
       idempotencyKey: this.buildRefundCancelIdempotencyKey(context.refund.id),
       cancelRequestIdSeed: context.refund.id,
     };
+    const storedCommand = readStoredPaymentCancelRequest(context.refund.providerMetadata);
     let command: ReturnType<typeof buildFullPaymentCancelRequest>;
     try {
-      command = readStoredPaymentCancelRequest(context.refund.providerMetadata) ?? (cancellationQuote
+      command = storedCommand ?? (cancellationQuote
         ? buildFullReservationPaymentCancelRequest({
             ...baseCommandInput,
             cancellationQuote,
@@ -447,6 +449,12 @@ export class RefundCancelRetryWorker implements OnModuleInit, OnModuleDestroy {
         );
       }
       if (command.options.cancelAmount !== undefined && queried.isPartialCancelable !== true) {
+        if (cancellationQuote && amountSnapshot && storedCommand?.options.idempotencyKey) {
+          const { updated, jobId } = await deferPolicyRefund(this.db, this.pgBoss, this.logger, context.refund,
+            nextRetryCount, queried, storedCommand.options.idempotencyKey);
+          if (!updated) return { status: 'stale_job' };
+          return { status: jobId ? 'rescheduled' : 'retry_schedule_failed' };
+        }
         definitePreflightRejection = queried.isPartialCancelable === false
           && Boolean(amountSnapshot && hasUnchangedCancellationBalance(queried, amountSnapshot))
           && !hasProviderCancelForCommand(queried, command);
