@@ -2,7 +2,7 @@ import type { RefundTimeline, RefundPreviewResponse, ReservationDetail } from '@
 import type { refunds, ticketItems } from '../../database/schema/index.js';
 type RefundRecord = typeof refunds.$inferSelect;
 type RefundStateMachineStatus = RefundRecord['status'];
-const MS_PER_DAY = 86400000;
+export const REFUND_FOLLOW_UP_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
 
 export function hasRestoredRefundRights(refund: Pick<RefundRecord, 'status' | 'providerMetadata'> | null | undefined): boolean {
   if (refund?.status !== 'failed' || !refund.providerMetadata || typeof refund.providerMetadata !== 'object') return false;
@@ -24,7 +24,7 @@ export function toRefundTimeline(refund: RefundRecord, now: Date = new Date()): 
   // Historical expected_deposit_at values were created locally as +3 days.
   // Keep the processing follow-up threshold separate from issuer settlement.
   const isDelayed = refund.status !== 'completed'
-    && refund.requestedAt.getTime() + 3 * MS_PER_DAY < now.getTime();
+    && refund.requestedAt.getTime() + REFUND_FOLLOW_UP_DELAY_MS < now.getTime();
 
   return {
     currentState: REFUND_TIMELINE_STATE_MAP[refund.status],
@@ -51,7 +51,7 @@ export function ticketItemRefundTimeline(items: Array<typeof ticketItems.$inferS
     processedAtPgAt: pending?.cancellationCommand?.processingAtPgAt,
     requestedAt: times[0]!, completedAt: pending ? null : cancelled.map((item) => item.cancellationCommand?.completedAt ?? item.cancelledAt?.toISOString()).filter(Boolean).sort().at(-1)!,
     expectedDepositAt: null,
-    customerServiceCtaVisible: Boolean(pending && pending.cancelledAt && pending.cancelledAt.getTime() + 3 * MS_PER_DAY < Date.now()),
+    customerServiceCtaVisible: Boolean(pending && pending.cancelledAt && pending.cancelledAt.getTime() + REFUND_FOLLOW_UP_DELAY_MS < Date.now()),
   };
 }
 

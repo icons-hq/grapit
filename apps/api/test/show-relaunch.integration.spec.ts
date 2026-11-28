@@ -481,8 +481,13 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const [waiting] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, job.refundId));
     expect(waiting).toMatchObject({ status: 'requested', retryCount: 3, sentToPgAt: null,
       customerServiceCtaVisible: false, providerMetadata: { manualReviewRequired: false } });
-    snapshot.card.acquireStatus = 'COMPLETED';
-    expect(await worker.handleJob({ ...job, attempt: 4 })).toMatchObject({ status: 'rescheduled' });
+    // Either a completed acquisition that still refuses the amount, or a card stuck in acquisition for days.
+    if (daysToShow === 20) snapshot.card.acquireStatus = 'COMPLETED';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      if (daysToShow === 2) vi.setSystemTime(new Date(Date.now() + 4 * day));
+      expect(await worker.handleJob({ ...job, attempt: 4 })).toMatchObject({ status: 'rescheduled' });
+    } finally { vi.useRealTimers(); }
     const [restricted] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, job.refundId));
     expect(restricted).toMatchObject({ status: 'requested', sentToPgAt: null, providerMetadata: { manualReviewRequired: true } });
     expect(cancel).not.toHaveBeenCalled();

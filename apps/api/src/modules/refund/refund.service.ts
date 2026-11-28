@@ -14,7 +14,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { quoteBuyerRefund } from '../cancellation/ticket-addon-refunds.js';
 import { calculateTicketItemCancellationQuote } from '../cancellation/ticket-cancellation-policy.js';
 import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
-import { toRefundTimeline, hasRestoredRefundRights } from '../cancellation/refund-timeline.js';
+import { toRefundTimeline, hasRestoredRefundRights, REFUND_FOLLOW_UP_DELAY_MS } from '../cancellation/refund-timeline.js';
 export { toRefundTimeline } from '../cancellation/refund-timeline.js';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
@@ -413,7 +413,9 @@ export async function deferPolicyRefund(
   const jobId = await sendRefundCancelRetryJob(pgBoss, logger, refund.id, retryCount);
   const now = new Date();
   const acquiringCard = payment.card?.acquireStatus === 'READY' || payment.card?.acquireStatus === 'REQUESTED';
-  const schedule = buildRefundCancelRetrySchedule(jobId, retryCount, now, { awaitingProvider: acquiringCard });
+  const schedule = buildRefundCancelRetrySchedule(jobId, retryCount, now, {
+    awaitingProvider: acquiringCard && now.getTime() - refund.requestedAt.getTime() < REFUND_FOLLOW_UP_DELAY_MS,
+  });
   const [updated] = await db.update(refunds).set({
     retryCount, updatedAt: now,
     resultCode: 'AWAITING_POLICY_REFUND',
